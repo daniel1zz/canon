@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claims, handoffs } from "../coord/state.ts";
 import { start, stop } from "../work/work.ts";
@@ -61,6 +61,34 @@ describe("lifecycle hooks", () => {
     const out = await land(ws(s.worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("floor");
     expect(existsSync(join(s.worktree, "..", "before-land-ran"))).toBe(false);
+    expect(hookRuns(root)).toEqual([]);
+  });
+
+  test("BR-2056: setup runs first and a failed setup skips after_start; restarting an existing worktree runs after_start again", () => {
+    const failing = project();
+    writeFileSync(join(failing, "canon/config.yaml"), `floor: "true"\ntests: []\nsetup: "false"\nhooks:\n  after_start: touch "$CANON_WORKTREE/../after-start-ran"\n`);
+    sh(failing, "commit", "-qam", "failing setup");
+    expect(start(ws(failing), { title: "Broken setup" }, quiet).ok).toBe(false);
+    expect(hookRuns(failing)).toEqual([]);
+
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nsetup: touch setup-ran\nhooks:\n  after_start: 'test -e setup-ran && echo "$CANON_CHANGE" >> starts.txt'\n`);
+    mkdirSync(join(root, "canon/changes"), { recursive: true });
+    writeFileSync(join(root, "canon/changes/C-1.md"), "---\nid: C-1\ntitle: Planned\nstatus: open\n---\n## 为什么\n\nPlanned.\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "setup then after_start; a planned change");
+    const first = start(ws(root), { change: "C-1" }, quiet);
+    const again = start(ws(root), { change: "C-1" }, quiet); // the worktree exists: no setup, after_start again
+    expect(first.ok && again.ok && again.value.created).toBe(false);
+    if (!first.ok) return;
+    expect(readFileSync(join(first.value.worktree, "starts.txt"), "utf8").trim().split("\n")).toEqual(["C-1", "C-1"]);
+    expect(hookRuns(root).map((r) => r.exit)).toEqual([0, 0]);
+  });
+
+  test("BR-2058: stop without a claim is not found and after_stop does not run", () => {
+    const root = configured(`  after_stop: touch after-stop-ran\n`);
+    expect(stop(ws(root), "x", undefined, false).ok).toBe(false);
+    expect(existsSync(join(root, "after-stop-ran"))).toBe(false);
     expect(hookRuns(root)).toEqual([]);
   });
 
