@@ -1,0 +1,50 @@
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { openWorkspace, type Workspace } from "../app/workspace.ts";
+import { git } from "../repo/git.ts";
+import { start } from "./work.ts";
+
+/** Fixtures shared by the work and hook tests: throwaway repositories and workspaces. */
+export const quiet = () => {};
+export const FAST = { finish: false, timeoutMs: 20_000 };
+
+export function sh(cwd: string, ...args: string[]) {
+  const r = git(cwd, ...args);
+  if (!r.ok) throw new Error(r.error.message);
+  return r.value;
+}
+
+/** A repo whose floor passes unless a file named FAIL exists in the tree. */
+export function project(): string {
+  const root = mkdtempSync(join(tmpdir(), "canon-next-work-"));
+  sh(root, "init", "-q", "-b", "main");
+  sh(root, "config", "user.email", "t@t");
+  sh(root, "config", "user.name", "t");
+  mkdirSync(join(root, "canon"), { recursive: true });
+  writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\n");
+  writeFileSync(join(root, "app.txt"), "one\ntwo\nthree\n");
+  sh(root, "add", "-A");
+  sh(root, "commit", "-qm", "init");
+  return root;
+}
+
+export function ws(cwd: string, actor = "agent:a"): Workspace {
+  process.env["CANON_ACTOR"] = actor;
+  const r = openWorkspace(cwd);
+  if (!r.ok) throw new Error(r.error.message);
+  return r.value;
+}
+
+/** Starts a change and fills its description, as an agent must before landing (BR-2035). */
+export function startNew(root: string, title: string, actor = "agent:a") {
+  const r = start(ws(root, actor), { title }, quiet);
+  if (!r.ok) throw new Error(r.error.message);
+  const dir = join(r.value.worktree, "canon/changes");
+  const file = readdirSync(dir).find((f) => f.startsWith(`${r.value.change}-`) || f === `${r.value.change}.md`)!;
+  const text = readFileSync(join(dir, file), "utf8");
+  writeFileSync(join(dir, file), text.slice(0, text.indexOf("---\n", 4) + 4) + `\n## 为什么\n\n${title}.\n`);
+  sh(r.value.worktree, "commit", "-q", "--amend", "--no-edit", "-a");
+  return r.value;
+}
+

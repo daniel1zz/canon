@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { ID_PATTERN, stripCode, type Corpus, type Rule } from "../knowledge/model.ts";
+import { stripCode, type Corpus, type Rule } from "../knowledge/model.ts";
 import type { FileProblem } from "../knowledge/read.ts";
+import { idsIn as idsOf } from "../knowledge/types.ts";
 import { EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, RULE_SECTION, section } from "../knowledge/templates.ts";
 
 /**
@@ -23,7 +24,7 @@ export type CheckRule =
   | "test-retired-rule" // a test still names a retired rule
   | "rule-no-statement" // an active rule has no non-empty "## 规则" section
   | "rule-no-example" // an active rule with tests has no example in "## 例子"
-  | "template-unfilled"; // a rule, decision, change or domain README still holds a template placeholder line
+  | "template-unfilled"; // a rule, decision, change, declared-type document or domain README still holds a template placeholder line
 
 export interface CheckInput {
   readonly root: string;
@@ -34,6 +35,7 @@ export interface CheckInput {
 }
 
 export function check(input: CheckInput): Finding[] {
+  const idsIn = (text: string) => idsOf(input.corpus.types, text);
   const findings: Finding[] = input.problems.map((p) => ({ path: p.path, rule: "file-invalid", message: p.message }));
   const byId = new Map<string, string[]>();
   for (const d of input.corpus.docs) byId.set(d.id, [...(byId.get(d.id) ?? []), d.path]);
@@ -59,8 +61,9 @@ export function check(input: CheckInput): Finding[] {
   const testFiles = input.testFiles ?? findTestFiles(input.root);
   for (const file of testFiles) {
     const text = readFileSync(join(input.root, file), "utf8");
+    const rulePrefix = `${input.corpus.types.find((t) => t.name === "rule")!.prefix}-`;
     for (const ref of idsIn(text)) {
-      if (!ref.startsWith("BR-")) continue;
+      if (!ref.startsWith(rulePrefix)) continue;
       const rule = rules.get(ref);
       if (!rule) findings.push({ path: file, rule: "ref-dangling", message: `test names ${ref}, which does not exist` });
       else if (rule.status === "retired") findings.push({ path: file, rule: "test-retired-rule", message: `test still names retired rule ${ref}` });
@@ -81,7 +84,7 @@ function structureFindings(corpus: Corpus): Finding[] {
   const out: Finding[] = [];
   const unfilled = hasPlaceholderLine;
   for (const d of corpus.docs) {
-    if ((d.kind === "rule" || d.kind === "decision" || d.kind === "change") && unfilled(d.body)) {
+    if (d.kind !== "note" && unfilled(d.body)) {
       out.push({ path: d.path, rule: "template-unfilled", message: `${d.id} still contains a template placeholder line` });
     }
     if (d.kind !== "rule" || d.status !== "active") continue;
@@ -97,10 +100,6 @@ function structureFindings(corpus: Corpus): Finding[] {
     if (unfilled(dom.body)) out.push({ path: dom.path, rule: "template-unfilled", message: `domain ${dom.name} README still contains a template placeholder line` });
   }
   return out;
-}
-
-function idsIn(text: string): Set<string> {
-  return new Set([...text.matchAll(ID_PATTERN)].map((m) => `${m[1]}-${m[2]}`));
 }
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "canon", "dist", ".cache"]);

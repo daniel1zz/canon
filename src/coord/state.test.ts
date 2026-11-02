@@ -31,6 +31,16 @@ describe("landing queue", () => {
     d.db.query("UPDATE queue SET heartbeat = ? WHERE id = ?").run(old, a);
     expect(tryTurn(d, b)).toEqual({ mine: true, ahead: 0 });
   });
+
+  test("BR-2044: the stale time comes from lander_stale_minutes: 11 minutes of silence is not stale at 30", () => {
+    const d = db();
+    const a = enqueue(d, "/wt/a", "C-1", "x");
+    const b = enqueue(d, "/wt/b", "C-2", "x");
+    expect(tryTurn(d, a, 30 * 60_000).mine).toBe(true);
+    d.db.query("UPDATE queue SET heartbeat = ? WHERE id = ?").run(new Date(Date.now() - 11 * 60_000).toISOString(), a);
+    expect(tryTurn(d, b, 30 * 60_000)).toEqual({ mine: false, ahead: 1 });
+    expect(tryTurn(d, b, 10 * 60_000)).toEqual({ mine: true, ahead: 0 });
+  });
 });
 
 describe("human questions", () => {

@@ -4,12 +4,14 @@ import { dirname, join } from "node:path";
 import type { Workspace } from "../app/workspace.ts";
 import { check, type Finding } from "../check/check.ts";
 import { testFilesFor } from "../check/tests.ts";
-import { claimOfWorktree, dropHandoff, enqueue, finishEntry, heartbeat, releaseClaim, takeClaim, tryTurn, writeHandoff } from "../coord/state.ts";
+import { claimOfWorktree, dropHandoff, enqueue, finishEntry, heartbeat, releaseClaim, renewClaim, takeClaim, tryTurn, writeHandoff } from "../coord/state.ts";
+import { logFile, runHooks, runHooksInBackground, runHooksSync } from "../hooks/hooks.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { slugify, type Change, type Corpus } from "../knowledge/model.ts";
 import { findDoc } from "../knowledge/query.ts";
 import { readCorpus } from "../knowledge/read.ts";
 import { createDoc, setMeta } from "../knowledge/write.ts";
+import { worktreesDirOf } from "../repo/config.ts";
 import { git, isClean, listWorktrees } from "../repo/git.ts";
 import { reviewPrompt, runReview } from "../review/review.ts";
 
@@ -21,11 +23,12 @@ import { reviewPrompt, runReview } from "../review/review.ts";
 export type Say = (line: string) => void;
 
 /**
- * Change worktrees live next to the primary checkout, in `<primary>.worktrees/<C-n>`: outside every
- * checkout, so no test run, scan or status of the project ever picks up a copy of it.
+ * Change worktrees live by default next to the primary checkout, in `<primary>.worktrees/<C-n>`: outside
+ * every checkout, so no test run, scan or status of the project ever picks up a copy of it. `worktrees` in
+ * canon/config.yaml moves them (BR-2047).
  */
-export function worktreesDir(primary: string): string {
-  return `${primary.replace(/\/+$/, "")}.worktrees`;
+export function worktreesDir(ws: Workspace): string {
+  return worktreesDirOf(ws.config, ws.primary);
 }
 
 export interface Started {
@@ -63,9 +66,9 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     fresh = true;
   }
   const branch = (slug ? `change/${changeId}-${slug}` : `change/${changeId}`).slice(0, 80);
-  const path = join(worktreesDir(ws.primary), changeId);
+  const path = join(worktreesDir(ws), changeId);
 
-  const claim = takeClaim(ws.db, changeId, path, ws.actor);
+  const claim = takeClaim(ws.db, changeId, path, ws.actor, ws.config.claimLeaseMs);
   if (!claim.ok) return claim;
 
   let created = false;
@@ -93,8 +96,8 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   }
 
   if (fresh && "title" in target) {
-    const corpus = readCorpus(path).corpus;
-    const made = createDoc(path, corpus, ws.db, ws.actor, { kind: "change", title: target.title, rules: target.rules ?? [], id: changeId });
+    const corpus = readCorpus(path, ws.config.types).corpus;
+    const made = createDoc(path, corpus, ws.db, ws.actor, { kind: "change", title: target.title, rules: target.rules ?? [], id: changeId }, ws.config.templates);
     if (!made.ok) return made;
     const c = git(path, "add", made.value);
     if (!c.ok) return c;
@@ -102,6 +105,8 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     if (!m.ok) return m;
   }
   say(`${changeId} → ${path} (branch ${branch})`);
+  // after_start never changes the result (BR-2056): the worktree and claim stand whatever it exits with.
+  runHooksSync({ db: ws.db, actor: ws.actor, event: "after_start", change: changeId, cwd: path, env: { CANON_BRANCH: branch } }, ws.config.hooks.after_start, say);
   return ok({ change: changeId, worktree: path, branch, created });
 }
 
@@ -114,7 +119,7 @@ export function mainCorpus(ws: Workspace): Result<Corpus> {
   const wts = listWorktrees(ws.primary);
   if (!wts.ok) return wts;
   const holder = wts.value.find((w) => w.branch === main);
-  if (holder) return ok(readCorpus(holder.path).corpus);
+  if (holder) return ok(readCorpus(holder.path, ws.config.types).corpus);
   const dir = mkdtempSync(join(tmpdir(), "canon-main-"));
   try {
     const hasCorpus = git(ws.primary, "cat-file", "-e", `${main}:canon`).ok;
@@ -122,7 +127,7 @@ export function mainCorpus(ws: Workspace): Result<Corpus> {
       const tar = Bun.spawnSync(["sh", "-c", `git archive ${main} canon | tar -x -C ${JSON.stringify(dir)}`], { cwd: ws.primary, stderr: "pipe" });
       if (tar.exitCode !== 0) return err("io", `cannot read canon/ from ${main}: ${tar.stderr.toString().trim()}`);
     }
-    return ok(readCorpus(dir).corpus);
+    return ok(readCorpus(dir, ws.config.types).corpus);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -143,7 +148,7 @@ export interface LandOptions {
 
 export type LandOutcome =
   | { readonly kind: "landed"; readonly sha: string; readonly change: string | null; readonly finished: boolean }
-  | { readonly kind: "refused"; readonly reason: "dirty" | "conflict" | "floor" | "check" | "review" | "main-moved" | "main-dirty" | "no-floor" | "no-claim" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
+  | { readonly kind: "refused"; readonly reason: "dirty" | "conflict" | "floor" | "check" | "review" | "hook" | "main-moved" | "main-dirty" | "no-floor" | "no-claim" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
   | { readonly kind: "timeout"; readonly ahead: number };
 
 /**
@@ -153,7 +158,7 @@ export type LandOutcome =
 export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<LandOutcome> {
   const wt = ws.root;
   const main = ws.config.main;
-  const claim = claimOfWorktree(ws.db, wt);
+  const claim = renewClaim(ws.db, wt, ws.actor, ws.config.claimLeaseMs);
   const subject = claim?.subject ?? null;
   // Every refusal, early or late, is recorded with its reason so a check's precision can be measured (P6, BR-2026).
   const early = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], message: string): LandOutcome => {
@@ -170,7 +175,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
 
   if (opts.finish) {
     if (!subject) return early("no-claim", "--finish needs a claimed change; this worktree holds none");
-    const corpus = readCorpus(wt).corpus;
+    const corpus = readCorpus(wt, ws.config.types).corpus;
     const doc = findDoc(corpus, subject);
     if (doc?.kind === "change" && doc.status === "open") {
       const s = setMeta(wt, doc, { status: "done" });
@@ -185,7 +190,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   const deadline = Date.now() + opts.timeoutMs;
   let lastAhead = -1;
   for (;;) {
-    const turn = tryTurn(ws.db, entry);
+    const turn = tryTurn(ws.db, entry, ws.config.landerStaleMs);
     if (turn.mine) break;
     if (turn.ahead !== lastAhead) say(`waiting: ${turn.ahead} landing(s) ahead`);
     lastAhead = turn.ahead;
@@ -197,6 +202,20 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     await Bun.sleep(2000);
   }
 
+  // The heartbeat runs from the moment this lander has its turn until the landing ends, through the floor,
+  // the review and before_land, so a slow step never makes a later lander think this one died (BR-2049).
+  const beat = setInterval(() => heartbeat(ws.db, entry), Math.min(30_000, Math.max(50, ws.config.landerStaleMs / 3)));
+  try {
+    return await landTurn(ws, opts, say, { entry, subject, branch: branch.value });
+  } finally {
+    clearInterval(beat);
+  }
+}
+
+async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string }): Promise<LandOutcome> {
+  const wt = ws.root;
+  const main = ws.config.main;
+  const { entry, subject } = t;
   const refuse = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], message: string, findings?: readonly Finding[]): LandOutcome => {
     finishEntry(ws.db, entry, "failed", `${reason}: ${message.slice(0, 500)}`);
     ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000) });
@@ -217,17 +236,15 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   const logPath = join(dirname(ws.db.db.filename), "logs", `land-${entry}.log`);
   mkdirSync(dirname(logPath), { recursive: true });
   const fd = openSync(logPath, "w");
-  const proc = Bun.spawn(["sh", "-c", ws.config.floor], { cwd: wt, stdout: fd, stderr: fd });
-  const beat = setInterval(() => heartbeat(ws.db, entry), 30_000);
+  const proc = Bun.spawn(["sh", "-c", ws.config.floor!], { cwd: wt, stdout: fd, stderr: fd });
   const code = await proc.exited;
-  clearInterval(beat);
   closeSync(fd);
   if (code !== 0) {
     const tail = readFileSync(logPath, "utf8").split("\n").slice(-40).join("\n");
     return refuse("floor", `floor exited ${code} (full log: ${logPath})\n${tail}`);
   }
 
-  const read = readCorpus(wt);
+  const read = readCorpus(wt, ws.config.types);
   const tests = testFilesFor(wt, ws.config);
   const findings = check({ root: wt, ...read, testFiles: tests });
   if (findings.length > 0) return refuse("check", `canon check: ${findings.length} finding(s)`, findings);
@@ -250,23 +267,18 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
       for (const f of v.value.findings) say(`review note: ${f}`);
     }
   }
+  // before_land: after floor, canon check and the built-in review, on the exact tree that becomes main (BR-2057).
+  const hookEnv = { CANON_BASE: base.value, CANON_HEAD: head.value, CANON_BRANCH: t.branch };
+  const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env: hookEnv }, ws.config.hooks.before_land, say, true);
+  if (failed) return refuse("hook", `before_land \`${failed.command}\` exited ${failed.exit}\n${failed.output}`);
   const moved = moveMain(ws, base.value, head.value);
   if (moved !== "moved") return refuse(moved.reason, moved.message);
 
   finishEntry(ws.db, entry, "landed", head.value);
-  ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: branch.value });
+  ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: t.branch });
   say(`landed ${head.value.slice(0, 9)} on ${main}`);
-  if (ws.config.afterLand) {
-    const log = join(dirname(ws.db.db.filename), "logs", `after-land-${entry}.log`);
-    const fd2 = openSync(log, "w");
-    const p = Bun.spawn(["sh", "-c", ws.config.afterLand], {
-      cwd: ws.primary,
-      stdout: fd2,
-      stderr: fd2,
-      env: { ...process.env, CANON_BASE: base.value, CANON_HEAD: head.value, CANON_CHANGE: subject ?? "" },
-    });
-    p.unref();
-    closeSync(fd2);
+  if (ws.config.hooks.after_land.length > 0) {
+    const log = runHooksInBackground({ db: ws.db, actor: ws.actor, event: "after_land", change: subject, cwd: ws.primary, env: hookEnv }, ws.config.hooks.after_land, logFile(ws.db, `after-land-${entry}.log`));
     say(`after_land running in the background (log: ${log})`);
   }
 
@@ -301,11 +313,13 @@ function moveMain(ws: Workspace, expected: string, next: string): "moved" | { re
 }
 
 /** Records where the change stands so the next session can continue without a human re-briefing (P3). */
-export function stop(ws: Workspace, next: string, note: string | undefined, release: boolean): Result<string> {
-  const claim = claimOfWorktree(ws.db, ws.root);
+export function stop(ws: Workspace, next: string, note: string | undefined, release: boolean, say: Say = () => {}): Result<string> {
+  const claim = release ? claimOfWorktree(ws.db, ws.root) : renewClaim(ws.db, ws.root, ws.actor, ws.config.claimLeaseMs);
   if (!claim) return err("not_found", "this worktree holds no change; nothing to hand off");
   writeHandoff(ws.db, { subject: claim.subject, worktree: ws.root, actor: ws.actor, next, note: note ?? null });
   if (release) releaseClaim(ws.db, claim.subject, ws.actor);
+  // after_stop runs once the handoff is recorded and never changes the result (BR-2058).
+  runHooksSync({ db: ws.db, actor: ws.actor, event: "after_stop", change: claim.subject, cwd: ws.root, env: { CANON_NEXT: next } }, ws.config.hooks.after_stop, say);
   return ok(claim.subject);
 }
 
@@ -320,7 +334,7 @@ export function clean(ws: Workspace, say: Say): Result<{ removed: string[]; kept
   const kept: string[] = [];
   const held = new Set(ws.db.db.query<{ worktree: string }, []>("SELECT worktree FROM claims").all().map((r) => r.worktree));
   for (const w of wts.value) {
-    if (!w.path.startsWith(worktreesDir(ws.primary) + "/")) continue;
+    if (!w.path.startsWith(worktreesDir(ws) + "/")) continue;
     if (w.path === ws.root) {
       kept.push(`${w.path}: you are in it`);
       continue;

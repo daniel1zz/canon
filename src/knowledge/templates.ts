@@ -1,4 +1,3 @@
-import type { Kind } from "./model.ts";
 
 /**
  * Built-in document templates. canon/ documents are written in Chinese (product.md, "语言"), so the
@@ -27,8 +26,14 @@ export function hasPlaceholderLine(markdown: string): boolean {
   return markdown.replace(/```[\s\S]*?```/g, "").split("\n").some(isPlaceholderLine);
 }
 
-export function templateFor(kind: Kind): string {
-  switch (kind) {
+/**
+ * The initial body of a new document (BR-2037, BR-2055): the project's `canon/templates/<type>.md` when it
+ * exists, otherwise the built-in template; a declared type without a template file starts empty.
+ */
+export function templateFor(type: string, projectTemplates: Readonly<Record<string, string>> = {}): string {
+  const own = projectTemplates[type];
+  if (own !== undefined) return own;
+  switch (type) {
     case "rule":
       return [
         RULE_SECTION,
@@ -45,7 +50,7 @@ export function templateFor(kind: Kind): string {
       return "## 背景\n\n<为什么需要做这个决定，有哪些事实和数据。>\n\n## 方案\n\n1. <方案一>：<采用或否决，以及理由>\n2. <方案二>：<采用或否决，以及理由>\n\n## 决定\n\n<决定了什么。>\n\n## 后果\n\n<带来哪些变化、代价和后续工作。>\n";
     case "change":
       return "## 为什么\n\n<要解决什么问题。>\n\n## 要改什么\n\n<具体改动，以及会新增或修改哪些规则。>\n\n## 任务\n\n- [ ] <任务>\n";
-    case "note":
+    default:
       return "";
   }
 }

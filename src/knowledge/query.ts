@@ -1,6 +1,7 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-import { ID_PATTERN, stripCode, type Change, type Corpus, type Doc, type Domain, type Rule } from "./model.ts";
+import { stripCode, type Change, type Corpus, type Doc, type Domain, type Extra, type Rule } from "./model.ts";
+import { idsIn, type DocType } from "./types.ts";
 
 /** Plain scan over the files: the corpus is small enough that an index would only add a second source of truth. */
 export interface Hit {
@@ -12,7 +13,8 @@ export interface Hit {
 export function search(corpus: Corpus, query: string, limit = 20): Hit[] {
   const q = query.trim();
   if (q === "") return [];
-  const exactId = /^(BR|D|C|N)-\d+$/i.test(q) ? q.toUpperCase() : undefined;
+  const upper = q.toUpperCase();
+  const exactId = corpus.types.some((t) => new RegExp(`^${t.prefix}-\\d+$`).test(upper)) ? upper : undefined;
   const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
   const hits: Hit[] = [];
   for (const doc of corpus.docs) {
@@ -22,7 +24,7 @@ export function search(corpus: Corpus, query: string, limit = 20): Hit[] {
     if (exactId) {
       // An id matches whole ids only: BR-1 never matches BR-12 (BR-2008).
       if (doc.id === exactId) score += 100;
-      if (referencedIds(doc).has(exactId) || new RegExp(`\\b${exactId}\\b`).test(doc.body)) score += 10;
+      if (referencedIds(doc, corpus.types).has(exactId) || new RegExp(`\\b${exactId}\\b`).test(doc.body)) score += 10;
       if (score > 0) hits.push({ doc, score, line: bestLine(doc.body, [exactId.toLowerCase()]) });
       continue;
     }
@@ -38,8 +40,8 @@ export function search(corpus: Corpus, query: string, limit = 20): Hit[] {
 }
 
 /** Every id a document points at: in its text and in its structured fields (a change's rules, a decision's supersedes). */
-export function referencedIds(doc: Doc): Set<string> {
-  const ids = new Set([...stripCode(doc.body).matchAll(ID_PATTERN)].map((m) => m[0]));
+export function referencedIds(doc: Doc, types: readonly DocType[]): Set<string> {
+  const ids = idsIn(types, stripCode(doc.body));
   if (doc.kind === "change") for (const r of doc.rules) ids.add(r);
   if (doc.kind === "decision" && doc.supersedes) ids.add(doc.supersedes);
   return ids;
@@ -71,6 +73,8 @@ export interface Context {
   readonly rules: readonly Rule[];
   readonly decisions: readonly Doc[];
   readonly changes: readonly Change[];
+  /** Documents of declared types that mention one of the rules (BR-2053), listed by title. */
+  readonly extras: readonly Extra[];
   readonly target?: Doc;
 }
 
@@ -81,7 +85,7 @@ export function contextFor(corpus: Corpus, target: string): Context {
   const asDoc = findDoc(corpus, t);
   if (asDoc) {
     targetDoc = asDoc;
-    const ruleIds = referencedIds(asDoc);
+    const ruleIds = referencedIds(asDoc, corpus.types);
     const names = new Set(corpus.docs.filter((d): d is Rule => d.kind === "rule" && ruleIds.has(d.id)).map((r) => r.domain));
     if (asDoc.kind === "rule") names.add(asDoc.domain);
     domains = corpus.domains.filter((d) => names.has(d.name));
@@ -91,10 +95,11 @@ export function contextFor(corpus: Corpus, target: string): Context {
   const names = new Set(domains.map((d) => d.name));
   const rules = corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status === "active" && names.has(d.domain));
   const ruleIds = new Set(rules.map((r) => r.id));
-  const mentions = (d: Doc) => [...referencedIds(d)].some((id) => ruleIds.has(id));
+  const mentions = (d: Doc) => [...referencedIds(d, corpus.types)].some((id) => ruleIds.has(id));
   const decisions = corpus.docs.filter((d) => d.kind === "decision" && d.status === "accepted" && mentions(d));
   const changes = corpus.docs.filter((d): d is Change => d.kind === "change" && d.status === "open" && (mentions(d) || d.rules.some((r) => ruleIds.has(r))));
-  return { domains, rules, decisions, changes, ...(targetDoc ? { target: targetDoc } : {}) };
+  const extras = corpus.docs.filter((d): d is Extra => d.kind === "extra" && mentions(d));
+  return { domains, rules, decisions, changes, extras, ...(targetDoc ? { target: targetDoc } : {}) };
 }
 
 function isUnder(path: string, dir: string): boolean {
@@ -111,6 +116,10 @@ export function renderContext(root: string, ctx: Context): string {
   }
   if (ctx.decisions.length) out.push(`# Decisions\n\n${ctx.decisions.map((d) => `- ${d.id} ${d.title} (${d.path})`).join("\n")}\n`);
   if (ctx.changes.length) out.push(`# Open changes\n\n${ctx.changes.map((c) => `- ${c.id} ${c.title} (${c.path})`).join("\n")}\n`);
+  for (const type of [...new Set(ctx.extras.map((e) => e.type))]) {
+    const of = ctx.extras.filter((e) => e.type === type);
+    out.push(`# ${type}\n\n${of.map((e) => `- ${e.id} ${e.title}${e.status ? ` [${e.status}]` : ""} (${e.path})`).join("\n")}\n`);
+  }
   if (out.length === 0) out.push(`No domain, rule or document matches. Domains: canon rule domains\n`);
   return out.join("\n");
 }

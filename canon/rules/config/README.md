@@ -1,0 +1,16 @@
+---
+code:
+  - src/repo/config.ts
+  - src/hooks
+  - src/knowledge/types.ts
+---
+
+# 配置与扩展（config）
+
+`canon/config.yaml` 的读取和校验，以及项目扩展 canon 的四种方式（D-2、D-3）：策略参数、文档类型、生命周期 hook、文档模板。租约、掉线、排队超时这些参数各自的行为写在 work 领域的规则里，这里只管配置本身怎样读、怎样报错，以及类型、hook、模板的行为。
+
+## 术语
+
+- **声明的类型**：项目在 `types:` 下声明的文档类型，有自己的编号前缀、目录和状态；内置的规则、决策、变更、笔记不能删除，只能加必填字段。
+- **hook**：在 `after_start`、`before_land`、`after_land`、`after_stop` 四个事件上运行的命令；只有 `before_land` 能拒绝合入。
+- **模板**：`canon/templates/<类型名>.md`，新建文档时的初始正文。

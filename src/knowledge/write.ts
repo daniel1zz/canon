@@ -3,9 +3,10 @@ import { dirname, join } from "node:path";
 import type { CoordDb } from "../coord/db.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { parseDocFile, renderDocFile } from "./docfile.ts";
-import { ID_PREFIX, slugify, type Corpus, type Doc, type Kind } from "./model.ts";
+import { slugify, type Corpus, type Doc } from "./model.ts";
 import { CANON_DIR } from "./read.ts";
 import { domainReadme, templateFor } from "./templates.ts";
+import { typeNamed } from "./types.ts";
 
 /**
  * Creating documents is the only write canon performs on knowledge files: it allocates the id and lays
@@ -13,7 +14,8 @@ import { domainReadme, templateFor } from "./templates.ts";
  * through `setMeta` so the front matter stays valid.
  */
 export interface NewDoc {
-  readonly kind: Kind;
+  /** Type name: rule, decision, change, note, or a type declared in config. */
+  readonly kind: string;
   readonly title: string;
   readonly body?: string;
   /** rule only */
@@ -36,37 +38,43 @@ export function highestNumber(corpus: Corpus, prefix: string): number {
   return max;
 }
 
-export function createDoc(root: string, corpus: Corpus, db: CoordDb, actor: string, input: NewDoc): Result<Doc["path"]> {
+/**
+ * Creates a document of any type the corpus knows: allocates its id, lays out the file, writes the default
+ * status, the declared extra fields (empty, to be filled: BR-2054) and the template body.
+ */
+export function createDoc(root: string, corpus: Corpus, db: CoordDb, actor: string, input: NewDoc, templates: Readonly<Record<string, string>> = {}): Result<Doc["path"]> {
   const title = input.title.trim();
   if (title === "") return err("invalid", "a title is required");
-  const prefix = ID_PREFIX[input.kind];
+  const type = typeNamed(corpus.types, input.kind);
+  if (!type) return err("not_found", `no document type ${input.kind}; declared types: ${corpus.types.map((t) => t.name).join(", ")}`);
+  const prefix = type.prefix;
+  const extra = Object.fromEntries(type.fields.map((f) => [f, ""]));
   let path: string;
   let meta: Record<string, unknown>;
-  if (input.kind === "rule") {
+  if (type.name === "rule") {
     if (!input.domain) return err("invalid", "a rule needs a domain");
     if (!corpus.domains.some((d) => d.name === input.domain)) {
       return err("not_found", `domain ${input.domain} does not exist; create it with \`canon rule domain ${input.domain} --code <dir>\``);
     }
     const id = db.allocate(prefix, highestNumber(corpus, prefix), actor);
-    path = join(CANON_DIR, "rules", input.domain, `${id}.md`);
-    meta = { id, title, status: "active", untested: input.untested };
+    path = join(CANON_DIR, type.dir, input.domain, `${id}.md`);
+    meta = { id, title, status: type.defaultStatus, untested: input.untested, ...extra };
   } else {
-    if (input.id !== undefined && !input.id.startsWith(`${prefix}-`)) return err("invalid", `${input.id} is not a ${input.kind} id`);
+    if (input.id !== undefined && !input.id.startsWith(`${prefix}-`)) return err("invalid", `${input.id} is not a ${type.name} id`);
     const id = input.id ?? db.allocate(prefix, highestNumber(corpus, prefix), actor);
-    const dir = { decision: "decisions", change: "changes", note: "notes" }[input.kind];
     const slug = slugify(title);
-    path = join(CANON_DIR, dir, slug ? `${id}-${slug}.md` : `${id}.md`);
+    path = join(CANON_DIR, type.dir, slug ? `${id}-${slug}.md` : `${id}.md`);
     meta =
-      input.kind === "decision"
-        ? { id, title, status: "proposed", supersedes: input.supersedes }
-        : input.kind === "change"
-          ? { id, title, status: "open", rules: [...(input.rules ?? [])] }
-          : { id, title };
+      type.name === "decision"
+        ? { id, title, status: type.defaultStatus, supersedes: input.supersedes, ...extra }
+        : type.name === "change"
+          ? { id, title, status: type.defaultStatus, rules: [...(input.rules ?? [])], ...extra }
+          : { id, title, status: type.defaultStatus, ...extra };
   }
   const full = join(root, path);
   if (existsSync(full)) return err("conflict", `${path} already exists`);
   mkdirSync(dirname(full), { recursive: true });
-  writeFileSync(full, renderDocFile(meta, input.body ?? defaultBody(input.kind)));
+  writeFileSync(full, renderDocFile(meta, input.body ?? templateFor(type.name, templates)));
   return ok(path);
 }
 
@@ -88,8 +96,4 @@ export function setMeta(root: string, doc: Doc, patch: Record<string, unknown>):
   if (!parsed.ok) return parsed;
   writeFileSync(full, renderDocFile({ ...parsed.value.meta, ...patch }, parsed.value.body));
   return ok(undefined);
-}
-
-function defaultBody(kind: Kind): string {
-  return templateFor(kind);
 }

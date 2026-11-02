@@ -1,54 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { openWorkspace, type Workspace } from "../app/workspace.ts";
 import { claims, enqueue, takeClaim, tryTurn } from "../coord/state.ts";
 import { readCorpus } from "../knowledge/read.ts";
-import { git } from "../repo/git.ts";
 import { clean, land, start, stop } from "./work.ts";
 
-const quiet = () => {};
-const FAST = { finish: false, timeoutMs: 20_000 };
-
-function sh(cwd: string, ...args: string[]) {
-  const r = git(cwd, ...args);
-  if (!r.ok) throw new Error(r.error.message);
-  return r.value;
-}
-
-/** A repo whose floor passes unless a file named FAIL exists in the tree. */
-function project(): string {
-  const root = mkdtempSync(join(tmpdir(), "canon-next-work-"));
-  sh(root, "init", "-q", "-b", "main");
-  sh(root, "config", "user.email", "t@t");
-  sh(root, "config", "user.name", "t");
-  mkdirSync(join(root, "canon"), { recursive: true });
-  writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\n");
-  writeFileSync(join(root, "app.txt"), "one\ntwo\nthree\n");
-  sh(root, "add", "-A");
-  sh(root, "commit", "-qm", "init");
-  return root;
-}
-
-function ws(cwd: string, actor = "agent:a"): Workspace {
-  process.env["CANON_ACTOR"] = actor;
-  const r = openWorkspace(cwd);
-  if (!r.ok) throw new Error(r.error.message);
-  return r.value;
-}
-
-/** Starts a change and fills its description, as an agent must before landing (BR-2035). */
-function startNew(root: string, title: string, actor = "agent:a") {
-  const r = start(ws(root, actor), { title }, quiet);
-  if (!r.ok) throw new Error(r.error.message);
-  const dir = join(r.value.worktree, "canon/changes");
-  const file = readdirSync(dir).find((f) => f.startsWith(`${r.value.change}-`) || f === `${r.value.change}.md`)!;
-  const text = readFileSync(join(dir, file), "utf8");
-  writeFileSync(join(dir, file), text.slice(0, text.indexOf("---\n", 4) + 4) + `\n## 为什么\n\n${title}.\n`);
-  sh(r.value.worktree, "commit", "-q", "--amend", "--no-edit", "-a");
-  return r.value;
-}
+import { FAST, project, quiet, sh, startNew, ws } from "./testkit.ts";
 
 describe("work start", () => {
   test("BR-2012: a new change gets its own worktree, branch, committed change file and claim", () => {
@@ -83,6 +40,49 @@ describe("work start", () => {
       expect(other.error.code).toBe("conflict");
       expect(other.error.message).toContain(s.worktree); // names the holder
     }
+  });
+
+  test("BR-2011: work commands in the holding worktree renew the lease, so a long session is never taken over", async () => {
+    const root = project();
+    const s = startNew(root, "Long");
+    const db = ws(root).db;
+    const expire = () => db.db.query("UPDATE claims SET expires_at = ? WHERE subject = ?").run(new Date(Date.now() - 3600_000).toISOString(), s.change);
+    const expiry = () => new Date(claims(db)[0]!.expires_at).getTime();
+    expire();
+    expect(stop(ws(s.worktree), "keep going", undefined, false).ok).toBe(true);
+    expect(expiry()).toBeGreaterThan(Date.now() + 11 * 3600_000);
+    expire();
+    writeFileSync(join(s.worktree, "x.txt"), "x\n");
+    sh(s.worktree, "add", "x.txt");
+    sh(s.worktree, "commit", "-qm", "x");
+    await land(ws(s.worktree), FAST, quiet);
+    expect(expiry()).toBeGreaterThan(Date.now() + 11 * 3600_000);
+    expect(takeClaim(ws(root, "agent:b").db, s.change, "/elsewhere", "agent:b").ok).toBe(false);
+  });
+
+  test("BR-2011: claim_lease_hours sets the lease", () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), "floor: \"true\"\ntests: []\nclaim_lease_hours: 1\n");
+    sh(root, "commit", "-qam", "short lease");
+    const s = startNew(root, "Short");
+    const left = new Date(claims(ws(root).db)[0]!.expires_at).getTime() - Date.now();
+    expect(left).toBeGreaterThan(59 * 60_000);
+    expect(left).toBeLessThanOrEqual(60 * 60_000);
+    expect(s.change).toBe("C-1");
+  });
+
+  test("BR-2047: worktrees go where `worktrees` says, relative to the primary checkout; clean only looks there", () => {
+    const root = project();
+    const old = startNew(root, "Old place");
+    stop(ws(old.worktree), "x", undefined, true);
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nworktrees: ../${root.split("/").pop()}-wt\n`);
+    sh(root, "commit", "-qam", "move worktrees");
+    const s = startNew(root, "New place");
+    expect(s.worktree).toBe(join(realpathSync(root), "..", `${root.split("/").pop()}-wt`, s.change));
+    expect(existsSync(s.worktree)).toBe(true);
+    const r = clean(ws(root), quiet);
+    expect(r.ok && [...r.value.removed, ...r.value.kept].join("\n")).not.toContain(old.worktree);
+    expect(existsSync(old.worktree)).toBe(true);
   });
 
   test("BR-2011: once the lease has expired another worktree can take the change over", () => {
@@ -313,7 +313,7 @@ describe("boundaries record and clean up", () => {
     expect(out.kind === "refused" && out.reason).toBe("no-floor");
   });
 
-  test("BR-2044: a lander that waits past its timeout gives up and records it", async () => {
+  test("BR-2048: a lander that waits past its timeout gives up and records it", async () => {
     const root = project();
     const s = startNew(root, "Waiting");
     writeFileSync(join(s.worktree, "w.txt"), "w\n");
@@ -325,6 +325,23 @@ describe("boundaries record and clean up", () => {
     const out = await land(ws(s.worktree), { finish: false, timeoutMs: 0 }, quiet);
     expect(out).toEqual({ kind: "timeout", ahead: 1 });
     expect(events(root, "land.refuse").map((e) => JSON.parse(e.detail).reason)).toEqual(["timeout"]);
+  });
+
+  test("BR-2049: the heartbeat runs through the whole landing, so a slow step is not mistaken for a dead lander", async () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), "floor: \"true\"\ntests: []\nlander_stale_minutes: 0.02\nhooks:\n  before_land: sleep 3\n");
+    sh(root, "commit", "-qam", "slow before_land, 1.2 s stale time");
+    const s = startNew(root, "Slow");
+    writeFileSync(join(s.worktree, "x.txt"), "x\n");
+    sh(s.worktree, "add", "x.txt");
+    sh(s.worktree, "commit", "-qm", "x");
+    const other = ws(root, "agent:b");
+    const landing = land(ws(s.worktree), FAST, quiet);
+    await Bun.sleep(2200); // well past the 1.2 s stale time, while before_land still sleeps
+    const b = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
+    expect(tryTurn(other.db, b, 1200).mine).toBe(false);
+    expect((await landing).kind).toBe("landed");
+    expect(tryTurn(other.db, b, 1200).mine).toBe(true);
   });
 
   test("BR-2031: landing from main is refused", async () => {
@@ -349,7 +366,7 @@ describe("boundaries record and clean up", () => {
   test("BR-2030: after_land runs in the background with the landing's commits and never changes the result", async () => {
     const root = project();
     const marker = join(root, "..", `${root.split("/").pop()}-after.txt`);
-    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nafter_land: 'echo "$CANON_BASE $CANON_HEAD $CANON_CHANGE" > ${marker}; exit 7'\n`);
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nhooks:\n  after_land: 'echo "$CANON_BASE $CANON_HEAD $CANON_CHANGE" > ${marker}; exit 7'\n`);
     sh(root, "commit", "-qam", "after_land");
     const s = startNew(root, "With hook");
     writeFileSync(join(s.worktree, "x.txt"), "x\n");

@@ -11,14 +11,13 @@
  *
  * One file per document so concurrent sessions only conflict when they edit the same document
  * (prototype: one file per rule 0% false conflicts vs 53% for a shared append-only file).
- * Ids are allocated by the coordination DB, never by a file in the repo.
+ * Ids are allocated by the coordination DB, never by a file in the repo. A project can declare more
+ * types (src/knowledge/types.ts); each lives in `canon/<dir>/<PREFIX>-<n>-<slug>.md`.
  */
-export type Kind = "rule" | "decision" | "change" | "note";
+import type { DocType } from "./types.ts";
 
-export const ID_PREFIX: Record<Kind, string> = { rule: "BR", decision: "D", change: "C", note: "N" };
-
-/** Matches any document id anywhere in text: BR-12, D-3, C-40, N-7. */
-export const ID_PATTERN = /\b(BR|D|C|N)-(\d+)\b/g;
+/** Built-in kinds; a document of a type declared in config (D-2 §2) has kind "extra" and names its type. */
+export type Kind = "rule" | "decision" | "change" | "note" | "extra";
 
 export type RuleStatus = "active" | "retired";
 export type DecisionStatus = "proposed" | "accepted" | "superseded";
@@ -57,7 +56,18 @@ export interface Note extends Base {
   readonly kind: "note";
 }
 
-export type Doc = Rule | Decision | Change | Note;
+/** A document of a type the project declared in `canon/config.yaml` (BR-2050). */
+export interface Extra extends Base {
+  readonly kind: "extra";
+  /** The declared type's name, e.g. "spec". */
+  readonly type: string;
+  readonly status: string | undefined;
+}
+
+export type Doc = Rule | Decision | Change | Note | Extra;
+
+/** The type name of a document: its kind for built-ins, the declared name otherwise. */
+export const typeNameOf = (d: Doc): string => (d.kind === "extra" ? d.type : d.kind);
 
 export interface Domain {
   readonly name: string;
@@ -70,11 +80,8 @@ export interface Domain {
 export interface Corpus {
   readonly docs: readonly Doc[];
   readonly domains: readonly Domain[];
-}
-
-export function kindOfId(id: string): Kind | undefined {
-  const prefix = id.split("-")[0];
-  return (Object.keys(ID_PREFIX) as Kind[]).find((k) => ID_PREFIX[k] === prefix);
+  /** The types the corpus was read with; ids, check and search all follow them. */
+  readonly types: readonly DocType[];
 }
 
 /**

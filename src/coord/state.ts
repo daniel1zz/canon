@@ -5,6 +5,7 @@ import type { CoordDb } from "./db.ts";
  * Live coordination operations (design §2). Each is one transaction on the shared DB, so two sessions
  * racing for the same claim or queue slot see a consistent answer (P4).
  */
+/** Defaults; projects set their own in canon/config.yaml (`claim_lease_hours`, `lander_stale_minutes`). */
 export const CLAIM_LEASE_MS = 12 * 60 * 60 * 1000;
 export const QUEUE_STALE_MS = 10 * 60 * 1000;
 
@@ -22,19 +23,35 @@ export interface Claim {
  * Takes or refreshes the claim on a change. The holder is the worktree: one change, one worktree.
  * Refused while another worktree holds a live lease; an expired lease can be taken over.
  */
-export function takeClaim(db: CoordDb, subject: string, holder: string, actor: string): Result<Claim> {
+export function takeClaim(db: CoordDb, subject: string, holder: string, actor: string, leaseMs = CLAIM_LEASE_MS): Result<Claim> {
   const tx = db.db.transaction((): Result<Claim> => {
     const cur = db.db.query<{ holder: string; expires_at: string; worktree: string | null }, [string]>("SELECT holder, expires_at, worktree FROM claims WHERE subject = ?").get(subject);
     if (cur && cur.worktree !== holder && new Date(cur.expires_at) > now()) {
       db.event(actor, "claim.refuse", subject, { reason: "held", by: cur.worktree, until: cur.expires_at });
       return err("conflict", `${subject} is claimed by ${cur.holder} in ${cur.worktree} until ${cur.expires_at}`);
     }
-    const expires = iso(new Date(now().getTime() + CLAIM_LEASE_MS));
+    const expires = iso(new Date(now().getTime() + leaseMs));
     db.db
       .query("INSERT INTO claims(subject, holder, worktree, expires_at) VALUES (?, ?, ?, ?) ON CONFLICT(subject) DO UPDATE SET holder = excluded.holder, worktree = excluded.worktree, expires_at = excluded.expires_at, version = version + 1")
       .run(subject, actor, holder, expires);
     db.event(actor, cur ? "claim.renew" : "claim.take", subject, { worktree: holder });
     return ok({ subject, holder, actor, expires_at: expires });
+  });
+  return tx.immediate();
+}
+
+/**
+ * Extends the lease of the claim this worktree holds (BR-2011): every work command in the worktree renews it,
+ * so a session working longer than one lease is never taken over. Returns the claim, or undefined when the
+ * worktree holds none (it may have been taken over after expiring).
+ */
+export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs = CLAIM_LEASE_MS): Claim | undefined {
+  const tx = db.db.transaction((): Claim | undefined => {
+    const cur = claimOfWorktree(db, worktree);
+    if (!cur) return undefined;
+    const expires = iso(new Date(now().getTime() + leaseMs));
+    db.db.query("UPDATE claims SET expires_at = ?, version = version + 1 WHERE subject = ? AND worktree = ?").run(expires, cur.subject, worktree);
+    return { ...cur, expires_at: expires };
   });
   return tx.immediate();
 }
@@ -74,9 +91,9 @@ export function enqueue(db: CoordDb, worktree: string, subject: string | null, a
 }
 
 /** Becomes the lander if every earlier entry is finished or stale. Returns the entries still ahead otherwise. */
-export function tryTurn(db: CoordDb, entryId: number): { readonly mine: boolean; readonly ahead: number } {
+export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS): { readonly mine: boolean; readonly ahead: number } {
   const tx = db.db.transaction(() => {
-    const stale = iso(new Date(now().getTime() - QUEUE_STALE_MS));
+    const stale = iso(new Date(now().getTime() - staleMs));
     db.db.query("UPDATE queue SET state = 'abandoned' WHERE state IN ('waiting','landing') AND heartbeat < ? AND id != ?").run(stale, entryId);
     db.db.query("UPDATE queue SET heartbeat = ? WHERE id = ?").run(iso(now()), entryId);
     const ahead = db.db.query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM queue WHERE id < ? AND state IN ('waiting','landing')").get(entryId)?.n ?? 0;

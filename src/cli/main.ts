@@ -35,30 +35,33 @@ function workspace(): Workspace {
   return must(openWorkspace(process.cwd()));
 }
 
+/** The corpus of this worktree, read with the project's declared types. */
+const corpusOf = (ws: Workspace) => readCorpus(ws.root, ws.config.types);
+
 const list = (v: unknown): string[] => (typeof v === "string" && v.trim() !== "" ? v.split(",").map((s) => s.trim()).filter(Boolean) : []);
 const say = (line: string) => console.log(line);
 const json = (v: unknown) => console.log(JSON.stringify(v, null, 2));
 
 // ---------------------------------------------------------------- knowledge
 
-function newDocCommand(kind: Kind, extra: Record<string, { type: "string"; description: string; required?: boolean }> = {}) {
+function newDocCommand(kind: string, extra: Record<string, { type: "string"; description: string; required?: boolean }> = {}) {
   return defineCommand({
     meta: { description: `Create a ${kind} (allocates its id; edit the file afterwards)` },
     args: { title: { type: "string", required: true, description: "Title" }, body: { type: "string", description: "Body text (default: a template)" }, ...extra },
     run({ args }) {
       const ws = workspace();
-      const { corpus } = readCorpus(ws.root);
+      const { corpus } = corpusOf(ws);
       const a = args as Record<string, unknown>;
       const path = must(
         createDoc(ws.root, corpus, ws.db, ws.actor, {
-          kind,
+          kind: kind === "" ? String(a["type"]) : kind,
           title: String(a["title"]),
           ...(typeof a["body"] === "string" ? { body: a["body"] } : {}),
           ...(typeof a["domain"] === "string" ? { domain: a["domain"] } : {}),
           ...(typeof a["untested"] === "string" ? { untested: a["untested"] } : {}),
           ...(typeof a["supersedes"] === "string" ? { supersedes: a["supersedes"] } : {}),
           ...(kind === "change" ? { rules: list(a["rules"]) } : {}),
-        }),
+        }, ws.config.templates),
       );
       say(path);
     },
@@ -68,14 +71,22 @@ function newDocCommand(kind: Kind, extra: Record<string, { type: "string"; descr
 function listCommand(kind: Kind, describe: string) {
   return defineCommand({
     meta: { description: describe },
-    args: { all: { type: "boolean", description: "Include retired / superseded / done / dropped" }, domain: { type: "string", description: "Rules of one domain" }, json: { type: "boolean" } },
+    args: {
+      all: { type: "boolean", description: "Include retired / superseded / done / dropped" },
+      domain: { type: "string", description: "Rules of one domain" },
+      type: { type: "string", description: "canon doc list: the declared type" },
+      json: { type: "boolean" },
+    },
     run({ args }) {
       const ws = workspace();
-      const docs = readCorpus(ws.root).corpus.docs.filter((d) => d.kind === kind);
-      const live = (d: (typeof docs)[number]) => args.all || !("status" in d) || ["active", "accepted", "proposed", "open"].includes(d.status);
+      if (kind === "extra" && (typeof args.type !== "string" || !ws.config.types.some((t) => t.name === args.type && !t.builtin))) {
+        fail({ code: "invalid", message: `--type must name a type declared in canon/config.yaml (${ws.config.types.filter((t) => !t.builtin).map((t) => t.name).join(", ") || "none declared"})` });
+      }
+      const docs = corpusOf(ws).corpus.docs.filter((d) => d.kind === kind && (kind !== "extra" || (d.kind === "extra" && d.type === args.type)));
+      const live = (d: (typeof docs)[number]) => kind === "extra" || args.all || !("status" in d) || d.status === undefined || ["active", "accepted", "proposed", "open"].includes(d.status);
       const rows = docs.filter(live).filter((d) => !args.domain || (d.kind === "rule" && d.domain === args.domain));
       if (args.json) return json(rows.map(({ body: _b, ...r }) => r));
-      for (const d of rows) say(`${d.id.padEnd(8)} ${"status" in d ? d.status.padEnd(10) : "".padEnd(10)} ${d.title}`);
+      for (const d of rows) say(`${d.id.padEnd(8)} ${("status" in d && d.status ? d.status : "").padEnd(10)} ${d.title}`);
       if (rows.length === 0) say(`(no ${kind}s)`);
     },
   });
@@ -84,7 +95,7 @@ function listCommand(kind: Kind, describe: string) {
 /** Sets a document's status. `validate` runs before anything is written, so a refused change leaves no trace. */
 function setStatus(id: string, kind: Kind, status: string, validate?: (corpus: ReturnType<typeof readCorpus>["corpus"], doc: Doc) => void) {
   const ws = workspace();
-  const { corpus } = readCorpus(ws.root);
+  const { corpus } = corpusOf(ws);
   const doc = findDoc(corpus, id);
   if (!doc || doc.kind !== kind) fail({ code: "not_found", message: `${id} is not a ${kind}` });
   validate?.(corpus, doc);
@@ -119,7 +130,7 @@ const rule = defineCommand({
       meta: { description: "List domains and their code directories" },
       run() {
         const ws = workspace();
-        const { corpus } = readCorpus(ws.root);
+        const { corpus } = corpusOf(ws);
         for (const d of corpus.domains) {
           const n = corpus.docs.filter((r) => r.kind === "rule" && r.domain === d.name && r.status === "active").length;
           say(`${d.name.padEnd(20)} ${String(n).padStart(4)} rules  ${d.code.join(", ")}`);
@@ -168,6 +179,27 @@ const change = defineCommand({
   },
 });
 
+/** Documents of the types a project declared in canon/config.yaml (BR-2050, BR-2051). */
+const doc = defineCommand({
+  meta: { description: "Documents of the types declared under `types:` in canon/config.yaml" },
+  subCommands: {
+    new: newDocCommand("", { type: { type: "string", required: true, description: "Declared type name" } }),
+    list: listCommand("extra", "List documents of one declared type (--type)"),
+    status: defineCommand({
+      meta: { description: "Set the status of a declared-type document to one of its declared statuses" },
+      args: { id: { type: "positional", required: true }, status: { type: "positional", required: true } },
+      run({ args }) {
+        const ws = workspace();
+        const d = findDoc(corpusOf(ws).corpus, String(args.id));
+        if (!d || d.kind !== "extra") fail({ code: "not_found", message: `${args.id} is not a document of a declared type` });
+        const type = ws.config.types.find((t) => t.name === d.type)!;
+        if (!type.statuses?.includes(String(args.status))) fail({ code: "invalid", message: `${d.type} statuses are: ${type.statuses?.join(", ") ?? "(none)"}` });
+        setStatus(d.id, "extra", String(args.status));
+      },
+    }),
+  },
+});
+
 const note = defineCommand({
   meta: { description: "Notes: research, retros, references" },
   subCommands: { new: newDocCommand("note"), list: listCommand("note", "List notes") },
@@ -178,7 +210,7 @@ const show = defineCommand({
   args: { id: { type: "positional", required: true } },
   run({ args }) {
     const ws = workspace();
-    const doc = findDoc(readCorpus(ws.root).corpus, args.id);
+    const doc = findDoc(corpusOf(ws).corpus, args.id);
     if (!doc) fail({ code: "not_found", message: `${args.id} does not exist` });
     process.stdout.write(`${doc.path}\n\n${rawText(ws.root, doc)}`);
   },
@@ -189,7 +221,7 @@ const searchCmd = defineCommand({
   args: { query: { type: "positional", required: true }, limit: { type: "string", default: "20" }, json: { type: "boolean" } },
   run({ args }) {
     const ws = workspace();
-    const hits = search(readCorpus(ws.root).corpus, args.query, Number(args.limit));
+    const hits = search(corpusOf(ws).corpus, args.query, Number(args.limit));
     if (args.json) return json(hits.map((h) => ({ id: h.doc.id, kind: h.doc.kind, title: h.doc.title, path: h.doc.path, line: h.line })));
     for (const h of hits) say(`${h.doc.id.padEnd(8)} ${h.doc.title}\n         ${h.line}`);
     if (hits.length === 0) say("(no match)");
@@ -201,7 +233,7 @@ const context = defineCommand({
   args: { target: { type: "positional", required: true, description: "Repo path, domain name, or id (C-12, BR-3, D-4)" } },
   run({ args }) {
     const ws = workspace();
-    say(renderContext(ws.root, contextFor(readCorpus(ws.root).corpus, args.target)));
+    say(renderContext(ws.root, contextFor(corpusOf(ws).corpus, args.target)));
   },
 });
 
@@ -210,7 +242,7 @@ const checkCmd = defineCommand({
   args: { json: { type: "boolean" } },
   run({ args }) {
     const ws = workspace();
-    const read = readCorpus(ws.root);
+    const read = corpusOf(ws);
     const findings = check({ root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config) });
     if (args.json) json(findings);
     else for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
@@ -237,15 +269,16 @@ const work = defineCommand({
     }),
     land: defineCommand({
       meta: { description: "Land this worktree's branch on main: queue → rebase → floor → canon check → main" },
-      args: { finish: { type: "boolean", description: "Also close the change and release it" }, timeout: { type: "string", default: "60", description: "Minutes to wait in the queue" } },
+      args: { finish: { type: "boolean", description: "Also close the change and release it" }, timeout: { type: "string", description: "Minutes to wait in the queue (default: land_timeout_minutes, 60)" } },
       async run({ args }) {
-        const minutes = Number(args.timeout);
-        if (!Number.isFinite(minutes) || minutes <= 0) fail({ code: "invalid", message: `--timeout must be a positive number of minutes, got ${JSON.stringify(args.timeout)}` });
+        const minutes = args.timeout === undefined ? undefined : Number(args.timeout);
+        if (minutes !== undefined && (!Number.isFinite(minutes) || minutes <= 0)) fail({ code: "invalid", message: `--timeout must be a positive number of minutes, got ${JSON.stringify(args.timeout)}` });
         const ws = workspace();
-        const out = await land(ws, { finish: Boolean(args.finish), timeoutMs: minutes * 60_000 }, say);
+        const timeoutMs = minutes === undefined ? ws.config.landTimeoutMs : minutes * 60_000;
+        const out = await land(ws, { finish: Boolean(args.finish), timeoutMs }, say);
         if (out.kind === "landed") return;
         if (out.kind === "timeout") {
-          console.error(`canon: still ${out.ahead} landing(s) ahead after ${args.timeout} min; run again`);
+          console.error(`canon: still ${out.ahead} landing(s) ahead after ${timeoutMs / 60_000} min; run again`);
           process.exit(EXIT.timeout);
         }
         console.error(`canon: land refused (${out.reason}): ${out.message}`);
@@ -258,7 +291,7 @@ const work = defineCommand({
       args: { next: { type: "string", required: true }, note: { type: "string" }, release: { type: "boolean", description: "Release the claim too" } },
       run({ args }) {
         const ws = workspace();
-        const subject = must(stop(ws, String(args.next), typeof args.note === "string" ? args.note : undefined, Boolean(args.release)));
+        const subject = must(stop(ws, String(args.next), typeof args.note === "string" ? args.note : undefined, Boolean(args.release), say));
         say(`${subject}: handoff recorded${args.release ? ", claim released" : ""}`);
       },
     }),
@@ -372,7 +405,7 @@ const brief = defineCommand({
 
 const main = defineCommand({
   meta: { name: "canon", description: "Shared memory and coordination for a project built by many concurrent AI sessions" },
-  subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, work, human },
+  subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, doc, work, human },
 });
 
 runMain(main);
