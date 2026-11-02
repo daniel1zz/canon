@@ -6,7 +6,7 @@ import { CoordDb } from "./db.ts";
 import { answer, ask, enqueue, finishEntry, questions, QUEUE_STALE_MS, tryTurn } from "./state.ts";
 
 function db(): CoordDb {
-  const r = CoordDb.open(join(mkdtempSync(join(tmpdir(), "lore-next-state-")), "state.db"));
+  const r = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-next-state-")), "state.db"));
   if (!r.ok) throw new Error(r.error.message);
   return r.value;
 }

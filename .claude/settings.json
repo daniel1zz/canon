@@ -2,7 +2,7 @@
   "hooks": {
     "SessionStart": [
       {
-        "hooks": [{ "type": "command", "command": "lore brief" }]
+        "hooks": [{ "type": "command", "command": "canon brief" }]
       }
     ]
   }

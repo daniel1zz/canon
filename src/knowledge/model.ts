@@ -1,13 +1,13 @@
 /**
  * The knowledge model: four kinds of durable documents, each one Markdown file with YAML front matter,
- * living under `lore/` in the repository and changing through ordinary commits (design §1).
+ * living under `canon/` in the repository and changing through ordinary commits (design §1).
  *
- *   lore/product.md                       purpose, users, non-goals, promises
- *   lore/rules/<domain>/README.md         domain scope, code directories, Terms
- *   lore/rules/<domain>/BR-<n>.md         one rule per file: the current truth (P1)
- *   lore/decisions/D-<n>-<slug>.md        why a non-trivial choice was made (P2)
- *   lore/changes/C-<n>-<slug>.md          one unit of intended work (P3)
- *   lore/notes/N-<n>-<slug>.md            research, retros, references
+ *   canon/product.md                       purpose, users, non-goals, promises
+ *   canon/rules/<domain>/README.md         domain scope, code directories, Terms
+ *   canon/rules/<domain>/BR-<n>.md         one rule per file: the current truth (P1)
+ *   canon/decisions/D-<n>-<slug>.md        why a non-trivial choice was made (P2)
+ *   canon/changes/C-<n>-<slug>.md          one unit of intended work (P3)
+ *   canon/notes/N-<n>-<slug>.md            research, retros, references
  *
  * One file per document so concurrent sessions only conflict when they edit the same document
  * (prototype: one file per rule 0% false conflicts vs 53% for a shared append-only file).
@@ -62,7 +62,7 @@ export type Doc = Rule | Decision | Change | Note;
 export interface Domain {
   readonly name: string;
   readonly path: string;
-  /** Code directories this domain's rules govern; `lore context <path>` resolves through them. */
+  /** Code directories this domain's rules govern; `canon context <path>` resolves through them. */
   readonly code: readonly string[];
   readonly body: string;
 }
@@ -77,7 +77,12 @@ export function kindOfId(id: string): Kind | undefined {
   return (Object.keys(ID_PREFIX) as Kind[]).find((k) => ID_PREFIX[k] === prefix);
 }
 
+/**
+ * ASCII slug for file and branch names. A title with any non-ASCII character (e.g. Chinese) gets no slug,
+ * so the name carries the id alone: a slug built from the ASCII fragments of a mixed title would mislead.
+ */
 export function slugify(title: string): string {
+  if (/[^\x00-\x7F]/.test(title)) return "";
   return title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")

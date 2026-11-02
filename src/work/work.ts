@@ -56,7 +56,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     slug = slugify(target.title);
     fresh = true;
   }
-  const branch = `change/${changeId}-${slug}`.slice(0, 80);
+  const branch = (slug ? `change/${changeId}-${slug}` : `change/${changeId}`).slice(0, 80);
   const path = join(worktreesDir(ws.primary), changeId);
 
   const claim = takeClaim(ws.db, changeId, path, ws.actor);
@@ -84,7 +84,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     if (!made.ok) return made;
     const c = git(path, "add", made.value);
     if (!c.ok) return c;
-    const m = git(path, "commit", "-q", "-m", `lore: open ${changeId} ${target.title}`);
+    const m = git(path, "commit", "-q", "-m", `canon: open ${changeId} ${target.title}`);
     if (!m.ok) return m;
   }
   say(`${changeId} → ${path} (branch ${branch})`);
@@ -101,12 +101,12 @@ export function mainCorpus(ws: Workspace): Result<Corpus> {
   if (!wts.ok) return wts;
   const holder = wts.value.find((w) => w.branch === main);
   if (holder) return ok(readCorpus(holder.path).corpus);
-  const dir = mkdtempSync(join(tmpdir(), "lore-main-"));
+  const dir = mkdtempSync(join(tmpdir(), "canon-main-"));
   try {
-    const hasLore = git(ws.primary, "cat-file", "-e", `${main}:lore`).ok;
-    if (hasLore) {
-      const tar = Bun.spawnSync(["sh", "-c", `git archive ${main} lore | tar -x -C ${JSON.stringify(dir)}`], { cwd: ws.primary, stderr: "pipe" });
-      if (tar.exitCode !== 0) return err("io", `cannot read lore/ from ${main}: ${tar.stderr.toString().trim()}`);
+    const hasCorpus = git(ws.primary, "cat-file", "-e", `${main}:canon`).ok;
+    if (hasCorpus) {
+      const tar = Bun.spawnSync(["sh", "-c", `git archive ${main} canon | tar -x -C ${JSON.stringify(dir)}`], { cwd: ws.primary, stderr: "pipe" });
+      if (tar.exitCode !== 0) return err("io", `cannot read canon/ from ${main}: ${tar.stderr.toString().trim()}`);
     }
     return ok(readCorpus(dir).corpus);
   } finally {
@@ -133,7 +133,7 @@ export type LandOutcome =
   | { readonly kind: "timeout"; readonly ahead: number };
 
 /**
- * Lands the current worktree's branch on main: queue → rebase onto main → floor → lore check →
+ * Lands the current worktree's branch on main: queue → rebase onto main → floor → canon check →
  * compare-and-swap main. Runs on the exact tree that becomes main.
  */
 export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<LandOutcome> {
@@ -143,7 +143,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   if (!branch.ok || branch.value === "HEAD" || branch.value === main) {
     return { kind: "refused", reason: "on-main", message: `land runs from a change worktree on its own branch, not from ${main} or a detached HEAD` };
   }
-  if (!ws.config.floor) return { kind: "refused", reason: "no-floor", message: "lore/config.yaml has no `floor` command; nothing proves the tree is sound" };
+  if (!ws.config.floor) return { kind: "refused", reason: "no-floor", message: "canon/config.yaml has no `floor` command; nothing proves the tree is sound" };
   const clean = isClean(wt);
   if (!clean.ok || !clean.value) return { kind: "refused", reason: "dirty", message: "the worktree has uncommitted changes; commit them first" };
 
@@ -157,7 +157,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
       const s = setMeta(wt, doc, { status: "done" });
       if (!s.ok) return { kind: "refused", reason: "check", message: s.error.message };
       git(wt, "add", doc.path);
-      const c = git(wt, "commit", "-q", "-m", `lore: close ${subject}`);
+      const c = git(wt, "commit", "-q", "-m", `canon: close ${subject}`);
       if (!c.ok) return { kind: "refused", reason: "check", message: c.error.message };
     }
   }
@@ -210,12 +210,12 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   const read = readCorpus(wt);
   const tests = testFilesFor(wt, ws.config);
   const findings = check({ root: wt, ...read, testFiles: tests });
-  if (findings.length > 0) return refuse("check", `lore check: ${findings.length} finding(s)`, findings);
+  if (findings.length > 0) return refuse("check", `canon check: ${findings.length} finding(s)`, findings);
 
   const head = git(wt, "rev-parse", "HEAD");
   if (!head.ok) return refuse("main-moved", head.error.message);
 
-  const knowledge = git(wt, "diff", "--name-only", base.value, head.value, "--", "lore/rules", "lore/decisions");
+  const knowledge = git(wt, "diff", "--name-only", base.value, head.value, "--", "canon/rules", "canon/decisions");
   const changedDocs = knowledge.ok ? read.corpus.docs.filter((d) => knowledge.value.split("\n").includes(d.path)) : [];
   if (changedDocs.length > 0) {
     if (!ws.config.review) {
@@ -243,7 +243,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
       cwd: ws.primary,
       stdout: fd2,
       stderr: fd2,
-      env: { ...process.env, LORE_BASE: base.value, LORE_HEAD: head.value, LORE_CHANGE: subject ?? "" },
+      env: { ...process.env, CANON_BASE: base.value, CANON_HEAD: head.value, CANON_CHANGE: subject ?? "" },
     });
     p.unref();
     closeSync(fd2);
@@ -255,7 +255,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     releaseClaim(ws.db, subject, ws.actor);
     dropHandoff(ws.db, subject);
     finished = true;
-    say(`${subject} closed; remove the worktree with \`lore work clean\` once you have left it`);
+    say(`${subject} closed; remove the worktree with \`canon work clean\` once you have left it`);
   }
   return { kind: "landed", sha: head.value, change: subject, finished };
 }

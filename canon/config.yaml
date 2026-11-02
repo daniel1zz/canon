@@ -1,0 +1,10 @@
+main: main
+# 必须在即将成为 main 的代码树上执行成功
+floor: "bun install --frozen-lockfile && bunx tsc --noEmit -p tsconfig.json && bun test"
+# 扫描规则编号的测试文件
+tests:
+  - "src/**/*.test.ts"
+# 新 worktree 里执行一次
+setup: "bun install"
+# 规则和决策文字的评审：从 stdin 读提示，在 stdout 输出 JSON 结论
+review: "scripts/review-claude.sh"

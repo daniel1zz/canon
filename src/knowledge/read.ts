@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import { parseDocFile } from "./docfile.ts";
 import type { Change, ChangeStatus, Corpus, Decision, DecisionStatus, Doc, Domain, Note, Rule, RuleStatus } from "./model.ts";
 
-/** A file under lore/ that does not fit the model. `lore check` reports these; reading never stops on one. */
+/** A file under canon/ that does not fit the model. `canon check` reports these; reading never stops on one. */
 export interface FileProblem {
   readonly path: string;
   readonly message: string;
@@ -14,7 +14,7 @@ export interface ReadResult {
   readonly problems: readonly FileProblem[];
 }
 
-export const LORE_DIR = "lore";
+export const CANON_DIR = "canon";
 
 const RULE_FILE = /^BR-\d+\.md$/;
 const NUMBERED_FILE: Record<"decision" | "change" | "note", RegExp> = {
@@ -28,12 +28,12 @@ const RULE_STATUS: readonly RuleStatus[] = ["active", "retired"];
 const DECISION_STATUS: readonly DecisionStatus[] = ["proposed", "accepted", "superseded"];
 const CHANGE_STATUS: readonly ChangeStatus[] = ["open", "done", "dropped"];
 
-/** Reads every knowledge document under `<root>/lore`. Files that do not parse become problems, not exceptions. */
+/** Reads every knowledge document under `<root>/canon`. Files that do not parse become problems, not exceptions. */
 export function readCorpus(root: string): ReadResult {
   const docs: Doc[] = [];
   const domains: Domain[] = [];
   const problems: FileProblem[] = [];
-  const base = join(root, LORE_DIR);
+  const base = join(root, CANON_DIR);
   const rel = (p: string) => relative(root, p);
 
   const rulesDir = join(base, "rules");

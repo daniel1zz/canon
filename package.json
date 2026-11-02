@@ -1,15 +1,15 @@
 {
-  "name": "lore",
+  "name": "canon",
   "version": "0.0.1",
   "private": true,
   "type": "module",
   "bin": {
-    "lore": "dist/lore"
+    "canon": "dist/canon"
   },
   "scripts": {
     "test": "bun test",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "build": "bun build --compile src/cli/main.ts --outfile dist/lore"
+    "build": "bun build --compile src/cli/main.ts --outfile dist/canon"
   },
   "dependencies": {
     "citty": "^0.1.6",

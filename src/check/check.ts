@@ -4,7 +4,7 @@ import { ID_PATTERN, stripCode, type Corpus, type Rule } from "../knowledge/mode
 import type { FileProblem } from "../knowledge/read.ts";
 
 /**
- * `lore check`: the corpus-integrity half of the landing boundary (design §3). It checks outcomes only:
+ * `canon check`: the corpus-integrity half of the landing boundary (design §3). It checks outcomes only:
  * the corpus parses, every id is unique, every reference resolves, and rules and tests point at each other.
  * It never checks how an agent worked.
  */
@@ -15,7 +15,7 @@ export interface Finding {
 }
 
 export type CheckRule =
-  | "file-invalid" // a lore/ file does not fit the model
+  | "file-invalid" // a canon/ file does not fit the model
   | "id-duplicate" // two files claim one id
   | "ref-dangling" // a document or test names an id that does not exist
   | "rule-untested" // an active rule has no test and no `untested:` reason
@@ -25,7 +25,7 @@ export interface CheckInput {
   readonly root: string;
   readonly corpus: Corpus;
   readonly problems: readonly FileProblem[];
-  /** Test files to scan for rule ids; defaults to every *.test.ts / *.spec.ts outside node_modules and lore/. */
+  /** Test files to scan for rule ids; defaults to every *.test.ts / *.spec.ts outside node_modules and canon/. */
   readonly testFiles?: readonly string[];
 }
 
@@ -70,7 +70,7 @@ function idsIn(text: string): Set<string> {
   return new Set([...text.matchAll(ID_PATTERN)].map((m) => `${m[1]}-${m[2]}`));
 }
 
-const SKIP_DIRS = new Set(["node_modules", ".git", "lore", "dist", ".cache"]);
+const SKIP_DIRS = new Set(["node_modules", ".git", "canon", "dist", ".cache"]);
 
 export function findTestFiles(root: string): string[] {
   const out: string[] = [];

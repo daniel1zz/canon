@@ -106,7 +106,7 @@ export function renderContext(root: string, ctx: Context): string {
   }
   if (ctx.decisions.length) out.push(`# Decisions\n\n${ctx.decisions.map((d) => `- ${d.id} ${d.title} (${d.path})`).join("\n")}\n`);
   if (ctx.changes.length) out.push(`# Open changes\n\n${ctx.changes.map((c) => `- ${c.id} ${c.title} (${c.path})`).join("\n")}\n`);
-  if (out.length === 0) out.push(`No domain, rule or document matches. Domains: lore rule domains\n`);
+  if (out.length === 0) out.push(`No domain, rule or document matches. Domains: canon rule domains\n`);
   return out.join("\n");
 }
 

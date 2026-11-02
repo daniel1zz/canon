@@ -19,12 +19,12 @@ function sh(cwd: string, ...args: string[]) {
 
 /** A repo whose floor passes unless a file named FAIL exists in the tree. */
 function project(): string {
-  const root = mkdtempSync(join(tmpdir(), "lore-next-work-"));
+  const root = mkdtempSync(join(tmpdir(), "canon-next-work-"));
   sh(root, "init", "-q", "-b", "main");
   sh(root, "config", "user.email", "t@t");
   sh(root, "config", "user.name", "t");
-  mkdirSync(join(root, "lore"), { recursive: true });
-  writeFileSync(join(root, "lore/config.yaml"), "floor: test ! -e FAIL\ntests: []\n");
+  mkdirSync(join(root, "canon"), { recursive: true });
+  writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\n");
   writeFileSync(join(root, "app.txt"), "one\ntwo\nthree\n");
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "init");
@@ -32,7 +32,7 @@ function project(): string {
 }
 
 function ws(cwd: string, actor = "agent:a"): Workspace {
-  process.env["LORE_ACTOR"] = actor;
+  process.env["CANON_ACTOR"] = actor;
   const r = openWorkspace(cwd);
   if (!r.ok) throw new Error(r.error.message);
   return r.value;
@@ -49,7 +49,7 @@ describe("work start", () => {
     const root = project();
     const s = startNew(root, "Refund window");
     expect(s.change).toBe("C-1");
-    expect(existsSync(join(s.worktree, "lore/changes/C-1-refund-window.md"))).toBe(true);
+    expect(existsSync(join(s.worktree, "canon/changes/C-1-refund-window.md"))).toBe(true);
     expect(sh(s.worktree, "status", "--porcelain")).toBe("");
     expect(claims(ws(root).db).map((c) => [c.subject, c.holder])).toEqual([["C-1", s.worktree]]);
   });
@@ -60,7 +60,7 @@ describe("work start", () => {
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
     sh(root, "checkout", "-q", "-b", "elsewhere");
     writeFileSync(join(root, "app.txt"), "diverged\n");
-    sh(root, "rm", "-rq", "lore/changes");
+    sh(root, "rm", "-rq", "canon/changes");
     sh(root, "commit", "-qam", "elsewhere: no changes dir");
     sh(root, "worktree", "remove", s.worktree);
     const again = start(ws(root, "agent:b"), { change: s.change }, quiet);
@@ -82,11 +82,11 @@ describe("rule review at land", () => {
     const root = project();
     const promptFile = join(root, "..", `${root.split("/").pop()}-prompt.txt`);
     writeFileSync(
-      join(root, "lore/config.yaml"),
+      join(root, "canon/config.yaml"),
       `floor: "true"\ntests: []\nreview: 'cat > ${promptFile}; echo ''{"verdict":"${verdict}","findings":["${["BR", 1].join("-")} is vague"]}'''\n`,
     );
-    mkdirSync(join(root, "lore/rules/billing"), { recursive: true });
-    writeFileSync(join(root, "lore/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n");
+    mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
+    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n");
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "domain");
     return { root, promptFile };
@@ -97,7 +97,7 @@ describe("rule review at land", () => {
     const before = sh(root, "rev-parse", "main");
     const s = startNew(root, "New rule");
     const id = ["BR", 1].join("-");
-    writeFileSync(join(s.worktree, `lore/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\nRefunds are fine.\n`);
+    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\nRefunds are fine.\n`);
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "rule");
     const out = await land(ws(s.worktree), FAST, quiet);
@@ -158,10 +158,10 @@ describe("work land", () => {
     expect(sh(d.worktree, "status", "--porcelain")).toBe(""); // rebase was aborted, work intact
   });
 
-  test("BR-2016: refuses when lore check finds a broken corpus", async () => {
+  test("BR-2016: refuses when canon check finds a broken corpus", async () => {
     const root = project();
     const s = startNew(root, "Bad ref");
-    writeFileSync(join(s.worktree, "lore/changes/C-1-bad-ref.md"), "---\nid: C-1\ntitle: Bad ref\n---\nSee D-99.\n");
+    writeFileSync(join(s.worktree, "canon/changes/C-1-bad-ref.md"), "---\nid: C-1\ntitle: Bad ref\n---\nSee D-99.\n");
     sh(s.worktree, "commit", "-qam", "dangling");
     const out = await land(ws(s.worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("check");

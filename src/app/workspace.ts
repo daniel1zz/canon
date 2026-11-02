@@ -19,14 +19,14 @@ export interface Workspace {
 }
 
 /**
- * Who is acting (BR-2023): LORE_ACTOR when set; inside a Claude Code session (CLAUDECODE=1) the agent
+ * Who is acting (BR-2023): CANON_ACTOR when set; inside a Claude Code session (CLAUDECODE=1) the agent
  * named by its session id; otherwise the OS user as a human. An agent is never recorded as a human.
  */
 export function currentActor(env: Record<string, string | undefined> = process.env): Result<string> {
   const inAgent = env["CLAUDECODE"] === "1";
-  const explicit = env["LORE_ACTOR"]?.trim();
+  const explicit = env["CANON_ACTOR"]?.trim();
   if (explicit) {
-    if (inAgent && !explicit.startsWith("agent:")) return err("invalid", `LORE_ACTOR=${explicit} inside a Claude Code session: an agent session can only act as agent:<name>`);
+    if (inAgent && !explicit.startsWith("agent:")) return err("invalid", `CANON_ACTOR=${explicit} inside a Claude Code session: an agent session can only act as agent:<name>`);
     return ok(explicit);
   }
   if (inAgent) return ok(`agent:${env["CLAUDE_CODE_SESSION_ID"]?.trim().slice(0, 8) || "unknown"}`);

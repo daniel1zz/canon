@@ -8,7 +8,7 @@ export interface DocFile {
 
 const FENCE = "---\n";
 
-/** Splits `---\n<yaml>---\n<body>`. A file without front matter is invalid: every lore document carries an id. */
+/** Splits `---\n<yaml>---\n<body>`. A file without front matter is invalid: every canon document carries an id. */
 export function parseDocFile(text: string, path: string): Result<DocFile> {
   if (!text.startsWith(FENCE)) return err("invalid", `${path}: missing front matter`);
   const end = text.indexOf(`\n${FENCE}`, FENCE.length - 1);

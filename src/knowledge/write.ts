@@ -4,10 +4,10 @@ import type { CoordDb } from "../coord/db.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { parseDocFile, renderDocFile } from "./docfile.ts";
 import { ID_PREFIX, slugify, type Corpus, type Doc, type Kind } from "./model.ts";
-import { LORE_DIR } from "./read.ts";
+import { CANON_DIR } from "./read.ts";
 
 /**
- * Creating documents is the only write lore performs on knowledge files: it allocates the id and lays
+ * Creating documents is the only write canon performs on knowledge files: it allocates the id and lays
  * out the file. Editing a document's text is ordinary file editing by the agent; changing a status goes
  * through `setMeta` so the front matter stays valid.
  */
@@ -44,16 +44,17 @@ export function createDoc(root: string, corpus: Corpus, db: CoordDb, actor: stri
   if (input.kind === "rule") {
     if (!input.domain) return err("invalid", "a rule needs a domain");
     if (!corpus.domains.some((d) => d.name === input.domain)) {
-      return err("not_found", `domain ${input.domain} does not exist; create it with \`lore rule domain ${input.domain} --code <dir>\``);
+      return err("not_found", `domain ${input.domain} does not exist; create it with \`canon rule domain ${input.domain} --code <dir>\``);
     }
     const id = db.allocate(prefix, highestNumber(corpus, prefix), actor);
-    path = join(LORE_DIR, "rules", input.domain, `${id}.md`);
+    path = join(CANON_DIR, "rules", input.domain, `${id}.md`);
     meta = { id, title, status: "active", untested: input.untested };
   } else {
     if (input.id !== undefined && !input.id.startsWith(`${prefix}-`)) return err("invalid", `${input.id} is not a ${input.kind} id`);
     const id = input.id ?? db.allocate(prefix, highestNumber(corpus, prefix), actor);
     const dir = { decision: "decisions", change: "changes", note: "notes" }[input.kind];
-    path = join(LORE_DIR, dir, `${id}-${slugify(title)}.md`);
+    const slug = slugify(title);
+    path = join(CANON_DIR, dir, slug ? `${id}-${slug}.md` : `${id}.md`);
     meta =
       input.kind === "decision"
         ? { id, title, status: "proposed", supersedes: input.supersedes }
@@ -71,7 +72,7 @@ export function createDoc(root: string, corpus: Corpus, db: CoordDb, actor: stri
 export function createDomain(root: string, name: string, code: readonly string[], description: string): Result<string> {
   if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) return err("invalid", "a domain name is lowercase letters, digits and dashes");
   if (code.length === 0) return err("invalid", "a domain must name at least one code directory (--code)");
-  const path = join(LORE_DIR, "rules", name, "README.md");
+  const path = join(CANON_DIR, "rules", name, "README.md");
   const full = join(root, path);
   if (existsSync(full)) return err("conflict", `domain ${name} already exists`);
   mkdirSync(dirname(full), { recursive: true });

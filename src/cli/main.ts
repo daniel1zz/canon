@@ -6,7 +6,7 @@ import { openWorkspace, type Workspace } from "../app/workspace.ts";
 import { check } from "../check/check.ts";
 import { testFilesFor } from "../check/tests.ts";
 import { activeQueue, answer, ask, claimOfWorktree, claims, handoffs, questions } from "../coord/state.ts";
-import type { LoreError, Result } from "../kernel/result.ts";
+import type { CanonError, Result } from "../kernel/result.ts";
 import type { Kind } from "../knowledge/model.ts";
 import { contextFor, findDoc, rawText, renderContext, search } from "../knowledge/query.ts";
 import { readCorpus } from "../knowledge/read.ts";
@@ -16,13 +16,13 @@ import { clean, land, start, stop } from "../work/work.ts";
 
 /**
  * Exit codes — one meaning each, so an agent can branch on them:
- *   0 ok · 1 refused by an outcome check (floor, lore check, conflict on land) · 2 usage / invalid input
+ *   0 ok · 1 refused by an outcome check (floor, canon check, conflict on land) · 2 usage / invalid input
  *   3 not found · 5 held by someone else or moved underneath (re-read, retry) · 75 queue timeout (retry later)
  */
 const EXIT = { ok: 0, refused: 1, usage: 2, notFound: 3, conflict: 5, timeout: 75 } as const;
 
-function fail(e: LoreError): never {
-  console.error(`lore: ${e.message}`);
+function fail(e: CanonError): never {
+  console.error(`canon: ${e.message}`);
   process.exit(e.code === "invalid" ? EXIT.usage : e.code === "not_found" ? EXIT.notFound : e.code === "conflict" ? EXIT.conflict : EXIT.refused);
 }
 
@@ -93,10 +93,10 @@ function setStatus(id: string, kind: Kind, status: string) {
 }
 
 const rule = defineCommand({
-  meta: { description: "Rules: the current truth, one file per rule under lore/rules/<domain>/" },
+  meta: { description: "Rules: the current truth, one file per rule under canon/rules/<domain>/" },
   subCommands: {
     new: newDocCommand("rule", {
-      domain: { type: "string", required: true, description: "Domain directory under lore/rules" },
+      domain: { type: "string", required: true, description: "Domain directory under canon/rules" },
       untested: { type: "string", description: "Reason this rule deliberately has no test" },
     }),
     list: listCommand("rule", "List active rules (--all for retired too)"),
@@ -106,7 +106,7 @@ const rule = defineCommand({
       run: ({ args }) => void setStatus(String(args.id), "rule", "retired"),
     }),
     domain: defineCommand({
-      meta: { description: "Create a domain: lore/rules/<name>/README.md with the code directories it governs" },
+      meta: { description: "Create a domain: canon/rules/<name>/README.md with the code directories it governs" },
       args: { name: { type: "positional", required: true }, code: { type: "string", required: true, description: "Comma-separated code directories" }, description: { type: "string" } },
       run({ args }) {
         const ws = workspace();
@@ -149,7 +149,7 @@ const decision = defineCommand({
 });
 
 const change = defineCommand({
-  meta: { description: "Changes: units of intended work (start one with `lore work start --title`)" },
+  meta: { description: "Changes: units of intended work (start one with `canon work start --title`)" },
   subCommands: {
     new: newDocCommand("change", { rules: { type: "string", description: "Comma-separated rule ids it adds, edits or retires" } }),
     list: listCommand("change", "List open changes (--all for done and dropped)"),
@@ -229,17 +229,17 @@ const work = defineCommand({
       },
     }),
     land: defineCommand({
-      meta: { description: "Land this worktree's branch on main: queue → rebase → floor → lore check → main" },
+      meta: { description: "Land this worktree's branch on main: queue → rebase → floor → canon check → main" },
       args: { finish: { type: "boolean", description: "Also close the change and release it" }, timeout: { type: "string", default: "60", description: "Minutes to wait in the queue" } },
       async run({ args }) {
         const ws = workspace();
         const out = await land(ws, { finish: Boolean(args.finish), timeoutMs: Number(args.timeout) * 60_000 }, say);
         if (out.kind === "landed") return;
         if (out.kind === "timeout") {
-          console.error(`lore: still ${out.ahead} landing(s) ahead after ${args.timeout} min; run again`);
+          console.error(`canon: still ${out.ahead} landing(s) ahead after ${args.timeout} min; run again`);
           process.exit(EXIT.timeout);
         }
-        console.error(`lore: land refused (${out.reason}): ${out.message}`);
+        console.error(`canon: land refused (${out.reason}): ${out.message}`);
         for (const f of out.findings ?? []) console.error(`  ${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
         process.exit(out.reason === "dirty" || out.reason === "on-main" || out.reason === "no-floor" ? EXIT.usage : EXIT.refused);
       },
@@ -291,7 +291,7 @@ const human = defineCommand({
       run({ args }) {
         const ws = workspace();
         const id = ask(ws.db, ws.actor, typeof args.change === "string" ? args.change : (claimOfWorktree(ws.db, ws.root)?.subject ?? null), String(args.question), list(args.option));
-        say(`question #${id} recorded; \`lore human pending\` shows it`);
+        say(`question #${id} recorded; \`canon human pending\` shows it`);
       },
     }),
     pending: defineCommand({
@@ -321,13 +321,13 @@ const human = defineCommand({
 // ---------------------------------------------------------------- project
 
 const init = defineCommand({
-  meta: { description: "Create the lore/ layout in this repository" },
+  meta: { description: "Create the canon/ layout in this repository" },
   args: { floor: { type: "string", description: "Command that must pass before anything lands, e.g. \"bun run typecheck && bun test\"" } },
   run({ args }) {
     const root = must(git(process.cwd(), "rev-parse", "--show-toplevel"));
     const files: Record<string, string> = {
-      "lore/product.md": "---\ntitle: Product\n---\n# Product\n\n## Purpose\n\n## Users\n\n## Promises\n\n## Non-goals\n",
-      "lore/config.yaml": `main: main\nfloor: ${JSON.stringify(args.floor ?? "")}\n`,
+      "canon/product.md": "---\ntitle: Product\n---\n# Product\n\n## Purpose\n\n## Users\n\n## Promises\n\n## Non-goals\n",
+      "canon/config.yaml": `main: main\nfloor: ${JSON.stringify(args.floor ?? "")}\n`,
     };
     for (const [p, text] of Object.entries(files)) {
       const full = join(root, p);
@@ -338,8 +338,8 @@ const init = defineCommand({
         say(`created ${p}`);
       }
     }
-    for (const dir of ["rules", "decisions", "changes", "notes"]) mkdirSync(join(root, "lore", dir), { recursive: true });
-    if (!args.floor) say("set `floor` in lore/config.yaml before landing anything");
+    for (const dir of ["rules", "decisions", "changes", "notes"]) mkdirSync(join(root, "canon", dir), { recursive: true });
+    if (!args.floor) say("set `floor` in canon/config.yaml before landing anything");
   },
 });
 
@@ -351,18 +351,18 @@ const brief = defineCommand({
     const hs = handoffs(ws.db);
     const pending = questions(ws.db, "pending").length;
     if (mine) {
-      say(`You are in ${mine.subject} (${ws.root}). Read it: lore show ${mine.subject}; context: lore context ${mine.subject}`);
+      say(`You are in ${mine.subject} (${ws.root}). Read it: canon show ${mine.subject}; context: canon context ${mine.subject}`);
       const h = hs.find((x) => x.subject === mine.subject);
       if (h) say(`Handoff from ${h.actor} at ${h.updated_at}: next — ${h.next}${h.note ? `\n${h.note}` : ""}`);
     }
     const others = hs.filter((h) => h.subject !== mine?.subject);
-    if (others.length) say(`Unfinished changes with handoffs: ${others.map((h) => h.subject).join(", ")} (lore work status)`);
-    if (pending) say(`${pending} question(s) wait for a human (lore human pending)`);
+    if (others.length) say(`Unfinished changes with handoffs: ${others.map((h) => h.subject).join(", ")} (canon work status)`);
+    if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
   },
 });
 
 const main = defineCommand({
-  meta: { name: "lore", description: "Shared memory and coordination for a project built by many concurrent AI sessions" },
+  meta: { name: "canon", description: "Shared memory and coordination for a project built by many concurrent AI sessions" },
   subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, work, human },
 });
 

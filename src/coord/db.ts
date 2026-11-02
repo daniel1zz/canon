@@ -73,12 +73,12 @@ export class CoordDb {
     }
   }
 
-  /** `<git common dir>/lore/state.db` for the repository containing `cwd`. */
+  /** `<git common dir>/canon/state.db` for the repository containing `cwd`. */
   static pathFor(cwd: string): Result<string> {
     const r = Bun.spawnSync(["git", "rev-parse", "--git-common-dir"], { cwd, stdout: "pipe", stderr: "pipe" });
     if (r.exitCode !== 0) return err("io", `not inside a git repository: ${r.stderr.toString().trim()}`);
     const common = r.stdout.toString().trim();
-    return ok(join(isAbsolute(common) ? common : join(cwd, common), "lore", "state.db"));
+    return ok(join(isAbsolute(common) ? common : join(cwd, common), "canon", "state.db"));
   }
 
   /**

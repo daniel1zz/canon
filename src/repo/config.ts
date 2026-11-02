@@ -4,7 +4,7 @@ import { parse } from "yaml";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 /**
- * `lore/config.yaml` — the few project facts lore cannot infer.
+ * `canon/config.yaml` — the few project facts canon cannot infer.
  *   main:  the branch changes land on (default "main")
  *   floor: shell command that must exit 0 on the exact tree that becomes main (required to land)
  *   tests: globs of test files scanned for rule ids (default: every *.test.* / *.spec.*)
@@ -17,7 +17,7 @@ export interface Config {
   readonly setup: string | undefined;
   /**
    * Reviewer for rule and decision text (design §4). Receives the review prompt on stdin and prints JSON
-   * `{"verdict":"ok"|"block","findings":["..."]}`. Runs at land only when lore/rules or lore/decisions changed.
+   * `{"verdict":"ok"|"block","findings":["..."]}`. Runs at land only when canon/rules or canon/decisions changed.
    */
   readonly review: string | undefined;
   /** Advisory command run after a successful landing (e.g. a code review that files issues); never blocks. */
@@ -25,15 +25,15 @@ export interface Config {
 }
 
 export function readConfig(root: string): Result<Config> {
-  const path = join(root, "lore", "config.yaml");
+  const path = join(root, "canon", "config.yaml");
   if (!existsSync(path)) return ok({ main: "main", floor: undefined, tests: undefined, setup: undefined, review: undefined, afterLand: undefined });
   let raw: unknown;
   try {
     raw = parse(readFileSync(path, "utf8")) ?? {};
   } catch (e) {
-    return err("invalid", `lore/config.yaml is not valid YAML: ${(e as Error).message}`);
+    return err("invalid", `canon/config.yaml is not valid YAML: ${(e as Error).message}`);
   }
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return err("invalid", "lore/config.yaml must be a mapping");
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return err("invalid", "canon/config.yaml must be a mapping");
   const c = raw as Record<string, unknown>;
   const main = c["main"] ?? "main";
   const floor = c["floor"];
