@@ -8,3 +8,5 @@ tests:
 setup: "bun install"
 # 规则和决策文字的评审：从 stdin 读提示，在 stdout 输出 JSON 结论
 review: "scripts/review-claude.sh"
+# 合入后在主 checkout 重新构建 dist/canon，让 PATH 上的 canon 和 main 一致
+after_land: "bun run build"

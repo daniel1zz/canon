@@ -23,7 +23,7 @@ export type CheckRule =
   | "test-retired-rule" // a test still names a retired rule
   | "rule-no-statement" // an active rule has no non-empty "## 规则" section
   | "rule-no-example" // an active rule with tests has no example in "## 例子"
-  | "template-unfilled"; // a rule, decision or domain README still holds a template placeholder line
+  | "template-unfilled"; // a rule, decision, change or domain README still holds a template placeholder line
 
 export interface CheckInput {
   readonly root: string;
@@ -76,7 +76,7 @@ function structureFindings(corpus: Corpus): Finding[] {
   const out: Finding[] = [];
   const unfilled = (text: string) => PLACEHOLDER_LINE.test(text.replace(/```[\s\S]*?```/g, ""));
   for (const d of corpus.docs) {
-    if ((d.kind === "rule" || d.kind === "decision") && unfilled(d.body)) {
+    if ((d.kind === "rule" || d.kind === "decision" || d.kind === "change") && unfilled(d.body)) {
       out.push({ path: d.path, rule: "template-unfilled", message: `${d.id} still contains a template placeholder line` });
     }
     if (d.kind !== "rule" || d.status !== "active") continue;
