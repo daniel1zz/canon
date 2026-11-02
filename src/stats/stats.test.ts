@@ -117,6 +117,10 @@ describe("canon stats", () => {
     expect(!bad.ok && bad.error.message).toContain("no such check");
     writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ncheck_reviews:\n  floor: "soon"\n');
     expect(readConfig(root).ok).toBe(false);
+    writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ncheck_reviews:\n  floor: "2026-02-30"\n');
+    expect(readConfig(root).ok).toBe(false); // well formed, but there is no 30 February
+    writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ncheck_reviews:\n  floor: "2028-02-29"\n');
+    expect(readConfig(root).ok).toBe(true);
     expect(readFileSync(join(root, "canon/config.yaml"), "utf8")).toContain("soon");
   });
 });
