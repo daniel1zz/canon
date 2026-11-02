@@ -381,3 +381,49 @@ describe("boundaries record and clean up", () => {
     expect(change).toBe(s.change);
   });
 });
+
+describe("same-file overlap", () => {
+  const commitFile = (wt: string, file: string, text: string) => {
+    writeFileSync(join(wt, file), text);
+    sh(wt, "add", file);
+    sh(wt, "commit", "-qm", file);
+  };
+  const notices = (root: string) =>
+    ws(root).db.db.query<{ subject: string; detail: string }, []>("SELECT subject, detail FROM events WHERE kind = 'overlap.notice' ORDER BY id").all().map((e) => ({ subject: e.subject, ...JSON.parse(e.detail) }));
+
+  test("BR-2062: landing a change that shares a committed file with another change prints and records a notice, and still lands", async () => {
+    const root = project();
+    const a = startNew(root, "A");
+    const b = startNew(root, "B");
+    const c = startNew(root, "C");
+    commitFile(a.worktree, "shared.txt", "a\n");
+    commitFile(b.worktree, "shared.txt", "b\n");
+    commitFile(c.worktree, "other.txt", "c\n");
+    writeFileSync(join(c.worktree, "shared.txt"), "uncommitted\n");
+    const lines: string[] = [];
+    const out = await land(ws(a.worktree), FAST, (l) => lines.push(l));
+    expect(out.kind).toBe("landed");
+    expect(lines.filter((l) => l.startsWith("overlap:"))).toEqual([`overlap: ${b.change} also changes shared.txt; whoever lands second resolves the conflict`]);
+    expect(notices(root)).toEqual([{ subject: a.change, at: "land", with: b.change, files: ["shared.txt"] }]);
+  });
+
+  test("BR-2062: restarting a change whose branch already overlaps another prints the notice; a fresh change does not", () => {
+    const root = project();
+    mkdirSync(join(root, "canon/changes"), { recursive: true });
+    writeFileSync(join(root, "canon/changes/C-1.md"), "---\nid: C-1\ntitle: Planned\nstatus: open\n---\n## 为什么\n\nPlanned.\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "planned change");
+    const a = start(ws(root), { change: "C-1" }, quiet);
+    if (!a.ok) throw new Error(a.error.message);
+    const fresh: string[] = [];
+    const b = start(ws(root), { title: "B" }, (l) => fresh.push(l));
+    if (!b.ok) throw new Error(b.error.message);
+    expect(fresh.some((l) => l.startsWith("overlap:"))).toBe(false);
+    commitFile(a.value.worktree, "shared.txt", "a\n");
+    commitFile(b.value.worktree, "shared.txt", "b\n");
+    const lines: string[] = [];
+    expect(start(ws(root), { change: "C-1" }, (l) => lines.push(l)).ok).toBe(true);
+    expect(lines.filter((l) => l.startsWith("overlap:"))).toEqual([`overlap: ${b.value.change} also changes shared.txt; whoever lands second resolves the conflict`]);
+    expect(notices(root)).toEqual([{ subject: "C-1", at: "start", with: b.value.change, files: ["shared.txt"] }]);
+  });
+});

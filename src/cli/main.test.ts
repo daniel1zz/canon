@@ -169,3 +169,22 @@ describe("session continuity", () => {
     expect(canon(root, "brief").out).toBe("");
   });
 });
+
+describe("overlap in brief", () => {
+  test("BR-2063: brief names the other change that touches the same file, and nothing when there is no overlap", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    committed(root);
+    const wt = (title: string) => canon(root, "work", "start", "--title", title).out.match(/cd (.+)/)![1]!.trim();
+    const a = wt("A");
+    const b = wt("B");
+    expect(canon(a, "brief").out).not.toContain("Overlap");
+    for (const [dir, text] of [[a, "a"], [b, "b"]] as const) {
+      writeFileSync(join(dir, "shared.txt"), text);
+      Bun.spawnSync(["git", "add", "shared.txt"], { cwd: dir });
+      Bun.spawnSync(["git", "commit", "-qm", "s"], { cwd: dir });
+    }
+    expect(canon(a, "brief").out).toContain("Overlap: C-2 also changes shared.txt");
+    expect(canon(b, "brief").out).toContain("Overlap: C-1 also changes shared.txt");
+  });
+});

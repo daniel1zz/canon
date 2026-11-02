@@ -12,6 +12,7 @@ import { contextFor, findDoc, rawText, renderContext, search } from "../knowledg
 import { readCorpus } from "../knowledge/read.ts";
 import { createDoc, createDomain, setMeta } from "../knowledge/write.ts";
 import { git } from "../repo/git.ts";
+import { overlapsOf } from "../work/overlap.ts";
 import { clean, land, start, stop } from "../work/work.ts";
 
 /**
@@ -400,6 +401,7 @@ const brief = defineCommand({
       say(`You are in ${mine.subject} (${ws.root}). Read it: canon show ${mine.subject}; context: canon context ${mine.subject}`);
       const h = hs.find((x) => x.subject === mine.subject);
       if (h) say(`Handoff from ${h.actor} at ${h.updated_at}: next — ${h.next}${h.note ? `\n${h.note}` : ""}`);
+      for (const o of overlapsOf(ws, ws.root)) say(`Overlap: ${o.change} also changes ${o.files.join(", ")}`);
     }
     const others = hs.filter((h) => h.subject !== mine?.subject);
     if (others.length) say(`Unfinished changes with handoffs: ${others.map((h) => h.subject).join(", ")} (canon work status)`);

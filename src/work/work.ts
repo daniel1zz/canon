@@ -6,6 +6,7 @@ import { check, type Finding } from "../check/check.ts";
 import { testFilesFor } from "../check/tests.ts";
 import { claimOfWorktree, dropHandoff, enqueue, finishEntry, heartbeat, releaseClaim, renewClaim, takeClaim, tryTurn, writeHandoff } from "../coord/state.ts";
 import { logFile, runHooks, runHooksInBackground, runHooksSync } from "../hooks/hooks.ts";
+import { noticeOverlaps } from "./overlap.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { slugify, type Change, type Corpus } from "../knowledge/model.ts";
 import { findDoc } from "../knowledge/query.ts";
@@ -105,6 +106,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     if (!m.ok) return m;
   }
   say(`${changeId} → ${path} (branch ${branch})`);
+  noticeOverlaps(ws, path, changeId, "start", say);
   // after_start never changes the result (BR-2056): the worktree and claim stand whatever it exits with.
   runHooksSync({ db: ws.db, actor: ws.actor, event: "after_start", change: changeId, cwd: path, env: { CANON_BRANCH: branch } }, ws.config.hooks.after_start, say);
   return ok({ change: changeId, worktree: path, branch, created });
@@ -186,6 +188,8 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     }
   }
 
+  // Same-file overlap with other changes in flight: a notice only, never a refusal (BR-2062).
+  noticeOverlaps(ws, wt, subject, "land", say);
   const entry = enqueue(ws.db, wt, subject, ws.actor);
   const deadline = Date.now() + opts.timeoutMs;
   let lastAhead = -1;
