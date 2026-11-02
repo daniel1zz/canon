@@ -40,9 +40,9 @@ export interface Env {
   readonly say: (line: string) => void;
 }
 
-/** The files the landing changed that are code (not under canon/), with their full text at HEAD. */
+/** The files the landing added, changed or renamed outside canon/, with their full text at HEAD; deleted ones are only in the diff. */
 export function changedFiles(e: Env): Result<{ path: string; text: string }[]> {
-  const names = git(e.cwd, "diff", "--name-only", "--diff-filter=AM", e.base, e.head);
+  const names = git(e.cwd, "diff", "--name-only", "--diff-filter=d", e.base, e.head); // everything but deletions (BR-2070)
   if (!names.ok) return names;
   const out: { path: string; text: string }[] = [];
   for (const path of names.value.split("\n").filter((p) => p !== "" && !p.startsWith("canon/"))) {

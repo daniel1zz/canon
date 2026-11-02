@@ -89,6 +89,33 @@ describe("post-land code review", () => {
     expect(p).not.toContain("## canon/rules/x.md"); // documents are not code
   });
 
+  test("BR-2070: binary files are not given as full text, deleted files appear only in the diff", () => {
+    const t = setup({ findings: [] });
+    writeFileSync(join(t.root, "logo.png"), Buffer.from([0x89, 0x50, 0x00, 0x01]));
+    sh(t.root, "rm", "-q", "src/queue.ts");
+    mkdirSync(join(t.root, "src"), { recursive: true });
+    writeFileSync(join(t.root, "src/new.ts"), "export const b = 1;\n");
+    sh(t.root, "add", "-A");
+    sh(t.root, "commit", "-qm", "binary and delete");
+    const env = { ...t.env, base: t.env.head, head: sh(t.root, "rev-parse", "HEAD") };
+    expect(codeReview(env).ok).toBe(true);
+    const p = t.prompt();
+    expect(p).toContain("## src/new.ts");
+    expect(p).not.toContain("## logo.png");
+    expect(p).not.toContain("## src/queue.ts");
+    expect(p).toContain("-export const a = 2;"); // the deletion is in the diff
+  });
+
+  test("BR-2070: the script refuses to run without CANON_BASE and CANON_HEAD", () => {
+    const script = join(import.meta.dir, "..", "..", "scripts", "code-review.ts");
+    const env = { ...process.env } as Record<string, string>;
+    delete env["CANON_BASE"];
+    delete env["CANON_HEAD"];
+    const r = Bun.spawnSync(["bun", script], { env, stdout: "pipe", stderr: "pipe" });
+    expect(r.exitCode).toBe(2);
+    expect(r.stderr.toString()).toContain("CANON_BASE and CANON_HEAD are required");
+  });
+
   test("BR-2070: a landing that changed no code does not call the reviewer", () => {
     const t = setup({ findings: [finding()] });
     const docsOnly = { ...t.env, base: sh(t.root, "rev-parse", "HEAD"), head: sh(t.root, "rev-parse", "HEAD") };
@@ -126,6 +153,8 @@ describe("post-land code review", () => {
     const byTitle = setup({ findings: [finding()] }, open, [{ number: 12, title: "queue turn is not atomic" }]);
     expect(codeReview(byTitle.env)).toMatchObject({ ok: true, value: { created: [], commented: [12] } });
     expect(byTitle.calls().filter((c) => c[1] === "comment").map((c) => c[2])).toEqual(["12"]);
+    const search = byTitle.calls().find((c) => c.includes("--search"))!;
+    expect(search.slice(search.indexOf("--label"), search.indexOf("--label") + 2)).toEqual(["--label", "canon-review"]); // only labelled issues match by title
 
     const closedNumber = setup({ findings: [finding({ existing: 99 })] }, open, []);
     expect(codeReview(closedNumber.env)).toMatchObject({ ok: true, value: { created: ["https://github.com/o/r/issues/77"], commented: [] } });

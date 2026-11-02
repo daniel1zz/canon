@@ -47,6 +47,9 @@ describe("declared document types", () => {
     expect(builtin.err).toContain("canon rule list");
     expect(canon(repo(""), "doc", "list", "--type", "spec").code).toBe(3);
     expect(canon(root, "doc", "list").code).toBe(2);
+    writeFileSync(join(root, `canon/specs/${id("SP", 10)}.md`), doc("SP", 10, "status: draft\n", "Ten."));
+    const ids = canon(root, "doc", "list", "--type", "spec").out.trim().split("\n").map((l) => l.split(/\s+/)[0]);
+    expect(ids).toEqual([id("SP", 1), id("SP", 2), id("SP", 10)]);
   });
 
   test("BR-2051: a status outside the declared ones is invalid; doc status only accepts declared statuses", () => {

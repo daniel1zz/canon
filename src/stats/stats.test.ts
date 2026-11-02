@@ -33,6 +33,34 @@ describe("canon stats", () => {
     expect(of(s, "review").runs).toBe(3);
   });
 
+  test("BR-2067: claim counts takes, renewals and refusals; setup counts starts that ran it and its failures", () => {
+    const opened = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
+    if (!opened.ok) throw new Error(opened.error.message);
+    const d = opened.value;
+    d.event("a", "claim.take", "C-1", {});
+    d.event("a", "claim.take", "C-2", {});
+    d.event("b", "claim.refuse", "C-1", { reason: "held" });
+    d.event("a", "start.ok", "C-1", { created: true, setup: true });
+    d.event("a", "start.ok", "C-2", { created: true, setup: true });
+    d.event("a", "start.ok", "C-3", { created: false, setup: false });
+    d.event("a", "start.refuse", "C-4", { reason: "setup" });
+    const s = computeStats(d, {}, "2026-11-03");
+    expect([of(s, "claim").runs, of(s, "claim").refused]).toEqual([3, 1]);
+    expect([of(s, "setup").runs, of(s, "setup").refused]).toEqual([3, 1]);
+  });
+
+  test("BR-2068: refused twice and not yet landed is pending twice; a drop that only asked is still pending; no change id is unknown", () => {
+    const opened = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
+    if (!opened.ok) throw new Error(opened.error.message);
+    const d = opened.value;
+    d.event("a", "land.refuse", "C-4", { reason: "floor", diff: "x" });
+    d.event("a", "land.refuse", "C-4", { reason: "floor", diff: "y" });
+    d.event("a", "land.refuse", "C-5", { reason: "floor", diff: "z" });
+    d.event("a", "drop.escalate", "C-5", { question: 1 });
+    d.event("a", "land.refuse", null, { reason: "floor", diff: "w" });
+    expect(of(computeStats(d, {}, "2026-11-03"), "floor").outcomes).toEqual({ changed: 0, same: 0, abandoned: 0, pending: 3, unknown: 1 });
+  });
+
   test("BR-2068: a refusal is changed when the change later lands with other code, same when it lands unchanged", async () => {
     const root = project();
     const fixed = startNew(root, "Fixed");
@@ -74,8 +102,8 @@ describe("canon stats", () => {
 
   test("BR-2069: checks whose review date has come are listed as due, undated ones are named, and an unknown check is a config error", () => {
     const root = project();
-    const s = computeStats(ws(root).db, { floor: "2026-01-01", check: "2027-02-03" }, "2026-11-03");
-    expect([of(s, "floor").due, of(s, "check").due]).toEqual([true, false]);
+    const s = computeStats(ws(root).db, { floor: "2026-01-01", check: "2027-02-03", review: "2026-11-03" }, "2026-11-03");
+    expect([of(s, "floor").due, of(s, "check").due, of(s, "review").due]).toEqual([true, false, true]); // the day itself is due
     const text = renderStats(s);
     expect(text).toContain("Due for review:\n  floor (since 2026-01-01)");
     expect(text).not.toContain("  check (since");

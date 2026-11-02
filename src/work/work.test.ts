@@ -407,6 +407,19 @@ describe("same-file overlap", () => {
     expect(notices(root)).toEqual([{ subject: a.change, at: "land", with: b.change, files: ["shared.txt"] }]);
   });
 
+  test("BR-2062: a landing refused before the queue (uncommitted work) prints no overlap notice", async () => {
+    const root = project();
+    const a = startNew(root, "A");
+    const b = startNew(root, "B");
+    commitFile(a.worktree, "shared.txt", "a\n");
+    commitFile(b.worktree, "shared.txt", "b\n");
+    writeFileSync(join(a.worktree, "dirty.txt"), "x\n");
+    const lines: string[] = [];
+    expect((await land(ws(a.worktree), FAST, (l) => lines.push(l))).kind).toBe("refused");
+    expect(lines.some((l) => l.startsWith("overlap:"))).toBe(false);
+    expect(notices(root)).toEqual([]);
+  });
+
   test("BR-2062: restarting a change whose branch already overlaps another prints the notice; a fresh change does not", () => {
     const root = project();
     mkdirSync(join(root, "canon/changes"), { recursive: true });

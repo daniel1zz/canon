@@ -91,7 +91,10 @@ function listCommand(kind: Kind, describe: string) {
       }
       const docs = corpusOf(ws).corpus.docs.filter((d) => d.kind === kind && (kind !== "extra" || (d.kind === "extra" && d.type === args.type)));
       const live = (d: (typeof docs)[number]) => kind === "extra" || args.all || !("status" in d) || d.status === undefined || ["active", "accepted", "proposed", "open"].includes(d.status);
-      const rows = docs.filter(live).filter((d) => !args.domain || (d.kind === "rule" && d.domain === args.domain));
+      const rows = docs
+        .filter(live)
+        .filter((d) => !args.domain || (d.kind === "rule" && d.domain === args.domain))
+        .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true })); // SP-2 before SP-10 (BR-2061)
       if (args.json) return json(rows.map(({ body: _b, ...r }) => r));
       for (const d of rows) say(`${d.id.padEnd(8)} ${("status" in d && d.status ? d.status : "").padEnd(10)} ${d.title}`);
       if (rows.length === 0) say(`(no ${kind}s)`);
