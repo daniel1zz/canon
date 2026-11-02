@@ -105,6 +105,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     const m = git(path, "commit", "-q", "-m", `canon: open ${changeId} ${target.title}`);
     if (!m.ok) return m;
   }
+  ws.db.event(ws.actor, "start.ok", changeId, { created, setup: created && ws.config.setup !== undefined });
   say(`${changeId} → ${path} (branch ${branch})`);
   noticeOverlaps(ws, path, changeId, "start", say);
   // after_start never changes the result (BR-2056): the worktree and claim stand whatever it exits with.
@@ -164,7 +165,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   const subject = claim?.subject ?? null;
   // Every refusal, early or late, is recorded with its reason so a check's precision can be measured (P6, BR-2026).
   const early = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], message: string): LandOutcome => {
-    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000) });
+    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main) });
     return { kind: "refused", reason, message };
   };
   const branch = git(wt, "rev-parse", "--abbrev-ref", "HEAD");
@@ -200,7 +201,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     lastAhead = turn.ahead;
     if (Date.now() > deadline) {
       finishEntry(ws.db, entry, "failed", "timeout");
-      ws.db.event(ws.actor, "land.refuse", subject, { reason: "timeout", ahead: turn.ahead });
+      ws.db.event(ws.actor, "land.refuse", subject, { reason: "timeout", ahead: turn.ahead, diff: ownDiffId(wt, main) });
       return { kind: "timeout", ahead: turn.ahead };
     }
     await Bun.sleep(2000);
@@ -222,7 +223,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const { entry, subject } = t;
   const refuse = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], message: string, findings?: readonly Finding[]): LandOutcome => {
     finishEntry(ws.db, entry, "failed", `${reason}: ${message.slice(0, 500)}`);
-    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000) });
+    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main) });
     return { kind: "refused", reason, message, ...(findings ? { findings } : {}) };
   };
 
@@ -275,11 +276,12 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const hookEnv = { CANON_BASE: base.value, CANON_HEAD: head.value, CANON_BRANCH: t.branch };
   const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env: hookEnv }, ws.config.hooks.before_land, say, true);
   if (failed) return refuse("hook", `before_land \`${failed.command}\` exited ${failed.exit}\n${failed.output}`);
+  const fingerprint = ownDiffId(wt, main); // before main moves: afterwards the merge base is HEAD itself
   const moved = moveMain(ws, base.value, head.value);
   if (moved !== "moved") return refuse(moved.reason, moved.message);
 
   finishEntry(ws.db, entry, "landed", head.value);
-  ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: t.branch });
+  ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: t.branch, diff: fingerprint });
   say(`landed ${head.value.slice(0, 9)} on ${main}`);
   if (ws.config.hooks.after_land.length > 0) {
     const log = runHooksInBackground({ db: ws.db, actor: ws.actor, event: "after_land", change: subject, cwd: ws.primary, env: hookEnv }, ws.config.hooks.after_land, logFile(ws.db, `after-land-${entry}.log`));
@@ -294,6 +296,17 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
     say(`${subject} closed; remove the worktree with \`canon work clean\` once you have left it`);
   }
   return { kind: "landed", sha: head.value, change: subject, finished };
+}
+
+/**
+ * A fingerprint of the change's own committed edits: the zero-context diff from its merge base with main to
+ * HEAD, outside canon/changes, through `git patch-id`. A rebase onto a newer main leaves it unchanged; editing
+ * code changes it. `canon stats` compares a refusal's fingerprint with the later landing's (BR-2068).
+ */
+export function ownDiffId(wt: string, main: string): string | null {
+  const r = Bun.spawnSync(["sh", "-c", `base=$(git merge-base ${JSON.stringify(main)} HEAD) && git diff -U0 "$base" HEAD -- . ':(exclude)canon/changes' | git patch-id --stable`], { cwd: wt, stdout: "pipe", stderr: "pipe" });
+  if (r.exitCode !== 0) return null;
+  return r.stdout.toString().trim().split(/\s+/)[0] || "empty";
 }
 
 /**

@@ -13,6 +13,7 @@ import { readCorpus } from "../knowledge/read.ts";
 import { createDoc, createDomain, setMeta } from "../knowledge/write.ts";
 import { git } from "../repo/git.ts";
 import { overlapsOf } from "../work/overlap.ts";
+import { computeStats, renderStats } from "../stats/stats.ts";
 import { drop } from "../work/drop.ts";
 import { clean, land, mainCorpus, start, stop } from "../work/work.ts";
 
@@ -432,9 +433,21 @@ const brief = defineCommand({
   },
 });
 
+const stats = defineCommand({
+  meta: { description: "Check precision: runs, refusals and what happened after each refusal; checks due for review" },
+  args: { json: { type: "boolean" } },
+  run({ args }) {
+    const ws = workspace();
+    const today = new Date().toLocaleDateString("sv"); // YYYY-MM-DD, local time
+    const s = computeStats(ws.db, ws.config.checkReviews, today);
+    if (args.json) return json(s);
+    say(renderStats(s));
+  },
+});
+
 const main = defineCommand({
   meta: { name: "canon", description: "Shared memory and coordination for a project built by many concurrent AI sessions" },
-  subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, doc, work, human },
+  subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, doc, work, human, stats },
 });
 
 runMain(main);

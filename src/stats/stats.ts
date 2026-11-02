@@ -1,0 +1,105 @@
+import type { CoordDb } from "../coord/db.ts";
+import { CHECKS, LAND_CHECKS, LAND_STAGES } from "./checks.ts";
+
+/**
+ * Check precision from the event table (C-9, P6). Counting refusals alone makes a check that refuses a lot
+ * look useful; what tells a good refusal from a bad one is what happened next (BR-2068):
+ *   changed    the same change later landed with different code: the refusal caught something
+ *   same       it later landed with the same code: probably a false refusal
+ *   abandoned  the change was dropped without landing
+ *   pending    nothing yet
+ *   unknown    the refusal has no change, or predates fingerprints
+ */
+export type Outcome = "changed" | "same" | "abandoned" | "pending" | "unknown";
+
+export interface CheckStats {
+  readonly check: string;
+  /** Times the check ran (BR-2067); for landing checks, landings that reached it. */
+  readonly runs: number;
+  readonly refused: number;
+  /** Outcomes of the refusals; only landing checks have them. */
+  readonly outcomes: Readonly<Record<Outcome, number>> | null;
+  /** Configured review date, if any (BR-2069). */
+  readonly review: string | null;
+  readonly due: boolean;
+}
+
+interface Row {
+  readonly id: number;
+  readonly kind: string;
+  readonly subject: string | null;
+  readonly detail: Record<string, unknown>;
+}
+
+export function computeStats(db: CoordDb, reviews: Readonly<Record<string, string>>, today: string): CheckStats[] {
+  const rows: Row[] = db.db
+    .query<{ id: number; kind: string; subject: string | null; detail: string }, []>(
+      "SELECT id, kind, subject, detail FROM events WHERE kind IN ('land.refuse','land.ok','claim.take','claim.renew','claim.refuse','start.ok','start.refuse','drop.done','change.status') ORDER BY id",
+    )
+    .all()
+    .map((r) => ({ ...r, detail: JSON.parse(r.detail) as Record<string, unknown> }));
+  const count = (pred: (r: Row) => boolean) => rows.filter(pred).length;
+  const refusalsOf = (check: string) => rows.filter((r) => r.kind === "land.refuse" && r.detail["reason"] === check);
+  const landed = count((r) => r.kind === "land.ok");
+
+  const outcomeOf = (r: Row): Outcome => {
+    if (!r.subject) return "unknown";
+    const later = rows.filter((x) => x.id > r.id && x.subject === r.subject);
+    const ok = later.find((x) => x.kind === "land.ok");
+    if (ok) {
+      const before = r.detail["diff"];
+      const after = ok.detail["diff"];
+      if (typeof before !== "string" || typeof after !== "string") return "unknown";
+      return before === after ? "same" : "changed";
+    }
+    if (later.some((x) => x.kind === "drop.done" || (x.kind === "change.status" && x.detail["status"] === "dropped"))) return "abandoned";
+    return "pending";
+  };
+
+  const out: CheckStats[] = [];
+  for (const check of CHECKS) {
+    let runs: number;
+    let refused: number;
+    let outcomes: Record<Outcome, number> | null = null;
+    if (LAND_CHECKS.includes(check)) {
+      const stage = LAND_STAGES.findIndex((s) => s.includes(check));
+      const reachedLater = LAND_STAGES.slice(stage).flat().reduce((n, c) => n + refusalsOf(c).length, 0);
+      runs = reachedLater + landed;
+      const mine = refusalsOf(check);
+      refused = mine.length;
+      outcomes = { changed: 0, same: 0, abandoned: 0, pending: 0, unknown: 0 };
+      for (const r of mine) outcomes[outcomeOf(r)]++;
+    } else if (check === "claim") {
+      refused = count((r) => r.kind === "claim.refuse");
+      runs = refused + count((r) => r.kind === "claim.take" || r.kind === "claim.renew");
+    } else {
+      refused = count((r) => r.kind === "start.refuse" && r.detail["reason"] === "setup");
+      runs = refused + count((r) => r.kind === "start.ok" && r.detail["setup"] === true);
+    }
+    const review = reviews[check] ?? null;
+    out.push({ check, runs, refused, outcomes, review, due: review !== null && review <= today });
+  }
+  return out;
+}
+
+export function renderStats(stats: readonly CheckStats[]): string {
+  const lines = [`${"check".padEnd(11)} ${"runs".padStart(5)} ${"refused".padStart(8)} ${"changed".padStart(8)} ${"same".padStart(5)} ${"abandoned".padStart(10)} ${"pending".padStart(8)} ${"unknown".padStart(8)}  review`];
+  const n = (v: number | undefined, w: number) => (v === undefined ? "-" : String(v)).padStart(w);
+  for (const s of stats) {
+    const o = s.outcomes ?? undefined;
+    lines.push(
+      `${s.check.padEnd(11)} ${n(s.runs, 5)} ${n(s.refused, 8)} ${n(o?.changed, 8)} ${n(o?.same, 5)} ${n(o?.abandoned, 10)} ${n(o?.pending, 8)} ${n(o?.unknown, 8)}  ${s.review ?? "(no date)"}`,
+    );
+  }
+  const due = stats.filter((s) => s.due);
+  if (due.length > 0) {
+    lines.push("", "Due for review:");
+    for (const s of due) {
+      const o = s.outcomes;
+      lines.push(`  ${s.check} (since ${s.review}): ${s.runs} runs, ${s.refused} refused${o ? `, ${o.changed} caught a change, ${o.same} landed unchanged (possibly false)` : ""}`);
+    }
+  }
+  const undated = stats.filter((s) => s.review === null);
+  if (undated.length > 0) lines.push("", `No review date (set check_reviews in canon/config.yaml): ${undated.map((s) => s.check).join(", ")}`);
+  return lines.join("\n");
+}

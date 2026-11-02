@@ -3,6 +3,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { BUILTIN_TYPES, RESERVED_DIRS, RESERVED_FIELDS, type DocType } from "../knowledge/types.ts";
+import { CHECKS } from "../stats/checks.ts";
 
 /**
  * `canon/config.yaml`: the project facts canon cannot infer and every extension point (D-2, D-3).
@@ -40,6 +41,8 @@ export interface Config {
   readonly types: readonly DocType[];
   /** Type name → template body from `canon/templates/<name>.md`. */
   readonly templates: Readonly<Record<string, string>>;
+  /** Check name → the date (YYYY-MM-DD) it is due for review (BR-2069). */
+  readonly checkReviews: Readonly<Record<string, string>>;
 }
 
 const HOUR = 3_600_000;
@@ -58,9 +61,10 @@ export const DEFAULT_CONFIG: Config = {
   worktrees: undefined,
   types: BUILTIN_TYPES,
   templates: {},
+  checkReviews: {},
 };
 
-const TOP_KEYS = new Set(["main", "floor", "tests", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees"]);
+const TOP_KEYS = new Set(["main", "floor", "tests", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews"]);
 const TYPE_KEYS = new Set(["prefix", "dir", "statuses", "default", "fields"]);
 const MOVED: Record<string, string> = { after_land: "hooks.after_land" };
 
@@ -112,6 +116,9 @@ export function readConfig(root: string): Result<Config> {
   const types = readTypes(c["types"]);
   if (!types.ok) return bad(types.error.message);
 
+  const reviews = readCheckReviews(c["check_reviews"]);
+  if (!reviews.ok) return bad(reviews.error.message);
+
   const commands = [floor, setup, review].map((r) => (r.ok ? r.value : undefined)).filter((x): x is string => x !== undefined);
   for (const cmd of [...commands, ...Object.values(hooks.value).flat()]) {
     const missing = missingScript(root, cmd);
@@ -141,7 +148,21 @@ export function readConfig(root: string): Result<Config> {
     worktrees: worktrees.ok ? worktrees.value : undefined,
     types: types.value,
     templates,
+    checkReviews: reviews.value,
   });
+}
+
+function readCheckReviews(v: unknown): Result<Record<string, string>> {
+  if (v === undefined || v === null) return ok({});
+  if (typeof v !== "object" || Array.isArray(v)) return err("invalid", "`check_reviews` must be a mapping of check name → date (YYYY-MM-DD)");
+  const out: Record<string, string> = {};
+  for (const [name, date] of Object.entries(v as Record<string, unknown>)) {
+    if (!CHECKS.includes(name)) return err("invalid", `\`check_reviews.${name}\`: no such check (checks: ${CHECKS.join(", ")})`);
+    const text = date instanceof Date ? date.toISOString().slice(0, 10) : date;
+    if (typeof text !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(text) || Number.isNaN(Date.parse(text))) return err("invalid", `\`check_reviews.${name}\` must be a date like 2027-02-01`);
+    out[name] = text;
+  }
+  return ok(out);
 }
 
 function readHooks(v: unknown): Result<Record<HookEvent, readonly string[]>> {

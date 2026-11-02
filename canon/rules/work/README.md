@@ -4,6 +4,7 @@ code:
   - src/coord
   - src/app
   - src/repo
+  - src/stats
 ---
 # 工作流（work）
 

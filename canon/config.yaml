@@ -12,3 +12,19 @@ review: "scripts/review-claude.sh"
 hooks:
   # 合入后在主 checkout 重新构建 dist/canon，让 PATH 上的 canon 和 main 一致
   after_land: "bun run build"
+# 每个检查的复审日期（BR-2069）：到期后 `canon stats` 把它列为待复审
+check_reviews:
+  on-main: "2027-02-03"
+  no-floor: "2027-02-03"
+  dirty: "2027-02-03"
+  no-claim: "2027-02-03"
+  timeout: "2027-02-03"
+  conflict: "2027-02-03"
+  floor: "2027-02-03"
+  check: "2027-02-03"
+  review: "2027-02-03"
+  hook: "2027-02-03"
+  main-moved: "2027-02-03"
+  main-dirty: "2027-02-03"
+  claim: "2027-02-03"
+  setup: "2027-02-03"
