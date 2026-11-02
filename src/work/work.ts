@@ -46,8 +46,14 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   if ("change" in target) {
     const corpus = onMain.value;
     const doc = findDoc(corpus, target.change);
-    if (!doc || doc.kind !== "change") return err("not_found", `${target.change} is not a change on ${main}; start a new one with --title`);
-    if (doc.status !== "open") return err("invalid", `${doc.id} is ${doc.status}`);
+    if (!doc || doc.kind !== "change") {
+      ws.db.event(ws.actor, "start.refuse", target.change, { reason: "not-found" });
+      return err("not_found", `${target.change} is not a change on ${main}; start a new one with --title`);
+    }
+    if (doc.status !== "open") {
+      ws.db.event(ws.actor, "start.refuse", doc.id, { reason: "not-open", status: doc.status });
+      return err("invalid", `${doc.id} is ${doc.status}`);
+    }
     changeId = doc.id;
     slug = slugify(doc.title);
   } else {
@@ -137,7 +143,7 @@ export interface LandOptions {
 
 export type LandOutcome =
   | { readonly kind: "landed"; readonly sha: string; readonly change: string | null; readonly finished: boolean }
-  | { readonly kind: "refused"; readonly reason: "dirty" | "conflict" | "floor" | "check" | "review" | "main-moved" | "no-floor" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
+  | { readonly kind: "refused"; readonly reason: "dirty" | "conflict" | "floor" | "check" | "review" | "main-moved" | "main-dirty" | "no-floor" | "no-claim" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
   | { readonly kind: "timeout"; readonly ahead: number };
 
 /**
@@ -163,7 +169,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   if (!clean.ok || !clean.value) return early("dirty", "the worktree has uncommitted changes; commit them first");
 
   if (opts.finish) {
-    if (!subject) return early("on-main", "--finish needs a claimed change; this worktree holds none");
+    if (!subject) return early("no-claim", "--finish needs a claimed change; this worktree holds none");
     const corpus = readCorpus(wt).corpus;
     const doc = findDoc(corpus, subject);
     if (doc?.kind === "change" && doc.status === "open") {
@@ -245,7 +251,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     }
   }
   const moved = moveMain(ws, base.value, head.value);
-  if (!moved.ok) return refuse("main-moved", moved.error.message);
+  if (moved !== "moved") return refuse(moved.reason, moved.message);
 
   finishEntry(ws.db, entry, "landed", head.value);
   ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: branch.value });
@@ -278,20 +284,20 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
  * Compare-and-swap of main from `expected` to `next`. When a worktree has main checked out, it is
  * fast-forwarded in place so its files stay in step; it must be clean, or the swap is refused.
  */
-function moveMain(ws: Workspace, expected: string, next: string): Result<void> {
+function moveMain(ws: Workspace, expected: string, next: string): "moved" | { reason: "main-moved" | "main-dirty"; message: string } {
   const main = ws.config.main;
   const wts = listWorktrees(ws.primary);
-  if (!wts.ok) return wts;
+  if (!wts.ok) return { reason: "main-moved", message: wts.error.message };
   const holder = wts.value.find((w) => w.branch === main);
   if (holder) {
-    if (holder.head !== expected) return err("conflict", `${main} moved to ${holder.head.slice(0, 9)} during the landing; land again`);
+    if (holder.head !== expected) return { reason: "main-moved", message: `${main} moved to ${holder.head.slice(0, 9)} during the landing; land again` };
     const clean = isClean(holder.path);
-    if (!clean.ok || !clean.value) return err("conflict", `${holder.path} has ${main} checked out with uncommitted changes; ${main} was not moved`);
+    if (!clean.ok || !clean.value) return { reason: "main-dirty", message: `${holder.path} has ${main} checked out with uncommitted changes; ${main} was not moved` };
     const ff = git(holder.path, "merge", "-q", "--ff-only", next);
-    return ff.ok ? ok(undefined) : ff;
+    return ff.ok ? "moved" : { reason: "main-moved", message: ff.error.message };
   }
   const r = git(ws.primary, "update-ref", `refs/heads/${main}`, next, expected);
-  return r.ok ? ok(undefined) : err("conflict", `${main} moved during the landing; land again (${r.error.message})`);
+  return r.ok ? "moved" : { reason: "main-moved", message: `${main} moved during the landing; land again (${r.error.message})` };
 }
 
 /** Records where the change stands so the next session can continue without a human re-briefing (P3). */

@@ -62,6 +62,22 @@ describe("canon check", () => {
     const findings = check({ root, ...readCorpus(root) });
     expect(findings.map((f) => f.rule)).toEqual(["file-invalid"]);
   });
+
+  test("BR-2006: a README without `code`, or with an empty list, is invalid; one code directory is enough", () => {
+    const root = repo({
+      "canon/rules/a/README.md": "---\ntitle: a\n---\n# a\n",
+      "canon/rules/b/README.md": "---\ncode: []\n---\n# b\n",
+      "canon/rules/c/README.md": "---\ncode: [src/auth]\n---\n# c\n",
+    });
+    const findings = check({ root, ...readCorpus(root), testFiles: [] });
+    expect(findings.map((f) => `${f.rule} ${f.path}`).sort()).toEqual(["file-invalid canon/rules/a/README.md", "file-invalid canon/rules/b/README.md"]);
+  });
+
+  test("BR-2004: a domain README naming an id that does not exist is reported on the README", () => {
+    const root = repo({ "canon/rules/billing/README.md": `${domainReadme}\nSee ${br(9999)}. Example only: \`${br(9998)}\`.\n` });
+    const findings = check({ root, ...readCorpus(root), testFiles: [] });
+    expect(findings.map((f) => `${f.rule} ${f.path} ${f.message}`)).toEqual([`ref-dangling canon/rules/billing/README.md names ${br(9999)}, which does not exist`]);
+  });
 });
 
 describe("rule shape", () => {
@@ -101,6 +117,19 @@ describe("rule shape", () => {
     });
     const got = check({ root, ...readCorpus(root) }).filter((f) => f.rule === "template-unfilled").map((f) => f.path.split("/").pop()).sort();
     expect(got).toEqual([`${br(1)}.md`, `${d(1)}.md`, "C-1.md", "README.md"].sort());
+  });
+
+  test("BR-2035: every placeholder form the built-in templates leave is reported; prose with angle brackets and code blocks are not", () => {
+    const filled = "## 为什么\n\nBecause.\n";
+    const root = repo({
+      "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **<术语>**：<在这个领域里的含义>\n",
+      "canon/changes/C-1.md": `---\nid: C-1\ntitle: Task left\n---\n${filled}\n## 任务\n\n- [ ] <任务>\n`,
+      [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: Option left\n---\n## 方案\n\n1. <方案一>：<采用或否决，以及理由>\n`,
+      "canon/changes/C-2.md": `---\nid: C-2\ntitle: Prose\n---\n${filled}\n金额 <100 元时免运费\n\n- [x] 写好了 <C-2> 的测试\n`,
+      "canon/changes/C-3.md": `---\nid: C-3\ntitle: Code block\n---\n${filled}\n\`\`\`\n<占位>\n- [ ] <任务>\n\`\`\`\n`,
+    });
+    const got = check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "template-unfilled").map((f) => f.path.split("/").pop()).sort();
+    expect(got).toEqual([`${d(1)}.md`, "C-1.md", "README.md"].sort());
   });
 });
 

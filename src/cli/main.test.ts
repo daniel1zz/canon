@@ -30,7 +30,7 @@ describe("exit codes", () => {
     expect(canon(root, "work", "start").code).toBe(2);
   });
 
-  test("BR-2001 BR-2037: a Chinese title gives a file and branch named by the id alone", () => {
+  test("BR-2001 BR-2012 BR-2037: a Chinese title gives a file and branch named by the id alone", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     const d = canon(root, "decision", "new", "--title", "知识以文件存放");
@@ -43,6 +43,28 @@ describe("exit codes", () => {
     expect(w.code).toBe(0);
     expect(w.out).toContain("(branch change/C-1)");
     expect(canon(root, "note", "new", "--title", "调研 API 方案").out.trim()).toBe("canon/notes/N-1.md");
+    expect(canon(root, "decision", "new", "--title", "Use files").out.trim()).toBe(`canon/decisions/${["D", 2].join("-")}-use-files.md`);
+  });
+
+  test("BR-2037: a rule created without a body holds the template, which canon check reports until it is filled", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    canon(root, "rule", "domain", "billing", "--code", "src/billing", "--description", "Money.");
+    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n");
+    canon(root, "rule", "new", "--domain", "billing", "--title", "Refunds", "--untested", "fixture");
+    const id = ["BR", 1].join("-");
+    const shown = canon(root, "show", id).out;
+    expect(shown).toContain("## 规则");
+    expect(shown).toContain("## 例子");
+    expect(canon(root, "check").out).toContain(`template-unfilled  canon/rules/billing/${id}.md`);
+  });
+
+  test("BR-2044: a --timeout that is not a positive number is a usage error and never enters the queue", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    const r = canon(root, "work", "land", "--timeout", "abc");
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("--timeout");
   });
 
   test("BR-2021: an agent session without a terminal cannot answer a human question", () => {
@@ -74,6 +96,13 @@ describe("project and documents", () => {
     expect(readFileSync(join(root, "canon/product.md"), "utf8")).toBe("mine");
   });
 
+  test("BR-2032: the product description init writes has the Chinese headings", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    const text = readFileSync(join(root, "canon/product.md"), "utf8");
+    for (const h of ["## 目的", "## 使用者", "## 承诺", "## 不做的事"]) expect(text).toContain(h);
+  });
+
   test("BR-2027: accepting a decision supersedes the one it replaces; a non-decision target is not found", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
@@ -85,6 +114,7 @@ describe("project and documents", () => {
     expect(list).toMatch(/D-2\s+accepted/);
     canon(root, "decision", "new", "--title", "Bad", "--supersedes", ["C", 9].join("-"));
     expect(canon(root, "decision", "accept", ["D", 3].join("-")).code).toBe(3);
+    expect(canon(root, "show", ["D", 3].join("-")).out).toContain("status: proposed"); // nothing was written
   });
 
   test("BR-2028 BR-2041: a retired rule keeps its file and leaves context; a dropped change keeps its file", () => {

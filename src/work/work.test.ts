@@ -79,7 +79,19 @@ describe("work start", () => {
     const s = startNew(root, "A");
     const other = takeClaim(ws(root, "agent:b").db, s.change, "/elsewhere", "agent:b");
     expect(other.ok).toBe(false);
-    if (!other.ok) expect(other.error.code).toBe("conflict");
+    if (!other.ok) {
+      expect(other.error.code).toBe("conflict");
+      expect(other.error.message).toContain(s.worktree); // names the holder
+    }
+  });
+
+  test("BR-2011: once the lease has expired another worktree can take the change over", () => {
+    const root = project();
+    const s = startNew(root, "A");
+    const db = ws(root, "agent:b").db;
+    db.db.query("UPDATE claims SET expires_at = ? WHERE subject = ?").run(new Date(Date.now() - 13 * 3600_000).toISOString(), s.change);
+    expect(takeClaim(db, s.change, "/elsewhere", "agent:b").ok).toBe(true);
+    expect(claims(db).map((c) => c.holder)).toEqual(["/elsewhere"]);
   });
 });
 
@@ -114,6 +126,40 @@ describe("rule review at land", () => {
     expect(prompt).toContain(`- ${id} [billing] Refunds`);
     expect(prompt).toContain("language the documents are written in");
     expect(sh(root, "rev-parse", "main")).toBe(before);
+  });
+
+  test("BR-2009: a reviewer that fails to run refuses the landing", async () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: "exit 3"\n`);
+    mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
+    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "domain");
+    const s = startNew(root, "New rule");
+    const id = ["BR", 1].join("-");
+    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds are fine.\n`);
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "rule");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(out.kind === "refused" && out.message).toContain("could not run");
+  });
+
+  test("BR-2010: changed rule text without a configured reviewer lands with a notice and a review.skip event", async () => {
+    const root = project();
+    mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
+    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "domain");
+    const s = startNew(root, "New rule");
+    const id = ["BR", 1].join("-");
+    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds are fine.\n`);
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "rule");
+    const lines: string[] = [];
+    expect((await land(ws(s.worktree), FAST, (l) => lines.push(l))).kind).toBe("landed");
+    expect(lines.join("\n")).toContain("review: not configured");
+    expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'review.skip'").get()?.n).toBe(1);
   });
 
   test("BR-2010: the reviewer is not asked when no rule or decision text changed", async () => {
@@ -167,6 +213,30 @@ describe("work land", () => {
     expect(sh(d.worktree, "status", "--porcelain")).toBe(""); // rebase was aborted, work intact
   });
 
+  test("BR-2017: main that moved while the floor ran stays where it was moved, and the landing is refused", async () => {
+    const root = project();
+    const s = startNew(root, "Racing");
+    writeFileSync(join(s.worktree, "canon/config.yaml"), `floor: "git -C ${root} commit -q --allow-empty -m moved-meanwhile"\ntests: []\n`);
+    sh(s.worktree, "commit", "-qam", "floor that moves main");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("main-moved");
+    expect(sh(root, "log", "-1", "--format=%s", "main")).toBe("moved-meanwhile");
+  });
+
+  test("BR-2039 BR-2026: a primary checkout with uncommitted changes on main keeps main still; the reason is main-dirty", async () => {
+    const root = project();
+    const before = sh(root, "rev-parse", "main");
+    const s = startNew(root, "Blocked by dirty main");
+    writeFileSync(join(s.worktree, "new.txt"), "x\n");
+    sh(s.worktree, "add", "new.txt");
+    sh(s.worktree, "commit", "-qm", "x");
+    writeFileSync(join(root, "app.txt"), "local edit\n");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("main-dirty");
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+    expect(readFileSync(join(root, "app.txt"), "utf8")).toBe("local edit\n");
+  });
+
   test("BR-2016: refuses when canon check finds a broken corpus", async () => {
     const root = project();
     const s = startNew(root, "Bad ref");
@@ -217,6 +287,21 @@ describe("boundaries record and clean up", () => {
     const reasons = events(root, "land.refuse").map((e) => JSON.parse(e.detail).reason);
     expect(reasons).toEqual(["dirty", "on-main"]);
     expect(events(root, "claim.refuse").map((e) => e.subject)).toEqual([s.change]);
+  });
+
+  test("BR-2026: starting a missing or closed change, and --finish without a claim, are recorded with their own reasons", async () => {
+    const root = project();
+    const s = startNew(root, "Closed");
+    expect((await land(ws(s.worktree), { ...FAST, finish: true }, quiet)).kind).toBe("landed");
+    expect(start(ws(root), { change: s.change }, quiet).ok).toBe(false);
+    expect(start(ws(root), { change: "C-99" }, quiet).ok).toBe(false);
+    expect(events(root, "start.refuse").map((e) => [e.subject, JSON.parse(e.detail).reason])).toEqual([
+      [s.change, "not-open"],
+      ["C-99", "not-found"],
+    ]);
+    sh(root, "worktree", "add", "-q", "-b", "loose", join(root, "..", `${root.split("/").pop()}-loose`), "main");
+    const loose = join(root, "..", `${root.split("/").pop()}-loose`);
+    expect(await land(ws(loose), { ...FAST, finish: true }, quiet)).toMatchObject({ kind: "refused", reason: "no-claim" });
   });
 
   test("BR-2043: a project without a floor cannot land anything", async () => {

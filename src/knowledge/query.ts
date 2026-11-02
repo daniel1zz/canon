@@ -19,15 +19,20 @@ export function search(corpus: Corpus, query: string, limit = 20): Hit[] {
     const title = doc.title.toLowerCase();
     const body = doc.body.toLowerCase();
     let score = 0;
-    if (exactId && doc.id === exactId) score += 100;
-    if (exactId && referencedIds(doc).has(exactId)) score += 10;
+    if (exactId) {
+      // An id matches whole ids only: BR-1 never matches BR-12 (BR-2008).
+      if (doc.id === exactId) score += 100;
+      if (referencedIds(doc).has(exactId) || new RegExp(`\\b${exactId}\\b`).test(doc.body)) score += 10;
+      if (score > 0) hits.push({ doc, score, line: bestLine(doc.body, [exactId.toLowerCase()]) });
+      continue;
+    }
     for (const t of terms) {
       if (doc.id.toLowerCase() === t) score += 100;
       if (title.includes(t)) score += 5;
       score += Math.min(count(body, t), 5);
     }
-    if (exactId === undefined && terms.length > 1 && !terms.every((t) => title.includes(t) || body.includes(t))) continue;
-    if (score > 0) hits.push({ doc, score, line: bestLine(doc.body, exactId ? [exactId.toLowerCase()] : terms) });
+    if (terms.length > 1 && !terms.every((t) => title.includes(t) || body.includes(t))) continue;
+    if (score > 0) hits.push({ doc, score, line: bestLine(doc.body, terms) });
   }
   return hits.sort((a, b) => b.score - a.score || a.doc.id.localeCompare(b.doc.id)).slice(0, limit);
 }

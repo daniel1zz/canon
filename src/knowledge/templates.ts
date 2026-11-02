@@ -9,10 +9,23 @@ export const RULE_SECTION = "## 规则";
 export const EXAMPLE_SECTION = "## 例子";
 
 /**
- * A line that is still a template placeholder: `<...>` alone on a line, or a list item made only of
- * placeholders such as `- <输入> → <结果>`. Placeholders inside backticks are code, not placeholders.
+ * A line that is still a template placeholder (BR-2035): once the list marker (`-`, `1.`, `- [ ]`), bold
+ * markers and separators (`→`, `：`, `:`) are removed, nothing is left but `<...>` fragments. A line with any
+ * other text (`金额 <100 元时免运费`) or a fragment in backticks is prose or code, not a placeholder.
  */
-export const PLACEHOLDER_LINE = /^\s*(?:-\s*)?<[^<>`\n]+>(?:\s*→\s*<[^<>`\n]+>)?\s*$/m;
+export function isPlaceholderLine(line: string): boolean {
+  const rest = line
+    .replace(/^\s*(?:(?:[-*]|\d+\.)\s+(?:\[[ xX]\]\s+)?)?/, "")
+    .replace(/\*\*/g, "")
+    .replace(/[→：:]/g, " ")
+    .trim();
+  return /^(?:<[^<>`\n]+>\s*)+$/.test(rest);
+}
+
+/** Whether any line outside fenced code blocks is a placeholder line. */
+export function hasPlaceholderLine(markdown: string): boolean {
+  return markdown.replace(/```[\s\S]*?```/g, "").split("\n").some(isPlaceholderLine);
+}
 
 export function templateFor(kind: Kind): string {
   switch (kind) {

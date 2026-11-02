@@ -2,7 +2,7 @@ import { readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { ID_PATTERN, stripCode, type Corpus, type Rule } from "../knowledge/model.ts";
 import type { FileProblem } from "../knowledge/read.ts";
-import { EXAMPLE_SECTION, PLACEHOLDER_LINE, RULE_SECTION, section } from "../knowledge/templates.ts";
+import { EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, RULE_SECTION, section } from "../knowledge/templates.ts";
 
 /**
  * `canon check`: the corpus-integrity half of the landing boundary (design §3). It checks outcomes only:
@@ -47,6 +47,11 @@ export function check(input: CheckInput): Finding[] {
       if (ref !== d.id && !byId.has(ref)) findings.push({ path: d.path, rule: "ref-dangling", message: `names ${ref}, which does not exist` });
     }
   }
+  for (const dom of input.corpus.domains) {
+    for (const ref of idsIn(stripCode(dom.body))) {
+      if (!byId.has(ref)) findings.push({ path: dom.path, rule: "ref-dangling", message: `names ${ref}, which does not exist` });
+    }
+  }
 
   const rules = new Map<string, Rule>();
   for (const d of input.corpus.docs) if (d.kind === "rule") rules.set(d.id, d);
@@ -74,7 +79,7 @@ export function check(input: CheckInput): Finding[] {
 /** Rule shape (BR-2033, BR-2034) and unfilled templates (BR-2035): outcomes of the document, checked at land. */
 function structureFindings(corpus: Corpus): Finding[] {
   const out: Finding[] = [];
-  const unfilled = (text: string) => PLACEHOLDER_LINE.test(text.replace(/```[\s\S]*?```/g, ""));
+  const unfilled = hasPlaceholderLine;
   for (const d of corpus.docs) {
     if ((d.kind === "rule" || d.kind === "decision" || d.kind === "change") && unfilled(d.body)) {
       out.push({ path: d.path, rule: "template-unfilled", message: `${d.id} still contains a template placeholder line` });
@@ -85,7 +90,7 @@ function structureFindings(corpus: Corpus): Finding[] {
       out.push({ path: d.path, rule: "rule-no-statement", message: `${d.id} has no "${RULE_SECTION}" section with the statement` });
     }
     if (d.untested !== undefined) continue;
-    const examples = (section(d.body, EXAMPLE_SECTION) ?? "").split("\n").filter((l) => l.trim() !== "" && !PLACEHOLDER_LINE.test(l));
+    const examples = (section(d.body, EXAMPLE_SECTION) ?? "").split("\n").filter((l) => l.trim() !== "" && !isPlaceholderLine(l));
     if (examples.length === 0) out.push({ path: d.path, rule: "rule-no-example", message: `${d.id} has no example under "${EXAMPLE_SECTION}"` });
   }
   for (const dom of corpus.domains) {

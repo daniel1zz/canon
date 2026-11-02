@@ -56,6 +56,17 @@ describe("search", () => {
     expect(hits).not.toContain(id("BR", 3));
   });
 
+  test("BR-2008: an id matches whole ids only, so BR-1 does not find a note that names only BR-12", () => {
+    const { corpus } = corpusOf({ ...files, [`canon/notes/${id("N", 1)}-a.md`]: `---\nid: ${id("N", 1)}\ntitle: A\n---\nAbout ${id("BR", 12)} only.\n` });
+    expect(search(corpus, id("BR", 1)).map((h) => h.doc.id)).not.toContain(id("N", 1));
+    expect(search(corpus, id("BR", 12)).map((h) => h.doc.id)).toEqual([id("N", 1)]);
+  });
+
+  test("BR-2008: a Chinese word finds the Chinese documents that contain it", () => {
+    const { corpus } = corpusOf({ ...files, [`canon/notes/${id("N", 1)}-a.md`]: `---\nid: ${id("N", 1)}\ntitle: 复盘\n---\n合入排队太久。\n` });
+    expect(search(corpus, "合入").map((h) => h.doc.id)).toEqual([id("N", 1)]);
+  });
+
   test("BR-2008: several words must all appear", () => {
     const { corpus } = corpusOf(files);
     expect(search(corpus, "sessions hours").map((h) => h.doc.id)).toEqual([id("BR", 3)]);

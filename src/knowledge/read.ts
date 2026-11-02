@@ -47,7 +47,7 @@ export function readCorpus(root: string): ReadResult {
       else {
         const code = parsed.value.meta["code"];
         const codeList = Array.isArray(code) ? code.filter((c): c is string => typeof c === "string") : [];
-        if (!Array.isArray(code)) problems.push({ path: rel(readme), message: "front matter `code` must list the code directories this domain governs" });
+        if (!Array.isArray(code) || codeList.length === 0) problems.push({ path: rel(readme), message: "front matter `code` must list at least one code directory this domain governs" });
         domains.push({ name: domain, path: rel(readme), code: codeList, body: parsed.value.body });
       }
     }

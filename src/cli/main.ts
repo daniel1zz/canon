@@ -7,7 +7,7 @@ import { check } from "../check/check.ts";
 import { testFilesFor } from "../check/tests.ts";
 import { activeQueue, answer, ask, claimOfWorktree, claims, handoffs, questions } from "../coord/state.ts";
 import type { CanonError, Result } from "../kernel/result.ts";
-import type { Kind } from "../knowledge/model.ts";
+import type { Doc, Kind } from "../knowledge/model.ts";
 import { contextFor, findDoc, rawText, renderContext, search } from "../knowledge/query.ts";
 import { readCorpus } from "../knowledge/read.ts";
 import { createDoc, createDomain, setMeta } from "../knowledge/write.ts";
@@ -17,7 +17,7 @@ import { clean, land, start, stop } from "../work/work.ts";
 /**
  * Exit codes — one meaning each, so an agent can branch on them:
  *   0 ok · 1 refused by an outcome check (floor, canon check, conflict on land) · 2 usage / invalid input
- *   3 not found · 5 held by someone else or moved underneath (re-read, retry) · 75 queue timeout (retry later)
+ *   3 not found · 5 conflict: claimed by another worktree, already answered, already exists · 75 queue timeout (retry later)
  */
 const EXIT = { ok: 0, refused: 1, usage: 2, notFound: 3, conflict: 5, timeout: 75 } as const;
 
@@ -81,11 +81,13 @@ function listCommand(kind: Kind, describe: string) {
   });
 }
 
-function setStatus(id: string, kind: Kind, status: string) {
+/** Sets a document's status. `validate` runs before anything is written, so a refused change leaves no trace. */
+function setStatus(id: string, kind: Kind, status: string, validate?: (corpus: ReturnType<typeof readCorpus>["corpus"], doc: Doc) => void) {
   const ws = workspace();
   const { corpus } = readCorpus(ws.root);
   const doc = findDoc(corpus, id);
   if (!doc || doc.kind !== kind) fail({ code: "not_found", message: `${id} is not a ${kind}` });
+  validate?.(corpus, doc);
   must(setMeta(ws.root, doc, { status }));
   ws.db.event(ws.actor, `${kind}.status`, doc.id, { status });
   say(`${doc.id} → ${status} (${doc.path}; commit it with your change)`);
@@ -136,10 +138,15 @@ const decision = defineCommand({
       meta: { description: "Accept a decision; a decision it supersedes becomes superseded" },
       args: { id: { type: "positional", required: true } },
       run({ args }) {
-        const { ws, corpus, doc } = setStatus(String(args.id), "decision", "accepted");
-        if (doc.kind === "decision" && doc.supersedes) {
+        const superseded = (corpus: ReturnType<typeof readCorpus>["corpus"], doc: Doc) => {
+          if (doc.kind !== "decision" || !doc.supersedes) return undefined;
           const old = findDoc(corpus, doc.supersedes);
           if (!old || old.kind !== "decision") fail({ code: "not_found", message: `${doc.id} supersedes ${doc.supersedes}, which is not a decision` });
+          return old;
+        };
+        const { ws, corpus, doc } = setStatus(String(args.id), "decision", "accepted", (c, d) => void superseded(c, d));
+        const old = superseded(corpus, doc);
+        if (old) {
           must(setMeta(ws.root, old, { status: "superseded" }));
           say(`${old.id} → superseded`);
         }
@@ -232,8 +239,10 @@ const work = defineCommand({
       meta: { description: "Land this worktree's branch on main: queue → rebase → floor → canon check → main" },
       args: { finish: { type: "boolean", description: "Also close the change and release it" }, timeout: { type: "string", default: "60", description: "Minutes to wait in the queue" } },
       async run({ args }) {
+        const minutes = Number(args.timeout);
+        if (!Number.isFinite(minutes) || minutes <= 0) fail({ code: "invalid", message: `--timeout must be a positive number of minutes, got ${JSON.stringify(args.timeout)}` });
         const ws = workspace();
-        const out = await land(ws, { finish: Boolean(args.finish), timeoutMs: Number(args.timeout) * 60_000 }, say);
+        const out = await land(ws, { finish: Boolean(args.finish), timeoutMs: minutes * 60_000 }, say);
         if (out.kind === "landed") return;
         if (out.kind === "timeout") {
           console.error(`canon: still ${out.ahead} landing(s) ahead after ${args.timeout} min; run again`);
@@ -241,7 +250,7 @@ const work = defineCommand({
         }
         console.error(`canon: land refused (${out.reason}): ${out.message}`);
         for (const f of out.findings ?? []) console.error(`  ${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
-        process.exit(out.reason === "dirty" || out.reason === "on-main" || out.reason === "no-floor" ? EXIT.usage : EXIT.refused);
+        process.exit(out.reason === "dirty" || out.reason === "on-main" || out.reason === "no-floor" || out.reason === "no-claim" ? EXIT.usage : EXIT.refused);
       },
     }),
     stop: defineCommand({
@@ -326,7 +335,7 @@ const init = defineCommand({
   run({ args }) {
     const root = must(git(process.cwd(), "rev-parse", "--show-toplevel"));
     const files: Record<string, string> = {
-      "canon/product.md": "---\ntitle: Product\n---\n# Product\n\n## Purpose\n\n## Users\n\n## Promises\n\n## Non-goals\n",
+      "canon/product.md": "---\ntitle: 产品\n---\n# 产品\n\n## 目的\n\n## 使用者\n\n## 承诺\n\n## 不做的事\n",
       "canon/config.yaml": `main: main\nfloor: ${JSON.stringify(args.floor ?? "")}\n`,
     };
     for (const [p, text] of Object.entries(files)) {
