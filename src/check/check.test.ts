@@ -20,7 +20,7 @@ function repo(files: Record<string, string>): string {
 }
 
 const domainReadme = "---\ncode: [src/billing]\n---\n# Billing\n";
-const ruleFile = (n: number, extra = "") => `---\nid: ${br(n)}\ntitle: Rule ${n}\n${extra}---\nStatement ${n}.\n`;
+const ruleFile = (n: number, extra = "") => `---\nid: ${br(n)}\ntitle: Rule ${n}\n${extra}---\n## 规则\n\nStatement ${n}.\n\n## 例子\n\n- day 30 → refunded\n`;
 
 describe("canon check", () => {
   test("BR-2004 BR-2005: a clean corpus whose rules are all tested has no findings", () => {
@@ -34,7 +34,7 @@ describe("canon check", () => {
     expect(check({ root, ...r })).toEqual([]);
   });
 
-  test("BR-2001 BR-2004 BR-2005: reports each outcome violation by its rule name", () => {
+  test("BR-2001 BR-2004 BR-2005 BR-2042: reports each outcome violation by its rule name", () => {
     const root = repo({
       "canon/rules/billing/README.md": domainReadme,
       [`canon/rules/billing/${br(1)}.md`]: ruleFile(1),
@@ -61,6 +61,45 @@ describe("canon check", () => {
     const root = repo({ [`canon/rules/auth/${br(1)}.md`]: ruleFile(1, "untested: n/a\n") });
     const findings = check({ root, ...readCorpus(root) });
     expect(findings.map((f) => f.rule)).toEqual(["file-invalid"]);
+  });
+});
+
+describe("rule shape", () => {
+  const readme = { "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n" };
+  const fileOf = (n: number, body: string, extra = "") => ({ [`canon/rules/billing/${br(n)}.md`]: `---\nid: ${br(n)}\ntitle: R${n}\n${extra}---\n${body}` });
+  const run = (files: Record<string, string>) => {
+    const ids = Object.keys(files).map((p) => p.split("/").pop()!.replace(/\.md$/, ""));
+    const root = repo({ ...readme, ...files, "src/billing/a.test.ts": `it("${ids.join(" ")}", () => {});` });
+    return check({ root, ...readCorpus(root) }).map((f) => `${f.rule} ${f.path.split("/").pop()}`).sort();
+  };
+
+  test("BR-2033: an active rule without a non-empty statement section is reported", () => {
+    expect(run({ ...fileOf(1, "Just text.\n\n## 例子\n\n- a → b\n"), ...fileOf(2, "## 规则\n\n\n## 例子\n\n- a → b\n") })).toEqual([
+      `rule-no-statement ${br(1)}.md`,
+      `rule-no-statement ${br(2)}.md`,
+    ]);
+  });
+
+  test("BR-2034: a tested active rule needs a real example; an untested or retired one does not", () => {
+    expect(
+      run({
+        ...fileOf(1, "## 规则\n\nS.\n"),
+        ...fileOf(2, "## 规则\n\nS.\n\n## 例子\n\n"),
+        ...fileOf(3, "## 规则\n\nS.\n", "untested: provider contract\n"),
+        ...fileOf(4, "## 规则\n\nS.\n", "status: retired\n"),
+      }),
+    ).toEqual([`rule-no-example ${br(1)}.md`, `rule-no-example ${br(2)}.md`, "test-retired-rule a.test.ts"]);
+  });
+
+  test("BR-2035: a placeholder line left from a template is reported, but not one written as code", () => {
+    const root = repo({
+      "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\n<这个领域管什么、不管什么。>\n",
+      ...fileOf(1, "## 规则\n\nS.\n\n## 例子\n\n- <边界上的具体输入或状态> → <必须出现的结果>\n- `canon work start <C-n>` → starts\n"),
+      [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: X\n---\n## 背景\n\n<为什么需要做这个决定，有哪些事实和数据。>\n\n\`\`\`\n<kept as code>\n\`\`\`\n`,
+      "src/billing/a.test.ts": `it("${br(1)}", () => {});`,
+    });
+    const got = check({ root, ...readCorpus(root) }).filter((f) => f.rule === "template-unfilled").map((f) => f.path.split("/").pop()).sort();
+    expect(got).toEqual([`${br(1)}.md`, `${d(1)}.md`, "README.md"].sort());
   });
 });
 

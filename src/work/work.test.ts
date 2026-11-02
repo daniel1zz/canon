@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openWorkspace, type Workspace } from "../app/workspace.ts";
-import { claims, takeClaim } from "../coord/state.ts";
+import { claims, enqueue, takeClaim, tryTurn } from "../coord/state.ts";
 import { readCorpus } from "../knowledge/read.ts";
 import { git } from "../repo/git.ts";
 import { clean, land, start, stop } from "./work.ts";
@@ -54,7 +54,7 @@ describe("work start", () => {
     expect(claims(ws(root).db).map((c) => [c.subject, c.holder])).toEqual([["C-1", s.worktree]]);
   });
 
-  test("BR-2012: an open change on main is started even when the primary checkout has another branch out", async () => {
+  test("BR-2038: an open change on main is started even when the primary checkout has another branch out", async () => {
     const root = project();
     const s = startNew(root, "Planned");
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
@@ -92,18 +92,21 @@ describe("rule review at land", () => {
     return { root, promptFile };
   }
 
-  test("BR-2009: a block verdict on changed rule text refuses the landing; the reviewer saw the whole domain", async () => {
+  test("BR-2009 BR-2036: a block verdict on changed rule text refuses the landing; the reviewer saw the whole domain and the index of every rule", async () => {
     const { root, promptFile } = reviewedProject("block");
     const before = sh(root, "rev-parse", "main");
     const s = startNew(root, "New rule");
     const id = ["BR", 1].join("-");
-    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\nRefunds are fine.\n`);
+    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds are fine.\n`);
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "rule");
     const out = await land(ws(s.worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("review");
     expect(out.kind === "refused" && out.message).toContain("is vague");
-    expect(readFileSync(promptFile, "utf8")).toContain("# Domain: billing");
+    const prompt = readFileSync(promptFile, "utf8");
+    expect(prompt).toContain("# Domain: billing");
+    expect(prompt).toContain(`- ${id} [billing] Refunds`);
+    expect(prompt).toContain("language the documents are written in");
     expect(sh(root, "rev-parse", "main")).toBe(before);
   });
 
@@ -118,7 +121,7 @@ describe("rule review at land", () => {
 });
 
 describe("work land", () => {
-  test("BR-2017: lands a committed branch: main moves and the primary checkout's files follow", async () => {
+  test("BR-2017 BR-2039: lands a committed branch: main moves and the primary checkout's files follow", async () => {
     const root = project();
     const s = startNew(root, "Add four");
     writeFileSync(join(s.worktree, "app.txt"), "one\ntwo\nthree\nfour\n");
@@ -208,6 +211,29 @@ describe("boundaries record and clean up", () => {
     const reasons = events(root, "land.refuse").map((e) => JSON.parse(e.detail).reason);
     expect(reasons).toEqual(["dirty", "on-main"]);
     expect(events(root, "claim.refuse").map((e) => e.subject)).toEqual([s.change]);
+  });
+
+  test("BR-2043: a project without a floor cannot land anything", async () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), "tests: []\n");
+    sh(root, "commit", "-qam", "no floor");
+    const s = startNew(root, "No floor");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("no-floor");
+  });
+
+  test("BR-2044: a lander that waits past its timeout gives up and records it", async () => {
+    const root = project();
+    const s = startNew(root, "Waiting");
+    writeFileSync(join(s.worktree, "w.txt"), "w\n");
+    sh(s.worktree, "add", "w.txt");
+    sh(s.worktree, "commit", "-qm", "w");
+    const other = ws(root);
+    const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
+    expect(tryTurn(other.db, ahead).mine).toBe(true); // someone else is landing right now
+    const out = await land(ws(s.worktree), { finish: false, timeoutMs: 0 }, quiet);
+    expect(out).toEqual({ kind: "timeout", ahead: 1 });
+    expect(events(root, "land.refuse").map((e) => JSON.parse(e.detail).reason)).toEqual(["timeout"]);
   });
 
   test("BR-2031: landing from main is refused", async () => {

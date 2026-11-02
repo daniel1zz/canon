@@ -5,6 +5,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { parseDocFile, renderDocFile } from "./docfile.ts";
 import { ID_PREFIX, slugify, type Corpus, type Doc, type Kind } from "./model.ts";
 import { CANON_DIR } from "./read.ts";
+import { domainReadme, templateFor } from "./templates.ts";
 
 /**
  * Creating documents is the only write canon performs on knowledge files: it allocates the id and lays
@@ -76,7 +77,7 @@ export function createDomain(root: string, name: string, code: readonly string[]
   const full = join(root, path);
   if (existsSync(full)) return err("conflict", `domain ${name} already exists`);
   mkdirSync(dirname(full), { recursive: true });
-  writeFileSync(full, renderDocFile({ code: [...code] }, `# ${name}\n\n${description || "Scope of this domain."}\n\n## Terms\n`));
+  writeFileSync(full, renderDocFile({ code: [...code] }, domainReadme(name, description)));
   return ok(path);
 }
 
@@ -90,14 +91,5 @@ export function setMeta(root: string, doc: Doc, patch: Record<string, unknown>):
 }
 
 function defaultBody(kind: Kind): string {
-  switch (kind) {
-    case "rule":
-      return "<The rule, stated so a test can decide it. Examples if the boundary is not obvious.>";
-    case "decision":
-      return "## Context\n\n## Options\n\n## Decision\n\n## Consequences\n";
-    case "change":
-      return "## Why\n\n## What changes\n\n## Tasks\n\n- [ ] \n";
-    case "note":
-      return "";
-  }
+  return templateFor(kind);
 }

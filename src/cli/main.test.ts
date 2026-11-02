@@ -30,13 +30,13 @@ describe("exit codes", () => {
     expect(canon(root, "work", "start").code).toBe(2);
   });
 
-  test("BR-2001: a Chinese title gives a file and branch named by the id alone", () => {
+  test("BR-2001 BR-2037: a Chinese title gives a file and branch named by the id alone", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     const d = canon(root, "decision", "new", "--title", "知识以文件存放");
     expect(d.code).toBe(0);
     expect(d.out.trim()).toMatch(/^canon\/decisions\/D-1\.md$/);
-    expect(canon(root, "check").code).toBe(0);
+    expect(canon(root, "show", ["D", 1].join("-")).out).toContain("## 背景"); // BR-2037: Chinese template
     Bun.spawnSync(["git", "add", "-A"], { cwd: root });
     Bun.spawnSync(["git", "commit", "-qm", "init"], { cwd: root });
     const w = canon(root, "work", "start", "--title", "中文变更");
@@ -87,7 +87,7 @@ describe("project and documents", () => {
     expect(canon(root, "decision", "accept", ["D", 3].join("-")).code).toBe(3);
   });
 
-  test("BR-2028: a retired rule keeps its file and leaves context; a dropped change keeps its file", () => {
+  test("BR-2028 BR-2041: a retired rule keeps its file and leaves context; a dropped change keeps its file", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     canon(root, "rule", "domain", "billing", "--code", "src/billing");

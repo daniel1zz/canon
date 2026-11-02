@@ -15,8 +15,9 @@ export interface ReviewVerdict {
 export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc[]): string {
   const parts: string[] = [
     "You review changes to a project's rules and decisions. Rules are the current truth of what the product must do; decisions record why.",
-    "Block only for: a rule that contradicts another active rule or an accepted decision; a rule a test cannot decide (vague, no boundary); a decision without the options it rejected.",
-    "Do not block for wording, style or formatting.",
+    "Block only for: a rule that contradicts another active rule (in any domain: see the rule index) or an accepted decision; a rule a test cannot decide (vague, no boundary, examples that do not pin the boundary); a decision without the options it rejected.",
+    "Do not block for wording, style or formatting. When one rule bundles several behaviours that could be tested independently, say so in a finding but do not block for it.",
+    "Write the findings in the language the documents are written in.",
     'Answer with JSON only: {"verdict":"ok"|"block","findings":["<one sentence each, naming the id>"]}',
     "",
     "# Changed documents (new text)",
@@ -29,6 +30,8 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
     seen.add(target);
     parts.push(`# Current context for ${target}\n\n${renderContext(root, contextFor(corpus, target))}`);
   }
+  const index = corpus.docs.filter((d) => d.kind === "rule" && d.status === "active");
+  parts.push(`# Rule index (every active rule, all domains)\n\n${index.map((r) => `- ${r.id} [${r.kind === "rule" ? r.domain : ""}] ${r.title}`).join("\n")}`);
   const accepted = corpus.docs.filter((d) => d.kind === "decision" && d.status === "accepted");
   if (accepted.length) parts.push(`# Accepted decisions\n\n${accepted.map((d) => `- ${d.id} ${d.title}`).join("\n")}`);
   return parts.join("\n");

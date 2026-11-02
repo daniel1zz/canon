@@ -23,7 +23,7 @@ describe("landing queue", () => {
     expect(tryTurn(d, b)).toEqual({ mine: true, ahead: 0 });
   });
 
-  test("BR-2020: a lander that stopped heart-beating is skipped", () => {
+  test("BR-2044: a lander that stopped heart-beating is skipped", () => {
     const d = db();
     const a = enqueue(d, "/wt/a", "C-1", "x");
     const b = enqueue(d, "/wt/b", "C-2", "x");
@@ -34,7 +34,7 @@ describe("landing queue", () => {
 });
 
 describe("human questions", () => {
-  test("BR-2021: a question is answered once and the answer records who gave it", () => {
+  test("BR-2040: a question is answered once and the answer records who gave it", () => {
     const d = db();
     const q = ask(d, "agent:a", "C-1", "Ship on Friday?", ["yes", "no"]);
     expect(questions(d, "pending").map((x) => x.id)).toEqual([q]);
