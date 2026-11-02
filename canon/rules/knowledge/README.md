@@ -3,10 +3,11 @@ code:
   - src/knowledge
   - src/check
   - src/review
+  - scripts
 ---
 # 知识（knowledge）
 
-`canon/` 下长期保存的文档，以及让它们保持真实的检查：文件格式、编号分配、搜索、上下文、`canon check`，和对规则、决策文字的 AI 评审。
+`canon/` 下长期保存的文档，以及让它们保持真实的检查：文件格式、编号分配、搜索、上下文、`canon check`，对规则、决策文字的 AI 评审，以及合入后的代码评审脚本（`scripts/code-review.ts`，默认不开启）。
 
 ## 术语
 
