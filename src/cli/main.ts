@@ -13,7 +13,8 @@ import { readCorpus } from "../knowledge/read.ts";
 import { createDoc, createDomain, setMeta } from "../knowledge/write.ts";
 import { git } from "../repo/git.ts";
 import { overlapsOf } from "../work/overlap.ts";
-import { clean, land, start, stop } from "../work/work.ts";
+import { drop } from "../work/drop.ts";
+import { clean, land, mainCorpus, start, stop } from "../work/work.ts";
 
 /**
  * Exit codes — one meaning each, so an agent can branch on them:
@@ -314,6 +315,28 @@ const work = defineCommand({
         say("Handoffs:");
         for (const h of data.handoffs) say(`  ${h.subject.padEnd(8)} next: ${h.next}  (${h.actor}, ${h.updated_at})`);
         say(`Questions waiting for a human: ${data.questions.length}`);
+      },
+    }),
+    drop: defineCommand({
+      meta: { description: "Drop a change's worktree, branch and claim; asks a human first when that would lose work" },
+      args: { change: { type: "positional", required: true } },
+      run({ args }) {
+        const ws = workspace();
+        const out = must(drop(ws, String(args.change), say));
+        if (out.kind === "dropped") {
+          const onMain = mainCorpus(ws);
+          const doc = onMain.ok ? findDoc(onMain.value, String(args.change)) : undefined;
+          if (doc?.kind === "change" && doc.status === "open") say(`${doc.id} is still open on ${ws.config.main}; mark it with \`canon change drop ${doc.id}\` in a change if the work will not happen`);
+          return;
+        }
+        if (out.kind === "asked") {
+          console.error(`canon: dropping ${String(args.change).toUpperCase()} would lose:\n${out.losses.map((l) => `  - ${l}`).join("\n")}\nNothing was deleted. Question #${out.question} asks a human; run this again after \`canon human answer ${out.question} yes\`.`);
+        } else if (out.kind === "waiting") {
+          console.error(`canon: question #${out.question} is not answered yet; nothing was deleted`);
+        } else {
+          console.error(`canon: question #${out.question} was answered "${out.answer}"; nothing was deleted`);
+        }
+        process.exit(EXIT.refused);
       },
     }),
     clean: defineCommand({

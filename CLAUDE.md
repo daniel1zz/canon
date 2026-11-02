@@ -17,6 +17,7 @@ canon work start <C-n>            # 开始一个已有的变更；或 --title "<
   ...先写清变更文件的“为什么”和“要改什么”，再改代码和规则，提交...
 canon work land [--finish]        # 排队 → rebase → floor → canon check → 规则评审 → main
 canon work stop --next "<下一步>"  # 没做完就停下时
+canon work drop <C-n>             # 放弃一个变更的 worktree 和分支；会丢工作时先问人
 canon human ask "<问题>"          # 只用于方向，或明确留给人的决定
 ```
 
@@ -26,6 +27,7 @@ canon human ask "<问题>"          # 只用于方向，或明确留给人的决
 - 有真实备选方案的重要选择，写一个决策：`canon decision new --title "..."`。
 - `canon/` 下的文档一律用中文；代码、注释和测试名用英文。
 - 写在反引号里的编号是举例，不算引用。
+- 要删除带未合入提交或未提交改动的 worktree、删除未合入的变更分支，用 `canon work drop`，不要直接用 git：它会列出会丢的东西、问人，人同意后再执行，每一步都记进事件表。
 - 合入是唯一的关卡。被拒绝时，提示会写明要修什么；修好后重新合入。
 - 现在不修的问题，提成 GitHub issue（`gh issue create`）：一个根因一个 issue，附上能复现的命令，以及期望结果和实际结果。
 - 退出码：0 成功 · 1 被检查拒绝 · 2 用法错误 · 3 找不到 · 5 冲突（被别人认领、已回答、已存在）· 75 排队超时（完整定义见 BR-2022）。

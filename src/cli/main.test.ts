@@ -188,3 +188,18 @@ describe("overlap in brief", () => {
     expect(canon(b, "brief").out).toContain("Overlap: C-1 also changes shared.txt");
   });
 });
+
+describe("dropping from the command line", () => {
+  test("BR-2065 BR-2022: drop that would lose work exits 1 and names the question; nothing is deleted", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    committed(root);
+    const wt = canon(root, "work", "start", "--title", "Risky").out.match(/cd (.+)/)![1]!.trim();
+    writeFileSync(join(wt, "wip.txt"), "wip");
+    const r = canon(root, "work", "drop", "C-1");
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("uncommitted: ?? wip.txt");
+    expect(r.err).toContain("canon human answer 1 yes");
+    expect(Bun.spawnSync(["test", "-d", wt]).exitCode).toBe(0);
+  });
+});
