@@ -56,7 +56,7 @@ describe("search", () => {
     expect(hits).not.toContain(id("BR", 3));
   });
 
-  test("BR-2008: an id matches whole ids only, so BR-1 does not find a note that names only BR-12", () => {
+  test("BR-2008: an id matches whole ids only, so a short id does not find a note that names only a longer one", () => {
     const { corpus } = corpusOf({ ...files, [`canon/notes/${id("N", 1)}-a.md`]: `---\nid: ${id("N", 1)}\ntitle: A\n---\nAbout ${id("BR", 12)} only.\n` });
     expect(search(corpus, id("BR", 1)).map((h) => h.doc.id)).not.toContain(id("N", 1));
     expect(search(corpus, id("BR", 12)).map((h) => h.doc.id)).toEqual([id("N", 1)]);
