@@ -1,0 +1,9 @@
+main: main
+# Must exit 0 on the exact tree that becomes main.
+floor: "bun install --frozen-lockfile && bunx tsc --noEmit -p tsconfig.json && bun test"
+# Test files scanned for rule ids.
+tests:
+  - "src/**/*.test.ts"
+setup: "bun install"
+# Reviewer for rule and decision text: prompt on stdin, JSON verdict on stdout.
+review: "scripts/review-claude.sh"

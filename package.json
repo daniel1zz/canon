@@ -1,0 +1,22 @@
+{
+  "name": "lore",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "lore": "dist/lore"
+  },
+  "scripts": {
+    "test": "bun test",
+    "typecheck": "tsc --noEmit -p tsconfig.json",
+    "build": "bun build --compile src/cli/main.ts --outfile dist/lore"
+  },
+  "dependencies": {
+    "citty": "^0.1.6",
+    "yaml": "^2.7.1"
+  },
+  "devDependencies": {
+    "bun-types": "^1.3.14",
+    "typescript": "^5.8.3"
+  }
+}
