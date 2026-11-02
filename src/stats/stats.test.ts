@@ -31,6 +31,10 @@ describe("canon stats", () => {
     expect([of(s, "floor").runs, of(s, "floor").refused]).toEqual([5, 1]);
     expect([of(s, "check").runs, of(s, "check").refused]).toEqual([4, 1]);
     expect(of(s, "review").runs).toBe(3);
+    d.event("agent:a", "land.refuse", "C-6", { reason: "dirty" });
+    d.event("agent:a", "land.refuse", "C-7", { reason: "on-main" });
+    const early = computeStats(d, {}, "2026-11-03");
+    expect([of(early, "dirty").runs, of(early, "on-main").runs, of(early, "dirty").refused]).toEqual([7, 7, 1]); // one stage, same runs
   });
 
   test("BR-2067: claim counts takes, renewals and refusals; setup counts starts that ran it and its failures", () => {

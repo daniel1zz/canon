@@ -133,7 +133,7 @@ describe("post-land code review", () => {
   });
 
   test("BR-2072: a new root cause becomes one labelled issue; several findings with that root cause share it", () => {
-    const t = setup({ findings: [finding(), finding({ line: 2, scenario: "a retry interleaves with a landing → lost update" })] });
+    const t = setup({ findings: [finding(), finding({ line: 2, root_cause: "tryTurn  Reads and writes the queue in two statements", scenario: "a retry interleaves with a landing → lost update" })] });
     const r = codeReview(t.env);
     expect(r.ok && r.value).toEqual({ created: ["https://github.com/o/r/issues/77"], commented: [] });
     const creates = t.calls().filter((c) => c[1] === "create");
