@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openWorkspace, type Workspace } from "../app/workspace.ts";
@@ -38,9 +38,15 @@ function ws(cwd: string, actor = "agent:a"): Workspace {
   return r.value;
 }
 
+/** Starts a change and fills its description, as an agent must before landing (BR-2035). */
 function startNew(root: string, title: string, actor = "agent:a") {
   const r = start(ws(root, actor), { title }, quiet);
   if (!r.ok) throw new Error(r.error.message);
+  const dir = join(r.value.worktree, "canon/changes");
+  const file = readdirSync(dir).find((f) => f.startsWith(`${r.value.change}-`) || f === `${r.value.change}.md`)!;
+  const text = readFileSync(join(dir, file), "utf8");
+  writeFileSync(join(dir, file), text.slice(0, text.indexOf("---\n", 4) + 4) + `\n## 为什么\n\n${title}.\n`);
+  sh(r.value.worktree, "commit", "-q", "--amend", "--no-edit", "-a");
   return r.value;
 }
 

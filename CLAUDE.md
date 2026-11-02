@@ -14,7 +14,7 @@ Canon：为多个 AI 会话同时开发的项目提供共享记忆和协作协�
 canon context <路径|C-n|领域>     # 改代码前先读：整个领域的当前内容
 canon search <词|编号>
 canon work start <C-n>            # 开始一个已有的变更；或 --title "<要做什么>" 新建
-  ...改代码、规则、变更文件，然后提交...
+  ...先写清变更文件的“为什么”和“要改什么”，再改代码和规则，提交...
 canon work land [--finish]        # 排队 → rebase → floor → canon check → 规则评审 → main
 canon work stop --next "<下一步>"  # 没做完就停下时
 canon human ask "<问题>"          # 只用于方向，或明确留给人的决定
