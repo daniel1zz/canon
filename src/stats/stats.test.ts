@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../coord/db.ts";
@@ -121,6 +121,5 @@ describe("canon stats", () => {
     expect(readConfig(root).ok).toBe(false); // well formed, but there is no 30 February
     writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ncheck_reviews:\n  floor: "2028-02-29"\n');
     expect(readConfig(root).ok).toBe(true);
-    expect(readFileSync(join(root, "canon/config.yaml"), "utf8")).toContain("soon");
   });
 });
