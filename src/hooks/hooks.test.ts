@@ -29,13 +29,14 @@ async function commitAndLand(root: string, title: string, file: string) {
 
 describe("lifecycle hooks", () => {
   test("BR-2056: after_start runs in the new worktree with the change in its environment; its exit code changes nothing", () => {
-    const root = configured(`  after_start:\n    - 'echo "$CANON_EVENT $CANON_CHANGE $CANON_BRANCH" > started.txt'\n    - exit 4\n`);
+    const root = configured(`  after_start:\n    - 'echo "$CANON_EVENT $CANON_CHANGE $CANON_BRANCH" > started.txt'\n    - exit 4\n    - echo 2 > second.txt\n`);
     const lines: string[] = [];
     const r = start(ws(root), { title: "Hooked" }, (l) => lines.push(l));
     expect(r.ok).toBe(true);
     if (!r.ok) return;
     expect(readFileSync(join(r.value.worktree, "started.txt"), "utf8").trim()).toBe(`after_start ${r.value.change} ${r.value.branch}`);
     expect(lines.join("\n")).toContain("exited 4");
+    expect(readFileSync(join(r.value.worktree, "second.txt"), "utf8").trim()).toBe("2"); // a failure does not stop the rest
     expect(claims(ws(root).db).map((c) => c.subject)).toEqual([r.value.change]);
   });
 
@@ -64,7 +65,7 @@ describe("lifecycle hooks", () => {
   });
 
   test("BR-2058: after_stop runs after the handoff is recorded, with the next step; its exit code changes nothing", () => {
-    const root = configured(`  after_stop:\n    - 'echo "$CANON_NEXT" > next.txt'\n    - exit 9\n`);
+    const root = configured(`  after_stop:\n    - exit 9\n    - 'echo "$CANON_NEXT" > next.txt'\n`);
     const s = startNew(root, "Pausing");
     const r = stop(ws(s.worktree), "land it", undefined, false);
     expect(r.ok).toBe(true);

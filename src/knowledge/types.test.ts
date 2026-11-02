@@ -37,6 +37,17 @@ describe("declared document types", () => {
     expect(canon(root, "doc", "new", "--type", "spek", "--title", "X").code).toBe(3);
   });
 
+  test("BR-2061: doc list shows every document of one declared type; a built-in or undeclared type is a usage error", () => {
+    const root = repo(SPEC, { [`canon/specs/${id("SP", 1)}.md`]: doc("SP", 1, "status: draft\n", "One."), [`canon/specs/${id("SP", 2)}.md`]: doc("SP", 2, "status: approved\n", "Two.") });
+    const out = canon(root, "doc", "list", "--type", "spec").out;
+    expect(out).toMatch(new RegExp(`${id("SP", 1)}\\s+draft`));
+    expect(out).toMatch(new RegExp(`${id("SP", 2)}\\s+approved`));
+    const builtin = canon(root, "doc", "list", "--type", "rule");
+    expect(builtin.code).toBe(2);
+    expect(builtin.err).toContain("canon rule list");
+    expect(canon(repo(""), "doc", "list", "--type", "spec").code).toBe(2);
+  });
+
   test("BR-2051: a status outside the declared ones is invalid; doc status only accepts declared statuses", () => {
     const root = repo(SPEC, { [`canon/specs/${id("SP", 1)}.md`]: doc("SP", 1, "status: done\n", "One.") });
     expect(canon(root, "check").out).toContain(`file-invalid       canon/specs/${id("SP", 1)}.md: status must be one of draft, approved`);

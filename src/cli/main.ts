@@ -80,7 +80,8 @@ function listCommand(kind: Kind, describe: string) {
     run({ args }) {
       const ws = workspace();
       if (kind === "extra" && (typeof args.type !== "string" || !ws.config.types.some((t) => t.name === args.type && !t.builtin))) {
-        fail({ code: "invalid", message: `--type must name a type declared in canon/config.yaml (${ws.config.types.filter((t) => !t.builtin).map((t) => t.name).join(", ") || "none declared"})` });
+        const builtin = typeof args.type === "string" && ws.config.types.some((t) => t.name === args.type && t.builtin);
+        fail({ code: "invalid", message: builtin ? `${args.type} is built in; use \`canon ${args.type} list\`` : `--type must name a type declared in canon/config.yaml (${ws.config.types.filter((t) => !t.builtin).map((t) => t.name).join(", ") || "none declared"})` });
       }
       const docs = corpusOf(ws).corpus.docs.filter((d) => d.kind === kind && (kind !== "extra" || (d.kind === "extra" && d.type === args.type)));
       const live = (d: (typeof docs)[number]) => kind === "extra" || args.all || !("status" in d) || d.status === undefined || ["active", "accepted", "proposed", "open"].includes(d.status);
