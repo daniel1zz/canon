@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -52,5 +52,77 @@ describe("exit codes", () => {
     const r = canon(root, "human", "answer", "1", "yes");
     expect(r.code).toBe(2);
     expect(r.err).toContain("TTY");
+  });
+});
+
+function committed(root: string) {
+  Bun.spawnSync(["git", "add", "-A"], { cwd: root });
+  Bun.spawnSync(["git", "commit", "-qm", "c"], { cwd: root });
+}
+
+describe("project and documents", () => {
+  test("BR-2032: init lays out canon/ with the floor, never overwrites, and warns without a floor", () => {
+    const root = repo();
+    const first = canon(root, "init");
+    expect(first.code).toBe(0);
+    expect(first.out).toContain("set `floor`");
+    for (const p of ["canon/product.md", "canon/config.yaml", "canon/rules", "canon/decisions", "canon/changes", "canon/notes"]) {
+      expect(Bun.spawnSync(["test", "-e", join(root, p)]).exitCode).toBe(0);
+    }
+    writeFileSync(join(root, "canon/product.md"), "mine");
+    expect(canon(root, "init", "--floor", "true").out).toContain("exists canon/product.md");
+    expect(readFileSync(join(root, "canon/product.md"), "utf8")).toBe("mine");
+  });
+
+  test("BR-2027: accepting a decision supersedes the one it replaces; a non-decision target is not found", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    canon(root, "decision", "new", "--title", "Old way");
+    canon(root, "decision", "new", "--title", "New way", "--supersedes", ["D", 1].join("-"));
+    expect(canon(root, "decision", "accept", ["D", 2].join("-")).code).toBe(0);
+    const list = canon(root, "decision", "list", "--all").out;
+    expect(list).toMatch(/D-1\s+superseded/);
+    expect(list).toMatch(/D-2\s+accepted/);
+    canon(root, "decision", "new", "--title", "Bad", "--supersedes", ["C", 9].join("-"));
+    expect(canon(root, "decision", "accept", ["D", 3].join("-")).code).toBe(3);
+  });
+
+  test("BR-2028: a retired rule keeps its file and leaves context; a dropped change keeps its file", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    canon(root, "rule", "domain", "billing", "--code", "src/billing");
+    canon(root, "rule", "new", "--domain", "billing", "--title", "Refunds", "--untested", "fixture");
+    const id = ["BR", 1].join("-");
+    expect(canon(root, "rule", "retire", id).code).toBe(0);
+    expect(canon(root, "show", id).out).toContain("status: retired");
+    expect(canon(root, "context", "billing").out).not.toContain(id);
+    canon(root, "change", "new", "--title", "Maybe");
+    expect(canon(root, "change", "drop", ["C", 1].join("-")).code).toBe(0);
+    expect(canon(root, "change", "list", "--all").out).toMatch(/C-1\s+dropped/);
+  });
+});
+
+describe("session continuity", () => {
+  test("BR-2024 BR-2025: stop records the next step; brief shows it to the next session; stop outside a change is not found", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    committed(root);
+    expect(canon(root, "work", "stop", "--next", "x").code).toBe(3);
+    const started = canon(root, "work", "start", "--title", "Refunds");
+    const wt = started.out.match(/cd (.+)/)![1]!.trim();
+    expect(canon(wt, "brief").out).toContain("You are in C-1");
+    expect(canon(wt, "work", "stop", "--next", "write the refund test", "--note", "half done").code).toBe(0);
+    expect(canon(wt, "work", "stop", "--next", "land it").code).toBe(0); // replaces the earlier handoff
+    const b = canon(wt, "brief").out;
+    expect(b).toContain("next — land it");
+    expect(b).not.toContain("write the refund test");
+    expect(canon(root, "brief").out).toContain("Unfinished changes with handoffs: C-1");
+    expect(canon(root, "work", "status").out).toContain("C-1"); // claim kept without --release
+  });
+
+  test("BR-2024: brief prints nothing when nothing is in flight", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    expect(canon(root, "brief").out).toBe("");
   });
 });

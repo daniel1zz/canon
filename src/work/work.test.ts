@@ -193,3 +193,57 @@ describe("work land", () => {
     expect(r.value.kept.join("\n")).toContain("not on main");
   });
 });
+
+describe("boundaries record and clean up", () => {
+  const events = (root: string, kind: string) =>
+    ws(root).db.db.query<{ subject: string | null; detail: string }, [string]>("SELECT subject, detail FROM events WHERE kind = ? ORDER BY id").all(kind);
+
+  test("BR-2026: early land refusals and a refused claim are recorded with their reason", async () => {
+    const root = project();
+    const s = startNew(root, "Dirty");
+    writeFileSync(join(s.worktree, "app.txt"), "changed\n");
+    await land(ws(s.worktree), FAST, quiet);
+    expect(await land(ws(root), FAST, quiet)).toMatchObject({ kind: "refused", reason: "on-main" });
+    takeClaim(ws(root, "agent:b").db, s.change, "/elsewhere", "agent:b");
+    const reasons = events(root, "land.refuse").map((e) => JSON.parse(e.detail).reason);
+    expect(reasons).toEqual(["dirty", "on-main"]);
+    expect(events(root, "claim.refuse").map((e) => e.subject)).toEqual([s.change]);
+  });
+
+  test("BR-2031: landing from main is refused", async () => {
+    const root = project();
+    const out = await land(ws(root), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("on-main");
+  });
+
+  test("BR-2029: a failed setup removes the new worktree and releases the change, so a retry starts clean", () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), "floor: \"true\"\ntests: []\nsetup: \"test -e .ok\"\n");
+    sh(root, "commit", "-qam", "setup that fails");
+    const first = start(ws(root), { title: "Needs setup" }, quiet);
+    expect(first.ok).toBe(false);
+    expect(claims(ws(root).db)).toEqual([]);
+    const wts = sh(root, "worktree", "list");
+    expect(wts.split("\n").length).toBe(1);
+    expect(sh(root, "branch", "--list", "change/*")).toBe("");
+    expect(events(root, "start.refuse").map((e) => JSON.parse(e.detail).reason)).toEqual(["setup"]);
+  });
+
+  test("BR-2030: after_land runs in the background with the landing's commits and never changes the result", async () => {
+    const root = project();
+    const marker = join(root, "..", `${root.split("/").pop()}-after.txt`);
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nafter_land: 'echo "$CANON_BASE $CANON_HEAD $CANON_CHANGE" > ${marker}; exit 7'\n`);
+    sh(root, "commit", "-qam", "after_land");
+    const s = startNew(root, "With hook");
+    writeFileSync(join(s.worktree, "x.txt"), "x\n");
+    sh(s.worktree, "add", "x.txt");
+    sh(s.worktree, "commit", "-qm", "x");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind).toBe("landed");
+    for (let i = 0; i < 50 && !existsSync(marker); i++) await Bun.sleep(100);
+    const [base, head, change] = readFileSync(marker, "utf8").trim().split(" ");
+    expect(head).toBe(sh(root, "rev-parse", "main"));
+    expect(base).toBe(sh(root, "rev-parse", "main~2")); // the open-change commit and x are the landed ones
+    expect(change).toBe(s.change);
+  });
+});

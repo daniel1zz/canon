@@ -63,8 +63,9 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   if (!claim.ok) return claim;
 
   let created = false;
+  let hasBranch = false;
   if (!existsSync(path)) {
-    const hasBranch = git(ws.primary, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`).ok;
+    hasBranch = git(ws.primary, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`).ok;
     const add = hasBranch ? git(ws.primary, "worktree", "add", path, branch) : git(ws.primary, "worktree", "add", "-b", branch, path, main);
     if (!add.ok) {
       releaseClaim(ws.db, changeId, ws.actor);
@@ -74,7 +75,14 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     if (ws.config.setup) {
       say(`setup: ${ws.config.setup}`);
       const r = Bun.spawnSync(["sh", "-c", ws.config.setup], { cwd: path, stdout: "inherit", stderr: "inherit" });
-      if (r.exitCode !== 0) return err("io", `setup command exited ${r.exitCode} in ${path}`);
+      if (r.exitCode !== 0) {
+        // The worktree was created a moment ago and holds nothing but the checkout: remove it so a retry runs setup again.
+        git(ws.primary, "worktree", "remove", "--force", path);
+        if (!hasBranch) git(ws.primary, "branch", "-q", "-D", branch);
+        releaseClaim(ws.db, changeId, ws.actor);
+        ws.db.event(ws.actor, "start.refuse", changeId, { reason: "setup", exit: r.exitCode });
+        return err("io", `setup command exited ${r.exitCode}; the new worktree was removed and ${changeId} released, so a retry starts clean`);
+      }
     }
   }
 
@@ -139,26 +147,31 @@ export type LandOutcome =
 export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<LandOutcome> {
   const wt = ws.root;
   const main = ws.config.main;
-  const branch = git(wt, "rev-parse", "--abbrev-ref", "HEAD");
-  if (!branch.ok || branch.value === "HEAD" || branch.value === main) {
-    return { kind: "refused", reason: "on-main", message: `land runs from a change worktree on its own branch, not from ${main} or a detached HEAD` };
-  }
-  if (!ws.config.floor) return { kind: "refused", reason: "no-floor", message: "canon/config.yaml has no `floor` command; nothing proves the tree is sound" };
-  const clean = isClean(wt);
-  if (!clean.ok || !clean.value) return { kind: "refused", reason: "dirty", message: "the worktree has uncommitted changes; commit them first" };
-
   const claim = claimOfWorktree(ws.db, wt);
   const subject = claim?.subject ?? null;
+  // Every refusal, early or late, is recorded with its reason so a check's precision can be measured (P6, BR-2026).
+  const early = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], message: string): LandOutcome => {
+    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000) });
+    return { kind: "refused", reason, message };
+  };
+  const branch = git(wt, "rev-parse", "--abbrev-ref", "HEAD");
+  if (!branch.ok || branch.value === "HEAD" || branch.value === main) {
+    return early("on-main", `land runs from a change worktree on its own branch, not from ${main} or a detached HEAD`);
+  }
+  if (!ws.config.floor) return early("no-floor", "canon/config.yaml has no `floor` command; nothing proves the tree is sound");
+  const clean = isClean(wt);
+  if (!clean.ok || !clean.value) return early("dirty", "the worktree has uncommitted changes; commit them first");
+
   if (opts.finish) {
-    if (!subject) return { kind: "refused", reason: "on-main", message: "--finish needs a claimed change; this worktree holds none" };
+    if (!subject) return early("on-main", "--finish needs a claimed change; this worktree holds none");
     const corpus = readCorpus(wt).corpus;
     const doc = findDoc(corpus, subject);
     if (doc?.kind === "change" && doc.status === "open") {
       const s = setMeta(wt, doc, { status: "done" });
-      if (!s.ok) return { kind: "refused", reason: "check", message: s.error.message };
+      if (!s.ok) return early("check", s.error.message);
       git(wt, "add", doc.path);
       const c = git(wt, "commit", "-q", "-m", `canon: close ${subject}`);
-      if (!c.ok) return { kind: "refused", reason: "check", message: c.error.message };
+      if (!c.ok) return early("check", c.error.message);
     }
   }
 
@@ -172,6 +185,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     lastAhead = turn.ahead;
     if (Date.now() > deadline) {
       finishEntry(ws.db, entry, "failed", "timeout");
+      ws.db.event(ws.actor, "land.refuse", subject, { reason: "timeout", ahead: turn.ahead });
       return { kind: "timeout", ahead: turn.ahead };
     }
     await Bun.sleep(2000);
