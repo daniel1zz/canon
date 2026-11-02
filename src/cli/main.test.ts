@@ -102,6 +102,19 @@ describe("project and documents", () => {
   });
 });
 
+describe("starting existing changes", () => {
+  test("BR-2038: a change that is not open cannot be started", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    canon(root, "change", "new", "--title", "Old");
+    canon(root, "change", "drop", ["C", 1].join("-"));
+    committed(root);
+    const r = canon(root, "work", "start", ["C", 1].join("-"));
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("dropped");
+  });
+});
+
 describe("session continuity", () => {
   test("BR-2024 BR-2025: stop records the next step; brief shows it to the next session; stop outside a change is not found", () => {
     const root = repo();
