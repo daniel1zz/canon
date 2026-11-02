@@ -47,7 +47,7 @@ describe("declared document types", () => {
     expect(readFileSync(join(root, `canon/specs/${id("SP", 1)}.md`), "utf8")).toContain("status: approved");
   });
 
-  test("BR-2052: declared ids are references like built-in ones: checked, searchable, shown; undeclared prefixes are not ids", () => {
+  test("BR-2052: declared ids are checked like built-in ones: dangling and duplicate ids are reported; undeclared prefixes are not ids", () => {
     const files = {
       [`canon/specs/${id("SP", 1)}.md`]: doc("SP", 1, "", "One."),
       "canon/changes/C-1.md": doc("C", 1, "", `## 为什么\n\nImplements ${id("SP", 1)} and ${id("SP", 9)}; see ${id("XY", 3)}.`),
@@ -57,10 +57,19 @@ describe("declared document types", () => {
     expect(findings).toContain(`names ${id("SP", 9)}, which does not exist`);
     expect(findings).not.toContain(id("SP", 1) + ",");
     expect(findings).not.toContain(id("XY", 3));
-    expect(canon(root, "search", id("SP", 1)).out.split("\n")[0]).toStartWith(id("SP", 1));
-    expect(canon(root, "show", id("SP", 1)).code).toBe(0);
     const undeclared = repo("", files);
     expect(canon(undeclared, "check").out).not.toContain(id("SP", 9));
+    const dup = repo(SPEC, { [`canon/specs/${id("SP", 2)}-a.md`]: doc("SP", 2, "", "A."), [`canon/specs/${id("SP", 2)}-b.md`]: doc("SP", 2, "", "B.") });
+    expect(canon(dup, "check").out.split("\n").filter((l) => l.startsWith("id-duplicate")).length).toBe(2);
+  });
+
+  test("BR-2060: declared ids are searchable and shown like built-in ones", () => {
+    const root = repo(SPEC, { [`canon/specs/${id("SP", 1)}.md`]: doc("SP", 1, "", "One."), "canon/notes/N-1.md": doc("N", 1, "", `About ${id("SP", 1)}.`) });
+    expect(canon(root, "search", id("SP", 1)).out.split("\n")[0]).toStartWith(id("SP", 1));
+    const shown = canon(root, "show", id("SP", 1));
+    expect(shown.code).toBe(0);
+    expect(shown.out).toContain(`canon/specs/${id("SP", 1)}.md`);
+    expect(canon(root, "show", id("SP", 99)).code).toBe(3);
   });
 
   test("BR-2053: context lists declared-type documents that mention the domain's rules, and a declared id resolves to its domains", () => {

@@ -82,6 +82,8 @@ describe("test discovery", () => {
 
   test("BR-2046: without globs every *.test.* and *.spec.* counts, except under dist, canon, node_modules", () => {
     expect(untested(repo({ ...base, "e2e/a.spec.ts": `it("${br(1)}", () => {});` }))).toBe(0);
+    expect(untested(repo({ ...base, "e2e/b.test.mts": `it("${br(1)}", () => {});` }))).toBe(0);
+    expect(untested(repo({ ...base, "tools/a.test.py": `it("${br(1)}", () => {});` }))).toBe(1);
     expect(untested(repo({ ...base, "dist/a.test.js": `it("${br(1)}", () => {});` }))).toBe(1);
     expect(untested(repo({ ...base, "node_modules/x/a.test.js": `it("${br(1)}", () => {});` }))).toBe(1);
   });
