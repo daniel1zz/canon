@@ -3,8 +3,9 @@ import { join } from "node:path";
 import type { Workspace } from "../app/workspace.ts";
 import { answeredBy, ask, claims, dropHandoff, questions, releaseClaim } from "../coord/state.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { git } from "../repo/git.ts";
-import { worktreesDir } from "./work.ts";
+import { git, ignoredPaths, unregenerable } from "../repo/git.ts";
+import { processesIn } from "../repo/process.ts";
+import { describeOccupants, worktreesDir } from "./work.ts";
 
 /**
  * Dropping a change's work in flight (C-8): its worktree, its branch, its claim and its handoff. This is the
@@ -56,6 +57,9 @@ function losses(ws: Workspace, t: Target): string[] {
   if (t.worktree) {
     const st = git(t.worktree, "status", "--porcelain");
     for (const line of st.ok && st.value !== "" ? st.value.split("\n") : []) out.push(`uncommitted: ${line.trim()}`);
+    // `git status` hides git-ignored files; the ones a build cannot regenerate are work too (BR-2064).
+    const ignored = ignoredPaths(t.worktree);
+    for (const p of ignored.ok ? unregenerable(ignored.value, ws.config.regenerable) : [`? (${ignored.error.message})`]) out.push(`ignored: ${p}`);
   }
   const held = claims(ws.db).find((c) => c.subject === t.change);
   if (held && new Date(held.expires_at) > new Date() && held.actor !== ws.actor) out.push(`claimed by ${held.actor} in ${held.holder} until ${held.expires_at}`);
@@ -67,6 +71,15 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
   if (!located.ok) return located;
   const t = located.value;
   if (t.worktree && ws.root === t.worktree) return err("invalid", `you are in ${t.worktree}; run \`canon work drop ${t.change}\` from another checkout`);
+  if (t.worktree) {
+    const occupied = processesIn([t.worktree]);
+    if (!occupied.ok) return occupied;
+    const inside = occupied.value.get(t.worktree) ?? [];
+    if (inside.length > 0) {
+      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "in-use", pids: inside.map((o) => o.pid) });
+      return err("conflict", `${t.worktree} is in use by ${describeOccupants(inside)}; nothing was deleted. Run this again once that process has left it`);
+    }
+  }
   const lost = losses(ws, t);
   const fingerprint = lost.join("\n");
 

@@ -35,3 +35,18 @@ export function isClean(cwd: string): Result<boolean> {
   const r = git(cwd, "status", "--porcelain");
   return r.ok ? ok(r.value === "") : r;
 }
+
+/** Git-ignored files under a worktree, relative to it; a directory that is ignored as a whole appears once, as `dir/`. */
+export function ignoredPaths(cwd: string): Result<string[]> {
+  const r = git(cwd, "ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory");
+  return r.ok ? ok(r.value.split("\0").filter((p) => p !== "")) : r;
+}
+
+/**
+ * The ignored paths that are work rather than rebuildable output: no segment of the path matches a
+ * `regenerable` name (BR-2019). `node_modules/` and `pkg/dist/` are regenerable by default, `.env` is not.
+ */
+export function unregenerable(paths: readonly string[], regenerable: readonly string[]): string[] {
+  const globs = regenerable.map((p) => new Bun.Glob(p));
+  return paths.filter((p) => !p.replace(/\/+$/, "").split("/").some((seg) => globs.some((g) => g.match(seg))));
+}

@@ -44,9 +44,20 @@ export interface Config {
   readonly templates: Readonly<Record<string, string>>;
   /** Check name → the date (YYYY-MM-DD) it is due for review (BR-2069). */
   readonly checkReviews: Readonly<Record<string, string>>;
+  /**
+   * Names (globs, matched against each path segment) of git-ignored files a worktree can rebuild, such as
+   * node_modules; removing a worktree loses nothing by deleting them (BR-2019). Any other ignored file counts as work.
+   */
+  readonly regenerable: readonly string[];
 }
 
 const HOUR = 3_600_000;
+
+/** Build output, dependency and cache directories of common toolchains: rebuilt by `setup` or a build, never hand-made. */
+export const DEFAULT_REGENERABLE: readonly string[] = [
+  "node_modules", "dist", "build", "out", "coverage", ".next", ".nuxt", ".turbo", ".cache", ".parcel-cache",
+  "target", "__pycache__", ".pytest_cache", ".mypy_cache", ".venv", "venv", ".gradle", "*.pyc", ".DS_Store",
+];
 const MINUTE = 60_000;
 
 export const DEFAULT_CONFIG: Config = {
@@ -63,9 +74,10 @@ export const DEFAULT_CONFIG: Config = {
   types: BUILTIN_TYPES,
   templates: {},
   checkReviews: {},
+  regenerable: DEFAULT_REGENERABLE,
 };
 
-const TOP_KEYS = new Set(["main", "floor", "tests", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews"]);
+const TOP_KEYS = new Set(["main", "floor", "tests", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews", "regenerable"]);
 const TYPE_KEYS = new Set(["prefix", "dir", "statuses", "default", "fields", "sections"]);
 const MOVED: Record<string, string> = { after_land: "hooks.after_land" };
 
@@ -107,6 +119,10 @@ export function readConfig(root: string): Result<Config> {
   for (const r of [main, floor, setup, review, worktrees]) if (!r.ok) return r;
   const tests = c["tests"];
   if (tests !== undefined && (!Array.isArray(tests) || tests.some((t) => typeof t !== "string"))) return bad("`tests` must be a list of globs");
+  const regenerable = c["regenerable"];
+  if (regenerable !== undefined && (!Array.isArray(regenerable) || regenerable.some((t) => typeof t !== "string" || t.trim() === "" || t.includes("/")))) {
+    return bad("`regenerable` must be a list of file or directory names (globs allowed, no `/`)");
+  }
   const lease = positive("claim_lease_hours", HOUR, DEFAULT_CONFIG.claimLeaseMs);
   const stale = positive("lander_stale_minutes", MINUTE, DEFAULT_CONFIG.landerStaleMs);
   const timeout = positive("land_timeout_minutes", MINUTE, DEFAULT_CONFIG.landTimeoutMs);
@@ -158,6 +174,7 @@ export function readConfig(root: string): Result<Config> {
     types: types.value,
     templates,
     checkReviews: reviews.value,
+    regenerable: (regenerable as string[] | undefined) ?? DEFAULT_REGENERABLE,
   });
 }
 

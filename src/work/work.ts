@@ -13,7 +13,8 @@ import { findDoc } from "../knowledge/query.ts";
 import { readCorpus } from "../knowledge/read.ts";
 import { createDoc, setMeta } from "../knowledge/write.ts";
 import { worktreesDirOf } from "../repo/config.ts";
-import { git, isClean, listWorktrees } from "../repo/git.ts";
+import { git, ignoredPaths, isClean, listWorktrees, unregenerable, type WorktreeInfo } from "../repo/git.ts";
+import { processesIn, type Occupant } from "../repo/process.ts";
 import { reviewPrompt, runReview, type DeletedDoc } from "../review/review.ts";
 
 /**
@@ -363,8 +364,9 @@ export function stop(ws: Workspace, next: string, note: string | undefined, rele
 }
 
 /**
- * Removes finished worktrees: a worktree is removed only when it is clean and its branch is fully
- * contained in main, so no work can be lost (P4). Anything else is listed with the reason it stays.
+ * Removes finished worktrees: a worktree is removed only when it is clean, holds no ignored file that cannot
+ * be regenerated, has no process inside it, and its branch is fully contained in main, so no work can be lost
+ * (P4, BR-2019). Anything else is listed with the reason it stays.
  */
 export function clean(ws: Workspace, say: Say): Result<{ removed: string[]; kept: string[] }> {
   const wts = listWorktrees(ws.primary);
@@ -372,26 +374,26 @@ export function clean(ws: Workspace, say: Say): Result<{ removed: string[]; kept
   const removed: string[] = [];
   const kept: string[] = [];
   const held = new Set(ws.db.db.query<{ worktree: string }, []>("SELECT worktree FROM claims").all().map((r) => r.worktree));
+  const candidates: WorktreeInfo[] = [];
   for (const w of wts.value) {
     if (!w.path.startsWith(worktreesDir(ws) + "/")) continue;
-    if (w.path === ws.root) {
-      kept.push(`${w.path}: you are in it`);
+    const why = keepReason(ws, w, held);
+    if (why) kept.push(`${w.path}: ${why}`);
+    else candidates.push(w);
+  }
+  // One process listing for all candidates: lsof scans every process each time it runs.
+  const occupied = candidates.length > 0 ? processesIn(candidates.map((w) => w.path)) : ok(new Map<string, Occupant[]>());
+  for (const w of candidates) {
+    if (!occupied.ok) {
+      kept.push(`${w.path}: cannot tell whether a process is inside it (${occupied.error.message})`);
       continue;
     }
-    if (held.has(w.path)) {
-      kept.push(`${w.path}: claimed`);
+    const inside = occupied.value.get(w.path) ?? [];
+    if (inside.length > 0) {
+      kept.push(`${w.path}: in use by ${describeOccupants(inside)}`);
       continue;
     }
-    const c = isClean(w.path);
-    if (!c.ok || !c.value) {
-      kept.push(`${w.path}: uncommitted changes`);
-      continue;
-    }
-    const ahead = git(ws.primary, "rev-list", "--count", `${ws.config.main}..${w.head}`);
-    if (!ahead.ok || ahead.value !== "0") {
-      kept.push(`${w.path}: ${ahead.ok ? ahead.value : "?"} commit(s) not on ${ws.config.main}`);
-      continue;
-    }
+    // reason: without --force, so git itself still refuses if the worktree changed since the checks above.
     const rm = git(ws.primary, "worktree", "remove", w.path);
     if (!rm.ok) {
       kept.push(`${w.path}: ${rm.error.message}`);
@@ -402,6 +404,26 @@ export function clean(ws: Workspace, say: Say): Result<{ removed: string[]; kept
     say(`removed ${w.path}`);
   }
   return ok({ removed, kept });
+}
+
+/** Why `clean` must keep a worktree, cheapest check first; undefined when only the process check remains. */
+function keepReason(ws: Workspace, w: WorktreeInfo, held: ReadonlySet<string>): string | undefined {
+  if (w.path === ws.root) return "you are in it";
+  if (held.has(w.path)) return "claimed";
+  const c = isClean(w.path);
+  if (!c.ok || !c.value) return "uncommitted changes";
+  const ahead = git(ws.primary, "rev-list", "--count", `${ws.config.main}..${w.head}`);
+  if (!ahead.ok || ahead.value !== "0") return `${ahead.ok ? ahead.value : "?"} commit(s) not on ${ws.config.main}`;
+  // `git status` and `git worktree remove` both ignore git-ignored files, so a `.env` would vanish silently.
+  const ignored = ignoredPaths(w.path);
+  if (!ignored.ok) return `cannot list ignored files (${ignored.error.message})`;
+  const work = unregenerable(ignored.value, ws.config.regenerable);
+  if (work.length > 0) return `ignored files that cannot be regenerated: ${work.join(", ")} (if they can be, add their names to \`regenerable\` in canon/config.yaml)`;
+  return undefined;
+}
+
+export function describeOccupants(list: readonly Occupant[]): string {
+  return list.map((o) => `pid ${o.pid} (${o.command})`).join(", ");
 }
 
 export type { Change };

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { answer, claims, questions } from "../coord/state.ts";
 import { drop } from "./drop.ts";
@@ -43,6 +43,40 @@ describe("dropping a change", () => {
     expect(branches(root)).toBe("");
     const none = drop(ws(root), "C-99", quiet);
     expect(!none.ok && none.error.code).toBe("not_found");
+  });
+
+  test("BR-2064 BR-2065: an ignored file a build cannot regenerate counts as work; ignored node_modules does not", async () => {
+    const root = project();
+    writeFileSync(join(root, ".gitignore"), ".env\nnode_modules/\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "ignore");
+    const deps = startNew(root, "Deps only");
+    expect((await land(ws(deps.worktree), FAST, quiet)).kind).toBe("landed");
+    mkdirSync(join(deps.worktree, "node_modules"), { recursive: true });
+    writeFileSync(join(deps.worktree, "node_modules/i.js"), "1\n");
+    expect(drop(ws(root), deps.change, quiet)).toMatchObject({ ok: true, value: { kind: "dropped" } });
+    const secret = startNew(root, "Has env");
+    expect((await land(ws(secret.worktree), FAST, quiet)).kind).toBe("landed");
+    writeFileSync(join(secret.worktree, ".env"), "TOKEN=1\n");
+    const r = drop(ws(root), secret.change, quiet);
+    expect(r.ok && r.value.kind === "asked" && r.value.losses).toEqual(["ignored: .env"]);
+    expect(existsSync(join(secret.worktree, ".env"))).toBe(true);
+  });
+
+  test("BR-2064: a worktree another process is in is not dropped: exit 5 naming the pid, nothing deleted", async () => {
+    const root = project();
+    const s = startNew(root, "Busy");
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    const proc = Bun.spawn(["sleep", "30"], { cwd: s.worktree });
+    try {
+      const r = drop(ws(root), s.change, quiet);
+      expect(!r.ok && r.error.code).toBe("conflict");
+      expect(!r.ok && r.error.message).toContain(`pid ${proc.pid} (sleep)`);
+      expect(existsSync(s.worktree)).toBe(true);
+    } finally {
+      proc.kill();
+      await proc.exited;
+    }
   });
 
   test("BR-2065: work that would be lost is listed in a question for a human and nothing is deleted; asking again does not repeat it", () => {

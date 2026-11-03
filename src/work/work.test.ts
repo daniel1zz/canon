@@ -332,6 +332,68 @@ describe("work land", () => {
   });
 });
 
+describe("clean keeps what git does not show", () => {
+  async function landed(root: string, title: string) {
+    const s = startNew(root, title);
+    const out = await land(ws(s.worktree), { ...FAST, finish: true }, quiet);
+    if (out.kind !== "landed") throw new Error(`expected landed, got ${out.kind}`);
+    return s;
+  }
+  function ignoring(root: string, extraConfig = "") {
+    writeFileSync(join(root, ".gitignore"), ".env\nnode_modules/\ncache-*/\n");
+    writeFileSync(join(root, "canon/config.yaml"), `floor: test ! -e FAIL\ntests: []\n${extraConfig}`);
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "ignore");
+  }
+
+  test("BR-2019: a landed worktree holding an ignored .env is kept; one holding only node_modules is removed", async () => {
+    const root = project();
+    ignoring(root);
+    const secret = await landed(root, "Has env");
+    writeFileSync(join(secret.worktree, ".env"), "TOKEN=1\n");
+    const deps = await landed(root, "Has deps");
+    mkdirSync(join(deps.worktree, "node_modules/x"), { recursive: true });
+    writeFileSync(join(deps.worktree, "node_modules/x/i.js"), "1\n");
+    const r = clean(ws(root), quiet);
+    if (!r.ok) throw new Error(r.error.message);
+    expect(r.value.removed).toEqual([deps.worktree]);
+    expect(existsSync(join(secret.worktree, ".env"))).toBe(true);
+    expect(r.value.kept.join("\n")).toContain(`${secret.worktree}: ignored files that cannot be regenerated: .env`);
+  });
+
+  test("BR-2019: names listed under regenerable replace the default list", async () => {
+    const root = project();
+    ignoring(root, "regenerable: [\"cache-*\"]\n");
+    const cache = await landed(root, "Has cache");
+    mkdirSync(join(cache.worktree, "cache-v1"), { recursive: true });
+    writeFileSync(join(cache.worktree, "cache-v1/blob"), "1\n");
+    const deps = await landed(root, "Has deps");
+    mkdirSync(join(deps.worktree, "node_modules"), { recursive: true });
+    writeFileSync(join(deps.worktree, "node_modules/i.js"), "1\n");
+    const r = clean(ws(root), quiet);
+    if (!r.ok) throw new Error(r.error.message);
+    expect(r.value.removed).toEqual([cache.worktree]);
+    expect(r.value.kept.join("\n")).toContain(`${deps.worktree}: ignored files that cannot be regenerated: node_modules/`);
+  });
+
+  test("BR-2019: a landed worktree that another process has as its current directory is kept, naming the pid", async () => {
+    const root = project();
+    const s = await landed(root, "Busy");
+    const proc = Bun.spawn(["sleep", "30"], { cwd: s.worktree });
+    try {
+      const r = clean(ws(root), quiet);
+      if (!r.ok) throw new Error(r.error.message);
+      expect(r.value.removed).toEqual([]);
+      expect(r.value.kept.join("\n")).toContain(`${s.worktree}: in use by pid ${proc.pid} (sleep)`);
+    } finally {
+      proc.kill();
+      await proc.exited;
+    }
+    const after = clean(ws(root), quiet);
+    expect(after.ok && after.value.removed).toEqual([s.worktree]);
+  });
+});
+
 describe("boundaries record and clean up", () => {
   const events = (root: string, kind: string) =>
     ws(root).db.db.query<{ subject: string | null; detail: string }, [string]>("SELECT subject, detail FROM events WHERE kind = ? ORDER BY id").all(kind);

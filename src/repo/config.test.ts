@@ -37,6 +37,7 @@ describe("config validation", () => {
     ["a default outside the statuses", "types:\n  spec:\n    prefix: SP\n    dir: specs\n    statuses: [draft]\n    default: done\n", "default"],
     ["an unknown hook event", "hooks:\n  before_start: x\n", "unknown hook event"],
     ["invalid YAML", "floor: [\n", "not valid YAML"],
+    ["a regenerable entry with a slash", "regenerable: [build/out]\n", "regenerable"],
   ];
   for (const [what, yaml, message] of cases) {
     test(`BR-2045: ${what} makes every command fail with exit 2`, () => {
