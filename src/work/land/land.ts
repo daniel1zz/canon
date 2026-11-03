@@ -63,6 +63,9 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   const clean = isClean(wt);
   if (!clean.ok || !clean.value) return early("dirty", "the worktree has uncommitted changes; commit them first");
 
+  // The close commit lands with the work, so the tree that is tested is the tree that becomes main (BR-2106);
+  // a landing that does not reach main takes it back out, so the change never says done without landing (BR-2018).
+  let close: CloseCommit | undefined;
   if (opts.finish) {
     if (!subject) return early("no-claim", "--finish needs a claimed change; this worktree holds none");
     const corpus = readCorpus(wt, ws.config.types, ws.config).corpus;
@@ -71,8 +74,9 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
       const s = setMeta(wt, doc, { status: "done" });
       if (!s.ok) return early("check", s.error.message);
       git(wt, "add", doc.path);
-      const c = git(wt, "commit", "-q", "-m", `canon: close ${subject}`);
+      const c = git(wt, "commit", "-q", "-m", closeSubject(subject));
       if (!c.ok) return early("check", c.error.message);
+      close = { subject, path: doc.path };
     }
   }
 
@@ -89,19 +93,48 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     const aborted = rebaseInProgress(wt) && git(wt, "rebase", "--abort").ok;
     // A signal after main moved leaves the landed entry as it is: the landing happened.
     // reason: an interruption, not a check's verdict, so it is its own event kind and no check in `canon stats` (BR-2067).
-    if (failIfActive(ws.db, entry, "killed")) ws.db.event(ws.actor, "land.killed", subject, { signal, rebaseAborted: aborted });
+    if (failIfActive(ws.db, entry, "killed")) {
+      ws.db.event(ws.actor, "land.killed", subject, { signal, rebaseAborted: aborted });
+      if (close) reopen(wt, close, say);
+    }
     if (bound) unbindFromLander(ws.db, bound);
     process.exit(signal === "SIGINT" ? 130 : 143);
   };
   process.on("SIGTERM", onSignal);
   process.on("SIGINT", onSignal);
+  let out: LandOutcome | undefined;
   try {
-    return await queueAndLand(ws, opts, say, { entry, subject, branch: branch.value, running });
+    out = await queueAndLand(ws, opts, say, { entry, subject, branch: branch.value, running });
+    return out;
   } finally {
+    if (close && out?.kind !== "landed") reopen(wt, close, say);
     if (bound) unbindFromLander(ws.db, bound);
     process.off("SIGTERM", onSignal);
     process.off("SIGINT", onSignal);
   }
+}
+
+/** The `canon: close C-n` commit `--finish` made before queuing, so a landing that fails can take it back. */
+interface CloseCommit {
+  readonly subject: string;
+  readonly path: string;
+}
+
+const closeSubject = (change: string) => `canon: close ${change}`;
+
+/**
+ * Takes the close commit back out after a landing that did not reach main: only while it is still the top
+ * commit and changes nothing but the change file, with `git reset --keep`, which never drops local edits (BR-2018).
+ */
+function reopen(wt: string, close: CloseCommit, say: Say): void {
+  const top = git(wt, "log", "-1", "--format=%s", "HEAD");
+  const files = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "HEAD~1", "HEAD");
+  if (!top.ok || top.value !== closeSubject(close.subject) || !files.ok || files.value !== close.path) {
+    say(`${close.subject} still has its close commit somewhere below HEAD; it says done although it did not land`);
+    return;
+  }
+  const r = git(wt, "reset", "-q", "--keep", "HEAD~1");
+  say(r.ok ? `${close.subject} reopened: the landing did not reach main, so its close commit was taken back` : `${close.subject} could not be reopened (${r.error.message}); it says done although it did not land`);
 }
 
 /** What a signal handler must stop: the floor while it runs. */

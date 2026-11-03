@@ -654,6 +654,40 @@ describe("the claim during a landing", () => {
     expect((await landing).kind).toBe("landed");
   }, TIMED);
 
+  test("BR-2018: a refused --finish landing takes its close commit back, so the change stays open", async () => {
+    const root = project();
+    const s = startNew(root, "Refused finish");
+    writeFileSync(join(s.worktree, "FAIL"), "x\n"); // the floor is `test ! -e FAIL`
+    sh(s.worktree, "add", "FAIL");
+    sh(s.worktree, "commit", "-qm", "breaks the floor");
+    const head = sh(s.worktree, "rev-parse", "HEAD");
+    const before = sh(root, "rev-parse", "main");
+    const lines: string[] = [];
+    const out = await land(ws(s.worktree), { ...FAST, finish: true }, (l) => lines.push(l));
+    expect(out.kind === "refused" && out.reason).toBe("floor");
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(head);
+    expect(sh(s.worktree, "status", "--porcelain")).toBe("");
+    const change = readCorpus(s.worktree).corpus.docs.find((d) => d.id === s.change);
+    expect(change?.kind === "change" && change.status).toBe("open");
+    expect(lines.join("\n")).toContain(`${s.change} reopened`);
+    expect(claims(ws(root).db).map((c) => c.subject)).toEqual([s.change]);
+  });
+
+  test("BR-2018: a --finish landing that times out in the queue takes its close commit back too", async () => {
+    const root = project();
+    const s = startNew(root, "Timed out finish");
+    const head = sh(s.worktree, "rev-parse", "HEAD");
+    const other = ws(root, "agent:b");
+    const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
+    expect(tryTurn(other.db, ahead).mine).toBe(true);
+    const out = await land(ws(s.worktree), { finish: true, timeoutMs: 0 }, quiet);
+    expect(out.kind).toBe("timeout");
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(head);
+    const change = readCorpus(s.worktree).corpus.docs.find((d) => d.id === s.change);
+    expect(change?.kind === "change" && change.status).toBe("open");
+  });
+
   test("BR-2018: --finish leaves alone a claim and handoff that another session took over during the landing", async () => {
     const root = project();
     const s = startNew(root, "Taken over");
@@ -822,6 +856,22 @@ describe("a lander killed by a signal", () => {
     const b = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
     expect(tryTurn(other.db, b).mine).toBe(true);
   }, TIMED);
+
+  test("BR-2018: a --finish lander killed by SIGTERM takes its close commit back", async () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), "floor: \"sleep 30\"\ntests: []\n");
+    sh(root, "commit", "-qam", "slow floor");
+    const s = startNew(root, "Killed finish");
+    const head = sh(s.worktree, "rev-parse", "HEAD");
+    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const logs = join(sh(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "canon/logs");
+    await until(() => entryOf(root)?.state === "landing" && existsSync(join(logs, `land-${entryOf(root)!.id}.log`)));
+    p.kill("SIGTERM");
+    expect(await p.exited).toBe(143);
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(head);
+    const change = readCorpus(s.worktree).corpus.docs.find((d) => d.id === s.change);
+    expect(change?.kind === "change" && change.status).toBe("open");
+  });
 
   test("BR-2099: a process group killed in the middle of the rebase leaves the worktree on its own commits, not mid-rebase", async () => {
     const root = project();
