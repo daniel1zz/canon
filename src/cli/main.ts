@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { defineCommand, runCommand, runMain } from "citty";
+import { defineCommand, renderUsage, runCommand } from "citty";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openWorkspace, type Workspace } from "../app/workspace.ts";
@@ -15,6 +15,7 @@ import { git } from "../repo/git.ts";
 import { overlapsOf } from "../work/overlap.ts";
 import { skillsSource, type InstallReport } from "../skills/install.ts";
 import { WORKFLOW_GUIDE } from "./guide.ts";
+import { resolve, unknownArgument } from "./strict.ts";
 import { assetsStatus, installAssets, updateNotice, updateProject } from "../skills/update.ts";
 import { computeStats, renderStats } from "../stats/stats.ts";
 import { drop } from "../work/drop.ts";
@@ -525,16 +526,32 @@ const main = defineCommand({
 
 /**
  * citty's runMain exits 1 on every error; canon keeps 1 for check refusals, so usage errors exit 2 and
- * unexpected exceptions (bugs) exit 70 (D-4). Help still goes through runMain, which prints usage and exits 0.
+ * unexpected exceptions (bugs) exit 70 (D-4). Help prints usage to stdout and exits 0, before any argument check.
  */
 async function run(): Promise<void> {
   const raw = process.argv.slice(2);
-  if (raw.includes("--help") || raw.includes("-h")) return runMain(main);
+  const at = resolve(main, raw);
+  if (raw.includes("--help") || raw.includes("-h")) {
+    // reason: printed with console.log, not citty's runMain: consola is silent under a test runner, so help could not be tested.
+    // Its backticks are markup consola would have turned into colour.
+    console.log(`${(await renderUsage(at.cmd, at.before.at(-1)?.cmd)).replaceAll("`", "")}\n`);
+    return;
+  }
+  // Before anything runs: an argument the command does not declare is a usage error, never ignored (BR-2097).
+  const levels = [...at.before, ...(Object.keys(at.cmd.subCommands ?? {}).length === 0 ? [{ cmd: at.cmd, path: at.path, args: at.rest }] : [])];
+  for (const l of levels) {
+    const name = ["canon", ...l.path].join(" ");
+    const problem = unknownArgument(l.cmd, name, l.args);
+    if (problem) {
+      console.error(`canon: ${problem} (see \`${name} --help\`)`);
+      process.exit(EXIT.usage);
+    }
+  }
   try {
     await runCommand(main, { rawArgs: raw });
   } catch (e) {
     if (e instanceof Error && e.name === "CLIError") {
-      console.error(`canon: ${e.message} (see \`canon ${raw.filter((a) => !a.startsWith("-")).slice(0, 2).join(" ")} --help\`)`.replace("canon  --help", "canon --help"));
+      console.error(`canon: ${e.message} (see \`${["canon", ...at.path].join(" ")} --help\`)`);
       process.exit(EXIT.usage);
     }
     console.error(`canon: internal error (a bug in canon): ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);

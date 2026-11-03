@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WORKFLOW_GUIDE } from "./guide.ts";
@@ -112,6 +112,47 @@ function committed(root: string) {
   Bun.spawnSync(["git", "add", "-A"], { cwd: root });
   Bun.spawnSync(["git", "commit", "-qm", "c"], { cwd: root });
 }
+
+describe("undeclared arguments", () => {
+  test("BR-2097 BR-2022: an option or positional the command does not declare exits 2, names it and lists the valid options", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    const typo = canon(root, "search", "brief", "--jsno");
+    expect(typo.code).toBe(2);
+    expect(typo.err).toContain("--jsno");
+    expect(typo.err).toContain("--limit, --json");
+    expect(canon(root, "search", "brief", "--json").code).toBe(0);
+    expect(canon(root, "stats", "extra").code).toBe(2);
+    const extra = canon(root, "search", "a", "b");
+    expect(extra.code).toBe(2);
+    expect(extra.err).toContain('"b"');
+    expect(canon(root, "show", ["C", 1].join("-"), "--json").code).toBe(2);
+    expect(canon(root, "stats", "--json=yes").code).toBe(2);
+    expect(canon(root, "stats", "--json=true").code).toBe(0);
+    expect(canon(root, "work", "land", "--dry-run").code).toBe(2);
+  });
+
+  test("BR-2097: a write command with an unknown option changes nothing; without it, it writes", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    canon(root, "rule", "domain", "billing", "--code", "src/billing");
+    const before = readdirSync(join(root, "canon/rules/billing")).sort();
+    const r = canon(root, "rule", "new", "--domain", "billing", "--title", "X", "--dry-run");
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("--dry-run");
+    expect(readdirSync(join(root, "canon/rules/billing")).sort()).toEqual(before);
+    expect(canon(root, "rule", "new", "--domain", "billing", "--title", "X").code).toBe(0);
+    expect(readdirSync(join(root, "canon/rules/billing")).length).toBe(before.length + 1);
+  });
+
+  test("BR-2097: the check runs before the command touches the repository, and --help still prints usage", () => {
+    const outside = mkdtempSync(join(tmpdir(), "canon-not-a-repo-"));
+    expect(canon(outside, "stats", "--bogus").code).toBe(2); // not 4: nothing looked for a repository
+    const h = canon(outside, "stats", "--bogus", "--help");
+    expect(h.code).toBe(0);
+    expect(h.out + h.err).toContain("USAGE");
+  });
+});
 
 describe("project and documents", () => {
   test("BR-2032 BR-2076: init lays out canon/ with the floor, never overwrites, and warns without a floor", () => {
