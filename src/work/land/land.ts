@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Say, Workspace } from "../workspace.ts";
 import { readConfig, type Config } from "../../config/config.ts";
@@ -104,9 +104,11 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
         if (!hasLessons(doc.body)) return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
         // reason: a file write or git commit that fails is an environment error, not a check's verdict (BR-2193).
         // setMeta fails before it writes, so the file is left as it is: whatever is in it now is someone else's edit (issue #80).
+        const file = join(wt, doc.path);
+        // reason: what was on disk right before canon wrote, including any edit saved since readCorpus, is what a rollback puts back (issue #80).
+        const before = readFileSync(file, "utf8");
         const s = setMeta(wt, doc, { status: "done" });
         if (!s.ok) return early("environment", `the close commit could not be made: ${s.error.message}`);
-        const file = join(wt, doc.path);
         const written = readFileSync(file, "utf8");
         git(wt, "add", doc.path);
         const c = git(wt, "commit", "-q", "-m", closeSubject(subject));
@@ -114,7 +116,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
           git(wt, "reset", "-q", "--", doc.path);
           // reason: put back only canon's own write; an edit saved meanwhile (e.g. during a slow pre-commit hook) stays (BR-2193, issue #80).
           const mine = existsSync(file) && readFileSync(file, "utf8") === written;
-          if (mine) git(wt, "checkout", "--", doc.path);
+          if (mine) writeFileSync(file, before);
           return early("environment", `the close commit could not be made: ${c.error.message}${mine ? "" : `\n${doc.path} changed while it was being committed, so it was left as it is`}`);
         }
         close = { subject, path: doc.path };
