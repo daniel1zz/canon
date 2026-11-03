@@ -305,16 +305,22 @@ describe("overlap in brief", () => {
 });
 
 describe("dropping from the command line", () => {
-  test("BR-2065 BR-2022: drop that would lose work exits 1 and names the question; nothing is deleted", () => {
+  test("BR-2102 BR-2103 BR-2022: drop that would lose work archives it and exits 0 printing how to restore; a failed archive exits 4", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     committed(root);
     const wt = canon(root, "work", "start", "--title", "Risky").out.match(/cd (.+)/)![1]!.trim();
     writeFileSync(join(wt, "wip.txt"), "wip");
-    const r = canon(root, "work", "drop", "C-1");
-    expect(r.code).toBe(1);
-    expect(r.err).toContain("uncommitted: ?? wip.txt");
-    expect(r.err).toContain("canon human answer 1 yes");
+    Bun.spawnSync(["git", "update-ref", "refs/canon/archive/C-1", "HEAD"], { cwd: root });
+    const blocked = canon(root, "work", "drop", "C-1");
+    expect(blocked.code).toBe(4);
     expect(Bun.spawnSync(["test", "-d", wt]).exitCode).toBe(0);
+    Bun.spawnSync(["git", "update-ref", "-d", "refs/canon/archive/C-1"], { cwd: root });
+    const r = canon(root, "work", "drop", "C-1");
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/archived to refs\/canon\/archive\/C-1\//);
+    expect(r.out).toContain("uncommitted: ?? wip.txt");
+    expect(r.out).toContain("restore --source=refs/canon/archive/C-1/");
+    expect(Bun.spawnSync(["test", "-d", wt]).exitCode).toBe(1);
   });
 });

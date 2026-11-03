@@ -2,7 +2,12 @@ import { err, ok, type Result } from "../kernel/result.ts";
 
 /** Thin git wrapper. Every call is explicit about its cwd; output is trimmed stdout, failures carry stderr. */
 export function git(cwd: string, ...args: string[]): Result<string> {
-  const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+  return gitEnv(cwd, {}, ...args);
+}
+
+/** `git` with extra environment variables, e.g. GIT_INDEX_FILE for a scratch index. */
+export function gitEnv(cwd: string, env: Readonly<Record<string, string>>, ...args: string[]): Result<string> {
+  const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", ...(Object.keys(env).length > 0 ? { env: { ...process.env, ...env } } : {}) });
   if (r.exitCode !== 0) return err("io", `git ${args.join(" ")}: ${(r.stderr.toString() || r.stdout.toString()).trim()}`);
   return ok(r.stdout.toString().trim());
 }

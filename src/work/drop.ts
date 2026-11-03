@@ -1,27 +1,30 @@
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Workspace } from "../app/workspace.ts";
-import { answeredBy, ask, claims, dropHandoff, questions, releaseClaim } from "../coord/state.ts";
+import { claims, dropHandoff, releaseClaim } from "../coord/state.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { git, ignoredPaths, unregenerable } from "../repo/git.ts";
+import { git, gitEnv, ignoredPaths, unregenerable } from "../repo/git.ts";
 import { processesIn } from "../repo/process.ts";
 import { describeOccupants, worktreesDir } from "./work.ts";
 
 /**
  * Dropping a change's work in flight (C-8): its worktree, its branch, its claim and its handoff. This is the
  * one sanctioned path for an operation that can lose work (P4). When nothing would be lost it runs at once
- * (BR-2064); otherwise it asks a human through `canon human ask`, deletes nothing (BR-2065), and runs only
- * when a human said yes and nothing changed since the question was asked (BR-2066). It does not intercept
+ * (BR-2064). Otherwise it first archives everything that would be lost under refs/canon/archive/<C-n>/<time>,
+ * reads the archive back, and only then deletes (BR-2102); if archiving or the read-back fails it deletes
+ * nothing (BR-2103). The owner chose archiving over asking a human every time (D-13). It does not intercept
  * an agent using git directly: that would be checking how an agent works, which D-1 rules out.
  */
-export type DropOutcome =
-  | { readonly kind: "dropped"; readonly worktree: string | null; readonly branch: string | null }
-  | { readonly kind: "asked"; readonly question: number; readonly losses: readonly string[] }
-  | { readonly kind: "waiting"; readonly question: number }
-  | { readonly kind: "declined"; readonly question: number; readonly answer: string };
-
-/** Answers that approve a drop. Anything else declines it. */
-const APPROVE = /^(yes|y|同意|是)$/i;
+export interface Dropped {
+  readonly worktree: string | null;
+  readonly branch: string | null;
+  /** The archive ref, or null when nothing would have been lost. */
+  readonly archive: string | null;
+  readonly losses: readonly string[];
+  /** Commands that bring the dropped work back; empty when nothing was archived. */
+  readonly restore: readonly string[];
+}
 
 interface Target {
   readonly change: string;
@@ -47,30 +50,109 @@ function locate(ws: Workspace, change: string): Result<Target> {
   return ok({ change, worktree, branch });
 }
 
-/** What dropping would lose, one line each; empty when nothing would be lost. Also the fingerprint of the state. */
-function losses(ws: Workspace, t: Target): string[] {
-  const out: string[] = [];
+/** What dropping would lose, one line each, plus the ignored paths that must go into the archive. */
+function losses(ws: Workspace, t: Target): Result<{ lines: string[]; ignored: string[] }> {
+  const lines: string[] = [];
   if (t.branch) {
     const log = git(ws.primary, "log", "--format=%h %s", `${ws.config.main}..${t.branch}`);
-    for (const line of log.ok && log.value !== "" ? log.value.split("\n") : []) out.push(`commit not on ${ws.config.main}: ${line}`);
+    if (!log.ok) return log;
+    for (const line of log.value !== "" ? log.value.split("\n") : []) lines.push(`commit not on ${ws.config.main}: ${line}`);
   }
+  let ignored: string[] = [];
   if (t.worktree) {
     const st = git(t.worktree, "status", "--porcelain");
-    for (const line of st.ok && st.value !== "" ? st.value.split("\n") : []) out.push(`uncommitted: ${line.trim()}`);
+    if (!st.ok) return st;
+    for (const line of st.value !== "" ? st.value.split("\n") : []) lines.push(`uncommitted: ${line.trim()}`);
     // `git status` hides git-ignored files; the ones a build cannot regenerate are work too (BR-2064).
-    const ignored = ignoredPaths(t.worktree);
-    for (const p of ignored.ok ? unregenerable(ignored.value, ws.config.regenerable) : [`? (${ignored.error.message})`]) out.push(`ignored: ${p}`);
+    const all = ignoredPaths(t.worktree);
+    if (!all.ok) return all;
+    ignored = unregenerable(all.value, ws.config.regenerable);
+    for (const p of ignored) lines.push(`ignored: ${p}`);
   }
-  const held = claims(ws.db).find((c) => c.subject === t.change);
-  if (held && new Date(held.expires_at) > new Date() && held.actor !== ws.actor) out.push(`claimed by ${held.actor} in ${held.holder} until ${held.expires_at}`);
-  return out;
+  return ok({ lines, ignored });
 }
 
-export function drop(ws: Workspace, change: string, say: (line: string) => void): Result<DropOutcome> {
+/**
+ * Archives the branch tip and the worktree's uncommitted, untracked and non-regenerable ignored files as one
+ * commit (first parent: the branch tip) under a new ref, then reads it back. `git stash create` cannot do
+ * this: it records tracked changes only. A scratch index (GIT_INDEX_FILE) captures the files without
+ * touching the worktree's own index.
+ */
+function archive(ws: Workspace, t: Target, ignored: readonly string[]): Result<{ ref: string; tip: string; commit: string }> {
+  const at = t.worktree ?? ws.primary;
+  const tipR = git(at, "rev-parse", "--verify", t.worktree ? "HEAD^{commit}" : `refs/heads/${t.branch}^{commit}`);
+  if (!tipR.ok) return tipR;
+  const tip = tipR.value;
+  let commit = tip;
+  let tree: string;
+  const scratch = mkdtempSync(join(tmpdir(), "canon-archive-"));
+  const env = { GIT_INDEX_FILE: join(scratch, "index") };
+  try {
+    if (t.worktree) {
+      for (const args of [["read-tree", tip], ["add", "-A"], ...(ignored.length > 0 ? [["add", "-f", "--", ...ignored]] : [])]) {
+        const r = gitEnv(t.worktree, env, ...args);
+        if (!r.ok) return r;
+      }
+      const w = gitEnv(t.worktree, env, "write-tree");
+      if (!w.ok) return w;
+      tree = w.value;
+      const tipTree = git(at, "rev-parse", `${tip}^{tree}`);
+      if (!tipTree.ok) return tipTree;
+      if (tree !== tipTree.value) {
+        const who = { GIT_AUTHOR_NAME: ws.actor, GIT_AUTHOR_EMAIL: "canon@localhost", GIT_COMMITTER_NAME: ws.actor, GIT_COMMITTER_EMAIL: "canon@localhost" };
+        const c = gitEnv(at, who, "commit-tree", tree, "-p", tip, "-m", `canon: archive of ${t.change}'s uncommitted work before canon work drop`);
+        if (!c.ok) return c;
+        commit = c.value;
+      }
+    } else {
+      const r = git(at, "rev-parse", `${tip}^{tree}`);
+      if (!r.ok) return r;
+      tree = r.value;
+    }
+    const ref = `refs/canon/archive/${t.change}/${new Date().toISOString().replace(/[:.]/g, "-")}`;
+    const made = git(ws.primary, "update-ref", ref, commit, ""); // "" = create only, never overwrite an archive
+    if (!made.ok) return made;
+
+    // Read back: the ref names the commit, holds the captured tree, keeps the branch tip, and has every file.
+    const back = git(ws.primary, "rev-parse", "--verify", `${ref}^{commit}`);
+    if (!back.ok || back.value !== commit) return err("io", `${ref} does not read back as ${commit}`);
+    const backTree = git(ws.primary, "rev-parse", `${ref}^{tree}`);
+    if (!backTree.ok || backTree.value !== tree) return err("io", `${ref} does not hold tree ${tree}`);
+    if (!git(ws.primary, "merge-base", "--is-ancestor", tip, ref).ok) return err("io", `${ref} does not contain the branch tip ${tip}`);
+    if (t.worktree) {
+      const files = git(ws.primary, "-c", "core.quotePath=false", "ls-tree", "-r", "-z", "--name-only", ref);
+      if (!files.ok) return files;
+      const have = new Set(files.value.split("\0"));
+      const untracked = git(t.worktree, "ls-files", "-z", "--others", "--exclude-standard");
+      const modified = git(t.worktree, "ls-files", "-z", "--modified");
+      if (!untracked.ok) return untracked;
+      if (!modified.ok) return modified;
+      const deleted = git(t.worktree, "ls-files", "-z", "--deleted");
+      const gone = new Set(deleted.ok ? deleted.value.split("\0") : []);
+      const want = [...untracked.value.split("\0"), ...modified.value.split("\0")].filter((p) => p !== "" && !gone.has(p));
+      const missing = want.find((p) => !have.has(p)) ?? ignored.find((p) => (p.endsWith("/") ? ![...have].some((h) => h.startsWith(p)) : !have.has(p)));
+      if (missing) return err("io", `${ref} lacks ${missing}`);
+      // The captured state is the one on disk: no file changed between the capture and now.
+      const same = gitEnv(t.worktree, env, "diff-files", "--quiet");
+      if (!same.ok) return err("io", `the worktree changed while it was archived; ${ref} may be incomplete`);
+    }
+    return ok({ ref, tip, commit });
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+export function drop(ws: Workspace, change: string, say: (line: string) => void): Result<Dropped> {
   const located = locate(ws, change.toUpperCase());
   if (!located.ok) return located;
   const t = located.value;
   if (t.worktree && ws.root === t.worktree) return err("invalid", `you are in ${t.worktree}; run \`canon work drop ${t.change}\` from another checkout`);
+  // Someone else still at work there is not something an archive can save: refuse before looking at losses.
+  const held = claims(ws.db).find((c) => c.subject === t.change);
+  if (held && new Date(held.expires_at) > new Date() && held.actor !== ws.actor) {
+    ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "claimed", actor: held.actor });
+    return err("conflict", `${t.change} is claimed by ${held.actor} in ${held.holder} until ${held.expires_at}; nothing was deleted`);
+  }
   if (t.worktree) {
     const occupied = processesIn([t.worktree]);
     if (!occupied.ok) return occupied;
@@ -81,34 +163,27 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
     }
   }
   const lost = losses(ws, t);
-  const fingerprint = lost.join("\n");
+  if (!lost.ok) return lost;
 
-  if (lost.length > 0) {
-    const last = ws.db.db
-      .query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = 'drop.escalate' AND subject = ? ORDER BY id DESC LIMIT 1")
-      .get(t.change);
-    const prior = last ? (JSON.parse(last.detail) as { question: number; fingerprint: string }) : undefined;
-    const q = prior && prior.fingerprint === fingerprint ? questions(ws.db, "all").find((x) => x.id === prior.question) : undefined;
-    if (q && q.answer === null) {
-      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "waiting", question: q.id });
-      return ok({ kind: "waiting", question: q.id });
+  let archived: { ref: string; tip: string; commit: string } | null = null;
+  const restore: string[] = [];
+  if (lost.value.lines.length > 0) {
+    const a = archive(ws, t, lost.value.ignored);
+    if (!a.ok) {
+      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "archive", message: a.error.message.slice(0, 2000), losses: lost.value.lines });
+      return err("io", `archiving ${t.change} failed, so nothing was deleted: ${a.error.message}`);
     }
-    // A direct human answer or an agent's relay of the human's words both count (D-6); the record says which.
-    const fromHuman = q?.answered_by?.startsWith("human:") === true || Boolean(q?.relayed);
-    if (q && q.answer !== null && !(APPROVE.test(q.answer.trim()) && fromHuman)) {
-      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "declined", question: q.id, answer: q.answer });
-      return ok({ kind: "declined", question: q.id, answer: q.answer });
+    archived = a.value;
+    const branch = t.branch ?? `change/${t.change}`;
+    restore.push(`git branch ${branch} ${archived.tip}`);
+    if (t.worktree) {
+      restore.push(`git worktree add ${t.worktree} ${branch}`);
+      if (archived.commit !== archived.tip) restore.push(`git -C ${t.worktree} restore --source=${archived.ref} --worktree -- .`);
     }
-    if (!q) {
-      const text = `Drop ${t.change}? This deletes ${[t.worktree, t.branch && `branch ${t.branch}`].filter(Boolean).join(" and ")} and loses:\n${lost.map((l) => `  - ${l}`).join("\n")}`;
-      const id = ask(ws.db, ws.actor, t.change, text, ["yes", "no"]);
-      ws.db.event(ws.actor, "drop.escalate", t.change, { question: id, fingerprint, losses: lost });
-      return ok({ kind: "asked", question: id, losses: lost });
-    }
-    say(`#${q.id} approved by ${answeredBy(q)}; dropping ${t.change}`);
   }
 
   if (t.worktree) {
+    // reason: --force is safe here: everything it would destroy is in the archive verified above (BR-2102).
     const rm = git(ws.primary, "worktree", "remove", "--force", t.worktree);
     if (!rm.ok) return rm;
   }
@@ -118,7 +193,11 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
   }
   releaseClaim(ws.db, t.change, ws.actor);
   dropHandoff(ws.db, t.change);
-  ws.db.event(ws.actor, "drop.done", t.change, { worktree: t.worktree, branch: t.branch, losses: lost });
+  ws.db.event(ws.actor, "drop.done", t.change, { worktree: t.worktree, branch: t.branch, losses: lost.value.lines, archive: archived?.ref ?? null, archive_commit: archived?.commit ?? null });
   say(`dropped ${t.change}${t.worktree ? `: removed ${t.worktree}` : ""}${t.branch ? `, deleted branch ${t.branch}` : ""}`);
-  return ok({ kind: "dropped", worktree: t.worktree, branch: t.branch });
+  if (archived) {
+    say(`archived to ${archived.ref}:\n${lost.value.lines.map((l) => `  - ${l}`).join("\n")}`);
+    say(`restore with:\n${restore.map((c) => `  ${c}`).join("\n")}`);
+  }
+  return ok({ worktree: t.worktree, branch: t.branch, archive: archived?.ref ?? null, losses: lost.value.lines, restore });
 }

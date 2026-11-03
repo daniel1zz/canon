@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { answer, claims, questions } from "../coord/state.ts";
+import { claims } from "../coord/state.ts";
 import { drop } from "./drop.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "./testkit.ts";
 import { land } from "./work.ts";
@@ -10,24 +10,32 @@ import { land } from "./work.ts";
 const events = (root: string, kind: string) =>
   ws(root).db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = ? ORDER BY id").all(kind).map((e) => JSON.parse(e.detail));
 const branches = (root: string) => sh(root, "branch", "--list", "change/*");
+const archives = (root: string) => sh(root, "for-each-ref", "--format=%(refname)", "refs/canon/archive");
 
-function withCommit(root: string, title: string) {
-  const s = startNew(root, title);
+function withCommit(root: string, title: string, actor = "agent:a") {
+  const s = startNew(root, title, actor);
   writeFileSync(join(s.worktree, "wip.txt"), "wip\n");
   sh(s.worktree, "add", "wip.txt");
   sh(s.worktree, "commit", "-qm", "wip");
   return s;
 }
 
+function ignoring(root: string) {
+  writeFileSync(join(root, ".gitignore"), ".env\nnode_modules/\n");
+  sh(root, "add", "-A");
+  sh(root, "commit", "-qm", "ignore");
+}
+
 describe("dropping a change", () => {
-  test("BR-2064: a fully landed change is dropped at once: worktree, branch, claim and handoff go", async () => {
+  test("BR-2064: a fully landed change is dropped at once without an archive: worktree, branch, claim and handoff go", async () => {
     const root = project();
     const s = startNew(root, "Landed");
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
     const r = drop(ws(root, "agent:a"), s.change, quiet);
-    expect(r.ok && r.value.kind).toBe("dropped");
+    expect(r.ok && r.value.archive).toBe(null);
     expect(existsSync(s.worktree)).toBe(false);
     expect(branches(root)).toBe("");
+    expect(archives(root)).toBe("");
     expect(claims(ws(root).db)).toEqual([]);
     expect(events(root, "drop.done").length).toBe(1);
   });
@@ -40,31 +48,40 @@ describe("dropping a change", () => {
     expect(!inside.ok && inside.error.code).toBe("invalid");
     sh(root, "worktree", "remove", s.worktree);
     const r = drop(ws(root), s.change, quiet);
-    expect(r.ok && r.value).toMatchObject({ kind: "dropped", worktree: null });
+    expect(r.ok && r.value).toMatchObject({ worktree: null, archive: null });
     expect(branches(root)).toBe("");
     const none = drop(ws(root), "C-99", quiet);
     expect(!none.ok && none.error.code).toBe("not_found");
   });
 
-  test("BR-2064 BR-2065: an ignored file a build cannot regenerate counts as work; ignored node_modules does not", async () => {
+  test("BR-2064: ignored node_modules is not work; an ignored .env is, and goes into the archive", async () => {
     const root = project();
-    writeFileSync(join(root, ".gitignore"), ".env\nnode_modules/\n");
-    sh(root, "add", "-A");
-    sh(root, "commit", "-qm", "ignore");
+    ignoring(root);
     const deps = startNew(root, "Deps only");
     expect((await land(ws(deps.worktree), FAST, quiet)).kind).toBe("landed");
     mkdirSync(join(deps.worktree, "node_modules"), { recursive: true });
     writeFileSync(join(deps.worktree, "node_modules/i.js"), "1\n");
-    expect(drop(ws(root), deps.change, quiet)).toMatchObject({ ok: true, value: { kind: "dropped" } });
+    expect(drop(ws(root), deps.change, quiet)).toMatchObject({ ok: true, value: { archive: null } });
     const secret = startNew(root, "Has env");
     expect((await land(ws(secret.worktree), FAST, quiet)).kind).toBe("landed");
     writeFileSync(join(secret.worktree, ".env"), "TOKEN=1\n");
     const r = drop(ws(root), secret.change, quiet);
-    expect(r.ok && r.value.kind === "asked" && r.value.losses).toEqual(["ignored: .env"]);
-    expect(existsSync(join(secret.worktree, ".env"))).toBe(true);
+    if (!r.ok || !r.value.archive) throw new Error("expected an archive");
+    expect(r.value.losses).toEqual(["ignored: .env"]);
+    expect(sh(root, "show", `${r.value.archive}:.env`)).toBe("TOKEN=1");
   });
 
-  test("BR-2064: a worktree another process is in is not dropped, before anything is asked: exit 5 naming the pid, nothing deleted", async () => {
+  test("BR-2064: a change another operator holds a live claim on is not dropped and not archived: exit 5", () => {
+    const root = project();
+    const s = withCommit(root, "Theirs", "agent:b");
+    const r = drop(ws(root, "agent:a"), s.change, quiet);
+    expect(!r.ok && r.error.code).toBe("conflict");
+    expect(existsSync(s.worktree)).toBe(true);
+    expect(archives(root)).toBe("");
+    expect(events(root, "drop.refuse").map((e) => e.reason)).toEqual(["claimed"]);
+  });
+
+  test("BR-2064: a worktree another process is in is not dropped or archived, landed or not: exit 5 naming the pid", async () => {
     const root = project();
     const s = startNew(root, "Busy");
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
@@ -81,7 +98,7 @@ describe("dropping a change", () => {
         await proc.exited;
       }
     }
-    expect(questions(ws(root).db, "all")).toEqual([]);
+    expect(archives(root)).toBe("");
     expect(events(root, "drop.refuse").map((e) => e.reason)).toEqual(["in-use", "in-use"]);
   });
 
@@ -102,70 +119,59 @@ describe("dropping a change", () => {
     }
   });
 
-  test("BR-2065: work that would be lost is listed in a question for a human and nothing is deleted; asking again does not repeat it", () => {
+  test("BR-2102: an unlanded commit is archived at the branch tip, then deleted without asking; the printed commands restore the branch", () => {
     const root = project();
     const s = withCommit(root, "Unlanded");
+    const tip = sh(s.worktree, "rev-parse", "HEAD");
+    const lines: string[] = [];
+    const r = drop(ws(root), s.change, (l) => lines.push(l));
+    if (!r.ok || !r.value.archive) throw new Error("expected an archive");
+    expect(r.value.archive).toMatch(new RegExp(`^refs/canon/archive/${s.change}/\\d{4}-\\d{2}-\\d{2}T`));
+    expect(sh(root, "rev-parse", r.value.archive)).toBe(tip);
+    expect(r.value.losses[0]).toMatch(/^commit not on main: [0-9a-f]+ wip$/);
+    expect(existsSync(s.worktree)).toBe(false);
+    expect(branches(root)).toBe("");
+    expect(events(root, "drop.done")[0]).toMatchObject({ archive: r.value.archive });
+    expect(lines.join("\n")).toContain(r.value.restore[0]!);
+    for (const c of r.value.restore) expect(Bun.spawnSync(["sh", "-c", c], { cwd: root }).exitCode).toBe(0);
+    expect(readFileSync(join(s.worktree, "wip.txt"), "utf8")).toBe("wip\n");
+  });
+
+  test("BR-2102: modified, untracked and ignored files are archived with their current content; node_modules is not; the restore brings them back", () => {
+    const root = project();
+    ignoring(root);
+    const s = startNew(root, "Dirty");
+    writeFileSync(join(s.worktree, "app.txt"), "changed\n");
     writeFileSync(join(s.worktree, "notes.txt"), "n\n");
+    writeFileSync(join(s.worktree, ".env"), "TOKEN=2\n");
+    mkdirSync(join(s.worktree, "node_modules"), { recursive: true });
+    writeFileSync(join(s.worktree, "node_modules/i.js"), "1\n");
+    sh(s.worktree, "add", "app.txt");
     const r = drop(ws(root), s.change, quiet);
-    expect(r.ok && r.value.kind).toBe("asked");
-    expect(existsSync(s.worktree)).toBe(true);
+    if (!r.ok || !r.value.archive) throw new Error("expected an archive");
+    expect(r.value.losses.slice(1)).toEqual(["uncommitted: M  app.txt", "uncommitted: ?? notes.txt", "ignored: .env"]);
+    const files = sh(root, "ls-tree", "-r", "--name-only", r.value.archive).split("\n");
+    expect(files).toEqual(expect.arrayContaining(["app.txt", "notes.txt", ".env"]));
+    expect(files.some((f) => f.startsWith("node_modules"))).toBe(false);
+    expect(existsSync(s.worktree)).toBe(false);
+    for (const c of r.value.restore) expect(Bun.spawnSync(["sh", "-c", c], { cwd: root }).exitCode).toBe(0);
+    expect(readFileSync(join(s.worktree, "app.txt"), "utf8")).toBe("changed\n");
+    expect(readFileSync(join(s.worktree, "notes.txt"), "utf8")).toBe("n\n");
+    expect(readFileSync(join(s.worktree, ".env"), "utf8")).toBe("TOKEN=2\n");
+  });
+
+  test("BR-2103: when the archive ref cannot be written nothing is deleted: exit 4, a drop.refuse with reason archive", () => {
+    const root = project();
+    const s = withCommit(root, "Blocked");
+    // A ref named exactly refs/canon/archive/<C-n> makes every refs/canon/archive/<C-n>/<time> impossible.
+    sh(root, "update-ref", `refs/canon/archive/${s.change}`, "HEAD");
+    const r = drop(ws(root), s.change, quiet);
+    expect(!r.ok && r.error.code).toBe("io");
+    expect(!r.ok && r.error.message).toContain("nothing was deleted");
+    expect(existsSync(join(s.worktree, "wip.txt"))).toBe(true);
     expect(branches(root)).toContain(s.branch);
-    const q = questions(ws(root).db, "pending");
-    expect(q.length).toBe(1);
-    expect(q[0]!.question).toMatch(/commit not on main: [0-9a-f]+ wip/);
-    expect(q[0]!.question).toContain("uncommitted: ?? notes.txt");
-    expect(q[0]!.options).toEqual(["yes", "no"]);
-    const again = drop(ws(root), s.change, quiet);
-    expect(again.ok && again.value.kind).toBe("waiting");
-    expect(questions(ws(root).db, "all").length).toBe(1);
-    expect(events(root, "drop.refuse").map((e) => e.reason)).toEqual(["waiting"]);
-  });
-
-  test("BR-2066: a human yes, or an agent relaying it, drops an unchanged state; a no, or a bare agent yes, does not", () => {
-    const root = project();
-    const yes = withCommit(root, "Approved");
-    const asked = drop(ws(root), yes.change, quiet);
-    if (!asked.ok || asked.value.kind !== "asked") throw new Error("expected a question");
-    answer(ws(root).db, asked.value.question, "Yes", "human:dz");
-    const done = drop(ws(root), yes.change, quiet);
-    expect(done.ok && done.value.kind).toBe("dropped");
-    expect(existsSync(yes.worktree)).toBe(false);
-    expect(events(root, "drop.done")[0].losses[0]).toContain("wip");
-
-    const no = withCommit(root, "Declined");
-    const q2 = drop(ws(root), no.change, quiet);
-    if (!q2.ok || q2.value.kind !== "asked") throw new Error("expected a question");
-    answer(ws(root).db, q2.value.question, "no", "human:dz");
-    expect(drop(ws(root), no.change, quiet)).toMatchObject({ ok: true, value: { kind: "declined" } });
-    expect(existsSync(no.worktree)).toBe(true);
-
-    const byAgent = withCommit(root, "Agent said yes");
-    const q3 = drop(ws(root), byAgent.change, quiet);
-    if (!q3.ok || q3.value.kind !== "asked") throw new Error("expected a question");
-    // an agent's bare answer (no relay) that reached the table some other way does not approve
-    ws(root).db.db.query("UPDATE questions SET answer = 'yes', answered_by = 'agent:x' WHERE id = ?").run(q3.value.question);
-    expect(drop(ws(root), byAgent.change, quiet)).toMatchObject({ ok: true, value: { kind: "declined" } });
-    expect(existsSync(byAgent.worktree)).toBe(true);
-
-    const relayed = withCommit(root, "Relayed yes");
-    const q4 = drop(ws(root), relayed.change, quiet);
-    if (!q4.ok || q4.value.kind !== "asked") throw new Error("expected a question");
-    expect(answer(ws(root).db, q4.value.question, "yes", "agent:x", "删吧").ok).toBe(true);
-    expect(drop(ws(root), relayed.change, quiet)).toMatchObject({ ok: true, value: { kind: "dropped" } });
-  });
-
-  test("BR-2066: when more would be lost after the question, a new question is asked", () => {
-    const root = project();
-    const s = withCommit(root, "Moving");
-    const first = drop(ws(root), s.change, quiet);
-    if (!first.ok || first.value.kind !== "asked") throw new Error("expected a question");
-    answer(ws(root).db, first.value.question, "yes", "human:dz");
-    writeFileSync(join(s.worktree, "more.txt"), "more\n");
-    sh(s.worktree, "add", "more.txt");
-    sh(s.worktree, "commit", "-qm", "more");
-    const again = drop(ws(root), s.change, quiet);
-    expect(again.ok && again.value.kind).toBe("asked");
-    expect(existsSync(s.worktree)).toBe(true);
-    expect(questions(ws(root).db, "all").length).toBe(2);
+    expect(claims(ws(root).db).map((c) => c.subject)).toEqual([s.change]);
+    expect(events(root, "drop.refuse").map((e) => e.reason)).toEqual(["archive"]);
+    expect(events(root, "drop.done")).toEqual([]);
   });
 });

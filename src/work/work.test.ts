@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claims, enqueue, takeClaim, tryTurn } from "../coord/state.ts";
 import { readCorpus } from "../knowledge/read.ts";
@@ -374,6 +375,23 @@ describe("clean keeps what git does not show", () => {
     if (!r.ok) throw new Error(r.error.message);
     expect(r.value.removed).toEqual([cache.worktree]);
     expect(r.value.kept.join("\n")).toContain(`${deps.worktree}: ignored files that cannot be regenerated: node_modules/`);
+  });
+
+  test.skipIf(process.platform === "linux")("BR-2019: when processes cannot be listed a landed worktree is kept, saying so", async () => {
+    const root = project();
+    const s = await landed(root, "No lsof");
+    const bin = mkdtempSync(join(tmpdir(), "canon-nolsof-"));
+    writeFileSync(join(bin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const path = process.env["PATH"];
+    process.env["PATH"] = `${bin}:${path}`;
+    try {
+      const r = clean(ws(root), quiet);
+      if (!r.ok) throw new Error(r.error.message);
+      expect(r.value.removed).toEqual([]);
+      expect(r.value.kept.join("\n")).toContain(`${s.worktree}: cannot tell whether a process is inside it`);
+    } finally {
+      process.env["PATH"] = path;
+    }
   });
 
   test("BR-2019: a landed worktree that another process has as its current directory is kept, naming the pid", async () => {

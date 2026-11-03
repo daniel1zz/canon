@@ -330,25 +330,14 @@ const work = defineCommand({
       },
     }),
     drop: defineCommand({
-      meta: { description: "Drop a change's worktree, branch and claim; asks a human first when that would lose work" },
+      meta: { description: "Drop a change's worktree, branch and claim; archives anything that would be lost to refs/canon/archive first" },
       args: { change: { type: "positional", required: true } },
       run({ args }) {
         const ws = workspace();
-        const out = must(drop(ws, String(args.change), say));
-        if (out.kind === "dropped") {
-          const onMain = mainCorpus(ws);
-          const doc = onMain.ok ? findDoc(onMain.value, String(args.change)) : undefined;
-          if (doc?.kind === "change" && doc.status === "open") say(`${doc.id} is still open on ${ws.config.main}; mark it with \`canon change drop ${doc.id}\` in a change if the work will not happen`);
-          return;
-        }
-        if (out.kind === "asked") {
-          console.error(`canon: dropping ${String(args.change).toUpperCase()} would lose:\n${out.losses.map((l) => `  - ${l}`).join("\n")}\nNothing was deleted. Question #${out.question} asks a human; run this again after \`canon human answer ${out.question} yes\`.`);
-        } else if (out.kind === "waiting") {
-          console.error(`canon: question #${out.question} is not answered yet; nothing was deleted`);
-        } else {
-          console.error(`canon: question #${out.question} was answered "${out.answer}"; nothing was deleted`);
-        }
-        process.exit(EXIT.refused);
+        must(drop(ws, String(args.change), say));
+        const onMain = mainCorpus(ws);
+        const doc = onMain.ok ? findDoc(onMain.value, String(args.change)) : undefined;
+        if (doc?.kind === "change" && doc.status === "open") say(`${doc.id} is still open on ${ws.config.main}; mark it with \`canon change drop ${doc.id}\` in a change if the work will not happen`);
       },
     }),
     clean: defineCommand({

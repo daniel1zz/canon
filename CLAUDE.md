@@ -19,7 +19,7 @@ canon work start <C-n>            # 开始一个已有的变更；或 --title "<
 canon work land [--finish]        # 排队 → rebase → floor → canon check → 规则评审 → main
 canon work stop --next "<下一步>"  # 没做完就停下时
 canon update [--check]            # 更新 canon 装进项目的 skill 和 hook（用户要求时）
-canon work drop <C-n>             # 放弃一个变更的 worktree 和分支；会丢工作时先问人
+canon work drop <C-n>             # 放弃一个变更的 worktree 和分支；会丢的东西先存档再删
 canon human ask "<问题>"          # 只用于方向，或明确留给人的决定
 canon human answer <n> <回答> --relayed "<人的原话>"  # 人在对话里回答后，由 agent 如实转述记下
 ```
@@ -30,8 +30,8 @@ canon human answer <n> <回答> --relayed "<人的原话>"  # 人在对话里回
 - 有真实备选方案的重要选择，写一个决策：`canon decision new --title "..."`。
 - `canon/` 下的文档一律用中文；代码、注释和测试名用英文。
 - 写在反引号里的编号是举例，不算引用。
-- 要删除带未合入提交或未提交改动的 worktree、删除未合入的变更分支，用 `canon work drop`，不要直接用 git：它会列出会丢的东西、问人，人同意后再执行，每一步都记进事件表。
-- 留给人的问题（包括 `canon work drop` 提的问题），先用提问工具问负责人，再用 `canon human answer --relayed` 记下负责人的原话；只转述负责人真实说过的话，不替他决定（D-6）。
+- 要删除带未合入提交或未提交改动的 worktree、删除未合入的变更分支，用 `canon work drop`，不要直接用 git：它先把会丢的东西（提交、未提交和未跟踪的文件、不能重新生成的被忽略文件）存档到 `refs/canon/archive/<C-n>/<时间>`，读回校验后才删除，并打印恢复命令，不问人（D-13）。
+- 留给人的问题，先用提问工具问负责人，再用 `canon human answer --relayed` 记下负责人的原话；只转述负责人真实说过的话，不替他决定（D-6）。
 - 必须问人（`canon human ask`，或在对话里直接问）的情形还包括：要花钱的操作（付费 API、云资源）、对共享范围不可逆的操作（发布、删除远端数据、推送到别人的仓库）、需要人的凭据或二次验证。其余不等人。
 - 在 worktree 里只跑和改动相关的测试；全量测试由 floor 在合入时跑一次。多个 worktree 同时跑全量测试会互相拖慢，曾出现负载 150、70 多个假失败。
 - 反直觉的代码加一行 `// reason:` 注释，写明依据的规则或决策编号。

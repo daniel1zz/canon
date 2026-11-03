@@ -53,14 +53,15 @@ describe("canon stats", () => {
     expect([of(s, "setup").runs, of(s, "setup").refused]).toEqual([3, 1]);
   });
 
-  test("BR-2068: refused twice and not yet landed is pending twice; a drop that only asked is still pending; no change id is unknown", () => {
+  test("BR-2068: refused twice and not yet landed is pending twice; a drop that deleted nothing is still pending; no change id is unknown", () => {
     const opened = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
     if (!opened.ok) throw new Error(opened.error.message);
     const d = opened.value;
     d.event("a", "land.refuse", "C-4", { reason: "floor", diff: "x" });
     d.event("a", "land.refuse", "C-4", { reason: "floor", diff: "y" });
     d.event("a", "land.refuse", "C-5", { reason: "floor", diff: "z" });
-    d.event("a", "drop.escalate", "C-5", { question: 1 });
+    d.event("a", "drop.refuse", "C-5", { reason: "archive" });
+    d.event("a", "drop.escalate", "C-5", { question: 1 }); // from before D-13, still in old coordination databases
     d.event("a", "land.refuse", null, { reason: "floor", diff: "w" });
     expect(of(computeStats(d, {}, "2026-11-03"), "floor").outcomes).toEqual({ changed: 0, same: 0, abandoned: 0, pending: 3, unknown: 1 });
   });
@@ -97,9 +98,6 @@ describe("canon stats", () => {
     const waiting = startNew(root, "Waiting");
     commit(waiting.worktree, "FAIL", "y");
     await land(ws(waiting.worktree), FAST, quiet);
-    const asked = drop(ws(root), gone.change, quiet);
-    if (!asked.ok || asked.value.kind !== "asked") throw new Error("expected a question");
-    ws(root).db.db.query("UPDATE questions SET answer = 'yes', answered_by = 'human:dz' WHERE id = ?").run(asked.value.question);
     expect(drop(ws(root), gone.change, quiet).ok).toBe(true);
     expect(of(computeStats(ws(root).db, {}, "2026-11-03"), "floor").outcomes).toMatchObject({ abandoned: 1, pending: 1 });
   });
