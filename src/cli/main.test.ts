@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { WORKFLOW_GUIDE } from "./guide.ts";
 
 const MAIN = join(import.meta.dir, "main.ts");
 
@@ -195,10 +196,17 @@ describe("session continuity", () => {
     expect(canon(root, "work", "status").out).toContain("C-1"); // claim kept without --release
   });
 
-  test("BR-2024: brief prints nothing when nothing is in flight", () => {
+  test("BR-2024 BR-2090: with nothing in flight brief prints only the workflow guide, and the guide comes first otherwise", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
-    expect(canon(root, "brief").out).toBe("");
+    const idle = canon(root, "brief").out;
+    expect(idle.trim()).toBe(WORKFLOW_GUIDE);
+    for (const cmd of ["canon context", "canon work start", "canon work land --finish", "canon work stop --next", "--relayed", "canon work drop"]) expect(idle).toContain(cmd);
+    committed(root);
+    const wt = canon(root, "work", "start", "--title", "Refunds").out.match(/cd (.+)/)![1]!.trim();
+    const b = canon(wt, "brief").out;
+    expect(b.startsWith(WORKFLOW_GUIDE)).toBe(true);
+    expect(b.slice(WORKFLOW_GUIDE.length)).toContain("You are in C-1");
   });
 });
 

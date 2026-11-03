@@ -14,6 +14,7 @@ import { createDoc, createDomain, setMeta } from "../knowledge/write.ts";
 import { git } from "../repo/git.ts";
 import { overlapsOf } from "../work/overlap.ts";
 import { skillsSource, type InstallReport } from "../skills/install.ts";
+import { WORKFLOW_GUIDE } from "./guide.ts";
 import { assetsStatus, installAssets, updateNotice, updateProject } from "../skills/update.ts";
 import { computeStats, renderStats } from "../stats/stats.ts";
 import { drop } from "../work/drop.ts";
@@ -485,12 +486,13 @@ function noticeUpdates(ws: Workspace, out: (line: string) => void) {
 }
 
 const brief = defineCommand({
-  meta: { description: "Session start: this worktree's change and handoff, and what else is in flight (printed by the session-start hook)" },
+  meta: { description: "Session start: how to work in a canon project, this worktree's change and handoff, and what else is in flight (printed by the session-start hook)" },
   run() {
     const ws = workspace();
     const mine = claimOfWorktree(ws.db, ws.root);
     const hs = handoffs(ws.db);
     const pending = questions(ws.db, "pending").length;
+    say(WORKFLOW_GUIDE);
     if (mine) {
       say(`You are in ${mine.subject} (${ws.root}). Read it: canon show ${mine.subject}; context: canon context ${mine.subject}`);
       const h = hs.find((x) => x.subject === mine.subject);
