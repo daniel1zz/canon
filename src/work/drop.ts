@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type { Workspace } from "../app/workspace.ts";
-import { ask, claims, dropHandoff, questions, releaseClaim } from "../coord/state.ts";
+import { answeredBy, ask, claims, dropHandoff, questions, releaseClaim } from "../coord/state.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { git } from "../repo/git.ts";
 import { worktreesDir } from "./work.ts";
@@ -80,7 +80,9 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
       ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "waiting", question: q.id });
       return ok({ kind: "waiting", question: q.id });
     }
-    if (q && q.answer !== null && !(APPROVE.test(q.answer.trim()) && q.answered_by?.startsWith("human:"))) {
+    // A direct human answer or an agent's relay of the human's words both count (D-6); the record says which.
+    const fromHuman = q?.answered_by?.startsWith("human:") === true || Boolean(q?.relayed);
+    if (q && q.answer !== null && !(APPROVE.test(q.answer.trim()) && fromHuman)) {
       ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "declined", question: q.id, answer: q.answer });
       return ok({ kind: "declined", question: q.id, answer: q.answer });
     }
@@ -90,7 +92,7 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
       ws.db.event(ws.actor, "drop.escalate", t.change, { question: id, fingerprint, losses: lost });
       return ok({ kind: "asked", question: id, losses: lost });
     }
-    say(`#${q.id} approved by ${q.answered_by}; dropping ${t.change}`);
+    say(`#${q.id} approved by ${answeredBy(q)}; dropping ${t.change}`);
   }
 
   if (t.worktree) {

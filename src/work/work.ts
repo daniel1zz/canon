@@ -259,7 +259,8 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
 
   // Every added, edited or deleted file under canon/rules or canon/decisions is reviewed (BR-2009): rule and
   // decision documents by their new text, deleted ones by the text they had on main, domain READMEs whole.
-  const knowledge = git(wt, "diff", "--name-status", "--no-renames", base.value, head.value, "--", "canon/rules", "canon/decisions");
+  // core.quotePath=false: git otherwise prints non-ASCII paths quoted and octal-escaped, which match no document.
+  const knowledge = git(wt, "-c", "core.quotePath=false", "diff", "--name-status", "--no-renames", base.value, head.value, "--", "canon/rules", "canon/decisions");
   const entries = knowledge.ok && knowledge.value !== "" ? knowledge.value.split("\n").map((l) => ({ status: l[0]!, path: l.slice(l.indexOf("\t") + 1) })) : [];
   const live = new Set(entries.filter((e) => e.status !== "D").map((e) => e.path));
   const changedDocs = read.corpus.docs.filter((d) => live.has(d.path));

@@ -45,6 +45,7 @@ CREATE TABLE IF NOT EXISTS questions (
   options     TEXT NOT NULL DEFAULT '[]',
   answer      TEXT,
   answered_by TEXT,
+  relayed     TEXT,                    -- the human's words when an agent relayed the answer
   asked_at    TEXT NOT NULL,
   answered_at TEXT
 );
@@ -67,6 +68,9 @@ export class CoordDb {
       const db = new Database(path, { create: true, strict: true });
       db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
       db.exec(SCHEMA);
+      // Columns added after the first schema; SQLite has no ADD COLUMN IF NOT EXISTS.
+      const cols = db.query<{ name: string }, []>("PRAGMA table_info(questions)").all().map((c) => c.name);
+      if (!cols.includes("relayed")) db.exec("ALTER TABLE questions ADD COLUMN relayed TEXT");
       return ok(new CoordDb(db));
     } catch (e) {
       return err("io", `cannot open coordination DB at ${path}: ${(e as Error).message}`);

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { openWorkspace, type Workspace } from "../app/workspace.ts";
 import { check } from "../check/check.ts";
 import { testFilesFor } from "../check/tests.ts";
-import { activeQueue, answer, ask, claimOfWorktree, claims, handoffs, questions } from "../coord/state.ts";
+import { activeQueue, answer, answeredBy, ask, claimOfWorktree, claims, handoffs, questions } from "../coord/state.ts";
 import type { CanonError, Result } from "../kernel/result.ts";
 import type { Doc, Kind } from "../knowledge/model.ts";
 import { contextFor, findDoc, rawText, renderContext, search } from "../knowledge/query.ts";
@@ -378,18 +378,25 @@ const human = defineCommand({
         const ws = workspace();
         const qs = questions(ws.db, args.all ? "all" : "pending");
         if (args.json) return json(qs);
-        for (const q of qs) say(`#${q.id} [${q.subject ?? "-"}] ${q.question}${q.options.length ? `  (${q.options.join(" | ")})` : ""}${q.answer ? `\n    → ${q.answer} (${q.answered_by})` : ""}`);
+        for (const q of qs) say(`#${q.id} [${q.subject ?? "-"}] ${q.question}${q.options.length ? `  (${q.options.join(" | ")})` : ""}${q.answer ? `\n    → ${q.answer} (${answeredBy(q)})` : ""}`);
         if (qs.length === 0) say("(nothing waiting)");
       },
     }),
     answer: defineCommand({
-      meta: { description: "Answer a question. Only from an interactive terminal: an agent cannot answer for the human" },
-      args: { id: { type: "positional", required: true }, text: { type: "positional", required: true } },
+      meta: { description: "Answer a question: a human at a terminal, or an agent passing on the human's own words with --relayed" },
+      args: {
+        id: { type: "positional", required: true },
+        text: { type: "positional", required: true },
+        relayed: { type: "string", description: "Agent only: the human's own words this answer passes on (recorded as a relay)" },
+      },
       run({ args }) {
-        if (!process.stdin.isTTY) fail({ code: "invalid", message: "answers are typed by a human at a terminal; this session has no TTY" });
+        const relayed = typeof args.relayed === "string" ? args.relayed : undefined;
+        if (relayed === undefined && !process.stdin.isTTY) {
+          fail({ code: "invalid", message: 'answer at a terminal, or as an agent relay the human\'s words with --relayed "<what they said>"' });
+        }
         const ws = workspace();
-        must(answer(ws.db, Number(args.id), String(args.text), ws.actor));
-        say(`#${args.id} answered`);
+        must(answer(ws.db, Number(args.id), String(args.text), ws.actor, relayed));
+        say(`#${args.id} answered${relayed ? ` (relayed by ${ws.actor})` : ""}`);
       },
     }),
   },

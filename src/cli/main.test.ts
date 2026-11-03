@@ -91,13 +91,17 @@ describe("exit codes", () => {
     expect(canon(wt, "human", "pending").out).toContain("#2 [-] Rename it?");
   });
 
-  test("BR-2021: an agent session without a terminal cannot answer a human question", () => {
+  test("BR-2021: without a terminal and without --relayed an answer is refused; an agent relaying the human's words is recorded as a relay", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     expect(canon(root, "human", "ask", "Ship it?").code).toBe(0);
-    const r = canon(root, "human", "answer", "1", "yes");
-    expect(r.code).toBe(2);
-    expect(r.err).toContain("TTY");
+    const bare = canon(root, "human", "answer", "1", "yes");
+    expect(bare.code).toBe(2);
+    expect(bare.err).toContain("--relayed");
+    const relayed = canon(root, "human", "answer", "1", "yes", "--relayed", "好的，发吧");
+    expect(relayed.code).toBe(0);
+    expect(canon(root, "human", "pending", "--all").out).toContain('→ yes (agent:test relaying the human: "好的，发吧")');
+    expect(canon(root, "human", "answer", "1", "no", "--relayed", "算了").code).toBe(5); // answered once (BR-2040)
   });
 });
 

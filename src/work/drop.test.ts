@@ -64,7 +64,7 @@ describe("dropping a change", () => {
     expect(events(root, "drop.refuse").map((e) => e.reason)).toEqual(["waiting"]);
   });
 
-  test("BR-2066: a human yes on an unchanged state drops it; a no, or an agent's yes, does not", () => {
+  test("BR-2066: a human yes, or an agent relaying it, drops an unchanged state; a no, or a bare agent yes, does not", () => {
     const root = project();
     const yes = withCommit(root, "Approved");
     const asked = drop(ws(root), yes.change, quiet);
@@ -85,10 +85,16 @@ describe("dropping a change", () => {
     const byAgent = withCommit(root, "Agent said yes");
     const q3 = drop(ws(root), byAgent.change, quiet);
     if (!q3.ok || q3.value.kind !== "asked") throw new Error("expected a question");
-    // answer() refuses an agent; drop must still refuse an agent's answer that reached the table some other way
+    // an agent's bare answer (no relay) that reached the table some other way does not approve
     ws(root).db.db.query("UPDATE questions SET answer = 'yes', answered_by = 'agent:x' WHERE id = ?").run(q3.value.question);
     expect(drop(ws(root), byAgent.change, quiet)).toMatchObject({ ok: true, value: { kind: "declined" } });
     expect(existsSync(byAgent.worktree)).toBe(true);
+
+    const relayed = withCommit(root, "Relayed yes");
+    const q4 = drop(ws(root), relayed.change, quiet);
+    if (!q4.ok || q4.value.kind !== "asked") throw new Error("expected a question");
+    expect(answer(ws(root).db, q4.value.question, "yes", "agent:x", "删吧").ok).toBe(true);
+    expect(drop(ws(root), relayed.change, quiet)).toMatchObject({ ok: true, value: { kind: "dropped" } });
   });
 
   test("BR-2066: when more would be lost after the question, a new question is asked", () => {
