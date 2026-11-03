@@ -69,6 +69,7 @@ describe("code layout config", () => {
   const cases: [string, string, string][] = [
     ["shared without code_root", "shared: [src/kernel]\n", "`shared` needs `code_root`"],
     ["a shared entry outside code_root", "code_root: src\nshared: [lib/x]\n", "under src"],
+    ["a shared entry that is the whole code_root", "code_root: src\nshared: [src]\n", "under src"],
     ["an absolute code_root", "code_root: /abs/src\n", "`code_root`"],
     ["a code_root with ..", "code_root: ../src\n", "`code_root`"],
     ["a code_root that is not a string", "code_root: [src]\n", "`code_root`"],

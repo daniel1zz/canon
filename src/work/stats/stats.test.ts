@@ -203,6 +203,10 @@ describe("shared code share", () => {
     expect(at(150)).toBe("shared code: 150 of 1000 lines under src (15.0%)");
     expect(at(200)).toBe("shared code: 200 of 1000 lines under src (20.0%)");
     expect(at(250)).toBe("shared code: 250 of 1000 lines under src (25.0%): above 20%; move code that serves one domain into that domain's directory");
+    const root = layout(0, 0);
+    writeFileSync(join(root, "src/kernel/git.ts"), "a\nb"); // no newline after the last line: still a line
+    sh(root, "commit", "-qam", "no trailing newline");
+    expect(sharedShare(root, { codeRoot: "src", shared: ["src/kernel"] })).toEqual({ codeRoot: "src", sharedLines: 2, totalLines: 2 });
     expect(sharedShare(layout(1, 1), { codeRoot: "src", shared: [] })).toBeUndefined();
     expect(sharedShare(layout(1, 1), { codeRoot: undefined, shared: [] })).toBeUndefined();
   });

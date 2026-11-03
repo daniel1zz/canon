@@ -346,5 +346,6 @@ describe("code layout (D-15)", () => {
       "code-layout src/work/helpers",
     ]);
     expect(kinds(root)).not.toContain("code-layout src/work/helpers"); // no code_root: no layout check
+    expect(kinds(root, { codeRoot: "src", shared: ["src/lib/kernel", "src/gone", "src/index.ts"] })).not.toContain("code-layout src/index.ts"); // a shared file
   });
 });
