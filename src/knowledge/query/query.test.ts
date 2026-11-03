@@ -118,6 +118,36 @@ describe("search", () => {
   });
 });
 
+describe("search ranking", () => {
+  const note = (n: number, title: string, body: string) => [`canon/notes/${id("N", n)}.md`, `---\nid: ${id("N", n)}\ntitle: ${title}\n---\n${body}\n`] as const;
+
+  test("BR-2215: among documents matching as many words, a title hit scores 5, each body hit 1 up to 5, an id equal to a word 100; ties go by id", () => {
+    const { corpus } = corpusOf(Object.fromEntries([note(1, "Body", "refund refund"), [`canon/decisions/${id("D", 1)}.md`, `---\nid: ${id("D", 1)}\ntitle: Refund rules\nstatus: accepted\n---\nnothing\n`]]));
+    expect(search(corpus, "refund").map((h) => [h.doc.id, h.score])).toEqual([[id("D", 1), 5], [id("N", 1), 2]]);
+    const capped = corpusOf(Object.fromEntries([note(1, "Body", "refund ".repeat(7)), [`canon/decisions/${id("D", 1)}.md`, `---\nid: ${id("D", 1)}\ntitle: Refund rules\nstatus: accepted\n---\nnothing\n`], note(2, "Refund both", "one refund")])).corpus;
+    expect(search(capped, "refund").map((h) => [h.doc.id, h.score])).toEqual([[id("N", 2), 6], [id("D", 1), 5], [id("N", 1), 5]]);
+    const byId = corpusOf(Object.fromEntries([note(1, "One", "nothing"), note(2, "Two", "a refund")])).corpus;
+    const hits = search(byId, `${id("n", 1)} refund`);
+    expect(hits.map((h) => [h.doc.id, h.matched, h.score])).toEqual([[id("N", 1), 1, 100], [id("N", 2), 1, 1]]);
+  });
+});
+
+describe("render", () => {
+  test("BR-2073: a one-word search lists its hits without a words marker", () => {
+    const { corpus } = corpusOf(files);
+    const lines = renderSearch(search(corpus, "sessions"), false);
+    expect(lines[0]).toStartWith(id("BR", 3));
+    expect(lines.join("\n")).not.toContain("words]");
+  });
+
+  test("BR-2120: a returned domain without subdomains gets no other-subdomains line", () => {
+    const { root, corpus } = corpusOf(files);
+    const out = renderContext(root, contextFor(corpus, "src/billing/refund.ts", root), { full: false });
+    expect(out).toContain("# Domain: billing");
+    expect(out).not.toContain("Other subdomains");
+  });
+});
+
 describe("check: duplicates", () => {
   test("BR-2003: two files claiming one id are both reported", () => {
     const r = corpusOf({

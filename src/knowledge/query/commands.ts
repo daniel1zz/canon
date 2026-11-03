@@ -22,6 +22,8 @@ const searchCmd = defineCommand({
   meta: { description: "Search titles, bodies and ids of every document" },
   args: { query: { type: "positional", required: true }, limit: { type: "string", default: "20" }, json: { type: "boolean" } },
   run({ args }) {
+    // reason: NaN or 0 would list nothing and report "no match" for a query that has hits (BR-2212, #72)
+    if (!/^\d+$/.test(String(args.limit)) || Number(args.limit) <= 0) fail({ code: "invalid", message: `--limit must be a positive integer, got ${JSON.stringify(args.limit)}` });
     const ws = workspace();
     const corpus = corpusOf(ws).corpus;
     const hits = search(corpus, args.query, Number(args.limit));
