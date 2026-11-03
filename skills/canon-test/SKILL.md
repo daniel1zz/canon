@@ -1,0 +1,90 @@
+---
+name: canon-test
+description: "Use when writing, adding or reviewing automated tests, building a feature or fixing a bug test-first, or asking whether a green suite actually proves anything. Triggers: 'write tests', 'add tests', 'test this', 'regression test', 'TDD', 'red-green', 'is this test any good', 'mock this', 'flaky test', '写测试', '补测试', '测试驱动', '这个测试靠谱吗'. Derives expectations from canon rules and their examples before reading the code. NOT for accepting a finished feature end to end (use canon-uat) or for hunting down a known bug (use canon-diagnose)."
+---
+
+# Test (canon)
+
+A test exists to find bugs. A suite that passes on broken code is worse than no suite, because people believe it. In canon a test proves a rule: its name starts with the rule's id (`it("BR-n: ...")`), and its cases come from the rule's `## 例子`.
+
+## 1. Expectations before code
+
+1. `canon context <path>` for the code under test: the domain's rules, accepted decisions and open changes. Find the rules this code implements (`canon search <term>` if unsure).
+2. **Before opening the implementation**, write the expected behaviours as test skeletons, from the rule's `## 规则` and `## 例子` only:
+   - every example becomes a case, input and expected result taken from the example, not from the code;
+   - every refusal the rule implies becomes a case: which input, which error or exit code, and what must *not* happen (no file written, no row inserted, no commit made).
+   Reading the implementation first produces tests that mirror it, bugs included.
+3. No rule covers the behaviour, or its examples do not reach the boundary: that is a gap. Add or sharpen the rule in the same change (`canon rule new --domain <d> --title "..."`), with examples on both sides of the boundary. Until then, derive expectations from the public signature and its docs, never the function body.
+4. A test that fails because the code contradicts the rule has found a defect. Do not change the expected value to match the code. Fix the code, or, if the rule is what is wrong, change the rule in the same commit and say why.
+
+## 2. Read the implementation adversarially
+
+Now read the code, hunting for places where it goes beyond or against the rule. For each hit, write a test asserting what the rule wants, not what the code does.
+
+| Pattern | Signal (grep) | Test to write |
+|---------|---------------|---------------|
+| Silent fallback | `?? `, `\|\| `, `?? 0`, `?? []`, `?? {}` | Does the rule say fall back, or refuse? Assert the rule's answer. |
+| Silent catch | `catch {`, `catch (e) { return`, empty catch | Make the dependency fail: is the error surfaced or swallowed? |
+| Hardcoded value | magic numbers, string literals outside constants | Vary the input; if the output does not change, it is hardcoded. |
+| Missing validation | parameters used without checks | Pass null, empty, out-of-range: validated, or does the rule allow it? |
+| Type assertion | `as any`, `as unknown as`, `!` | Feed the case the assertion hides (the value really is null). |
+| Early return | `if (x) return` with no else | Exercise the other path: intended, or a missing case? |
+
+## 3. Vertical slices, one test at a time
+
+Do not write all the tests first and then all the code. Tests written in bulk test imagined behaviour and lock in structure before you understand it.
+
+```
+RIGHT:  test1 → impl1,  test2 → impl2,  test3 → impl3 ...
+WRONG:  test1..test5,   then impl1..impl5
+```
+
+Each cycle: write one test → run it and **watch it fail for the expected reason** (the assertion, not an import error) → write the minimum code to pass → run it green → next. Each test responds to what the previous cycle taught you. Refactor only when green, re-running after each step.
+
+Testing code that already exists still needs the red: break the input or revert the fix and watch the test catch it.
+
+## 4. What every test must satisfy
+
+- **Named after its rule**: `it("BR-n: <behaviour>")`. A test that proves no rule usually means a rule is missing. An active rule nobody tests needs a test, or `untested: <reason>` in its front matter.
+- **Public interface only.** It survives an internal rename; if a refactor breaks it while behaviour stays the same, it was testing implementation.
+- **At least two input sets producing different outputs** on the happy path. This defeats an implementation that returns a constant.
+- **Refusals are tested like successes**: exit code, error text, and absence of side effects.
+- **Mocks are the exception.** Prefer the real thing: a temp directory, a throwaway git repo, an in-memory database. Mock only boundaries you do not own. Before adding a mock, answer: what bug does it hide, and does removing it change any outcome? If more than half a test is mock setup, it tests the mocks.
+- **Every mock cites its source.** Read the real emit or return site and copy its shape, field for field: `// Verified against src/events.ts:42`. A mock built from the design rather than the code once let 65 tests pass on a broken feature (the real event had no `type` field).
+- **Deterministic**: fixed clock, seeded randomness, an isolated temp dir per test, no network.
+- **Schema changes on existing data** test both paths: newly written rows and rows that existed before the migration.
+
+False-green patterns to scan for before committing, with grep commands: [references/false-green-patterns.md](references/false-green-patterns.md).
+
+## 5. Verification discipline (all eight, every time)
+
+1. **Enumerate mandated failures first.** Before running anything, list every case where the target must fail: invalid input → usage error, missing permission → denial, corrupt state → loud abort, check violation → refusal with a fix hint. Each gets exercised and compared with the rule (exit code, message, absent side effect). An unexercised mandated failure is an uncovered requirement.
+2. **Prove the oracle can fail before trusting its pass.** A test never seen red proves nothing. New test: watch it fail. Inherited suite: mutate one guarded behaviour and confirm the suite catches it. A suspiciously fast pass gets re-run before it is believed.
+3. **Negative controls travel in pairs.** Every "X is now allowed / fixed" ships with "Y is still refused". Fixed a false denial? Prove the true denial still fires. Loosened a matcher? Prove the true positives still match.
+4. **Hunt silent fallbacks on purpose.** Feed unknown flags, out-of-range config values, undeclared fields, unparseable files. If the answer to "what happens on bad input?" is "nothing visible", that is a finding (one real case: a TTL of `0` silently became 120).
+5. **Boundaries are failure scenarios.** Zero, empty, duplicate, expired, concurrent, over limit, already deleted, already done. Exercise illegal state transitions, not only the happy walk.
+6. **Measure without lying to yourself.** Read exit codes unpiped: `cmd > out.txt 2>&1; echo $?`, never `cmd | tail; echo $?` (that reports `tail`). Assert on actual bytes and state, not summaries. Reproduce any anomaly with clean measurement before reporting it.
+7. **Name what you did not cover.** Every report or commit message lists the cases, surfaces and environments not exercised. A silent scope cap reads as full coverage.
+8. **Verdicts come from external oracles**: exit codes, output, persisted state, an independent reviewer, never your own reading of your own work. Before reporting a finding that matters, try once to refute it.
+
+## 6. Running tests in a worktree
+
+The floor runs the full suite at `canon work land`. Inside a worktree run **only the tests relevant to the change**:
+
+```
+bun test src/work/work.test.ts          # the files you touched
+bun test -t "BR-2022"                    # the rules you touched
+```
+
+Many worktrees running full suites at once once drove load to 150 and produced 70+ phantom failures. A failure seen only under load is not evidence about your change; re-run that one test alone before acting on it.
+
+## 7. Before committing
+
+- [ ] every expectation came from a rule or its examples, written before reading the implementation
+- [ ] every new test was seen red for the right reason
+- [ ] every "fixed / allowed" test has its "still refused" sibling
+- [ ] the false-green scan is clean
+- [ ] each rule touched is named by a test or carries `untested: <reason>`; changed behaviour changed the rule in the same commit
+- [ ] the uncovered list is in the commit message
+
+A defect found but not fixed in this change becomes a GitHub issue (`gh issue create`): one root cause, the command that reproduces it, expected and actual result.
