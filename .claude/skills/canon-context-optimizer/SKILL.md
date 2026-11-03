@@ -5,7 +5,7 @@ description: "Use when shortening always-loaded or often-loaded instructions wit
 
 # Context Optimizer (canon)
 
-Shorten instructions that load into many sessions (in this project: `CLAUDE.md`, `skills/*/SKILL.md` and their references, the rule-review and code-review prompts in `src/review/`) without losing a rule. Follow the steps in order.
+Shorten instructions that load into many sessions (in this project: `CLAUDE.md`, `skills/*/SKILL.md` and their references, the rule-review and code-review prompts in `src/knowledge/review/`) without losing a rule. Follow the steps in order.
 
 ## 1. Measure and snapshot first
 

@@ -1,11 +1,3 @@
----
-code:
-  - src/knowledge
-  - src/check
-  - src/review
-  - scripts
----
-
 # 知识（knowledge）
 
 `canon/` 下长期保存的文档，以及让它们保持真实的检查。按子领域分：

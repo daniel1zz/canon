@@ -1,0 +1,350 @@
+import { describe, expect, test } from "bun:test";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { CoordDb } from "../../work/db.ts";
+import { readCorpus } from "../documents/read.ts";
+import { check } from "./check.ts";
+import { verify } from "./sources.ts";
+
+// Fixture ids are assembled at runtime. Since only test titles name rules (BR-2005), ids in fixture strings would not count anyway.
+const br = (n: number) => ["BR", n].join("-");
+const d = (n: number) => ["D", n].join("-");
+
+/** Fixture repo; the code directories the fixture domains name exist, as BR-2079 requires. */
+function repo(files: Record<string, string>): string {
+  const root = mkdtempSync(join(tmpdir(), "canon-next-check-"));
+  for (const dir of ["src/billing", "src/auth"]) mkdirSync(join(root, dir), { recursive: true });
+  for (const [p, text] of Object.entries(files)) {
+    mkdirSync(dirname(join(root, p)), { recursive: true });
+    writeFileSync(join(root, p), text);
+  }
+  return root;
+}
+
+const domainReadme = "---\ncode: [src/billing]\n---\n# Billing\n\n## 术语\n\n- **退款**：钱退回\n";
+const ruleFile = (n: number, extra = "") => `---\nid: ${br(n)}\ntitle: Rule ${n}\n${extra}---\n## 规则\n\nStatement ${n}.\n\n## 例子\n\n- day 30 → refunded\n`;
+
+describe("canon check", () => {
+  test("BR-2004 BR-2005: a clean corpus whose rules are all tested has no findings", () => {
+    const root = repo({
+      "canon/rules/billing/README.md": domainReadme,
+      [`canon/rules/billing/${br(1)}.md`]: ruleFile(1),
+      [`canon/decisions/${d(1)}-x.md`]: `---\nid: ${d(1)}\ntitle: X\nstatus: accepted\n---\n## 背景\n\nBecause ${br(1)}. Example only: \`${br(77)}\`.\n\n\`\`\`\n${br(78)}\n\`\`\`\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nB.\n`,
+      "src/billing/refund.test.ts": `it("${br(1)}: refuses day 31", () => {});`,
+    });
+    const r = readCorpus(root);
+    expect(check({ root, ...r })).toEqual([]);
+  });
+
+  test("BR-2001 BR-2004 BR-2005 BR-2042: reports each outcome violation by its rule name", () => {
+    const root = repo({
+      "canon/rules/billing/README.md": domainReadme,
+      [`canon/rules/billing/${br(1)}.md`]: ruleFile(1),
+      [`canon/rules/billing/${br(2)}.md`]: ruleFile(2, "status: retired\n"),
+      [`canon/rules/billing/${br(3)}.md`]: ruleFile(3, "untested: covered by the payment provider's contract\n"),
+      [`canon/rules/billing/${br(4)}.md`]: `---\nid: ${br(5)}\ntitle: Wrong id\n---\nx\n`,
+      [`canon/changes/C-1-a.md`]: `---\nid: C-1\ntitle: A\nrules: [${br(9)}]\n---\n## 为什么\n\nTouches ${br(1)}.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n`,
+      "src/billing/a.test.ts": `it("${br(2)} old", () => {}); it("${br(7)}", () => {});`,
+    });
+    const findings = check({ root, ...readCorpus(root) });
+    const summary = findings.map((f) => `${f.rule} ${f.path}`).sort();
+    expect(summary).toEqual(
+      [
+        `file-invalid canon/rules/billing/${br(4)}.md`, // id does not match the file name
+        "ref-dangling canon/changes/C-1-a.md", // change lists a rule that does not exist
+        "ref-dangling src/billing/a.test.ts", // test names a rule that does not exist
+        `rule-untested canon/rules/billing/${br(1)}.md`, // active, no test, no reason
+        "test-retired-rule src/billing/a.test.ts",
+      ].sort(),
+    );
+  });
+
+  test("BR-2005: only titles of tests that run make a rule tested; comments, strings, fixtures and skipped tests do not", () => {
+    const untested = (body: string, file = "src/billing/a.test.ts") => {
+      const root = repo({ "canon/rules/billing/README.md": domainReadme, [`canon/rules/billing/${br(1)}.md`]: ruleFile(1), [file]: body });
+      return check({ root, ...readCorpus(root), testFiles: [file] }).filter((f) => f.rule === "rule-untested").length;
+    };
+    const id = br(1);
+    for (const tested of [
+      `test("${id}: refunds day 30", () => {});`,
+      `it('${id}', () => {});`,
+      `test(\`${id}: \${what} fails\`, () => {});`,
+      `test.each([1, 2])("${id} case %d", (n) => {});`,
+      `describe("${id}", () => { test("x", () => {}); });`,
+      `test.only("${id}", () => {}); test.concurrent("y", () => {});`,
+      `const ok = /\\(/.test(s); test("${id}", () => {});`,
+    ]) expect([tested, untested(tested)]).toEqual([tested, 0]);
+    for (const loose of [
+      `// ${id}\ntest("x", () => {});`,
+      `/* ${id} */ test("x", () => {});`,
+      `const s = "${id}"; test("x", () => expect(s).toBe(s));`,
+      `const files = { "a.test.ts": \`it("${id}", () => {});\` };`,
+      `test.skip("${id}: later", () => {});`,
+      `test.todo("${id}");`,
+      `xit("${id}", () => {}); xtest("${id}", () => {});`,
+      `test.failing("${id}", () => {});`,
+      `test.if(process.env.X)("${id}", () => {}); test.skipIf(true)("${id}", () => {});`,
+      `describe.skip("x", () => { test("${id}", () => {}); });`,
+      `xdescribe("x", () => { describe("y", () => { it("${id}", () => {}); }); });`,
+      `const title = "${id}"; test(title, () => {});`,
+      `helper.test("${id}"); runner.it("${id}");`,
+    ]) expect([loose, untested(loose)]).toEqual([loose, 1]);
+    expect(untested(`describe.skip("x", () => {}); test("${id}", () => {});`)).toBe(0); // the skip ends with its describe
+    expect(untested(`# ${id} in a comment`, "tools/a.py")).toBe(0); // no title parser for other languages: whole text
+  });
+
+  test("BR-2004 BR-2042: ids in test titles are checked even when the test is skipped; ids outside titles are not", () => {
+    const root = repo({
+      "canon/rules/billing/README.md": domainReadme,
+      [`canon/rules/billing/${br(1)}.md`]: ruleFile(1),
+      [`canon/rules/billing/${br(2)}.md`]: ruleFile(2, "status: retired\n"),
+      "src/billing/a.test.ts": `// ${br(8)} and ${br(2)} in a comment\ntest("${br(1)}", () => { const s = "${br(9)}"; });`,
+      "src/billing/b.test.ts": `test.skip("${br(7)} later", () => {}); xit("${br(2)} old", () => {});`,
+    });
+    const got = check({ root, ...readCorpus(root) }).map((f) => `${f.rule} ${f.path} ${f.message}`);
+    expect(got).toEqual([`ref-dangling src/billing/b.test.ts test names ${br(7)}, which does not exist`, `test-retired-rule src/billing/b.test.ts test still names retired rule ${br(2)}`]);
+  });
+
+  test("BR-2006: a domain without README is invalid, so its code scope is never silently empty", () => {
+    const root = repo({ [`canon/rules/auth/${br(1)}.md`]: ruleFile(1, "untested: n/a\n") });
+    const findings = check({ root, ...readCorpus(root) });
+    expect(findings.map((f) => f.rule)).toEqual(["file-invalid"]);
+  });
+
+  test("BR-2006: without code_root a top-level README without `code`, or with an empty list, is invalid; one code directory is enough", () => {
+    const root = repo({
+      "canon/rules/a/README.md": "---\ntitle: a\n---\n# a\n\n## 术语\n\n- **退款**：钱退回\n",
+      "canon/rules/b/README.md": "---\ncode: []\n---\n# b\n\n## 术语\n\n- **退款**：钱退回\n",
+      "canon/rules/c/README.md": "---\ncode: [src/auth]\n---\n# c\n\n## 术语\n\n- **退款**：钱退回\n",
+    });
+    const findings = check({ root, ...readCorpus(root), testFiles: [] });
+    expect(findings.map((f) => `${f.rule} ${f.path}`).sort()).toEqual(["file-invalid canon/rules/a/README.md", "file-invalid canon/rules/b/README.md"]);
+  });
+
+  test("BR-2004: a domain README naming an id that does not exist is reported on the README", () => {
+    const root = repo({ "canon/rules/billing/README.md": `${domainReadme}\nSee ${br(9999)}. Example only: \`${br(9998)}\`.\n` });
+    const findings = check({ root, ...readCorpus(root), testFiles: [] });
+    expect(findings.map((f) => `${f.rule} ${f.path} ${f.message}`)).toEqual([`ref-dangling canon/rules/billing/README.md names ${br(9999)}, which does not exist`]);
+  });
+});
+
+describe("rule shape", () => {
+  const readme = { "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n" };
+  const fileOf = (n: number, body: string, extra = "") => ({ [`canon/rules/billing/${br(n)}.md`]: `---\nid: ${br(n)}\ntitle: R${n}\n${extra}---\n${body}` });
+  const run = (files: Record<string, string>) => {
+    const ids = Object.keys(files).map((p) => p.split("/").pop()!.replace(/\.md$/, ""));
+    const root = repo({ ...readme, ...files, "src/billing/a.test.ts": `it("${ids.join(" ")}", () => {});` });
+    return check({ root, ...readCorpus(root) }).map((f) => `${f.rule} ${f.path.split("/").pop()}`).sort();
+  };
+
+  test("BR-2033: an active rule without a non-empty statement section is reported", () => {
+    expect(run({ ...fileOf(1, "Just text.\n\n## 例子\n\n- a → b\n"), ...fileOf(2, "## 规则\n\n\n## 例子\n\n- a → b\n") })).toEqual([
+      `rule-no-statement ${br(1)}.md`,
+      `rule-no-statement ${br(2)}.md`,
+    ]);
+  });
+
+  test("BR-2034: a tested active rule needs a real example; an untested or retired one does not", () => {
+    expect(
+      run({
+        ...fileOf(1, "## 规则\n\nS.\n"),
+        ...fileOf(2, "## 规则\n\nS.\n\n## 例子\n\n"),
+        ...fileOf(3, "## 规则\n\nS.\n", "untested: provider contract\n"),
+        ...fileOf(4, "## 规则\n\nS.\n", "status: retired\n"),
+      }),
+    ).toEqual([`rule-no-example ${br(1)}.md`, `rule-no-example ${br(2)}.md`, "test-retired-rule a.test.ts"]);
+  });
+
+  test("BR-2035: a placeholder line left from a template is reported, but not one written as code", () => {
+    const root = repo({
+      "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\n<这个领域管什么、不管什么。>\n",
+      ...fileOf(1, "## 规则\n\nS.\n\n## 例子\n\n- <边界上的具体输入或状态> → <必须出现的结果>\n- `canon work start <C-n>` → starts\n"),
+      [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: X\n---\n## 背景\n\n<为什么需要做这个决定，有哪些事实和数据。>\n\n\`\`\`\n<kept as code>\n\`\`\`\n`,
+      "canon/changes/C-1.md": "---\nid: C-1\ntitle: X\n---\n## 为什么\n\n<要解决什么问题。>\n",
+      "src/billing/a.test.ts": `it("${br(1)}", () => {});`,
+    });
+    const got = check({ root, ...readCorpus(root) }).filter((f) => f.rule === "template-unfilled").map((f) => f.path.split("/").pop()).sort();
+    expect(got).toEqual([`${br(1)}.md`, `${d(1)}.md`, "C-1.md", "README.md"].sort());
+  });
+
+  test("BR-2035: every placeholder form the built-in templates leave is reported; prose with angle brackets and code blocks are not", () => {
+    const filled = "## 为什么\n\nBecause.\n";
+    const root = repo({
+      "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **<术语>**：<在这个领域里的含义>\n",
+      "canon/changes/C-1.md": `---\nid: C-1\ntitle: Task left\n---\n${filled}\n## 任务\n\n- [ ] <任务>\n`,
+      [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: Option left\n---\n## 方案\n\n1. <方案一>：<采用或否决，以及理由>\n`,
+      "canon/changes/C-2.md": `---\nid: C-2\ntitle: Prose\n---\n${filled}\n金额 <100 元时免运费\n\n- [x] 写好了 <C-2> 的测试\n`,
+      "canon/changes/C-3.md": `---\nid: C-3\ntitle: Code block\n---\n${filled}\n\`\`\`\n<占位>\n- [ ] <任务>\n\`\`\`\n`,
+    });
+    const got = check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "template-unfilled").map((f) => f.path.split("/").pop()).sort();
+    expect(got).toEqual([`${d(1)}.md`, "C-1.md", "README.md"].sort());
+  });
+});
+
+describe("required sections", () => {
+  test("BR-2091: a missing or placeholder-only required section is reported whatever the status; extra sections are not", () => {
+    const terms = "## 术语\n\n- **退款**：钱退回\n";
+    const change = (n: number, body: string) => ({ [`canon/changes/C-${n}.md`]: `---\nid: C-${n}\ntitle: C${n}\nstatus: done\n---\n${body}` });
+    const root = repo({
+      "canon/rules/billing/README.md": `---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n${terms}`,
+      "canon/rules/auth/README.md": "---\ncode: [src/auth]\n---\n# auth\n\nLogin.\n\n## 术语\n\n",
+      ...change(1, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n"),
+      ...change(2, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] <任务>\n"),
+      ...change(3, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n\n## 陷阱和假设\n\nY.\n\n## 任务\n\n- [x] X\n"),
+      [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: X\nstatus: superseded\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\nA.\n`,
+      "canon/notes/N-1.md": "---\nid: N-1\ntitle: Free\n---\nAnything.\n",
+    });
+    const got = check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "doc-missing-section").map((f) => `${f.path.split("/").pop()} ${f.message}`);
+    expect(got.sort()).toEqual(
+      [
+        "C-1.md C-1 lacks or leaves empty: ## 任务",
+        "C-2.md C-2 lacks or leaves empty: ## 任务",
+        `${d(1)}.md ${d(1)} lacks or leaves empty: ## 后果`,
+        "README.md domain auth README lacks or leaves empty: ## 术语",
+      ].sort(),
+    );
+  });
+});
+
+describe("decision options and sources", () => {
+  const decision = (n: number, options: string) =>
+    ({ [`canon/decisions/${d(n)}.md`]: `---\nid: ${d(n)}\ntitle: X\nstatus: accepted\n---\n## 背景\n\nB.\n\n## 方案\n\n${options}\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n` });
+  const run = (files: Record<string, string>, rule: string) =>
+    check({ root: repo(files), ...readCorpus(repo(files)), testFiles: [] }).filter((f) => f.rule === rule).map((f) => f.message).sort();
+
+  test("BR-2109: options must be a real choice: two or more, each taken or rejected, at least one of each", () => {
+    const got = run(
+      {
+        ...decision(1, "1. A：采用。"),
+        ...decision(2, "1. A：采用。\n2. B：采用。"),
+        ...decision(3, "1. A：采用。\n2. B：否决。\n3. C。负责人这次没有选，不做。"),
+        ...decision(4, "1. A：采用。\n2. B，先试过，\n   后否决：太慢。"),
+      },
+      "decision-options",
+    );
+    expect(got).toEqual(
+      [
+        `${d(1)} has 1 option(s) under ## 方案; a choice needs at least two`,
+        `${d(2)} no option under ## 方案 is 否决`,
+        `${d(3)} option "C。负责人这次没有选，不做。" says neither 采用 nor 否决`,
+      ].sort(),
+    );
+  });
+
+  test("BR-2110: a source line names a URL or relative path and quotes at least eight characters; a placeholder line is not one", () => {
+    const got = run(
+      {
+        ...decision(
+          1,
+          [
+            "1. A：采用。",
+            "   - 来源：https://arxiv.org/abs/2310.01798 “struggle to self-correct”",
+            "   - 来源：src/check/check.ts:10 “export function check(”",
+            "   - <来源：网址或仓库里的文件路径 “原文摘录”>",
+            "2. B：否决。",
+            "   - 来源：arXiv 上那篇论文",
+            "   - 来源：/Users/a/x.ts “some long quote here”",
+            "   - 来源：../x.ts “some long quote here”",
+            "   - 来源：https://example.com “太短”",
+          ].join("\n"),
+        ),
+      },
+      "source-malformed",
+    );
+    expect(got.map((m) => m.split(": ")[1]!.split(" (want")[0])).toEqual(
+      ["- 来源：arXiv 上那篇论文", "- 来源：/Users/a/x.ts “some long quote here”", "- 来源：../x.ts “some long quote here”", "- 来源：https://example.com “太短”"].sort(),
+    );
+  });
+});
+
+describe("source verification", () => {
+  test("BR-2111: a real HTTP page is fetched and its visible text, not its markup or scripts, must hold the quote", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: (req) =>
+        new URL(req.url).pathname === "/p"
+          ? new Response("<html><script>var q = 'hidden quote text';</script><p>LLMs struggle to <b>self-correct</b>\n their responses &amp; more</p></html>", { headers: { "content-type": "text/html" } })
+          : new Response("gone", { status: 404 }),
+    });
+    try {
+      const at = (path: string, quote: string) => ({ target: `http://localhost:${server.port}${path}`, quote, line: "" });
+      const got = await verify(repo({}), [at("/p", "struggle to self-correct their responses & more"), at("/p", "hidden quote text"), at("/x", "struggle to self-correct")]);
+      expect(got.map((m) => m.replace(/localhost:\d+/, "host"))).toEqual(["http://host/p does not contain “hidden quote text”", "http://host/x answered HTTP 404"]);
+    } finally {
+      server.stop(true);
+    }
+  });
+});
+
+describe("id allocation", () => {
+  test("BR-2002: never hands out an id at or below the highest one already in the files", () => {
+    const root = repo({});
+    const db = CoordDb.open(join(root, "state.db"));
+    if (!db.ok) throw new Error(db.error.message);
+    expect(db.value.allocate("BR", 1562, "test")).toBe(br(1563));
+    expect(db.value.allocate("BR", 0, "test")).toBe(br(1564));
+    expect(db.value.allocate("D", 0, "test")).toBe(d(1));
+    db.value.close();
+  });
+});
+
+describe("domain code paths", () => {
+  test("BR-2079: a code path that does not exist is reported on the README; existing files and directories are fine", () => {
+    const root = repo({
+      "canon/rules/billing/README.md": "---\ncode: [src/billing, src/gone, src/main.ts]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n",
+      "src/main.ts": "export {};\n",
+    });
+    const findings = check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "domain-code-missing");
+    expect(findings.map((f) => `${f.path} ${f.message}`)).toEqual(["canon/rules/billing/README.md code path src/gone does not exist; fix it or remove it from the README"]);
+  });
+});
+
+describe("code layout (D-15)", () => {
+  const readme = (name: string, code?: string) => `${code ? `---\ncode: [${code}]\n---\n` : ""}# ${name}\n\n## 术语\n\n- **x**：y\n`;
+  const kinds = (root: string, layout?: { codeRoot: string | undefined; shared: string[] }) =>
+    check({ root, ...readCorpus(root, undefined, layout), testFiles: [] }).map((f) => `${f.rule} ${f.path}`).sort();
+
+  test("BR-2006: without code_root a subdomain README needs no `code`; with code_root no README does, and front matter is optional", () => {
+    const root = repo({ "canon/rules/billing/README.md": readme("billing", "src/billing"), "canon/rules/billing/refunds/README.md": readme("billing/refunds") });
+    expect(kinds(root)).toEqual([]);
+    const layered = repo({ "canon/rules/billing/README.md": readme("billing"), "canon/rules/billing/refunds/README.md": readme("billing/refunds"), "src/billing/refunds/r.ts": "" });
+    expect(kinds(layered, { codeRoot: "src", shared: ["src/auth"] })).toEqual([]);
+  });
+
+  test("BR-2117: `code` is reported on a subdomain README, and on every README once code_root is set", () => {
+    const root = repo({ "canon/rules/billing/README.md": readme("billing", "src/billing"), "canon/rules/billing/refunds/README.md": readme("billing/refunds", "src/billing") });
+    expect(kinds(root)).toEqual(["domain-code-declared canon/rules/billing/refunds/README.md"]);
+    mkdirSync(join(root, "src/billing/refunds"), { recursive: true });
+    expect(kinds(root, { codeRoot: "src", shared: ["src/auth"] })).toEqual(["domain-code-declared canon/rules/billing/README.md", "domain-code-declared canon/rules/billing/refunds/README.md"]);
+  });
+
+  test("BR-2118: with code_root every domain has its directory and every directory at a branching level is a domain's or shared", () => {
+    const root = repo({
+      "canon/rules/work/README.md": readme("work"),
+      "canon/rules/work/land/README.md": readme("work/land"),
+      "canon/rules/work/drop/README.md": readme("work/drop"),
+      "canon/rules/billing/README.md": readme("billing"),
+      "src/work/db.ts": "", // a file in a branching domain's directory is that domain's
+      "src/work/land/steps/a.ts": "", // inside a leaf domain the layout is its own
+      "src/work/helpers/h.ts": "", // not a subdomain of work
+      "src/lib/kernel/git.ts": "", // src/lib is an ancestor of a shared entry
+      "src/lib/other/x.ts": "",
+      "src/__tests__/a.test.ts": "", // tests-only directories get no exemption
+      "src/index.ts": "",
+      "src/.cache/x": "",
+    });
+    rmSync(join(root, "src/billing"), { recursive: true });
+    expect(kinds(root, { codeRoot: "src", shared: ["src/lib/kernel", "src/gone"] })).toEqual([
+      "code-layout canon/config.yaml", // shared src/gone does not exist
+      "code-layout canon/rules/billing/README.md",
+      "code-layout canon/rules/work/drop/README.md",
+      "code-layout src/__tests__",
+      "code-layout src/auth", // the fixture's src/auth is no domain
+      "code-layout src/index.ts",
+      "code-layout src/lib/other",
+      "code-layout src/work/helpers",
+    ]);
+    expect(kinds(root)).not.toContain("code-layout src/work/helpers"); // no code_root: no layout check
+  });
+});

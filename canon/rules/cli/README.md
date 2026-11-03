@@ -1,11 +1,6 @@
----
-code:
-  - src/cli
-  - src/skills
----
 # 命令行（cli）
 
-`canon` 命令行：agent 或人要做的每个动作对应一个命令，每个退出码只有一种含义；以及 canon 自带的项目级 skill 怎样装进项目（D-9）。
+`canon` 命令行：agent 或人要做的每个动作对应一个命令，每个退出码只有一种含义。子领域 `cli/install`：canon 自带的项目级 skill 和 hook 怎样装进项目、怎样更新（D-9）。
 
 ## 术语
 

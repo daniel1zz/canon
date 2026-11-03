@@ -2,24 +2,28 @@
 import { defineCommand, renderUsage, runCommand } from "citty";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { openWorkspace, type Workspace } from "../app/workspace.ts";
-import { check } from "../check/check.ts";
-import { testFilesFor } from "../check/tests.ts";
-import { activeQueue, answer, answeredBy, ask, claimOfWorktree, claims, handoffs, questions } from "../coord/state.ts";
+import { openWorkspace, type Workspace } from "../work/workspace.ts";
+import { check } from "../knowledge/check/check.ts";
+import { testFilesFor } from "../knowledge/check/tests.ts";
+import { activeQueue } from "../work/land/queue.ts";
+import { answer, answeredBy, ask, questions } from "../work/humans/questions.ts";
+import { claimOfWorktree, claims } from "../work/claims/claims.ts";
+import { handoffs } from "../work/session/handoffs.ts";
 import type { CanonError, Result } from "../kernel/result.ts";
-import type { Doc, Kind } from "../knowledge/model.ts";
-import { contextFor, findDoc, rawText, renderContext, search } from "../knowledge/query.ts";
-import { readCorpus } from "../knowledge/read.ts";
-import { createDoc, createDomain, setMeta } from "../knowledge/write.ts";
-import { git } from "../repo/git.ts";
-import { overlapsOf } from "../work/overlap.ts";
-import { skillsSource, type InstallReport } from "../skills/install.ts";
+import type { Doc, Kind } from "../knowledge/documents/model.ts";
+import { contextFor, findDoc, rawText, renderContext, search } from "../knowledge/query/query.ts";
+import { readCorpus } from "../knowledge/documents/read.ts";
+import { createDoc, createDomain, setMeta } from "../knowledge/documents/write.ts";
+import { git } from "../kernel/git.ts";
+import { overlapsOf } from "../work/session/overlap.ts";
+import { skillsSource, type InstallReport } from "./install/install.ts";
 import { WORKFLOW_GUIDE } from "./guide.ts";
 import { resolve, unknownArgument } from "./strict.ts";
-import { assetsStatus, installAssets, updateNotice, updateProject } from "../skills/update.ts";
-import { computeStats, renderSharedShare, renderStats, sharedShare } from "../stats/stats.ts";
-import { drop } from "../work/drop.ts";
-import { clean, land, mainCorpus, start, stop } from "../work/work.ts";
+import { assetsStatus, installAssets, updateNotice, updateProject } from "./install/update.ts";
+import { computeStats, renderSharedShare, renderStats, sharedShare } from "../work/stats/stats.ts";
+import { drop } from "../work/drop/drop.ts";
+import { clean, mainCorpus, start, stop } from "../work/session/session.ts";
+import { land } from "../work/land/land.ts";
 
 /**
  * Exit codes — one meaning each, so an agent can branch on them (BR-2022, D-4):

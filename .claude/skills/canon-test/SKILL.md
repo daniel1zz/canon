@@ -72,7 +72,7 @@ False-green patterns to scan for before committing, with grep commands: [referen
 The floor runs the full suite at `canon work land`. Inside a worktree run **only the tests relevant to the change**:
 
 ```
-bun test src/work/work.test.ts          # the files you touched
+bun test src/work/land/land.test.ts         # the files you touched
 bun test -t "BR-2022"                    # the rules you touched
 ```
 

@@ -1,6 +1,10 @@
 main: main
 # 必须在即将成为 main 的代码树上执行成功
 floor: "bun install --frozen-lockfile && bunx tsc --noEmit -p tsconfig.json && bun test"
+# 代码目录和规则领域一一对应（D-15）：canon/rules/work/land ↔ src/work/land；src/kernel 是不属于任何业务领域的共享内核
+code_root: src
+shared:
+  - src/kernel
 # 扫描规则编号的测试文件
 tests:
   - "src/**/*.test.ts"

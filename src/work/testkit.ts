@@ -1,9 +1,9 @@
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { openWorkspace, type Workspace } from "../app/workspace.ts";
-import { git } from "../repo/git.ts";
-import { start } from "./work.ts";
+import { openWorkspace, type Workspace } from "./workspace.ts";
+import { git } from "../kernel/git.ts";
+import { start } from "./session/session.ts";
 
 /** Fixtures shared by the work and hook tests: throwaway repositories and workspaces. */
 export const quiet = () => {};

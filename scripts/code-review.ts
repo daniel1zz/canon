@@ -11,7 +11,7 @@
  * Environment: CANON_BASE and CANON_HEAD (set by canon), CANON_CHANGE (optional),
  * CANON_CODE_REVIEW_AI (default `claude -p --output-format text`), CANON_GH (default `gh`).
  */
-import { codeReview } from "../src/review/code-review.ts";
+import { codeReview } from "../src/knowledge/review/code-review.ts";
 
 const base = process.env["CANON_BASE"];
 const head = process.env["CANON_HEAD"];
