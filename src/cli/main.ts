@@ -311,7 +311,7 @@ const work = defineCommand({
         if (minutes !== undefined && (!Number.isFinite(minutes) || minutes <= 0)) fail({ code: "invalid", message: `--timeout must be a positive number of minutes, got ${JSON.stringify(args.timeout)}` });
         const ws = workspace();
         const timeoutMs = minutes === undefined ? ws.config.landTimeoutMs : minutes * 60_000;
-        const out = await land(ws, { finish: Boolean(args.finish), timeoutMs }, say);
+        const out = await land(ws, { finish: Boolean(args.finish), timeoutMs, guide: WORKFLOW_GUIDE }, say);
         if (out.kind === "landed") return;
         if (out.kind === "timeout") {
           console.error(`canon: still ${out.ahead} landing(s) ahead after ${timeoutMs / 60_000} min; run again`);

@@ -56,6 +56,8 @@ export interface Config {
   readonly codeRoot: string | undefined;
   /** Directories (or files) under codeRoot that belong to no business domain, such as a shared kernel; empty without codeRoot. */
   readonly shared: readonly string[];
+  /** Repo-relative files every session reads at start; changing one triggers the duplicate review (BR-2143). */
+  readonly instructions: readonly string[];
 }
 
 const HOUR = 3_600_000;
@@ -84,9 +86,10 @@ export const DEFAULT_CONFIG: Config = {
   regenerable: DEFAULT_REGENERABLE,
   codeRoot: undefined,
   shared: [],
+  instructions: ["CLAUDE.md"],
 };
 
-const TOP_KEYS = new Set(["main", "floor", "tests", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews", "regenerable", "code_root", "shared"]);
+const TOP_KEYS = new Set(["main", "floor", "tests", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews", "regenerable", "code_root", "shared", "instructions"]);
 const TYPE_KEYS = new Set(["prefix", "dir", "statuses", "default", "fields", "sections"]);
 const MOVED: Record<string, string> = { after_land: "hooks.after_land" };
 
@@ -131,6 +134,10 @@ export function readConfig(root: string): Result<Config> {
   const regenerable = c["regenerable"];
   if (regenerable !== undefined && (!Array.isArray(regenerable) || regenerable.some((t) => typeof t !== "string" || t.trim() === "" || t.includes("/")))) {
     return bad("`regenerable` must be a list of file or directory names (globs allowed, no `/`)");
+  }
+  const instructions = c["instructions"];
+  if (instructions !== undefined && (!Array.isArray(instructions) || instructions.some((t) => typeof t !== "string" || !REL_DIR.test(t)))) {
+    return bad("`instructions` must be a list of file paths relative to the repository root, such as CLAUDE.md");
   }
   const layout = readLayout(c["code_root"], c["shared"]);
   if (!layout.ok) return bad(layout.error.message);
@@ -188,6 +195,7 @@ export function readConfig(root: string): Result<Config> {
     regenerable: (regenerable as string[] | undefined) ?? DEFAULT_REGENERABLE,
     codeRoot: layout.value.codeRoot,
     shared: layout.value.shared,
+    instructions: (instructions as string[] | undefined) ?? DEFAULT_CONFIG.instructions,
   });
 }
 

@@ -38,6 +38,9 @@ describe("config validation", () => {
     ["an unknown hook event", "hooks:\n  before_start: x\n", "unknown hook event"],
     ["invalid YAML", "floor: [\n", "not valid YAML"],
     ["a regenerable entry with a slash", "regenerable: [build/out]\n", "regenerable"],
+    ["instructions that are not a list", "instructions: CLAUDE.md\n", "`instructions` must be a list"],
+    ["an absolute instructions path", "instructions: [/etc/CLAUDE.md]\n", "`instructions` must be a list"],
+    ["an instructions path with ..", "instructions: [../CLAUDE.md]\n", "`instructions` must be a list"],
   ];
   for (const [what, yaml, message] of cases) {
     test(`BR-2045: ${what} makes every command fail with exit 2`, () => {

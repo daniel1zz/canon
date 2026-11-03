@@ -15,7 +15,7 @@ import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { setMeta } from "../../knowledge/documents/write.ts";
 import { git, gitEnv, isClean, listWorktrees } from "../../kernel/git.ts";
-import { reviewPrompt, runReview, type DeletedDoc } from "../../knowledge/review/review.ts";
+import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, type DeletedDoc } from "../../knowledge/review/review.ts";
 
 /**
  * Landing (design §6): queue → rebase onto main → floor → canon check → sources → review → before_land →
@@ -29,6 +29,8 @@ export interface LandOptions {
   readonly timeoutMs: number;
   /** How decision sources given as URLs are fetched (BR-2111); the network unless a test supplies one. */
   readonly fetcher?: Fetcher;
+  /** The workflow guide `canon brief` prints, one of the standing texts the duplicate review compares (BR-2143). */
+  readonly guide?: string;
 }
 
 export type LandOutcome =
@@ -263,6 +265,22 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
       if (!v.ok) return refuse("review", `the rule review could not run: ${v.error.message}`);
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings });
       if (v.value.verdict === "block") return refuse("review", `rule review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
+      for (const f of v.value.findings) say(`review note: ${f}`);
+    }
+  }
+  // Standing instructions added or edited by this landing are reviewed for requirements stated twice (BR-2143).
+  const touched = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=d", base.value, head.value);
+  const standing = (touched.ok && touched.value !== "" ? touched.value.split("\n") : []).filter((p) => ws.config.instructions.includes(p) || SKILL_FILE.test(p));
+  if (standing.length > 0) {
+    if (!ws.config.review) {
+      say(`review: not configured — ${standing.join(", ")} land without a duplicate review`);
+      ws.db.event(ws.actor, "review.skip", subject, { docs: standing });
+    } else {
+      say(`review: standing instructions ${standing.join(", ")}`);
+      const v = await runReview(ws.config.review, wt, duplicatePrompt(standing, standingText(wt, ws.config.instructions), opts.guide));
+      if (!v.ok) return refuse("review", `the duplicate review could not run: ${v.error.message}`);
+      ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: standing, findings: v.value.findings });
+      if (v.value.verdict === "block") return refuse("review", `duplicate review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
       for (const f of v.value.findings) say(`review note: ${f}`);
     }
   }

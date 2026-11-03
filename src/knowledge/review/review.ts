@@ -1,3 +1,6 @@
+import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { parse } from "yaml";
 import type { Corpus, Doc } from "../documents/model.ts";
 import { contextFor, renderContext } from "../query/query.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
@@ -82,4 +85,51 @@ export async function runReview(command: string, cwd: string, prompt: string): P
   } catch (e) {
     return err("invalid", `review JSON does not parse: ${(e as Error).message}`);
   }
+}
+
+/** Text every session reads at start, gathered from the tree that is landing (BR-2143). */
+export interface StandingText {
+  /** The configured instruction files that exist, path and whole text. */
+  readonly files: readonly { readonly path: string; readonly text: string }[];
+  /** Each project skill's front-matter description, the only part of a skill loaded into every session. */
+  readonly skills: readonly { readonly path: string; readonly description: string }[];
+}
+
+export const SKILL_FILE = /^\.claude\/skills\/[^/]+\/SKILL\.md$/;
+
+export function standingText(root: string, instructions: readonly string[]): StandingText {
+  const files = instructions.filter((p) => existsSync(join(root, p))).map((path) => ({ path, text: readFileSync(join(root, path), "utf8") }));
+  const dir = join(root, ".claude", "skills");
+  const skills: { path: string; description: string }[] = [];
+  for (const name of existsSync(dir) ? readdirSync(dir).sort() : []) {
+    const path = `.claude/skills/${name}/SKILL.md`;
+    if (!existsSync(join(root, path))) continue;
+    const front = readFileSync(join(root, path), "utf8").match(/^---\n([\s\S]*?)\n---/);
+    let description: string;
+    try {
+      const meta = front ? (parse(front[1]!) as { description?: unknown } | null) : null;
+      description = typeof meta?.description === "string" ? meta.description : "(no description)";
+    } catch (e) {
+      description = `(front matter does not parse: ${(e as Error).message.split("\n")[0]})`;
+    }
+    skills.push({ path, description });
+  }
+  return { files, skills };
+}
+
+export function duplicatePrompt(changed: readonly string[], standing: StandingText, guide: string | undefined): string {
+  const parts: string[] = [
+    "You review the standing instructions of a project: text loaded into every AI coding session at start. The same requirement written in two places drifts apart, and the reader no longer knows which one holds.",
+    "Block when one requirement (an instruction, a condition or a qualifier) is stated in two standing texts below, or twice in one of them, in any wording or language, and at least one of the two places is in a changed file.",
+    "Do not block for: a one-line pointer to where a requirement is stated; a project-specific qualifier added to a general requirement stated elsewhere; facts or descriptions that are not requirements; wording, style or formatting.",
+    "Each finding names both places (file or source, and the sentence) and which one to keep.",
+    "Write the findings in the language the changed text is written in.",
+    'Answer with JSON only: {"verdict":"ok"|"block","findings":["<one sentence each>"]}',
+    "",
+    `# Changed in this landing: ${changed.join(", ")}`,
+  ];
+  if (guide !== undefined) parts.push(`# canon brief workflow guide (printed at the start of every session)\n\n${guide.trim()}\n`);
+  for (const f of standing.files) parts.push(`# ${f.path} (instruction file, loaded whole)\n\n${f.text.trim()}\n`);
+  if (standing.skills.length) parts.push(`# Skill descriptions (each loaded into every session)\n\n${standing.skills.map((s) => `- ${s.path}: ${s.description}`).join("\n")}`);
+  return parts.join("\n");
 }

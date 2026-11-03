@@ -159,6 +159,88 @@ describe("rule review at land", () => {
   });
 });
 
+describe("duplicate review of standing instructions at land", () => {
+  const GUIDE = "- Ask the human only about direction.";
+  function standingProject(verdict: "ok" | "block", extra = "") {
+    const root = project();
+    const promptFile = join(root, "..", `${root.split("/").pop()}-standing.txt`);
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\n${extra}review: 'cat > ${promptFile}; echo ''{"verdict":"${verdict}","findings":["CLAUDE.md repeats the guide"]}'''\n`);
+    writeFileSync(join(root, "CLAUDE.md"), "# Project\n");
+    mkdirSync(join(root, ".claude/skills/x"), { recursive: true });
+    writeFileSync(join(root, ".claude/skills/x/SKILL.md"), "---\nname: x\ndescription: Use when writing tests\n---\nbody\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "standing");
+    return { root, promptFile };
+  }
+
+  test("BR-2143: a block verdict on an edited CLAUDE.md refuses the landing; the reviewer saw the new text, the guide and the skill descriptions", async () => {
+    const { root, promptFile } = standingProject("block");
+    const before = sh(root, "rev-parse", "main");
+    const s = startNew(root, "Edit CLAUDE.md");
+    writeFileSync(join(s.worktree, "CLAUDE.md"), "# Project\n\n- Only ask the human about direction.\n");
+    sh(s.worktree, "commit", "-qam", "instructions");
+    const out = await land(ws(s.worktree), { ...FAST, guide: GUIDE }, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(out.kind === "refused" && out.message).toContain("CLAUDE.md repeats the guide");
+    const prompt = readFileSync(promptFile, "utf8");
+    expect(prompt).toContain("# Changed in this landing: CLAUDE.md");
+    expect(prompt).toContain("Only ask the human about direction.");
+    expect(prompt).toContain(GUIDE);
+    expect(prompt).toContain(".claude/skills/x/SKILL.md: Use when writing tests");
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+  });
+
+  test("BR-2143: an edited skill is reviewed and an ok verdict lands", async () => {
+    const { root, promptFile } = standingProject("ok");
+    const s = startNew(root, "Edit skill");
+    writeFileSync(join(s.worktree, ".claude/skills/x/SKILL.md"), "---\nname: x\ndescription: Use when writing or reviewing tests\n---\nbody\n");
+    sh(s.worktree, "commit", "-qam", "skill");
+    expect((await land(ws(s.worktree), { ...FAST, guide: GUIDE }, quiet)).kind).toBe("landed");
+    expect(readFileSync(promptFile, "utf8")).toContain("# Changed in this landing: .claude/skills/x/SKILL.md");
+  });
+
+  test("BR-2143: with instructions configured, only the listed files trigger the review; code alone and deletions never do", async () => {
+    const { root, promptFile } = standingProject("block", "instructions: [docs/agent.md]\n");
+    mkdirSync(join(root, "docs"), { recursive: true });
+    writeFileSync(join(root, "docs/agent.md"), "# Agent\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "agent doc");
+    const a = startNew(root, "Edit CLAUDE.md only");
+    writeFileSync(join(a.worktree, "CLAUDE.md"), "# Project\n\nmore\n");
+    writeFileSync(join(a.worktree, "app.txt"), "code\n");
+    sh(a.worktree, "add", "-A");
+    sh(a.worktree, "commit", "-qm", "not listed");
+    expect((await land(ws(a.worktree), FAST, quiet)).kind).toBe("landed");
+    const d = startNew(root, "Delete the listed file");
+    sh(d.worktree, "rm", "-q", "docs/agent.md");
+    sh(d.worktree, "commit", "-qm", "delete");
+    expect((await land(ws(d.worktree), FAST, quiet)).kind).toBe("landed");
+    expect(existsSync(promptFile)).toBe(false);
+    const b = startNew(root, "Add the listed file back");
+    mkdirSync(join(b.worktree, "docs"), { recursive: true });
+    writeFileSync(join(b.worktree, "docs/agent.md"), "# Agent\n\nnew\n");
+    sh(b.worktree, "add", "-A");
+    sh(b.worktree, "commit", "-qm", "listed");
+    const out = await land(ws(b.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(readFileSync(promptFile, "utf8")).toContain("# docs/agent.md (instruction file, loaded whole)");
+  });
+
+  test("BR-2143: an edited CLAUDE.md without a configured reviewer lands with a notice and a review.skip event", async () => {
+    const root = project();
+    writeFileSync(join(root, "CLAUDE.md"), "# Project\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "claude");
+    const s = startNew(root, "Edit CLAUDE.md");
+    writeFileSync(join(s.worktree, "CLAUDE.md"), "# Project\n\nnew\n");
+    sh(s.worktree, "commit", "-qam", "edit");
+    const lines: string[] = [];
+    expect((await land(ws(s.worktree), FAST, (l) => lines.push(l))).kind).toBe("landed");
+    expect(lines.join("\n")).toContain("review: not configured — CLAUDE.md");
+    expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'review.skip'").get()?.n).toBe(1);
+  });
+});
+
 describe("work land", () => {
   test("BR-2017 BR-2039: lands a committed branch: main moves and the primary checkout's files follow", async () => {
     const root = project();
