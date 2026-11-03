@@ -606,7 +606,10 @@ async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: { wt:
   const refuse = (reason: StepFailure["reason"], message: string, findings?: readonly Finding[]): StepFailure => ({ ok: false, reason, message, ...(findings ? { findings } : {}) });
   const read = readCorpus(wt, ws.config.types, ws.config);
   const tests = testFilesFor(wt, ws.config);
-  const findings = check({ root: wt, ...read, testFiles: tests });
+  // reason: the tree that is landing decides which paths may skip the floor (BR-2164), so it decides which test reads matter (BR-2181)
+  const landing = readConfig(wt);
+  if (!landing.ok) return refuse("check", `canon check: cannot read canon/config.yaml of the landing tree: ${landing.error.message}`);
+  const findings = check({ root: wt, ...read, testFiles: tests, floorSkipPaths: landing.value.floorSkipPaths });
   if (findings.length > 0) return refuse("check", `canon check: ${findings.length} finding(s)`, findings);
 
 

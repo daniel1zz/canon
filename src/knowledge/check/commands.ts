@@ -11,7 +11,7 @@ const checkCmd = defineCommand({
   run({ args }) {
     const ws = workspace();
     const read = corpusOf(ws);
-    const findings = check({ root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config) });
+    const findings = check({ root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config), floorSkipPaths: ws.config.floorSkipPaths });
     if (args.json) json(findings);
     else for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
     if (!args.json) say(findings.length === 0 ? `ok: ${read.corpus.docs.length} documents, ${read.corpus.domains.length} domains` : `${findings.length} finding(s)`);

@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { parseDocFile, parseReadme } from "./docfile.ts";
-import { NO_LAYOUT, type ChangeStatus, type Corpus, type DecisionStatus, type Doc, type Domain, type Layout, type RuleStatus } from "./model.ts";
+import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type DecisionStatus, type Doc, type Domain, type Layout, type RuleStatus } from "./model.ts";
 import { BUILTIN_TYPES, type DocType } from "./types.ts";
 
 /** A file under canon/ that does not fit the model. `canon check` reports these; reading never stops on one. */
@@ -92,6 +92,11 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         problems.push({ path: rel(full), message: "`untested` must state the reason the rule has no test" });
         continue;
       }
+      const lists = codeLists(p.meta["lists"]);
+      if (typeof lists === "string") {
+        problems.push({ path: rel(full), message: lists });
+        continue;
+      }
       docs.push({
         kind: "rule",
         id,
@@ -101,6 +106,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         domain,
         status: p.status as RuleStatus,
         ...(typeof untested === "string" ? { untested } : {}),
+        ...(lists.length > 0 ? { lists } : {}),
       });
     }
     for (const sub of listDirs(dir)) walk(`${domain}/${sub}`, domain);
@@ -161,4 +167,22 @@ function listDirs(dir: string): string[] {
 function listFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((n) => n.endsWith(".md") && statSync(join(dir, n)).isFile()).sort();
+}
+
+/** A rule's `lists` front matter (BR-2180), or the problem with it. */
+function codeLists(v: unknown): CodeList[] | string {
+  if (v === undefined) return [];
+  const bad = "`lists` must be a list of { file, name, items } entries: a repository path, the constant's name, and the names the rule uses from it (BR-2180)";
+  if (!Array.isArray(v) || v.length === 0) return bad;
+  const out: CodeList[] = [];
+  for (const e of v) {
+    if (typeof e !== "object" || e === null || Array.isArray(e)) return bad;
+    const { file, name, items, ...rest } = e as Record<string, unknown>;
+    if (Object.keys(rest).length > 0) return bad;
+    if (typeof file !== "string" || file.trim() === "" || file.startsWith("/") || file.split("/").includes("..")) return bad;
+    if (typeof name !== "string" || !/^[A-Za-z_$][\w$]*$/.test(name)) return bad;
+    if (!Array.isArray(items) || items.length === 0 || items.some((i) => typeof i !== "string" || i === "")) return bad;
+    out.push({ file, name, items: items as string[] });
+  }
+  return out;
 }

@@ -84,4 +84,18 @@ describe("floor skip for landings that change only declared paths", () => {
     expect(stats.find((x) => x.check === "floor")!.runs).toBe(0);
     expect(stats.find((x) => x.check === "check")!.runs).toBe(1);
   });
+
+  test("BR-2181: a test reading the repository's file under an entry the landing tree's config added while the change waited is refused by canon check", async () => {
+    const root = skipProject('floor: "true"\ntests: ["src/**/*.test.ts"]\nfloor_skip_paths: [canon/changes]\n');
+    const s = startNew(root, "Reads notes");
+    // reason: assembled from pieces so this file itself does not read like such a test (BR-2181)
+    const meta = ["import", "meta", "dir"].join(".");
+    const notes = ["canon", "notes"].join("/");
+    commitFile(s.worktree, "src/a.test.ts", `const ROOT = join(${meta}, "..");\nconst t = readFileSync(join(ROOT, "${notes}/N-1.md"));\n`);
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: ["src/**/*.test.ts"]\nfloor_skip_paths: [canon/changes, ${notes}]\n`);
+    sh(root, "commit", "-qam", "skip notes");
+    const out = await land(ws(s.worktree), FAST, quiet); // the workspace was opened on the config without canon/notes
+    expect(out.kind === "refused" && out.reason).toBe("check");
+    expect(out.kind === "refused" && out.findings?.map((f) => `${f.rule} ${f.path}`)).toEqual(["test-reads-skip-path src/a.test.ts:2"]);
+  });
 });

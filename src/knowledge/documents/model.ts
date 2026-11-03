@@ -37,6 +37,15 @@ export interface Rule extends Base {
   readonly status: RuleStatus;
   /** Present when the rule deliberately has no test; the reason is required. */
   readonly untested?: string;
+  /** Code lists the rule names items of instead of copying them; `canon check` compares the two (BR-2180). */
+  readonly lists?: readonly CodeList[];
+}
+
+/** A rule's `lists` entry: the constant `name` in `file` holds each of `items` as a string literal (BR-2180). */
+export interface CodeList {
+  readonly file: string;
+  readonly name: string;
+  readonly items: readonly string[];
 }
 
 export interface Decision extends Base {

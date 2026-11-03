@@ -1,6 +1,6 @@
 # 检查（knowledge/check）
 
-`canon check` 检查整个 `canon/` 是否自洽：文件格式、编号唯一、引用存在、领域的代码位置（README 的 `code:` 或 `code_root` 下的目录）和代码目录对得上、规则有测试在标题里点名、必填段落非空、没有残留的模板占位行。合入时也会跑它（`work/land`）。
+`canon check` 检查整个 `canon/` 是否自洽：文件格式、编号唯一、引用存在、领域的代码位置（README 的 `code:` 或 `code_root` 下的目录）和代码目录对得上、规则有测试在标题里点名、必填段落非空、没有残留的模板占位行、规则 `lists` 声明的代码列表和文字及代码对得上、测试不读 `floor_skip_paths` 下的真实文件。合入时也会跑它（`work/land`）。
 
 ## 术语
 
