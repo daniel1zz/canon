@@ -58,6 +58,22 @@ describe("config validation", () => {
     }
   });
 
+  test("BR-2160: test_command must be a string holding {file}, and a script it names must exist", () => {
+    const good = readConfig(repo({ "canon/config.yaml": 'test_command: "npx vitest run {file}"\n' }));
+    expect(good.ok && good.value.testCommand).toBe("npx vitest run {file}");
+    const none = readConfig(repo());
+    expect(none.ok && none.value.testCommand).toBeUndefined();
+    for (const [yaml, message] of [
+      ['test_command: "bun test"\n', "must contain {file}"],
+      ["test_command: 3\n", "`test_command` must be a string"],
+      ['test_command: "scripts/missing.sh {file}"\n', "scripts/missing.sh"],
+    ] as const) {
+      const r = canon(repo({ "canon/config.yaml": yaml }), "show", ["C", 1].join("-"));
+      expect(r.code).toBe(2);
+      expect(r.err).toContain(message);
+    }
+  });
+
   test("BR-2045: a template for a type that is not declared is a config error", () => {
     const root = repo({ "canon/config.yaml": "main: main\n", "canon/templates/spec.md": "## x\n" });
     const r = canon(root, "check");

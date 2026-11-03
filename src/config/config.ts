@@ -21,6 +21,8 @@ export interface Config {
   readonly floor: string | undefined;
   /** Globs of test files scanned for rule ids; undefined means the default discovery (BR-2046). */
   readonly tests: readonly string[] | undefined;
+  /** Shell command `canon work test` runs once per selected test file, `{file}` replaced by its path (BR-2160, D-23). */
+  readonly testCommand: string | undefined;
   /** Shell command run once in a new worktree (e.g. "bun install"). */
   readonly setup: string | undefined;
   /**
@@ -78,6 +80,7 @@ export const DEFAULT_CONFIG: Config = {
   main: "main",
   floor: undefined,
   tests: undefined,
+  testCommand: undefined,
   setup: undefined,
   review: undefined,
   hooks: { after_start: [], before_land: [], after_land: [], after_stop: [] },
@@ -95,7 +98,10 @@ export const DEFAULT_CONFIG: Config = {
   floorSkipPaths: [],
 };
 
-const TOP_KEYS = new Set(["main", "floor", "tests", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews", "regenerable", "code_root", "shared", "instructions", "floor_skip_paths"]);
+/** Where `test_command` takes the test file's path (BR-2160). */
+export const FILE_PLACEHOLDER = "{file}";
+
+const TOP_KEYS = new Set(["main", "floor", "tests", "test_command", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews", "regenerable", "code_root", "shared", "instructions", "floor_skip_paths"]);
 const TYPE_KEYS = new Set(["prefix", "dir", "statuses", "default", "fields", "sections"]);
 const MOVED: Record<string, string> = { after_land: "hooks.after_land" };
 
@@ -134,7 +140,11 @@ export function readConfig(root: string): Result<Config> {
   const setup = str("setup");
   const review = str("review");
   const worktrees = str("worktrees");
-  for (const r of [main, floor, setup, review, worktrees]) if (!r.ok) return r;
+  const testCommand = str("test_command");
+  for (const r of [main, floor, setup, review, worktrees, testCommand]) if (!r.ok) return r;
+  if (testCommand.ok && testCommand.value !== undefined && !testCommand.value.includes(FILE_PLACEHOLDER)) {
+    return bad(`\`test_command\` must contain ${FILE_PLACEHOLDER}, where the test file's path goes (e.g. "bun test ${FILE_PLACEHOLDER}")`);
+  }
   const tests = c["tests"];
   if (tests !== undefined && (!Array.isArray(tests) || tests.some((t) => typeof t !== "string"))) return bad("`tests` must be a list of globs");
   const regenerable = c["regenerable"];
@@ -162,7 +172,7 @@ export function readConfig(root: string): Result<Config> {
   const reviews = readCheckReviews(c["check_reviews"]);
   if (!reviews.ok) return bad(reviews.error.message);
 
-  const commands = [floor, setup, review].map((r) => (r.ok ? r.value : undefined)).filter((x): x is string => x !== undefined);
+  const commands = [floor, setup, review, testCommand].map((r) => (r.ok ? r.value : undefined)).filter((x): x is string => x !== undefined);
   for (const cmd of [...commands, ...Object.values(hooks.value).flat()]) {
     const missing = missingScript(root, cmd);
     if (missing) return bad(`command \`${cmd}\` runs ${missing}, which does not exist`);
@@ -190,6 +200,7 @@ export function readConfig(root: string): Result<Config> {
     main: (main.ok && main.value) || "main",
     floor: floor.ok ? floor.value : undefined,
     tests: tests as string[] | undefined,
+    testCommand: testCommand.ok ? testCommand.value : undefined,
     setup: setup.ok ? setup.value : undefined,
     review: review.ok ? review.value : undefined,
     hooks: hooks.value,

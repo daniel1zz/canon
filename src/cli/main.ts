@@ -29,6 +29,7 @@ import { drop } from "../work/drop/drop.ts";
 import { issueStatus, renderIssues } from "../work/issues/issues.ts";
 import { clean, LESSON_REMINDER, mainCorpus, start, stop } from "../work/session/session.ts";
 import { land } from "../work/land/land.ts";
+import { workTest } from "../work/verify/verify.ts";
 
 /**
  * Exit codes — one meaning each, so an agent can branch on them (BR-2022, D-4):
@@ -335,6 +336,15 @@ const work = defineCommand({
         for (const f of out.findings ?? []) console.error(`  ${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
         if (out.reason === "claimed") process.exit(EXIT.conflict);
         process.exit(out.reason === "dirty" || out.reason === "on-main" || out.reason === "no-floor" || out.reason === "no-claim" ? EXIT.usage : EXIT.refused);
+      },
+    }),
+    test: defineCommand({
+      meta: { description: "Run the test files related to this change (changed tests, tests importing changed files, tests naming touched rules), one file per test_command run; --all runs every test file" },
+      args: { all: { type: "boolean", description: "Run every test file, not only the related ones" } },
+      async run({ args }) {
+        const ws = workspace();
+        const r = must(await workTest(ws, Boolean(args.all), say));
+        if (r.failed > 0) process.exit(EXIT.refused);
       },
     }),
     stop: defineCommand({

@@ -8,6 +8,8 @@ shared:
 # 扫描规则编号的测试文件
 tests:
   - "src/**/*.test.ts"
+# canon work test 运行一个测试文件的命令，{file} 换成它的路径（D-23）
+test_command: "bun test {file}"
 # 每个会话开始时都会读到的文件：改了它们，合入时评审同一条要求是否写在多处（BR-2143）；工作说明的源码也算
 instructions:
   - CLAUDE.md
