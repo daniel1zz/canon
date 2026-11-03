@@ -1,4 +1,5 @@
 import { existsSync, readFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -89,12 +90,20 @@ export function readConfig(root: string): Result<Config> {
 }
 
 /**
- * The script a command starts with when it is written as a path (`scripts/review.sh`, `./x`, `/abs/x`),
- * when that file does not exist; undefined otherwise. Bare program names on PATH are not checked (D-3).
+ * The script a command starts with when its first word is a path, read the way `sh` reads it (BR-2197): quotes group
+ * the word, `~/` is the home directory, `/` is absolute, any other `/` is relative to the repository. Undefined when the
+ * file exists or the word is not checked: a program name on PATH (D-3), or a word the shell would expand or unescape.
  */
 function missingScript(root: string, command: string): string | undefined {
-  const first = command.trim().split(/\s+/)[0]?.replace(/^['"]|['"]$/g, "") ?? "";
-  if (!first.includes("/") || first.includes("$")) return undefined;
-  const full = isAbsolute(first) ? first : resolve(root, first);
+  const text = command.trim();
+  const quote = text[0] === "'" || text[0] === '"' ? text[0] : undefined;
+  const end = quote ? text.indexOf(quote, 1) : -1;
+  if (quote && end < 0) return undefined; // reason: an unclosed quote is the shell's error to report (BR-2197)
+  const first = quote ? text.slice(1, end) : (text.split(/\s+/)[0] ?? "");
+  if (!first.includes("/") || /[$`\\'"]/.test(first)) return undefined;
+  // reason: the shell expands a leading ~ only outside quotes, and ~name is another user's home (BR-2197, issue #63)
+  const home = !quote && first.startsWith("~");
+  if (home && !first.startsWith("~/")) return undefined;
+  const full = home ? join(homedir(), first.slice(2)) : isAbsolute(first) ? first : resolve(root, first);
   return existsSync(full) ? undefined : first;
 }

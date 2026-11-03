@@ -76,6 +76,17 @@ describe("config validation", () => {
     }
   });
 
+  test("BR-2045: a number must be greater than 0, except land_keep_place_minutes, where 0 means keep no place (issue #64)", () => {
+    const zero = readConfig(repo({ "canon/config.yaml": "land_keep_place_minutes: 0\n" }));
+    expect(zero.ok && zero.value.landKeepPlaceMs).toBe(0);
+    const negative = canon(repo({ "canon/config.yaml": "land_keep_place_minutes: -1\n" }), "show", ["C", 1].join("-"));
+    expect([negative.code, negative.err.includes("land_keep_place_minutes")]).toEqual([2, true]);
+    for (const key of ["claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes"]) {
+      const r = canon(repo({ "canon/config.yaml": `${key}: 0\n` }), "show", ["C", 1].join("-"));
+      expect([key, r.code, r.err.includes(key)]).toEqual([key, 2, true]);
+    }
+  });
+
   test("BR-2045: a template for a type that is not declared is a config error", () => {
     const root = repo({ "canon/config.yaml": "main: main\n", "canon/templates/spec.md": "## x\n" });
     const r = canon(root, "check");
@@ -163,6 +174,53 @@ describe("floor_skip_paths", () => {
     for (const bad of ["[canon/templates/rule.md]", "[canon/config.yaml]", "[/abs/docs]", "[canon/rules/]", "canon/rules", "[../x]"]) {
       const r = read(`floor_skip_paths: ${bad}\n`);
       expect(r.ok ? `accepted ${bad}` : r.error.message).toContain("floor_skip_paths");
+    }
+  });
+});
+
+describe("script paths in commands", () => {
+  /** `canon show C-1` in a repository with this config and these files, with HOME at `home`. */
+  function run(yaml: string, files: Record<string, string> = {}, home = mkdtempSync(join(tmpdir(), "canon-home-"))) {
+    const root = repo({ "canon/config.yaml": yaml, ...files });
+    const r = Bun.spawnSync(["bun", MAIN, "show", ["C", 1].join("-")], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, HOME: home, CANON_ACTOR: "agent:test" } });
+    return { code: r.exitCode, err: r.stderr.toString() };
+  }
+  const homeWith = (file: string) => {
+    const home = mkdtempSync(join(tmpdir(), "canon-home-"));
+    mkdirSync(dirname(join(home, file)), { recursive: true });
+    writeFileSync(join(home, file), "#!/bin/sh\n");
+    return home;
+  };
+
+  test("BR-2197: a relative or absolute script path must exist; arguments after it are not part of it", () => {
+    expect(run("review: scripts/missing.sh\n").err).toContain("scripts/missing.sh");
+    expect(run("review: scripts/review.sh --fast\n", { "scripts/review.sh": "#!/bin/sh\n" }).code).toBe(3);
+    expect(run("review: /no/such/review.sh\n").code).toBe(2);
+  });
+
+  test("BR-2197: a path starting with ~/ is under the home directory, not the repository (issue #63)", () => {
+    const found = run("review: ~/bin/review.sh\n", {}, homeWith("bin/review.sh"));
+    expect([found.code, found.err.includes("review.sh")]).toEqual([3, false]);
+    const missing = run("review: ~/bin/review.sh\n");
+    expect(missing.code).toBe(2);
+    expect(missing.err).toContain("runs ~/bin/review.sh, which does not exist");
+  });
+
+  test("BR-2197: a quoted first word is the whole quoted text, spaces included", () => {
+    expect(run(`review: "'scripts/my review.sh' --fast"\n`, { "scripts/my review.sh": "#!/bin/sh\n" }).code).toBe(3);
+    const missing = run(`review: "'scripts/my review.sh' --fast"\n`);
+    expect(missing.code).toBe(2);
+    expect(missing.err).toContain("runs scripts/my review.sh, which does not exist");
+    // A quoted ~ is not expanded by the shell: '~/bin/review.sh' is a directory named ~ in the repository.
+    const literal = run(`review: "'~/bin/review.sh'"\n`, {}, homeWith("bin/review.sh"));
+    expect(literal.code).toBe(2);
+    expect(run(`review: "'~/bin/review.sh'"\n`, { "~/bin/review.sh": "#!/bin/sh\n" }).code).toBe(3);
+  });
+
+  test("BR-2197: program names, words to expand and other users' homes are not checked", () => {
+    for (const cmd of ["claude -p", '"$HOME/bin/review.sh"', "~other/bin/review.sh", "`which review`", "scripts/my\\ review.sh", 'scripts/"my review".sh']) {
+      const r = run(`review: ${JSON.stringify(cmd)}\n`);
+      expect([cmd, r.code]).toEqual([cmd, 3]);
     }
   });
 });
