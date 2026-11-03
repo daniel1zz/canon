@@ -82,7 +82,7 @@ describe("exit codes", () => {
     expect(canon(root, "check").out).toContain(`template-unfilled  canon/rules/billing/${id}.md`);
   });
 
-  test("BR-2044: a --timeout that is not a positive number is a usage error and never enters the queue", () => {
+  test("BR-2048: a --timeout that is not a positive number is a usage error and never enters the queue", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     const r = canon(root, "work", "land", "--timeout", "abc");

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
@@ -168,4 +168,105 @@ describe("a landing back at its kept place", () => {
     expect(batchCandidates(d, lead, 3).map((x) => x.id)).toEqual([r, c]);
     expect(batchCandidates(d, lead, 1).map((x) => x.id)).toEqual([r]);
   });
+});
+
+describe("kept places end to end, through real landings", () => {
+  const CLI = join(import.meta.dir, "../../cli/main.ts");
+  const until = async (what: () => boolean, tries = 400) => {
+    for (let i = 0; i < tries && !what(); i++) await Bun.sleep(25);
+    expect(what()).toBe(true);
+  };
+  const commitFile = (wt: string, path: string, text: string) => {
+    writeFileSync(join(wt, path), text);
+    sh(wt, "add", path);
+    sh(wt, "commit", "-qm", path);
+  };
+  /** C-2's worktree with a place kept for it after a conflict refusal. */
+  function kept(root: string) {
+    const c2 = startNew(root, "Resolving");
+    commitFile(c2.worktree, "c2.txt", "c2\n");
+    const d = ws(root, "agent:b").db;
+    const r = enqueue(d, c2.worktree, c2.change, "agent:a");
+    failForConflict(d, r, "conflict: app.txt", KEEP);
+    return { c2, r, d };
+  }
+
+  test("BR-2177: canon work status lists the entry as resolving, and landing again records kept_place and resolve_ms", async () => {
+    const root = project();
+    const s = startNew(root, "Conflicts");
+    writeFileSync(join(s.worktree, "app.txt"), "one\n2\nthree\n");
+    sh(s.worktree, "commit", "-qam", "mine");
+    writeFileSync(join(root, "app.txt"), "one\nTWO\nthree\n");
+    sh(root, "commit", "-qam", "theirs");
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("refused");
+    const status = Bun.spawnSync(["bun", CLI, "work", "status"], { cwd: root, env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    expect(status.stdout.toString()).toContain(`resolving ${s.change}`);
+    sh(s.worktree, "rebase", "-q", "-X", "theirs", "main");
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    const enters = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'queue.enter' ORDER BY id").all().map((e) => JSON.parse(e.detail) as Record<string, unknown>);
+    expect(enters.at(-1)!["kept_place"]).toBeNumber();
+    expect(enters.at(-1)!["resolve_ms"] as number).toBeGreaterThanOrEqual(0);
+  }, 30_000);
+
+  test("BR-2178: back at its place while a later entry is landing, it waits for that landing, then goes before the entry queued after its place", async () => {
+    const root = project();
+    const { c2, r, d } = kept(root);
+    const c3 = enqueue(d, "/wt/c3", "C-3", "agent:b");
+    expect(tryTurn(d, c3).mine).toBe(true);
+    const c4 = enqueue(d, "/wt/c4", "C-4", "agent:b");
+    const landing = land(ws(c2.worktree), FAST, quiet);
+    await Bun.sleep(2500); // past a queue poll
+    expect(stateOf(d, r)).toBe("waiting");
+    expect(tryTurn(d, c4)).toEqual({ mine: false, ahead: 2 });
+    finishEntry(d, c3, "landed", "x");
+    expect((await landing).kind).toBe("landed");
+    expect(stateOf(d, r)).toBe("landed");
+    expect(tryTurn(d, c4).mine).toBe(true);
+  }, 30_000);
+
+  test("BR-2178: back at its place while a later entry's lander is gone, it does not wait; that entry is marked abandoned", async () => {
+    const root = project();
+    const { c2, d } = kept(root);
+    const c3 = enqueue(d, "/wt/c3", "C-3", "agent:b", { pid: 2 ** 22 + 12345, start: "never" });
+    expect(tryTurn(d, c3).mine).toBe(true);
+    expect((await land(ws(c2.worktree), FAST, quiet)).kind).toBe("landed");
+    expect(stateOf(d, c3)).toBe("abandoned");
+  }, 30_000);
+
+  for (const max of [4, 2]) {
+    test(`BR-2178: back at its place while C-3 leads, it is the first member C-3 batches (land_batch_max: ${max})`, async () => {
+      const root = project();
+      writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nland_batch_max: ${max}\n`);
+      sh(root, "commit", "-qam", "batches");
+      const { c2, r, d } = kept(root);
+      const c3 = startNew(root, "Leads");
+      commitFile(c3.worktree, "c3.txt", "c3\n");
+      const c4 = startNew(root, "Behind");
+      commitFile(c4.worktree, "c4.txt", "c4\n");
+      commitFile(root, "main.txt", "main moved\n"); // so C-3's rebase checks files out
+      const blocker = enqueue(d, "/elsewhere", "C-99", "agent:b");
+      expect(tryTurn(d, blocker).mine).toBe(true);
+      // reason: C-3 lands in its own process; its rebase's post-checkout hook holds it after its turn, before it picks members.
+      const hooks = join(sh(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "hooks");
+      mkdirSync(hooks, { recursive: true });
+      const go = join(root, "..", `${root.split("/").pop()}-go`);
+      const hit = join(root, "..", `${root.split("/").pop()}-hit`);
+      writeFileSync(join(hooks, "post-checkout"), `#!/bin/sh\nif [ -f ${go} ]; then rm ${go}; touch ${hit}; sleep 2; fi\n`, { mode: 0o755 });
+      const p3 = Bun.spawn(["bun", CLI, "work", "land"], { cwd: c3.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+      const entry = (wt: string) => d.db.query<{ id: number; state: string }, [string]>("SELECT id, state FROM queue WHERE worktree = ? ORDER BY id DESC LIMIT 1").get(wt);
+      await until(() => entry(c3.worktree)?.state === "waiting");
+      const l4 = land(ws(c4.worktree), FAST, quiet);
+      await until(() => entry(c4.worktree)?.state === "waiting");
+      writeFileSync(go, "");
+      finishEntry(d, blocker, "landed", "x");
+      await until(() => existsSync(hit), 1200);
+      const l2 = land(ws(c2.worktree), FAST, quiet); // takes its place back while C-3 holds the turn
+      expect(stateOf(d, r)).toBe("waiting");
+      const [o2, o4, code3] = await Promise.all([l2, l4, p3.exited]);
+      expect([o2.kind, o4.kind, code3]).toEqual(["landed", "landed", 0]);
+      const start = d.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'batch.start' ORDER BY id LIMIT 1").get();
+      const members = (JSON.parse(start!.detail) as { members: { entry: number }[] }).members.map((m) => m.entry);
+      expect(members).toEqual(max === 4 ? [r, entry(c4.worktree)!.id] : [r]);
+    }, 60_000);
+  }
 });
