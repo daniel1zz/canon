@@ -111,6 +111,11 @@ export interface Corpus {
   /** The types the corpus was read with; ids, check and search all follow them. */
   readonly types: readonly DocType[];
   readonly layout: Layout;
+  /**
+   * The highest number each prefix carries in a file name under its type's directory, counting files that do not
+   * parse: such a file still holds its number, so allocation must not hand it out again (BR-2002).
+   */
+  readonly numbers: Readonly<Record<string, number>>;
 }
 
 /**

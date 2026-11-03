@@ -29,6 +29,12 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
   const problems: FileProblem[] = [];
   const base = join(root, CANON_DIR);
   const rel = (p: string) => relative(root, p);
+  const numbers: Record<string, number> = {};
+  // reason: counted from the file name before parsing, so an invalid file's number is never reused (BR-2002)
+  const seen = (prefix: string, file: string): void => {
+    const m = new RegExp(`^${prefix}-(\\d+)(?![0-9])`).exec(file);
+    if (m) numbers[prefix] = Math.max(numbers[prefix] ?? 0, Number(m[1]));
+  };
 
   const parse = (full: string, type: DocType, id: string): { meta: Record<string, unknown>; body: string; status: unknown } | undefined => {
     const path = rel(full);
@@ -79,6 +85,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
     }
     for (const file of listFiles(dir)) {
       if (file === "README.md") continue;
+      seen(ruleType.prefix, file);
       const full = join(dir, file);
       if (!ruleFile.test(file)) {
         problems.push({ path: rel(full), message: `a rule file must be named ${ruleType.prefix}-<n>.md` });
@@ -118,6 +125,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
     const dir = join(base, type.dir);
     const numbered = new RegExp(`^${type.prefix}-\\d+(-[a-z0-9-]+)?\\.md$`);
     for (const file of listFiles(dir)) {
+      seen(type.prefix, file);
       const full = join(dir, file);
       const path = rel(full);
       if (!numbered.test(file)) {
@@ -150,7 +158,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
       }
     }
   }
-  return { corpus: { docs, domains, types, layout: { codeRoot, shared } }, problems };
+  return { corpus: { docs, domains, types, layout: { codeRoot, shared }, numbers }, problems };
 }
 
 function checkCommon(meta: Record<string, unknown>, idFromName: string): string | undefined {

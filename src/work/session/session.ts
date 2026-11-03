@@ -11,7 +11,7 @@ import { err, ok, type Result } from "../../kernel/result.ts";
 import { slugify, type Change, type Corpus } from "../../knowledge/documents/model.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
-import { createDoc } from "../../knowledge/documents/write.ts";
+import { createDoc, highestNumber } from "../../knowledge/documents/write.ts";
 import { worktreesDirOf } from "./config-keys.ts";
 import { git, ignoredPaths, isClean, listWorktrees, unregenerable, type WorktreeInfo } from "../../kernel/git.ts";
 import { GENERATED_DIR } from "../../config/reference/reference.ts";
@@ -188,8 +188,7 @@ function corpusOf(ws: Workspace, ref: string): Result<Corpus> {
 
 /** Allocates the change id up front so the worktree and branch can carry it. */
 function createDocProbe(ws: Workspace, corpus: Corpus, _title: string): { id: string } {
-  const max = corpus.docs.filter((d) => d.kind === "change").reduce((m, d) => Math.max(m, Number(d.id.split("-")[1])), 0);
-  return { id: ws.db.allocate("C", max, ws.actor) };
+  return { id: ws.db.allocate("C", highestNumber(corpus, "C"), ws.actor) };
 }
 
 /** Records where the change stands so the next session can continue without a human re-briefing (P3). */

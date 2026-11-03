@@ -29,8 +29,9 @@ export interface NewDoc {
   readonly id?: string;
 }
 
+/** The highest number of `prefix` in the corpus: its documents' ids and the numbers in its file names (BR-2002). */
 export function highestNumber(corpus: Corpus, prefix: string): number {
-  let max = 0;
+  let max = corpus.numbers[prefix] ?? 0;
   for (const d of corpus.docs) {
     const [p, n] = d.id.split("-");
     if (p === prefix) max = Math.max(max, Number(n));
