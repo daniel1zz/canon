@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { keptPlaces } from "./queue.ts";
@@ -30,6 +30,19 @@ describe("a git or file operation that fails during a landing", () => {
     expect(change?.kind === "change" && change.status).toBe("open");
     expect(reasons(root)).toEqual(["environment"]);
     expect(ws(root).db.db.query("SELECT 1 FROM queue").all()).toEqual([]);
+  }, TIMED);
+
+  test("BR-2193: a change file edited while the failing close commit runs keeps that edit (issue #80)", async () => {
+    const root = project();
+    const s = startNew(root, "Edited meanwhile");
+    const file = sh(s.worktree, "ls-files", "canon/changes").split("\n").find((f) => f.includes(s.change))!;
+    const hooks = join(sh(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "hooks");
+    mkdirSync(hooks, { recursive: true });
+    writeFileSync(join(hooks, "pre-commit"), `#!/bin/sh\necho 'edit saved meanwhile' >> ${file}\nexit 1\n`, { mode: 0o755 });
+    const out = await land(ws(s.worktree), { ...FAST, finish: true }, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("environment");
+    expect(out.kind === "refused" && out.message).toContain("left as it is");
+    expect(readFileSync(join(s.worktree, file), "utf8")).toContain("edit saved meanwhile");
   }, TIMED);
 
   test("BR-2193 BR-2067: a rebase that fails without a conflicted file is environment, keeps no place, and counts as no check", async () => {
