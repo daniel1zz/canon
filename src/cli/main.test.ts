@@ -87,6 +87,8 @@ describe("exit codes", () => {
     const wt = canon(root, "work", "start", "--title", "Asking").out.match(/cd (.+)/)![1]!.trim();
     expect(canon(wt, "human", "ask", "Ship it?").code).toBe(0);
     expect(canon(root, "human", "pending").out).toContain("#1 [C-1] Ship it?");
+    expect(canon(root, "human", "ask", "Rename it?").code).toBe(0); // the primary checkout holds no claim
+    expect(canon(wt, "human", "pending").out).toContain("#2 [-] Rename it?");
   });
 
   test("BR-2021: an agent session without a terminal cannot answer a human question", () => {
@@ -114,7 +116,9 @@ describe("project and documents", () => {
       expect(Bun.spawnSync(["test", "-e", join(root, p)]).exitCode).toBe(0);
     }
     writeFileSync(join(root, "canon/product.md"), "mine");
-    expect(canon(root, "init", "--floor", "true").out).toContain("exists canon/product.md");
+    const again = canon(root, "init", "--floor", "true");
+    expect(again.out).toContain("exists canon/product.md");
+    expect(again.code).toBe(0);
     expect(readFileSync(join(root, "canon/product.md"), "utf8")).toBe("mine");
   });
 
