@@ -504,13 +504,13 @@ describe("lessons when a change closes", () => {
     const s = startNew(root, "No lessons");
     setLessons(s.worktree, s.change, undefined);
     const out = await land(ws(s.worktree), { ...FAST, finish: true }, quiet);
-    expect(out).toMatchObject({ kind: "refused", reason: "check" });
+    expect(out).toMatchObject({ kind: "refused", reason: "lessons" });
     expect(out.kind === "refused" && out.message).toContain("## 教训");
     expect(sh(s.worktree, "log", "-1", "--format=%s")).toBe("lessons"); // no close commit
     expect(subjects(root)).not.toContain(`close ${s.change}`);
 
     setLessons(s.worktree, s.change, "<每条教训一行>");
-    expect(await land(ws(s.worktree), { ...FAST, finish: true }, quiet)).toMatchObject({ kind: "refused", reason: "check" });
+    expect(await land(ws(s.worktree), { ...FAST, finish: true }, quiet)).toMatchObject({ kind: "refused", reason: "lessons" });
   });
 
   test("BR-2161: a lessons section saying 无 closes the change; land without --finish never asks for it", async () => {

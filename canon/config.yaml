@@ -38,6 +38,7 @@ check_reviews:
   no-floor: "2027-02-03"
   dirty: "2027-02-03"
   no-claim: "2027-02-03"
+  lessons: "2027-02-03"
   timeout: "2027-02-03"
   conflict: "2027-02-03"
   floor: "2027-02-03"

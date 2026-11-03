@@ -37,7 +37,7 @@ export interface LandOptions {
 
 export type LandOutcome =
   | { readonly kind: "landed"; readonly sha: string; readonly change: string | null; readonly finished: boolean }
-  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "lost-turn" | "no-floor" | "no-claim" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
+  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "lost-turn" | "no-floor" | "no-claim" | "lessons" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
   | { readonly kind: "timeout"; readonly ahead: number };
 
 /**
@@ -74,7 +74,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     const doc = findDoc(corpus, subject);
     if (doc?.kind === "change" && doc.status === "open") {
       // reason: lessons are known when the work ends, so closing is where they are required; old closed changes stay valid (BR-2161, D-24)
-      if (!hasLessons(doc.body)) return early("check", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
+      if (!hasLessons(doc.body)) return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
       const s = setMeta(wt, doc, { status: "done" });
       if (!s.ok) return early("check", s.error.message);
       git(wt, "add", doc.path);

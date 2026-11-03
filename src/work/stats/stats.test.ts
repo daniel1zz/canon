@@ -36,6 +36,9 @@ describe("canon stats", () => {
     d.event("agent:a", "land.refuse", "C-7", { reason: "on-main" });
     const early = computeStats(d, {}, "2026-11-03");
     expect([of(early, "dirty").runs, of(early, "on-main").runs, of(early, "dirty").refused]).toEqual([7, 7, 1]); // one stage, same runs
+    d.event("agent:a", "land.refuse", "C-8", { reason: "lessons" });
+    const closing = computeStats(d, {}, "2026-11-03");
+    expect([of(closing, "lessons").runs, of(closing, "no-claim").runs, of(closing, "lessons").refused]).toEqual([8, 8, 1]); // before the queue, with no-claim
 
     const skipped = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
     if (!skipped.ok) throw new Error(skipped.error.message);
