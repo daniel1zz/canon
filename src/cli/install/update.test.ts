@@ -22,6 +22,12 @@ function canon(cwd: string, env: Record<string, string>, ...args: string[]) {
 
 const git = (cwd: string, ...args: string[]) => Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" }).stdout.toString().trim();
 
+/** Commits the index onto main past canon's guard, as a fixture standing in for a landed change (BR-2123). */
+function commitOnMain(root: string, message: string) {
+  const c = git(root, "commit-tree", git(root, "write-tree"), "-p", "HEAD", "-m", message);
+  Bun.spawnSync(["git", "update-ref", "refs/heads/main", c], { cwd: root, env: { ...process.env, CANON_LAND_MAIN: c } });
+}
+
 /** A canon project initialised from a fixture skills source and committed on main. */
 function project() {
   const src = dir({ "canon-a/SKILL.md": "a v1\n", "canon-b/SKILL.md": "b v1\n" });
@@ -83,7 +89,8 @@ describe("finding and applying updates", () => {
   test("BR-2086: an update that would overwrite a file edited here is refused before any change is opened", () => {
     const { src, root, env } = project();
     writeFileSync(join(root, ".claude/skills/canon-b/SKILL.md"), "b edited here\n");
-    git(root, "commit", "-qam", "local edit");
+    git(root, "add", "-A");
+    commitOnMain(root, "local edit");
     writeFileSync(join(src, "canon-b/SKILL.md"), "b v2\n");
     const r = canon(root, env, "update");
     expect(r.code).toBe(5);
@@ -157,7 +164,8 @@ describe("finding and applying updates", () => {
   test("BR-2089: a skill edited here while canon kept its version is not out of date, is kept by install and update, and is overwritten only with --force", () => {
     const { src, root, env } = project();
     writeFileSync(join(root, ".claude/skills/canon-b/SKILL.md"), "b edited here\n");
-    git(root, "commit", "-qam", "local edit");
+    git(root, "add", "-A");
+    commitOnMain(root, "local edit");
     expect(canon(root, env, "update", "--check").code).toBe(0);
     expect(canon(root, env, "brief").out).not.toContain("out of date");
     writeFileSync(join(src, "canon-a/SKILL.md"), "a v2\n");

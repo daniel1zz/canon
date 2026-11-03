@@ -437,17 +437,19 @@ const init = defineCommand({
   },
 });
 
-function reportInstall(r: InstallReport & { hook: boolean }) {
+function reportInstall(r: InstallReport & { hook: boolean; guard: boolean }) {
   for (const f of r.written) say(`skill ${f}`);
   for (const f of r.removed) say(`removed skill file ${f}`);
   for (const f of r.kept) say(`kept skill ${f} (edited in this project; canon has no newer version)`);
   if (r.hook) say("hook: canon brief at session start (.claude/settings.json)");
-  say(r.written.length + r.removed.length === 0 && !r.hook ? "canon project files: up to date" : "canon project files installed; commit them with the project");
+  if (r.guard) say("git hook: main moves only through canon work land (reference-transaction; not tracked, nothing to commit)");
+  const tracked = r.written.length + r.removed.length > 0 || r.hook;
+  say(tracked ? "canon project files installed; commit them with the project" : r.guard ? "canon project files installed" : "canon project files: up to date");
 }
 
 /** Installs canon's project files (skills, session hook) into this tree, as `canon init` does (D-9, D-10). */
 const install = defineCommand({
-  meta: { description: "Install canon's project files (skills, session-start hook) into this tree; files edited here are not overwritten without --force" },
+  meta: { description: "Install canon's project files (skills, session-start hook, the git hook that keeps main moving only through canon work land) into this tree; files edited here are not overwritten without --force" },
   args: { force: { type: "boolean", description: "Overwrite skill files that were edited in this project" } },
   run({ args }) {
     const root = must(git(process.cwd(), "rev-parse", "--show-toplevel"));
@@ -474,6 +476,7 @@ const update = defineCommand({
     }
     const out = must(await updateProject(ws, source, Boolean(args.force), ws.config.landTimeoutMs, say));
     if (out.kind === "current") return say(`canon project files: up to date (version ${out.version})`);
+    if (out.kind === "guard") return say(`git hook installed: main moves only through canon work land; canon project files are now up to date (version ${out.version})`);
     if (out.kind === "landed") return say(`updated to ${out.version} in ${out.change}, landed ${out.sha.slice(0, 9)}`);
     console.error(`canon: the update ${out.change} did not land: ${out.message}`);
     process.exit(EXIT.refused);

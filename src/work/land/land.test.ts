@@ -6,7 +6,8 @@ import { enqueue, finishEntry, tryTurn } from "./queue.ts";
 import { handoffs, writeHandoff } from "../session/handoffs.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { clean, start, stop } from "../session/session.ts";
-import { land } from "./land.ts";
+import { land, LAND_MARKER } from "./land.ts";
+import { ensureGuard } from "../../cli/install/githook.ts";
 
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
@@ -167,6 +168,28 @@ describe("work land", () => {
     expect(out.kind).toBe("landed");
     expect(sh(root, "rev-parse", "main")).toBe(sh(s.worktree, "rev-parse", "HEAD"));
     expect(readFileSync(join(root, "app.txt"), "utf8")).toContain("four");
+  });
+
+  test("BR-2125: with canon's git guard installed, land still moves main, both when main is checked out and when it is not, and leaves no marker behind", async () => {
+    const root = project();
+    expect(ensureGuard(root, "main")).toEqual({ ok: true, value: true });
+    writeFileSync(join(root, "app.txt"), "direct\n");
+    expect(Bun.spawnSync(["git", "commit", "-qam", "direct"], { cwd: root }).exitCode).not.toBe(0); // the guard is live
+    sh(root, "checkout", "-q", "--", "app.txt");
+    const a = startNew(root, "Checked out");
+    writeFileSync(join(a.worktree, "a.txt"), "a\n");
+    sh(a.worktree, "add", "a.txt");
+    sh(a.worktree, "commit", "-qm", "a");
+    expect((await land(ws(a.worktree), FAST, quiet)).kind).toBe("landed");
+    expect(existsSync(join(root, "a.txt"))).toBe(true); // the primary checkout followed main (BR-2039)
+    sh(root, "checkout", "-q", "--detach");
+    const b = startNew(root, "Detached");
+    writeFileSync(join(b.worktree, "b.txt"), "b\n");
+    sh(b.worktree, "add", "b.txt");
+    sh(b.worktree, "commit", "-qm", "b");
+    expect((await land(ws(b.worktree), FAST, quiet)).kind).toBe("landed");
+    expect(sh(root, "rev-parse", "main")).toBe(sh(b.worktree, "rev-parse", "HEAD"));
+    expect(process.env[LAND_MARKER]).toBeUndefined();
   });
 
   test("BR-2013 BR-2014 BR-2015: refuses uncommitted work, a red floor and a rebase conflict, leaving main untouched", async () => {

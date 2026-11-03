@@ -14,7 +14,7 @@ import { type Doc } from "../../knowledge/documents/model.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { setMeta } from "../../knowledge/documents/write.ts";
-import { git, isClean, listWorktrees } from "../../kernel/git.ts";
+import { git, gitEnv, isClean, listWorktrees } from "../../kernel/git.ts";
 import { reviewPrompt, runReview, type DeletedDoc } from "../../knowledge/review/review.ts";
 
 /**
@@ -314,6 +314,12 @@ export function ownDiffId(wt: string, main: string): string | null {
  * Compare-and-swap of main from `expected` to `next`. When a worktree has main checked out, it is
  * fast-forwarded in place so its files stay in step; it must be clean, or the swap is refused.
  */
+/**
+ * The environment variable naming the commit `canon work land` moves main to. The git guard canon installs
+ * lets main move only to that commit (BR-2123); land sets it only on its own git command that moves main (BR-2125).
+ */
+export const LAND_MARKER = "CANON_LAND_MAIN";
+
 function moveMain(ws: Workspace, expected: string, next: string): "moved" | { reason: "main-moved" | "main-dirty"; message: string } {
   const main = ws.config.main;
   const wts = listWorktrees(ws.primary);
@@ -323,10 +329,10 @@ function moveMain(ws: Workspace, expected: string, next: string): "moved" | { re
     if (holder.head !== expected) return { reason: "main-moved", message: `${main} moved to ${holder.head.slice(0, 9)} during the landing; land again` };
     const clean = isClean(holder.path);
     if (!clean.ok || !clean.value) return { reason: "main-dirty", message: `${holder.path} has ${main} checked out with uncommitted changes; ${main} was not moved` };
-    const ff = git(holder.path, "merge", "-q", "--ff-only", next);
+    const ff = gitEnv(holder.path, { [LAND_MARKER]: next }, "merge", "-q", "--ff-only", next);
     return ff.ok ? "moved" : { reason: "main-moved", message: ff.error.message };
   }
-  const r = git(ws.primary, "update-ref", `refs/heads/${main}`, next, expected);
+  const r = gitEnv(ws.primary, { [LAND_MARKER]: next }, "update-ref", `refs/heads/${main}`, next, expected);
   return r.ok ? "moved" : { reason: "main-moved", message: `${main} moved during the landing; land again (${r.error.message})` };
 }
 

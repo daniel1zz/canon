@@ -7,6 +7,8 @@ import { land } from "../../work/land/land.ts";
 import { start } from "../../work/session/session.ts";
 import { type Say } from "../../work/workspace.ts";
 import { ensureHook, hookStatus } from "./hook.ts";
+import { ensureGuard, foreignGuard, guardStatus } from "./githook.ts";
+import { readConfig } from "../../config/config.ts";
 import { installSkills, skillsStatus, type InstallReport } from "./install.ts";
 
 /**
@@ -16,6 +18,7 @@ import { installSkills, skillsStatus, type InstallReport } from "./install.ts";
  *
  *   skills   managed files under .claude/skills/canon-*, protected by a hash manifest (BR-2081)
  *   hook     merged: one SessionStart entry running `canon brief || echo ...` in .claude/settings.json (BR-2087)
+ *   guard    the git `reference-transaction` hook in the hooks directory (BR-2123); untracked, so installed in place, never landed
  *   canon/config.yaml, canon/product.md   written once by `canon init`, never touched again
  */
 export interface AssetsStatus {
@@ -25,6 +28,10 @@ export interface AssetsStatus {
   readonly outdated: readonly string[];
   /** Skill files edited in this project; an update refuses them without --force. */
   readonly edited: readonly string[];
+  /** Only the git guard is out of date: it is not in the tree, so an update installs it without a change. */
+  readonly guardOnly: boolean;
+  /** A reference-transaction hook canon did not write; install and update refuse it (BR-2124). */
+  readonly foreignGuard: string | undefined;
 }
 
 export function assetsStatus(root: string, source: string): Result<AssetsStatus> {
@@ -33,8 +40,21 @@ export function assetsStatus(root: string, source: string): Result<AssetsStatus>
   const h = hookStatus(root);
   if (!h.ok) return h;
   const hook = { present: [], missing: ["hook: canon brief at session start (.claude/settings.json)"], old: ["hook: canon brief at session start, older form that says nothing when canon is not on PATH (.claude/settings.json)"] }[h.value];
-  const outdated = [...s.value.outdated.map((f) => `skill ${f}`), ...hook];
-  return ok({ version: s.value.version, current: outdated.length === 0, outdated, edited: s.value.edited });
+  const g = guardLine(root);
+  if (!g.ok) return g;
+  const outdated = [...s.value.outdated.map((f) => `skill ${f}`), ...hook, ...g.value.line];
+  return ok({ version: s.value.version, current: outdated.length === 0, outdated, edited: s.value.edited, guardOnly: s.value.outdated.length === 0 && hook.length === 0 && g.value.line.length > 0, foreignGuard: g.value.foreign });
+}
+
+/** The update-check line for the git guard (BR-2123, BR-2124), and the path of a hook canon did not write. */
+function guardLine(root: string): Result<{ line: string[]; foreign?: string }> {
+  const config = readConfig(root);
+  if (!config.ok) return config;
+  const g = guardStatus(root, config.value.main);
+  if (!g.ok) return g;
+  const what = `git hook: main moves only through canon work land (${g.value.path})`;
+  const line = { current: [], missing: [what], old: [`${what}, older form`], foreign: [`${what}, not installed: that file was not written by canon`] }[g.value.state];
+  return ok({ line, ...(g.value.state === "foreign" ? { foreign: g.value.path } : {}) });
 }
 
 /** The one-line notice `canon brief` and `canon work start` print when something is out of date (BR-2085). */
@@ -44,16 +64,25 @@ export function updateNotice(st: AssetsStatus): string | undefined {
 }
 
 /** Installs every asset into `root` (the current tree). Used by `canon init` and by `canon update` in its worktree. */
-export function installAssets(root: string, source: string, force: boolean): Result<InstallReport & { hook: boolean }> {
+export function installAssets(root: string, source: string, force: boolean): Result<InstallReport & { hook: boolean; guard: boolean }> {
+  const config = readConfig(root);
+  if (!config.ok) return config;
+  // Someone else's git hook refuses the install before anything is written (BR-2124).
+  const g = guardStatus(root, config.value.main);
+  if (!g.ok) return g;
+  if (g.value.state === "foreign") return foreignGuard(g.value.path);
   const skills = installSkills(root, source, force);
   if (!skills.ok) return skills;
   const hook = ensureHook(root);
   if (!hook.ok) return hook;
-  return ok({ ...skills.value, hook: hook.value });
+  const guard = ensureGuard(root, config.value.main);
+  if (!guard.ok) return guard;
+  return ok({ ...skills.value, hook: hook.value, guard: guard.value });
 }
 
 export type UpdateOutcome =
   | { readonly kind: "current"; readonly version: string }
+  | { readonly kind: "guard"; readonly version: string }
   | { readonly kind: "landed"; readonly version: string; readonly change: string; readonly sha: string }
   | { readonly kind: "refused"; readonly change: string; readonly message: string };
 
@@ -65,6 +94,13 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
   const st = assetsStatus(ws.root, source);
   if (!st.ok) return st;
   if (st.value.current) return ok({ kind: "current", version: st.value.version });
+  if (st.value.foreignGuard) return foreignGuard(st.value.foreignGuard);
+  if (st.value.guardOnly) {
+    // reason: the git hook lives outside the tree, so there is nothing to land; it is installed in place (BR-2086, BR-2123)
+    const g = ensureGuard(ws.root, ws.config.main);
+    if (!g.ok) return g;
+    return ok({ kind: "guard", version: st.value.version });
+  }
   if (st.value.edited.length > 0 && !force) {
     return err("conflict", `these canon skill files were edited in this project and would be overwritten:\n${st.value.edited.map((e) => `  .claude/skills/${e}`).join("\n")}\nMove the edits into canon itself, or run \`canon update --force\` to discard them.`);
   }
