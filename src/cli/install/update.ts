@@ -17,7 +17,8 @@ import { installSkills, skillsStatus, type InstallReport } from "./install.ts";
  * the agent tells the user, and `canon update` runs only when someone asks for it.
  *
  *   skills   managed files under .claude/skills/canon-*, protected by a hash manifest (BR-2081)
- *   hook     merged: one SessionStart entry running `canon brief || echo ...` in .claude/settings.json (BR-2087)
+ *   hooks    merged into .claude/settings.json: a SessionStart entry running `canon brief || echo ...` (BR-2087), a
+ *            PreToolUse entry running `canon hook pre-bash` and an allow rule for the line it adds (BR-2128)
  *   guard    the git `reference-transaction` hook in the hooks directory (BR-2123); untracked, so installed in place, never landed
  *   canon/config.yaml, canon/product.md   written once by `canon init`, never touched again
  */
@@ -39,7 +40,11 @@ export function assetsStatus(root: string, source: string): Result<AssetsStatus>
   if (!s.ok) return s;
   const h = hookStatus(root);
   if (!h.ok) return h;
-  const hook = { present: [], missing: ["hook: canon brief at session start (.claude/settings.json)"], old: ["hook: canon brief at session start, older form that says nothing when canon is not on PATH (.claude/settings.json)"] }[h.value];
+  const brief = { present: [], missing: ["hook: canon brief at session start (.claude/settings.json)"], old: ["hook: canon brief at session start, older form that says nothing when canon is not on PATH (.claude/settings.json)"] }[h.value.brief];
+  const what = "hook: canon hook pre-bash before each Bash call, so a subagent acts as itself (.claude/settings.json)";
+  const preBash = { present: [], missing: [what], old: [`${what}, older form`] }[h.value.preBash];
+  const permission = h.value.permission ? [] : [`permission: the CANON_ACTOR export line canon hook pre-bash adds runs without a prompt (.claude/settings.json)`];
+  const hook = [...brief, ...preBash, ...permission];
   const g = guardLine(root);
   if (!g.ok) return g;
   const outdated = [...s.value.outdated.map((f) => `skill ${f}`), ...hook, ...g.value.line];
@@ -116,7 +121,7 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
   const head = text.slice(0, text.indexOf("---\n", 4) + 4);
   writeFileSync(
     join(changeDir, file),
-    `${head}\n## 为什么\n\n项目里 canon 装的文件（skill、会话开始时的 hook）落后于当前的 canon，按负责人的要求更新。\n\n## 要改什么\n\n${st.value.outdated.map((o) => `- ${o}`).join("\n")}\n\n## 任务\n\n- [x] 由 \`canon update\` 安装并合入\n`,
+    `${head}\n## 为什么\n\n项目里 canon 装的文件（skill、.claude/settings.json 里的 hook）落后于当前的 canon，按负责人的要求更新。\n\n## 要改什么\n\n${st.value.outdated.map((o) => `- ${o}`).join("\n")}\n\n## 任务\n\n- [x] 由 \`canon update\` 安装并合入\n`,
   );
   for (const args of [["add", "-A", ".claude", "canon/changes"], ["commit", "-q", "-m", `Update canon project files to ${st.value.version} (${started.value.change})`]]) {
     const r = git(wt, ...args);

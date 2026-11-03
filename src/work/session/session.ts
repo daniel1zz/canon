@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Say, Workspace } from "../workspace.ts";
-import { holdClaim, unholdClaim, releaseClaim, renewClaim, takeClaim } from "../claims/claims.ts";
+import { holdClaim, unholdClaim, releaseClaim, releaseSubagentClaim, renewClaim, takeClaim } from "../claims/claims.ts";
 import { writeHandoff } from "./handoffs.ts";
 import { sessionProcess } from "../claims/liveness.ts";
 import { runHooksSync } from "../../config/hooks.ts";
@@ -184,7 +184,17 @@ function createDocProbe(ws: Workspace, corpus: Corpus, _title: string): { id: st
 }
 
 /** Records where the change stands so the next session can continue without a human re-briefing (P3). */
-export function stop(ws: Workspace, next: string, note: string | undefined, release: boolean, say: Say = () => {}): Result<string> {
+export function stop(ws: Workspace, next: string, note: string | undefined, release: boolean, say: Say = () => {}, takeover = false): Result<string> {
+  if (takeover && release) {
+    // The main thread releases a claim of one of its own subagents, which no liveness probe can free (BR-2129).
+    const taken = releaseSubagentClaim(ws.db, ws.root, ws.actor);
+    if (!taken.ok) return taken;
+    if (taken.value) {
+      writeHandoff(ws.db, { subject: taken.value.subject, worktree: ws.root, actor: ws.actor, next, note: note ?? null });
+      runHooksSync({ db: ws.db, actor: ws.actor, event: "after_stop", change: taken.value.subject, cwd: ws.root, env: { CANON_NEXT: next } }, ws.config.hooks.after_stop, say);
+      return ok(taken.value.subject);
+    }
+  }
   // Release too goes through the holder check: only the holder lets its claim go (BR-2104).
   const renewed = renewClaim(ws.db, ws.root, ws.actor, ws.config.claimLeaseMs, sessionProcess());
   if (!renewed.ok) return renewed;

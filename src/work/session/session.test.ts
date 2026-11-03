@@ -8,6 +8,9 @@ import { land } from "../land/land.ts";
 
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
+/** This test process's own session prefix: in-process workspaces read the real environment, where a subagent actor of another session is refused (BR-2023). */
+const S = (process.env["CLAUDECODE"] === "1" && process.env["CLAUDE_CODE_SESSION_ID"]?.trim().slice(0, 8)) || "3d606482";
+
 describe("work start", () => {
   test("BR-2012: a new change gets its own worktree, branch, committed change file and claim", () => {
     const root = project();
@@ -80,6 +83,55 @@ describe("work start", () => {
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM handoffs").get()?.n).toBe(0);
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'land.refuse'").get()?.n).toBe(0);
     expect(cli("agent:a", "stop", "--release", "--next", "x").exitCode).toBe(0);
+    expect(claims(ws(root).db)).toEqual([]);
+  });
+
+  test("BR-2104: a sibling subagent sent into the holder's worktree cannot land, stop or release its claim", () => {
+    const root = project();
+    const s = startNew(root, "Sibling", `agent:${S}:aaa`);
+    const before = sh(root, "rev-parse", "main");
+    const cli = (actor: string, ...args: string[]) =>
+      Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", ...args], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: `${S}-8b99`, CANON_ACTOR: actor } });
+    for (const args of [["land", "--finish"], ["stop", "--release", "--next", "x"], ["stop", "--next", "x"]]) {
+      const r = cli(`agent:${S}:bbb`, ...args);
+      expect(r.exitCode).toBe(5);
+      expect(r.stderr.toString()).toContain(`claimed by agent:${S}:aaa`);
+    }
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+    expect(claims(ws(root).db).map((c) => [c.subject, c.actor])).toEqual([[s.change, `agent:${S}:aaa`]]);
+    const status = Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "status"], { cwd: root, stdout: "pipe", env: { ...process.env, CANON_ACTOR: "agent:x" } });
+    expect(status.stdout.toString()).toContain(` agent:${S}:aaa  ${s.worktree}`); // the full actor (BR-2023)
+  });
+
+  test("BR-2129: the main thread releases its own subagent's live claim only with --release --takeover; nobody else can", () => {
+    const root = project();
+    const s = startNew(root, "Subagent work", `agent:${S}:aaa`);
+    const cli = (actor: string, ...args: string[]) =>
+      Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", ...args], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: `${S}-8b99`, CANON_ACTOR: actor } });
+    const held = () => claims(ws(root).db).map((c) => c.actor);
+    const plain = cli(`agent:${S}`, "stop", "--release", "--next", "x");
+    expect(plain.exitCode).toBe(5);
+    expect(plain.stderr.toString()).toContain("--takeover");
+    expect(cli(`agent:${S}`, "land", "--finish").exitCode).toBe(5);
+    expect(cli(`agent:${S}`, "stop", "--takeover", "--next", "x").exitCode).toBe(2);
+    expect(cli(`agent:${S}:bbb`, "stop", "--release", "--takeover", "--next", "x").exitCode).toBe(5);
+    const other = Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "stop", "--release", "--takeover", "--next", "x"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:ffffffff" } });
+    expect(other.exitCode).toBe(5);
+    expect(held()).toEqual([`agent:${S}:aaa`]);
+    const db = ws(root).db;
+    expect(db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM handoffs").get()?.n).toBe(0);
+    const taken = cli(`agent:${S}`, "stop", "--release", "--takeover", "--next", "carry on");
+    expect(taken.exitCode).toBe(0);
+    expect(held()).toEqual([]);
+    expect(db.db.query<{ actor: string; next: string }, []>("SELECT actor, next FROM handoffs").all()).toEqual([{ actor: `agent:${S}`, next: "carry on" }]);
+    const ev = db.db.query<{ actor: string; detail: string }, []>("SELECT actor, detail FROM events WHERE kind = 'claim.release'").all();
+    expect(ev.map((e) => [e.actor, JSON.parse(e.detail)])).toEqual([[`agent:${S}`, { from: `agent:${S}:aaa`, reason: "takeover" }]]);
+  });
+
+  test("BR-2129: --takeover on the actor's own claim is an ordinary stop --release", () => {
+    const root = project();
+    const s = startNew(root, "Own work", `agent:${S}`);
+    expect(stop(ws(s.worktree, `agent:${S}`), "done here", undefined, true, quiet, true).ok).toBe(true);
     expect(claims(ws(root).db)).toEqual([]);
   });
 
