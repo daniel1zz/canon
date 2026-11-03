@@ -114,7 +114,7 @@ describe("canon work after-land", () => {
     expect([b?.change, b?.commands.map((c) => c.exit)]).toEqual(["C-5", [1]]);
   });
 
-  test("BR-2166: the whole batch is recorded before its first command runs", async () => {
+  test("BR-2059: the whole batch is recorded before its first command runs", async () => {
     const root = project();
     const dbPath = join(root, ".git/canon/state.db");
     const script = join(root, "count.ts");
