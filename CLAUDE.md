@@ -6,6 +6,7 @@ Canon：为多个 AI 会话同时开发的项目提供共享记忆和协作协�
 
 - `canon/rules/<领域>/BR-n.md`：产品现在必须怎么工作，一条规则一个文件。`canon/rules/<领域>/README.md` 写明这个领域管哪些代码。
 - `canon/decisions/D-n.md`：为什么这么定。`canon/changes/C-n.md`：要做的工作。`canon/notes/`：调研和复盘。
+- `skills/`：canon 自带的 Claude Code skill（`canon-design`、`canon-diagnose`），链接到 `~/.claude/skills/` 使用（D-7）。
 - `src/`：canon 的实现。测试名以它证明的规则编号开头（`it("BR-2014: ...")`）。
 
 ## 怎么干活
