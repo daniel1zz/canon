@@ -101,3 +101,21 @@ export function unknownArgument(cmd: CommandDef<ArgsDef>, name: string, args: re
   }
   return undefined;
 }
+
+/**
+ * The first argument problem of a whole command line (BR-2097), checked at every level it passes through: the words in
+ * front of each subcommand name against the command above it, and the rest against the command it ends on. That last
+ * command is checked when it has no subcommands, and also when it has some but runs by itself, as `canon x --flag`
+ * without a subcommand name does; one with subcommands and no run of its own is left to citty, which refuses it.
+ */
+export function argumentProblem(main: CommandDef<ArgsDef>, raw: readonly string[]): string | undefined {
+  const at = resolve(main, raw);
+  const runsItself = Object.keys(subsOf(at.cmd)).length === 0 || typeof at.cmd.run === "function";
+  const levels = [...at.before, ...(runsItself ? [{ cmd: at.cmd, path: at.path, args: at.rest }] : [])];
+  for (const l of levels) {
+    const name = ["canon", ...l.path].join(" ");
+    const problem = unknownArgument(l.cmd, name, l.args);
+    if (problem) return `${problem} (see \`${name} --help\`)`;
+  }
+  return undefined;
+}

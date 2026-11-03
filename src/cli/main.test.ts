@@ -210,6 +210,12 @@ describe("undeclared arguments", () => {
     expect(h.code).toBe(0);
     expect(h.out + h.err).toContain("USAGE");
   });
+
+  test("BR-2097: a group that cannot run by itself, given an option and no subcommand, exits 2", () => {
+    const r = canon(mkdtempSync(join(tmpdir(), "canon-not-a-repo-")), "decision", "--bogus");
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("canon decision --help");
+  });
 });
 
 describe("help", () => {

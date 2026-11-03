@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { defineCommand, renderUsage, runCommand } from "citty";
 import { assemble, EXIT } from "./command.ts";
-import { resolve, unknownArgument } from "./strict.ts";
+import { argumentProblem, resolve } from "./strict.ts";
 import { installCommands } from "./install/commands.ts";
 import { configCommands } from "../config/commands.ts";
 import { referenceCommands } from "../config/reference/commands.ts";
@@ -59,14 +59,10 @@ async function run(): Promise<void> {
     return;
   }
   // Before anything runs: an argument the command does not declare is a usage error, never ignored (BR-2097).
-  const levels = [...at.before, ...(Object.keys(at.cmd.subCommands ?? {}).length === 0 ? [{ cmd: at.cmd, path: at.path, args: at.rest }] : [])];
-  for (const l of levels) {
-    const name = ["canon", ...l.path].join(" ");
-    const problem = unknownArgument(l.cmd, name, l.args);
-    if (problem) {
-      console.error(`canon: ${problem} (see \`${name} --help\`)`);
-      process.exit(EXIT.usage);
-    }
+  const problem = argumentProblem(main, raw);
+  if (problem) {
+    console.error(`canon: ${problem}`);
+    process.exit(EXIT.usage);
   }
   try {
     await runCommand(main, { rawArgs: raw });
