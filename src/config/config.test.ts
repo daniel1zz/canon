@@ -38,6 +38,8 @@ describe("config validation", () => {
     ["an unknown hook event", "hooks:\n  before_start: x\n", "unknown hook event"],
     ["invalid YAML", "floor: [\n", "not valid YAML"],
     ["a regenerable entry with a slash", "regenerable: [build/out]\n", "regenerable"],
+    ["a batch size of 0", "land_batch_max: 0\n", "land_batch_max"],
+    ["a batch size that is not whole", "land_batch_max: 2.5\n", "land_batch_max"],
   ];
   for (const [what, yaml, message] of cases) {
     test(`BR-2045: ${what} makes every command fail with exit 2`, () => {

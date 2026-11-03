@@ -3,7 +3,8 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
-import { enqueue, finishEntry, QUEUE_STALE_MS, tryTurn } from "./queue.ts";
+import { batchCandidates, enqueue, finishEntry, joinBatch, leaveBatch, QUEUE_STALE_MS, tryTurn } from "./queue.ts";
+import { selfProcess } from "../claims/liveness.ts";
 
 function db(): CoordDb {
   const r = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-next-state-")), "state.db"));
@@ -54,5 +55,40 @@ describe("landing queue", () => {
     finishEntry(d, b, "landed", "sha");
     expect(tryTurn(d, a).mine).toBe(false);
     expect(d.db.query<{ state: string }, [number]>("SELECT state FROM queue WHERE id = ?").get(a)?.state).toBe("abandoned");
+  });
+});
+
+describe("batches", () => {
+  test("BR-2172: candidates are the live waiting entries right behind the leader, in order, stopping at the first that may not join", () => {
+    const d = db();
+    const me = selfProcess();
+    const lead = enqueue(d, "/wt/a", "C-1", "x", me);
+    const b = enqueue(d, "/wt/b", "C-2", "x", me);
+    const c = enqueue(d, "/wt/c", "C-3", "x", me);
+    const e = enqueue(d, "/wt/e", "C-4", "x", me);
+    expect(tryTurn(d, lead).mine).toBe(true);
+    expect(batchCandidates(d, lead, 2).map((x) => x.id)).toEqual([b, c]);
+    expect(joinBatch(d, lead, c, "h")).toBe(true);
+    leaveBatch(d, c, true); // c lands on its own from now on (BR-2173)
+    expect(batchCandidates(d, lead, 3).map((x) => x.id)).toEqual([b]); // stops at c, never takes e ahead of it
+    expect(e).toBeGreaterThan(c);
+    const silent = enqueue(d, "/wt/s", "C-5", "x"); // no lander process recorded
+    expect(batchCandidates(d, e, 3)).toEqual([]); // a lander with no process recorded never joins
+    expect(silent).toBeGreaterThan(e);
+    const old = enqueue(d, "/wt/o", "C-6", "x", me);
+    d.db.query("UPDATE queue SET solo = NULL WHERE id = ?").run(old); // queued by a canon that predates batches
+    expect(batchCandidates(d, silent, 3)).toEqual([]);
+  });
+
+  test("BR-2173: a member waits while its leader lands, and waits for its own turn again once the leader stops", () => {
+    const d = db();
+    const me = selfProcess();
+    const lead = enqueue(d, "/wt/a", "C-1", "x", me);
+    const m = enqueue(d, "/wt/b", "C-2", "x", me);
+    expect(tryTurn(d, lead).mine).toBe(true);
+    expect(joinBatch(d, lead, m, "h1")).toBe(true);
+    expect(tryTurn(d, m)).toEqual({ mine: false, ahead: 0, batched: { leader: lead, head: "h1" } });
+    finishEntry(d, lead, "failed", "killed");
+    expect(tryTurn(d, m)).toEqual({ mine: true, ahead: 0 });
   });
 });

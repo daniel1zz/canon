@@ -69,6 +69,11 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ["queue", "pid_start TEXT"],
   // The worktree each event was run from: with session-level actors, it is what tells a session's agents apart (BR-2131, D-18).
   ["events", "worktree TEXT"],
+  // Batched landings (D-26): the leader entry testing this one, the HEAD this entry had when it joined, and
+  // whether it must land on its own after a failed batch (BR-2172, BR-2173).
+  ["queue", "batch INTEGER"],
+  ["queue", "head TEXT"],
+  ["queue", "solo INTEGER"],
 ];
 
 /**

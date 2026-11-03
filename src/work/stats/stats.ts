@@ -100,8 +100,9 @@ export function computeStats(db: CoordDb, reviews: Readonly<Record<string, strin
     let outcomes: Record<Outcome, number> | null = null;
     if (LAND_CHECKS.includes(check)) {
       const stage = LAND_STAGES.findIndex((s) => s.includes(check));
-      // reason: a landing that skipped the floor reached the later stages without running it (BR-2164).
-      const ran = (r: Row) => check !== "floor" || r.detail["floor_skipped"] !== true;
+      // reason: a landing that skipped the floor reached the later stages without running it (BR-2164); a batch
+      // member's floor was its leader's one run (BR-2172).
+      const ran = (r: Row) => check !== "floor" || (r.detail["floor_skipped"] !== true && r.detail["batched_by"] === undefined);
       const reachedLater = LAND_STAGES.slice(stage).flat().reduce((n, c) => n + refusalsOf(c).filter(ran).length, 0);
       runs = reachedLater + count((r) => r.kind === "land.ok" && ran(r));
       const mine = refusalsOf(check);

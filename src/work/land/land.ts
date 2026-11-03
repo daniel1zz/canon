@@ -1,4 +1,4 @@
-import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Say, Workspace } from "../workspace.ts";
 import type { Config } from "../../config/config.ts";
@@ -7,7 +7,7 @@ import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../..
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { bindToLander, keepClaim, releaseOwnClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
 import { dropHandoff } from "../session/handoffs.ts";
-import { enqueue, failIfActive, finishEntry, heartbeat, holdsTurn, tryTurn } from "./queue.ts";
+import { batchCandidates, enqueue, failIfActive, finishEntry, heartbeat, holdsTurn, inBatch, isSolo, joinBatch, landBatched, leaveBatch, tryTurn } from "./queue.ts";
 import { selfProcess, sessionProcess } from "../claims/liveness.ts";
 import { logFile, runHooks, runHooksInBackground } from "../../config/hooks.ts";
 import { noticeOverlaps } from "../session/overlap.ts";
@@ -94,6 +94,8 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   // A lander killed by a signal (a tool timeout, Ctrl-C) gives its turn up at once and leaves no rebase half done (BR-2099).
   const onSignal = (signal: NodeJS.Signals) => {
     running.floor?.kill();
+    // reason: process.exit skips the batch's finally, so its temporary worktree is removed here (BR-2099, BR-2172).
+    if (existsSync(batchDir(ws, entry))) git(ws.primary, "worktree", "remove", "--force", batchDir(ws, entry));
     const aborted = rebaseInProgress(wt) && git(wt, "rebase", "--abort").ok;
     // A signal after main moved leaves the landed entry as it is: the landing happened.
     // reason: an interruption, not a check's verdict, so it is its own event kind and no check in `canon stats` (BR-2067).
@@ -187,6 +189,9 @@ async function queueAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { ent
   }
 }
 
+/** How often a waiting lander tries for its turn. */
+const POLL_MS = 2000;
+
 async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running }): Promise<LandOutcome> {
   const wt = ws.root;
   const main = ws.config.main;
@@ -199,6 +204,15 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
     const turn = tryTurn(ws.db, entry, ws.config.landerStaleMs);
     // A later lander skipped this entry while it was silent; it may already have moved main (BR-2144, issue #29).
     if (turn.lost !== undefined) return lostTurn(ws, subject, wt, turn.lost, "queue");
+    // The lander ahead tested this change in its batch and landed it (BR-2172).
+    if (turn.landedBy) return landedInBatch(ws, opts, say, { entry, subject }, turn.landedBy);
+    // While another lander tests this change in its batch, it neither refuses nor times out: the batch settles it (BR-2172).
+    if (turn.batched) {
+      if (lastAhead !== -2) say(`being tested in the batch of queue entry ${turn.batched.leader}; keep this worktree as it is`);
+      lastAhead = -2;
+      await Bun.sleep(POLL_MS);
+      continue;
+    }
     if (turn.mine) {
       // How long this lander waited in the queue, separate from how long its floor takes (BR-2122).
       ws.db.event(ws.actor, "land.turn", subject, { entry, waited_ms: Date.now() - queued });
@@ -226,7 +240,7 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
       ws.db.event(ws.actor, "land.refuse", subject, { reason: "timeout", ahead: turn.ahead, diff: ownDiffId(wt, main) });
       return { kind: "timeout", ahead: turn.ahead };
     }
-    await Bun.sleep(2000);
+    await Bun.sleep(POLL_MS);
   }
 
   // The heartbeat runs from the moment this lander has its turn until the landing ends, through the floor,
@@ -302,6 +316,15 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const tested = git(wt, "rev-parse", "HEAD");
   if (!tested.ok) return refuse("main-moved", tested.error.message);
 
+  // Landings waiting right behind this one are tested with it under one floor run (BR-2172, D-26); a batch that
+  // does not land as a whole sends them back to land on their own, and this landing goes on alone (BR-2173).
+  if (ws.config.landBatchMax > 1 && !isSolo(ws.db, entry)) {
+    const batched = await landBatch(ws, opts, say, { ...t, base: base.value, head: tested.value });
+    if (batched?.kind === "landed") return finishLanding(ws, opts, say, { entry, subject, sha: tested.value });
+    if (batched?.kind === "lost") return batched.outcome;
+    if (batched) return refuse(batched.reason, batched.message);
+  }
+
   // A landing that changes only paths the project declares no test reads has main's already-tested code tree,
   // so the floor would prove nothing new (BR-2164).
   const skip = floorSkip(wt, ws.config, base.value, tested.value);
@@ -310,27 +333,252 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
     say(`floor: skipped — all ${skip.paths.length} changed path(s) are under floor_skip_paths (${skip.under.join(", ")})`);
     ws.db.event(ws.actor, "floor.skip", subject, { entry, paths: skip.paths.slice(0, 50), under: skip.under });
   } else {
-    say(`floor: ${ws.config.floor}`);
-    const logPath = join(dirname(ws.db.db.filename), "logs", `land-${entry}.log`);
-    mkdirSync(dirname(logPath), { recursive: true });
-    const fd = openSync(logPath, "w");
-    const proc = Bun.spawn(["sh", "-c", ws.config.floor!], { cwd: wt, stdout: fd, stderr: fd });
-    t.running.floor = proc;
-    const code = await proc.exited;
-    t.running.floor = undefined;
-    closeSync(fd);
-    if (code !== 0) {
-      const tail = readFileSync(logPath, "utf8").split("\n").slice(-40).join("\n");
-      return refuse("floor", `floor exited ${code} (full log: ${logPath})\n${tail}`);
-    }
+    const floor = await runFloor(ws, say, wt, `land-${entry}.log`, t.running);
+    if (floor.code !== 0) return refuse("floor", `floor exited ${floor.code} (full log: ${floor.log})\n${floor.tail}`);
   }
 
+  const head = tested;
+  const steps = await verifyChange(ws, opts, say, { wt, base: base.value, head: head.value, subject, branch: t.branch });
+  if (!steps.ok) return refuse(steps.reason, steps.message, steps.findings);
+  const now = git(wt, "rev-parse", "HEAD");
+  const edits = changesIn(wt);
+  if (!now.ok || now.value !== head.value || edits.length > 0) {
+    const lines: string[] = [];
+    if (!now.ok || now.value !== head.value) {
+      const log = now.ok ? git(wt, "log", "--format=%h %s", `${head.value}..${now.value}`) : now;
+      lines.push(`HEAD moved from ${head.value.slice(0, 9)} to ${now.ok ? now.value.slice(0, 9) : "?"}${log.ok && log.value !== "" ? `:\n${log.value.split("\n").map((l) => `    ${l}`).join("\n")}` : ""}`);
+    }
+    for (const e of edits) lines.push(`uncommitted: ${e}`);
+    return refuse("moved-during-land", `the worktree changed after the rebase, so what was tested is not what would land; land again:\n${lines.map((l) => `  ${l}`).join("\n")}`);
+  }
+  // A lander that was silent past the stale time during its turn may have been skipped meanwhile; it no longer
+  // holds the turn and must not move main next to the one that took it over (BR-2144).
+  const turn = holdsTurn(ws.db, entry);
+  if (!turn.held) return lostTurn(ws, subject, wt, turn.state, "before-main");
+  const fingerprint = ownDiffId(wt, main); // before main moves: afterwards the merge base is HEAD itself
+  const moved = moveMain(ws, base.value, head.value);
+  if (moved !== "moved") return refuse(moved.reason, moved.message);
+
+  finishEntry(ws.db, entry, "landed", head.value);
+  ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: t.branch, diff: fingerprint, ...(steps.reviewNotes ?? {}), ...(floorSkipped ? { floor_skipped: true } : {}) });
+  say(`landed ${head.value.slice(0, 9)} on ${main}`);
+  afterLand(ws, say, { entry, subject, base: base.value, head: head.value, branch: t.branch });
+  return finishLanding(ws, opts, say, { entry, subject, sha: head.value });
+}
+
+/** Starts after_land in the background for one landed change, with its own base and head (BR-2030). */
+function afterLand(ws: Workspace, say: Say, l: { entry: number; subject: string | null; base: string; head: string; branch: string }): void {
+  if (ws.config.hooks.after_land.length === 0) return;
+  const env = { CANON_BASE: l.base, CANON_HEAD: l.head, CANON_BRANCH: l.branch };
+  const log = runHooksInBackground({ db: ws.db, actor: ws.actor, event: "after_land", change: l.subject, cwd: ws.primary, env }, ws.config.hooks.after_land, logFile(ws.db, `after-land-${l.entry}.log`), l.entry);
+  say(`after_land${l.subject ? ` for ${l.subject}` : ""} running in the background (log: ${log})`);
+}
+
+/** After main holds this change: with --finish, releases the own claim and handoff (BR-2018, BR-2108). */
+function finishLanding(ws: Workspace, opts: LandOptions, say: Say, l: { entry: number; subject: string | null; sha: string }): LandOutcome {
+  let finished = false;
+  if (opts.finish && l.subject) {
+    // Another session that took the change over meanwhile keeps its claim and its handoff (BR-2108).
+    if (releaseOwnClaim(ws.db, l.subject, ws.root, ws.actor)) dropHandoff(ws.db, l.subject);
+    else say(`${l.subject} is claimed by another session now; its claim and handoff were left as they are`);
+    finished = true;
+    say(`${l.subject} closed; remove the worktree with \`canon work clean ${l.subject}\` once you have left it`);
+  }
+  return { kind: "landed", sha: l.sha, change: l.subject, finished };
+}
+
+/** Runs the floor in `cwd`, its whole output in the log `name`; `running` lets a signal stop it (BR-2014, BR-2099). */
+async function runFloor(ws: Workspace, say: Say, cwd: string, name: string, running: Running): Promise<{ code: number; log: string; tail: string }> {
+  say(`floor: ${ws.config.floor}`);
+  const log = join(dirname(ws.db.db.filename), "logs", name);
+  mkdirSync(dirname(log), { recursive: true });
+  const fd = openSync(log, "w");
+  const proc = Bun.spawn(["sh", "-c", ws.config.floor!], { cwd, stdout: fd, stderr: fd });
+  running.floor = proc;
+  const code = await proc.exited;
+  running.floor = undefined;
+  closeSync(fd);
+  return { code, log, tail: code === 0 ? "" : readFileSync(log, "utf8").split("\n").slice(-40).join("\n") };
+}
+
+/** The temporary worktree a batch led by queue entry `entry` is tested in. */
+const batchDir = (ws: Workspace, entry: number) => join(dirname(ws.db.db.filename), "batch", String(entry));
+
+/** One change in a batch: its queue entry, and the chain commit below it (`base`) and its own top commit (`head`). */
+interface Link {
+  readonly entry: number;
+  readonly subject: string | null;
+  readonly worktree: string;
+  readonly branch: string;
+  /** The member's HEAD when it joined; its worktree must still be there when main moves (BR-2106). */
+  readonly joined: string;
+  readonly base: string;
+  readonly head: string;
+}
+
+/**
+ * The batch at this lander's turn (BR-2172, D-26). Takes up to `land_batch_max - 1` entries right behind it,
+ * rebases them one after another onto this landing's own rebased HEAD in a temporary worktree, runs each
+ * change's own steps on its part of the chain and the floor once on the top, and moves main to the top.
+ * Returns undefined when nothing joined or the batch fell back (members go back to wait and land on their own,
+ * BR-2173); "landed" when main moved; a refusal only for main moving or the turn being lost meanwhile.
+ */
+async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running; base: string; head: string }): Promise<{ kind: "landed" } | { kind: "refused"; reason: "main-moved" | "main-dirty"; message: string } | { kind: "lost"; outcome: LandOutcome } | undefined> {
+  const main = ws.config.main;
+  const members: { id: number; subject: string | null; worktree: string; branch: string; joined: string }[] = [];
+  for (const c of batchCandidates(ws.db, t.entry, ws.config.landBatchMax - 1, ws.config.landerStaleMs)) {
+    const head = git(c.worktree, "rev-parse", "HEAD");
+    const branch = git(c.worktree, "rev-parse", "--abbrev-ref", "HEAD");
+    const clean = isClean(c.worktree);
+    if (!head.ok || !branch.ok || !clean.ok || !clean.value) break;
+    if (!joinBatch(ws.db, t.entry, c.id, head.value)) break;
+    members.push({ id: c.id, subject: c.subject, worktree: c.worktree, branch: branch.value, joined: head.value });
+  }
+  if (members.length === 0) return undefined;
+  const leave = (from: number, solo: boolean) => {
+    for (const m of members.slice(from)) leaveBatch(ws.db, m.id, solo);
+  };
+  const names = (list: readonly { subject: string | null; id: number }[]) => list.map((m) => m.subject ?? `entry ${m.id}`).join(", ");
+
+  const dir = batchDir(ws, t.entry);
+  rmSync(dir, { recursive: true, force: true });
+  git(ws.primary, "worktree", "prune");
+  const added = git(ws.primary, "worktree", "add", "-q", "--detach", dir, t.head);
+  if (!added.ok) {
+    leave(0, false);
+    say(`batch: could not create a worktree to test in (${added.error.message.split("\n")[0]}); landing alone`);
+    return undefined;
+  }
+  try {
+    const links: Link[] = [{ entry: t.entry, subject: t.subject, worktree: ws.root, branch: t.branch, joined: t.head, base: t.base, head: t.head }];
+    for (let i = 0; i < members.length; i++) {
+      const m = members[i]!;
+      const prev = links[links.length - 1]!.head;
+      const from = git(ws.primary, "merge-base", t.base, m.joined);
+      const reb = from.ok ? git(dir, "rebase", "-q", "--onto", prev, from.value, m.joined) : from;
+      const top = reb.ok ? git(dir, "rev-parse", "HEAD") : reb;
+      if (!top.ok) {
+        // reason: a change that conflicts with the ones ahead of it in the batch is not judged here; it and the ones behind it wait for their own turn (BR-2172).
+        if (rebaseInProgress(dir)) git(dir, "rebase", "--abort");
+        say(`batch: ${names(members.slice(i))} do not rebase onto the batch; they wait for their own turn`);
+        leave(i, false);
+        members.splice(i);
+        break;
+      }
+      links.push({ entry: m.id, subject: m.subject, worktree: m.worktree, branch: m.branch, joined: m.joined, base: prev, head: top.value });
+    }
+    if (members.length === 0) return undefined;
+    const tip = links[links.length - 1]!.head;
+    say(`batch: testing ${names(members)} together with ${t.subject ?? "this landing"} (floor once on ${tip.slice(0, 9)})`);
+    ws.db.event(ws.actor, "batch.start", t.subject, { entry: t.entry, members: links.slice(1).map((l) => ({ entry: l.entry, change: l.subject, head: l.head })) });
+
+    const fallBack = (why: string) => {
+      leave(0, true);
+      ws.db.event(ws.actor, "batch.fail", t.subject, { entry: t.entry, why: why.slice(0, 2000), members: links.slice(1).map((l) => l.entry) });
+      say(`batch: ${why.split("\n")[0]}; ${names(members)} go back to the queue to land on their own, and ${t.subject ?? "this landing"} goes on alone`);
+      return undefined;
+    };
+
+    if (ws.config.setup) {
+      const setup = Bun.spawnSync(["sh", "-c", ws.config.setup], { cwd: dir, stdout: "pipe", stderr: "pipe" });
+      if (setup.exitCode !== 0) return fallBack(`setup exited ${setup.exitCode} in the batch worktree`);
+    }
+    const notes: Record<number, Awaited<ReturnType<typeof verifyChange>>> = {};
+    for (const l of links) {
+      const co = git(dir, "checkout", "-q", "--detach", l.head);
+      if (!co.ok) return fallBack(`checkout of ${l.head.slice(0, 9)} failed: ${co.error.message}`);
+      const steps = await verifyChange(ws, opts, say, { wt: dir, base: l.base, head: l.head, subject: l.subject, branch: l.branch });
+      if (!steps.ok) return fallBack(`${l.subject ?? `entry ${l.entry}`} was refused in the batch (${steps.reason})`);
+      notes[l.entry] = steps;
+    }
+    const co = git(dir, "checkout", "-q", "--detach", tip);
+    if (!co.ok) return fallBack(`checkout of ${tip.slice(0, 9)} failed: ${co.error.message}`);
+    const skip = floorSkip(dir, ws.config, t.base, tip);
+    if (skip) {
+      say(`floor: skipped — all ${skip.paths.length} changed path(s) of the batch are under floor_skip_paths (${skip.under.join(", ")})`);
+      ws.db.event(ws.actor, "floor.skip", t.subject, { entry: t.entry, paths: skip.paths.slice(0, 50), under: skip.under });
+    } else {
+      const floor = await runFloor(ws, say, dir, `land-${t.entry}-batch.log`, t.running);
+      if (floor.code !== 0) return fallBack(`the floor failed on the batch (exit ${floor.code}, log: ${floor.log})`);
+    }
+
+    // Every member's worktree is as it joined and the entry is still in this batch, and this lander still holds
+    // its turn: otherwise what was tested is not what would land (BR-2106, BR-2144).
+    for (const l of links) {
+      const now = git(l.worktree, "rev-parse", "HEAD");
+      const clean = isClean(l.worktree);
+      if (!now.ok || now.value !== l.joined || !clean.ok || !clean.value) return fallBack(`the worktree of ${l.subject ?? `entry ${l.entry}`} changed during the batch`);
+      if (l.entry !== t.entry && !inBatch(ws.db, l.entry, t.entry)) return fallBack(`${l.subject ?? `entry ${l.entry}`} left the batch (its lander stopped)`);
+    }
+    const turn = holdsTurn(ws.db, t.entry);
+    if (!turn.held) {
+      leave(0, false);
+      return { kind: "lost", outcome: lostTurn(ws, t.subject, ws.root, turn.state, "before-main") };
+    }
+    const fingerprints = new Map(links.map((l) => [l.entry, ownDiffId(l.worktree, main)]));
+    const moved = moveMain(ws, t.base, tip);
+    if (moved !== "moved") {
+      leave(0, false);
+      return { kind: "refused", reason: moved.reason, message: moved.message };
+    }
+    // reason: members are recorded landed before the leader, so a member never sees its leader done while it is still batched (BR-2172).
+    for (const l of links.slice(1)) landBatched(ws.db, l.entry, l.head);
+    finishEntry(ws.db, t.entry, "landed", t.head);
+    for (const l of links) {
+      const n = notes[l.entry];
+      const reviewNotes = n?.ok ? n.reviewNotes : undefined;
+      ws.db.event(ws.actor, "land.ok", l.subject, { sha: l.head, branch: l.branch, diff: fingerprints.get(l.entry) ?? null, ...(reviewNotes ?? {}), ...(skip ? { floor_skipped: true } : {}), ...(l.entry !== t.entry ? { batched_by: t.entry } : { batch: links.slice(1).map((x) => x.entry) }) });
+      say(`landed ${l.head.slice(0, 9)} (${l.subject ?? `entry ${l.entry}`}) on ${main}`);
+    }
+    for (const l of links) afterLand(ws, say, { entry: l.entry, subject: l.subject, base: l.base, head: l.head, branch: l.branch });
+    return { kind: "landed" };
+  } finally {
+    git(ws.primary, "worktree", "remove", "--force", dir);
+  }
+}
+
+/**
+ * A member of another lander's batch whose change that lander landed (BR-2172): its own branch moves by a
+ * compare-and-swap from the HEAD it joined with to its commit on main, and its files follow; then it finishes
+ * like any landing. A commit made in the worktree meanwhile stays, and the message says how to catch up.
+ */
+function landedInBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null }, by: { leader: number; sha: string; head: string }): LandOutcome {
+  const wt = ws.root;
+  const main = ws.config.main;
+  say(`landed ${by.sha.slice(0, 9)} on ${main} in the batch of queue entry ${by.leader}`);
+  const cas = git(wt, "update-ref", "-m", `canon: landed in batch ${by.leader}`, "HEAD", by.sha, by.head);
+  if (!cas.ok) say(`this worktree's branch moved after it joined the batch, so it was left as it is; \`git rebase ${main}\` brings it up to date`);
+  else if (!git(wt, "read-tree", "-m", "-u", by.head, by.sha).ok) {
+    git(wt, "update-ref", "-m", "canon: keep the branch as it was", "HEAD", by.head, by.sha);
+    say(`local edits keep this worktree's files from following the landed commit; the branch was left as it is; \`git rebase ${main}\` brings it up to date`);
+  }
+  return finishLanding(ws, opts, say, { entry: t.entry, subject: t.subject, sha: by.sha });
+}
+
+/** Why one change's own landing steps refused it: the refusal reason, message and canon check findings. */
+interface StepFailure {
+  readonly ok: false;
+  readonly reason: Extract<LandOutcome, { kind: "refused" }>["reason"];
+  readonly message: string;
+  readonly findings?: readonly Finding[];
+}
+type Steps = { readonly ok: true; readonly reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined } | StepFailure;
+
+/**
+ * One change's own landing steps after the floor, on the checkout `wt` at `head` (main or the batch chain at
+ * `base` below it): canon check, decision sources, the rule and duplicate reviews, before_land (BR-2016,
+ * BR-2009, BR-2111, BR-2143, BR-2057). A solo landing runs them in its worktree; a batch, per change (BR-2172).
+ */
+async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: { wt: string; base: string; head: string; subject: string | null; branch: string }): Promise<Steps> {
+  const { wt, subject } = v;
+  const base = { value: v.base };
+  const head = { value: v.head };
+  const refuse = (reason: StepFailure["reason"], message: string, findings?: readonly Finding[]): StepFailure => ({ ok: false, reason, message, ...(findings ? { findings } : {}) });
   const read = readCorpus(wt, ws.config.types, ws.config);
   const tests = testFilesFor(wt, ws.config);
   const findings = check({ root: wt, ...read, testFiles: tests });
   if (findings.length > 0) return refuse("check", `canon check: ${findings.length} finding(s)`, findings);
 
-  const head = tested;
 
   // Every added, edited or deleted file under canon/rules or canon/decisions is reviewed (BR-2009): rule and
   // decision documents by their new text, deleted ones by the text they had on main, domain READMEs whole.
@@ -396,45 +644,10 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
     }
   }
   // before_land: after floor, canon check and the built-in review, on the exact tree that becomes main (BR-2057).
-  const hookEnv = { CANON_BASE: base.value, CANON_HEAD: head.value, CANON_BRANCH: t.branch };
+  const hookEnv = { CANON_BASE: base.value, CANON_HEAD: head.value, CANON_BRANCH: v.branch };
   const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env: hookEnv }, ws.config.hooks.before_land, say, true);
   if (failed) return refuse("hook", `before_land \`${failed.command}\` exited ${failed.exit}\n${failed.output}`);
-  const now = git(wt, "rev-parse", "HEAD");
-  const edits = changesIn(wt);
-  if (!now.ok || now.value !== head.value || edits.length > 0) {
-    const lines: string[] = [];
-    if (!now.ok || now.value !== head.value) {
-      const log = now.ok ? git(wt, "log", "--format=%h %s", `${head.value}..${now.value}`) : now;
-      lines.push(`HEAD moved from ${head.value.slice(0, 9)} to ${now.ok ? now.value.slice(0, 9) : "?"}${log.ok && log.value !== "" ? `:\n${log.value.split("\n").map((l) => `    ${l}`).join("\n")}` : ""}`);
-    }
-    for (const e of edits) lines.push(`uncommitted: ${e}`);
-    return refuse("moved-during-land", `the worktree changed after the rebase, so what was tested is not what would land; land again:\n${lines.map((l) => `  ${l}`).join("\n")}`);
-  }
-  // A lander that was silent past the stale time during its turn may have been skipped meanwhile; it no longer
-  // holds the turn and must not move main next to the one that took it over (BR-2144).
-  const turn = holdsTurn(ws.db, entry);
-  if (!turn.held) return lostTurn(ws, subject, wt, turn.state, "before-main");
-  const fingerprint = ownDiffId(wt, main); // before main moves: afterwards the merge base is HEAD itself
-  const moved = moveMain(ws, base.value, head.value);
-  if (moved !== "moved") return refuse(moved.reason, moved.message);
-
-  finishEntry(ws.db, entry, "landed", head.value);
-  ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: t.branch, diff: fingerprint, ...(reviewNotes ?? {}), ...(floorSkipped ? { floor_skipped: true } : {}) });
-  say(`landed ${head.value.slice(0, 9)} on ${main}`);
-  if (ws.config.hooks.after_land.length > 0) {
-    const log = runHooksInBackground({ db: ws.db, actor: ws.actor, event: "after_land", change: subject, cwd: ws.primary, env: hookEnv }, ws.config.hooks.after_land, logFile(ws.db, `after-land-${entry}.log`), entry);
-    say(`after_land running in the background (log: ${log})`);
-  }
-
-  let finished = false;
-  if (opts.finish && subject) {
-    // Another session that took the change over meanwhile keeps its claim and its handoff (BR-2108).
-    if (releaseOwnClaim(ws.db, subject, ws.root, ws.actor)) dropHandoff(ws.db, subject);
-    else say(`${subject} is claimed by another session now; its claim and handoff were left as they are`);
-    finished = true;
-    say(`${subject} closed; remove the worktree with \`canon work clean ${subject}\` once you have left it`);
-  }
-  return { kind: "landed", sha: head.value, change: subject, finished };
+  return { ok: true, reviewNotes };
 }
 
 /**

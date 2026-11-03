@@ -65,6 +65,8 @@ export interface Config {
    * under them skips the floor, since its code tree is main's already-tested one (BR-2164). Empty: never skip.
    */
   readonly floorSkipPaths: readonly string[];
+  /** At most this many landings are tested together under one floor run (D-26, BR-2172); 1 means never batch. */
+  readonly landBatchMax: number;
 }
 
 const HOUR = 3_600_000;
@@ -96,12 +98,13 @@ export const DEFAULT_CONFIG: Config = {
   shared: [],
   instructions: ["CLAUDE.md"],
   floorSkipPaths: [],
+  landBatchMax: 1,
 };
 
 /** Where `test_command` takes the test file's path (BR-2160). */
 export const FILE_PLACEHOLDER = "{file}";
 
-const TOP_KEYS = new Set(["main", "floor", "tests", "test_command", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews", "regenerable", "code_root", "shared", "instructions", "floor_skip_paths"]);
+const TOP_KEYS = new Set(["main", "floor", "tests", "test_command", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews", "regenerable", "code_root", "shared", "instructions", "floor_skip_paths", "land_batch_max"]);
 const TYPE_KEYS = new Set(["prefix", "dir", "statuses", "default", "fields", "sections"]);
 const MOVED: Record<string, string> = { after_land: "hooks.after_land" };
 
@@ -163,6 +166,8 @@ export function readConfig(root: string): Result<Config> {
   const stale = positive("lander_stale_minutes", MINUTE, DEFAULT_CONFIG.landerStaleMs);
   const timeout = positive("land_timeout_minutes", MINUTE, DEFAULT_CONFIG.landTimeoutMs);
   for (const r of [lease, stale, timeout]) if (!r.ok) return r;
+  const batchMax = c["land_batch_max"];
+  if (batchMax !== undefined && (typeof batchMax !== "number" || !Number.isInteger(batchMax) || batchMax < 1)) return bad("`land_batch_max` must be a whole number of at least 1");
 
   const hooks = readHooks(c["hooks"]);
   if (!hooks.ok) return bad(hooks.error.message);
@@ -216,6 +221,7 @@ export function readConfig(root: string): Result<Config> {
     shared: layout.value.shared,
     instructions: (instructions as string[] | undefined) ?? DEFAULT_CONFIG.instructions,
     floorSkipPaths: skip.value,
+    landBatchMax: (batchMax as number | undefined) ?? DEFAULT_CONFIG.landBatchMax,
   });
 }
 

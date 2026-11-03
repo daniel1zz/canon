@@ -23,6 +23,8 @@ floor_skip_paths:
   - canon/notes
   - canon/product.md
   - canon/backlog.md
+# 轮到的合入者最多把几个合入一起测、只跑一次 floor（D-26、BR-2172）
+land_batch_max: 4
 # 新 worktree 里执行一次
 setup: "bun install"
 # 规则和决策文字的评审：从 stdin 读提示，在 stdout 输出 JSON 结论
