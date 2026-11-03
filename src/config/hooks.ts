@@ -88,7 +88,12 @@ export function runHooksInBackground(ctx: HookContext, commands: readonly string
   mkdirSync(dirname(logPath), { recursive: true });
   const fd = openSync(logPath, "w");
   // Each command runs in its own subshell; its exit code is written to the log after its output.
-  const script = commands.map((c, i) => `(\n${c}\n); echo "[hook ${i + 1}/${commands.length} exited $?]"`).join("\n");
+  // reason: the exit line must start a line to be read (EXIT_LINE); output that does not end in a newline gets one
+  // first, and only then, so a log of newline-ended output stays as it was (BR-2137, issue #61)
+  const quoted = `'${logPath.replaceAll("'", `'\\''`)}'`;
+  const script = commands
+    .map((c, i) => `(\n${c}\n); __canon_exit=$?; [ -n "$(tail -c 1 ${quoted})" ] && echo; echo "[hook ${i + 1}/${commands.length} exited $__canon_exit]"`)
+    .join("\n");
   // reason: the whole batch is recorded in one transaction before any command can finish, so a reader never sees
   // part of a batch whose recorded commands have all exited and takes it for finished (BR-2166, issue #38)
   ctx.db.db

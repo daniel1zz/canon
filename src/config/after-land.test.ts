@@ -125,6 +125,24 @@ describe("canon work after-land", () => {
     expect(readFileSync(log, "utf8")).toContain("rows=2");
   });
 
+  test("BR-2137: a command whose output does not end in a newline is still seen as finished (issue #61)", async () => {
+    const root = project();
+    const log = background(root, "C-7", 7, ["printf foo", "printf 'code-review: no findings'", "echo bar"]);
+    const b = await waitBackgroundHooks(ws(root).db, "agent:test", undefined, 10_000, 50);
+    expect(b?.commands.map((c) => c.exit)).toEqual([0, 0, 0]);
+    expect(b?.review).toEqual(["code-review: no findings"]);
+    expect(readFileSync(log, "utf8")).toBe("foo\n[hook 1/3 exited 0]\ncode-review: no findings\n[hook 2/3 exited 0]\nbar\n[hook 3/3 exited 0]\n");
+    expect(afterLand(root).code).toBe(0);
+    expect(exitEvents(root)).toBe(3);
+  });
+
+  test("BR-2137: output that ends in a newline, or no output at all, gets no extra line in the log", async () => {
+    const root = project();
+    const log = background(root, "C-8", 8, ["echo one", "true"]);
+    await finished(log, 2);
+    expect(readFileSync(log, "utf8")).toBe("one\n[hook 1/2 exited 0]\n[hook 2/2 exited 0]\n");
+  });
+
   test("BR-2167: --timeout must be a positive number and needs --wait", () => {
     const root = project();
     for (const bad of [["--wait", "--timeout", "0"], ["--wait", "--timeout", "abc"], ["--timeout", "5"]]) expect(afterLand(root, ...bad).code).toBe(2);
