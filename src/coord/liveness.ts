@@ -40,13 +40,15 @@ export function processOf(pid: number): Proc | undefined {
  * started at another time. False while it runs; undefined when the table cannot be read, so the caller falls back
  * to the time-based lease instead of guessing.
  */
-export function isGone(p: Proc): boolean | undefined {
-  const start = processStart(p.pid);
+export function isGone(p: Proc, read: (pid: number, zone: "utc" | "local") => string | null | undefined = processStart): boolean | undefined {
+  const start = read(p.pid, "utc");
   if (start === undefined) return undefined;
   if (start === null) return true;
   if (start === p.start) return false;
   // reason: records written before C-74 hold the start in the writer's local zone; read it that way too before calling it gone (BR-2100).
-  return processStart(p.pid, "local") !== p.start;
+  const local = read(p.pid, "local");
+  if (local === undefined) return undefined; // an unreadable table proves nothing (D-11)
+  return local !== p.start;
 }
 
 /** This canon process. */

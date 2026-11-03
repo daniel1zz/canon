@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { addColumns, CoordDb } from "./db.ts";
-import { processOf, selfProcess, sessionProcess, type Proc } from "./liveness.ts";
+import { isGone, processOf, selfProcess, sessionProcess, type Proc } from "./liveness.ts";
 import { answer, ask, claims, enqueue, finishEntry, holdClaim, questions, QUEUE_STALE_MS, renewClaim, takeClaim, tryTurn, unholdClaim } from "./state.ts";
 
 /** A real process that is gone by the time this returns: a pid and start time the probe will find missing. */
@@ -175,6 +175,15 @@ describe("process liveness", () => {
     const local = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(process.pid)], { stdout: "pipe", env: { ...process.env, LC_ALL: "C" } }).stdout.toString().trim().replace(/\s+/g, " ");
     takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * 3600_000, { pid: process.pid, start: local });
     expect(takeClaim(d, "C-1", "/wt/C-1", "agent:b").ok).toBe(false);
+  });
+
+  test("BR-2100: a table that cannot be read on the local-zone retry proves nothing", () => {
+    const p = { pid: 4242, start: "Tue Nov  3 11:49:43 2026" };
+    const reads = (utc: string | null | undefined, local: string | null | undefined) => (_: number, zone: "utc" | "local") => (zone === "utc" ? utc : local);
+    expect(isGone(p, reads("Tue Nov  3 03:49:43 2026", undefined))).toBeUndefined();
+    expect(isGone(p, reads("Tue Nov  3 03:49:43 2026", "Tue Nov  3 11:49:43 2026"))).toBe(false);
+    expect(isGone(p, reads("Wed Nov  4 01:00:00 2026", "Wed Nov  4 09:00:00 2026"))).toBe(true); // pid reused
+    expect(isGone(p, reads(null, undefined))).toBe(true);
   });
 
   test("BR-2100: CLAUDE_PID is believed only inside Claude Code and only when it is an ancestor of this process", () => {
