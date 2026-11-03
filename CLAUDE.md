@@ -39,7 +39,4 @@ canon human answer <n> <回答> --relayed "<人的原话>"  # 人在对话里回
 - 合入是唯一的关卡。被拒绝时，提示会写明要修什么；修好后重新合入。
 - 现在不修的问题，提成 GitHub issue（`gh issue create`）：一个根因一个 issue，附上能复现的命令，以及期望结果和实际结果。
 - 退出码：0 成功 · 1 被检查拒绝 · 2 用法错误 · 3 找不到 · 4 环境错误（git、文件、协调数据库）· 5 冲突（被别人认领、已回答、已存在）· 70 canon 的 bug · 75 排队超时（完整定义见 BR-2022、D-4）。
-
-## 现在的状态
-
-旧系统 lore 归档在 `~/Projects/zz/lore`（GitHub `daniel1zz/lore`），不要在这里使用 `lore` 命令或旧 lore 的 skill。全局配置里旧 lore 的规则、hook、skill 和 agent 已由 C-3、C-96 清除（备份在 `~/.claude/hooks/BACKUPS/`）；和本文件冲突的全局规则以本文件为准。
+- 全局配置里的说明和本文件冲突时，以本文件为准。

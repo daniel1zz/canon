@@ -496,7 +496,7 @@ const brief = defineCommand({
   meta: { description: "Session start: how to work in a canon project, in a change's worktree that change and its handoff, elsewhere what is in flight (printed by the session-start hook)" },
   run() {
     // reason: the guide comes before anything that can fail, and failures are also said on stdout, which is what a
-    // session-start hook shows the model; without it a session would know nothing about canon (BR-2090, lore KN-402)
+    // session-start hook shows the model; without it a session would know nothing about canon (BR-2090)
     say(WORKFLOW_GUIDE);
     const failed = (what: string) =>
       say(`canon brief failed: ${what}\nFix this, then run canon brief again. Until then work as the guide above says; do not edit the main branch directly.`);
@@ -525,7 +525,7 @@ function briefState(ws: Workspace) {
     for (const o of overlapsOf(ws, ws.root)) say(`Overlap: ${o.change} also changes ${o.files.join(", ")}`);
   } else {
     // reason: other sessions' handoffs and the question queue are shown only where no change is claimed; injected
-    // into a change's session they draw it into work that is not its own (BR-2024, lore SPEC-166)
+    // into a change's session they draw it into work that is not its own (BR-2024)
     if (hs.length) say(`Unfinished changes with handoffs: ${hs.map((h) => h.subject).join(", ")} (canon work status)`);
     const pending = questions(ws.db, "pending").length;
     if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
