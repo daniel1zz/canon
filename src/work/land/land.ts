@@ -101,7 +101,8 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     const aborted = rebaseInProgress(wt) && git(wt, "rebase", "--abort").ok;
     // A signal after main moved leaves the landed entry as it is: the landing happened.
     // reason: an interruption, not a check's verdict, so it is its own event kind and no check in `canon stats` (BR-2067).
-    if (failIfActive(ws.db, entry, "killed")) {
+    // reason: only while this lander still owns the entry; a later landing may have taken it back as its kept place (BR-2177, issue #45).
+    if (failIfActive(ws.db, entry, "killed", lander ?? null)) {
       ws.db.event(ws.actor, "land.killed", subject, { signal, rebaseAborted: aborted });
       if (close) reopen(wt, close, say);
     }

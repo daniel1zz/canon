@@ -107,7 +107,8 @@ export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS):
   const ahead = db.db
     .query<{ id: number; pid: number; pid_start: string }, [number, number]>("SELECT id, pid, pid_start FROM queue WHERE (id < ? AND state IN ('waiting','landing') OR state = 'landing' AND id != ?) AND pid IS NOT NULL AND pid_start IS NOT NULL")
     .all(entryId, entryId);
-  const dead = ahead.filter((e) => isGone({ pid: e.pid, start: e.pid_start }) === true).map((e) => e.id);
+  const gone = ahead.filter((e) => isGone({ pid: e.pid, start: e.pid_start }) === true);
+  const dead = gone.map((e) => e.id);
   const tx = db.db.transaction((): Turn => {
     // reason: the state is read and set in this one write transaction, so a skipped entry cannot slip back in (BR-2144).
     const own = db.db.query<{ state: string; result: string | null; batch: number | null; head: string | null }, [number]>("SELECT state, result, batch, head FROM queue WHERE id = ?").get(entryId);
@@ -127,7 +128,7 @@ export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS):
       own.state = "waiting";
     }
     if (!own || own.state !== "waiting") return { mine: false, ahead: 0, lost: own ? `${own.state}${own.result ? `: ${own.result}` : ""}` : "no such queue entry" };
-    for (const id of dead) db.db.query("UPDATE queue SET state = 'abandoned', result = 'lander process gone' WHERE id = ? AND state IN ('waiting','landing')").run(id);
+    for (const e of gone) abandonGone(db, e.id, { pid: e.pid, start: e.pid_start });
     const stale = iso(new Date(now().getTime() - staleMs));
     db.db.query("UPDATE queue SET state = 'abandoned', result = 'no heartbeat' WHERE state IN ('waiting','landing') AND heartbeat < ? AND id != ?").run(stale, entryId);
     db.db.query("UPDATE queue SET heartbeat = ? WHERE id = ?").run(iso(now()), entryId);
@@ -137,6 +138,16 @@ export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS):
     return { mine: ahead === 0, ahead };
   });
   return tx.immediate();
+}
+
+/**
+ * Marks an entry abandoned because the lander probed as gone, only while that lander still owns it: a landing that
+ * took the entry back as its kept place meanwhile (BR-2177) is another, live lander (issue #45). False when it did not.
+ */
+export function abandonGone(db: CoordDb, entryId: number, probed: Proc): boolean {
+  return db.db
+    .query("UPDATE queue SET state = 'abandoned', result = 'lander process gone' WHERE id = ? AND pid = ? AND pid_start = ? AND state IN ('waiting','landing')")
+    .run(entryId, probed.pid, probed.start).changes > 0;
 }
 
 /** Beats only while the entry is landing; false once another lander marked it abandoned (BR-2144). */
@@ -154,10 +165,16 @@ export function finishEntry(db: CoordDb, entryId: number, state: "landed" | "fai
   db.db.query("UPDATE queue SET state = ?, result = ?, heartbeat = ?, keep_until = NULL WHERE id = ?").run(state, result, iso(now()), entryId);
 }
 
-/** Marks an entry failed only while it is still waiting or landing; false when it had already finished. */
-export function failIfActive(db: CoordDb, entryId: number, result: string): boolean {
+/**
+ * Marks an entry failed only while it is still waiting or landing; false when it had already finished. With `owner`
+ * (the lander that entered it, null when none was recorded), only while that lander still owns it: a later landing
+ * may have taken the entry back as its kept place (BR-2177, issue #45).
+ */
+export function failIfActive(db: CoordDb, entryId: number, result: string, owner?: Proc | null): boolean {
   // reason: a member its leader locked in is about to be on main; giving it up now would reopen a change that lands (BR-2172, issue #42).
-  return db.db.query("UPDATE queue SET state = 'failed', result = ?, heartbeat = ? WHERE id = ? AND state IN ('waiting','landing') AND NOT (state = 'landing' AND batch IS NOT NULL)").run(result, iso(now()), entryId).changes > 0;
+  const active = "id = ? AND state IN ('waiting','landing') AND NOT (state = 'landing' AND batch IS NOT NULL)";
+  if (owner === undefined) return db.db.query(`UPDATE queue SET state = 'failed', result = ?, heartbeat = ? WHERE ${active}`).run(result, iso(now()), entryId).changes > 0;
+  return db.db.query(`UPDATE queue SET state = 'failed', result = ?, heartbeat = ? WHERE ${active} AND pid IS ? AND pid_start IS ?`).run(result, iso(now()), entryId, owner?.pid ?? null, owner?.start ?? null).changes > 0;
 }
 
 export function activeQueue(db: CoordDb): QueueEntry[] {

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
 import { readConfig } from "../../config/config.ts";
-import { batchCandidates, enqueue, enter, failForConflict, finishEntry, keptPlaces, tryTurn } from "./queue.ts";
+import { abandonGone, batchCandidates, enqueue, enter, failForConflict, failIfActive, finishEntry, keptPlaces, tryTurn } from "./queue.ts";
 import { selfProcess } from "../claims/liveness.ts";
 import { land } from "./land.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
@@ -140,6 +140,20 @@ describe("a landing back at its kept place", () => {
     expect(enter(d, "/wt/r", "C-2", "x").id).toBe(r);
     expect(tryTurn(d, r)).toEqual({ mine: true, ahead: 0 }); // b's lander process is gone, so it is skipped
     expect(stateOf(d, b)).toBe("abandoned");
+  });
+
+  test("BR-2177: a verdict about the lander that was refused does not touch the lander that took the place back (issue #45)", () => {
+    const d = db();
+    const old = { pid: 2 ** 22 + 12345, start: "never" };
+    const r = enqueue(d, "/wt/r", "C-2", "x", old);
+    failForConflict(d, r, "conflict", KEEP); // the old lander is refused and exits
+    const me = selfProcess()!;
+    expect(enter(d, "/wt/r", "C-2", "x", me).id).toBe(r);
+    expect(abandonGone(d, r, old)).toBe(false); // a waiter probed the old lander before the entry was taken back
+    expect(failIfActive(d, r, "killed", old)).toBe(false); // the old lander's signal handler, late
+    expect(stateOf(d, r)).toBe("waiting");
+    expect(tryTurn(d, r)).toEqual({ mine: true, ahead: 0 });
+    expect(failIfActive(d, r, "killed", me)).toBe(true); // its own lander still can
   });
 
   test("BR-2178: a batch takes it first, in queue order, ahead of the entries queued after its place", () => {
