@@ -6,6 +6,14 @@ import { processOf } from "../claims/liveness.ts";
 import { claims } from "../claims/claims.ts";
 import { drop } from "./drop.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { stop } from "../session/session.ts";
+
+/** The holder frees its claim first: a live claim refuses every drop, the same actor included (BR-2064). */
+function released<T extends { worktree: string }>(s: T): T {
+  const r = stop(ws(s.worktree), "drop it", undefined, true);
+  if (!r.ok) throw new Error(r.error.message);
+  return s;
+}
 import { land } from "../land/land.ts";
 
 const events = (root: string, kind: string) =>
@@ -30,7 +38,7 @@ function ignoring(root: string) {
 describe("dropping a change", () => {
   test("BR-2064: a fully landed change is dropped at once without an archive: worktree, branch, claim and handoff go", async () => {
     const root = project();
-    const s = startNew(root, "Landed");
+    const s = released(startNew(root, "Landed"));
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
     const r = drop(ws(root, "agent:a"), s.change, quiet);
     expect(r.ok && r.value.archive).toBe(null);
@@ -43,7 +51,7 @@ describe("dropping a change", () => {
 
   test("BR-2064: a branch without a worktree is dropped when all its commits are on main; inside the worktree or with nothing there it is refused", async () => {
     const root = project();
-    const s = startNew(root, "Branch only");
+    const s = released(startNew(root, "Branch only"));
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
     const inside = drop(ws(s.worktree), s.change, quiet);
     expect(!inside.ok && inside.error.code).toBe("invalid");
@@ -58,12 +66,12 @@ describe("dropping a change", () => {
   test("BR-2064: ignored node_modules is not work; an ignored .env is, and goes into the archive", async () => {
     const root = project();
     ignoring(root);
-    const deps = startNew(root, "Deps only");
+    const deps = released(startNew(root, "Deps only"));
     expect((await land(ws(deps.worktree), FAST, quiet)).kind).toBe("landed");
     mkdirSync(join(deps.worktree, "node_modules"), { recursive: true });
     writeFileSync(join(deps.worktree, "node_modules/i.js"), "1\n");
     expect(drop(ws(root), deps.change, quiet)).toMatchObject({ ok: true, value: { archive: null } });
-    const secret = startNew(root, "Has env");
+    const secret = released(startNew(root, "Has env"));
     expect((await land(ws(secret.worktree), FAST, quiet)).kind).toBe("landed");
     writeFileSync(join(secret.worktree, ".env"), "TOKEN=1\n");
     const r = drop(ws(root), secret.change, quiet);
@@ -97,9 +105,9 @@ describe("dropping a change", () => {
 
   test("BR-2064: a worktree another process is in is not dropped or archived, landed or not: exit 5 naming the pid", async () => {
     const root = project();
-    const s = startNew(root, "Busy");
+    const s = released(startNew(root, "Busy"));
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
-    const unlanded = withCommit(root, "Busy and unlanded");
+    const unlanded = released(withCommit(root, "Busy and unlanded"));
     for (const t of [s, unlanded]) {
       const proc = Bun.spawn(["sleep", "30"], { cwd: t.worktree });
       try {
@@ -118,7 +126,7 @@ describe("dropping a change", () => {
 
   test.skipIf(process.platform === "linux")("BR-2064: while drop runs the change is held: a start arriving meanwhile is refused with exit 5", async () => {
     const root = project();
-    const s = startNew(root, "Racing");
+    const s = released(startNew(root, "Racing"));
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed"); // the change is open on main
     writeFileSync(join(s.worktree, "wip.txt"), "wip\n");
     sh(s.worktree, "add", "wip.txt");
@@ -144,7 +152,7 @@ describe("dropping a change", () => {
 
   test.skipIf(process.platform === "linux")("BR-2064: when processes cannot be listed nothing is deleted and the error is an environment failure", async () => {
     const root = project();
-    const s = startNew(root, "No lsof");
+    const s = released(startNew(root, "No lsof"));
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
     const bin = mkdtempSync(join(tmpdir(), "canon-nolsof-"));
     writeFileSync(join(bin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
@@ -161,7 +169,7 @@ describe("dropping a change", () => {
 
   test("BR-2102: an unlanded commit is archived at the branch tip, then deleted without asking; the printed commands restore the branch", () => {
     const root = project();
-    const s = withCommit(root, "Unlanded");
+    const s = released(withCommit(root, "Unlanded"));
     const tip = sh(s.worktree, "rev-parse", "HEAD");
     const lines: string[] = [];
     const r = drop(ws(root), s.change, (l) => lines.push(l));
@@ -180,7 +188,7 @@ describe("dropping a change", () => {
   test("BR-2102: modified, untracked and ignored files are archived with their current content; node_modules is not; the restore brings them back", () => {
     const root = project();
     ignoring(root);
-    const s = startNew(root, "Dirty");
+    const s = released(startNew(root, "Dirty"));
     writeFileSync(join(s.worktree, "app.txt"), "changed\n");
     writeFileSync(join(s.worktree, "notes.txt"), "n\n");
     writeFileSync(join(s.worktree, ".env"), "TOKEN=2\n");
@@ -202,7 +210,7 @@ describe("dropping a change", () => {
 
   test("BR-2103: a file that appears after the archive was written is not deleted: exit 4, the hold is released", () => {
     const root = project();
-    const s = withCommit(root, "Late file");
+    const s = released(withCommit(root, "Late file"));
     // git runs reference-transaction when the archive ref is created: the moment to add work behind drop's back.
     const hook = join(root, ".git", "hooks", "reference-transaction");
     mkdirSync(join(hook, ".."), { recursive: true });
@@ -212,12 +220,12 @@ describe("dropping a change", () => {
     expect(!r.ok && r.error.message).toContain("nothing was deleted");
     expect(readFileSync(join(s.worktree, "late.txt"), "utf8")).toBe("late\n");
     expect(branches(root)).toContain(s.branch);
-    expect(claims(ws(root).db).map((c) => [c.subject, c.holder])).toEqual([[s.change, s.worktree]]);
+    expect(claims(ws(root).db)).toEqual([]); // the hold is gone; the claim was released before the drop, so none comes back
   });
 
   test("BR-2103: when the archive ref cannot be written nothing is deleted: exit 4, a drop.refuse with reason archive", () => {
     const root = project();
-    const s = withCommit(root, "Blocked");
+    const s = released(withCommit(root, "Blocked"));
     // A ref named exactly refs/canon/archive/<C-n> makes every refs/canon/archive/<C-n>/<time> impossible.
     sh(root, "update-ref", `refs/canon/archive/${s.change}`, "HEAD");
     const r = drop(ws(root), s.change, quiet);
@@ -225,7 +233,7 @@ describe("dropping a change", () => {
     expect(!r.ok && r.error.message).toContain("nothing was deleted");
     expect(existsSync(join(s.worktree, "wip.txt"))).toBe(true);
     expect(branches(root)).toContain(s.branch);
-    expect(claims(ws(root).db).map((c) => c.subject)).toEqual([s.change]);
+    expect(claims(ws(root).db)).toEqual([]); // the hold is gone; nothing was claimed before the drop
     expect(events(root, "drop.refuse").map((e) => e.reason)).toEqual(["archive"]);
     expect(events(root, "drop.done")).toEqual([]);
   });

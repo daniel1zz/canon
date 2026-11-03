@@ -524,7 +524,7 @@ describe("a lander killed by a signal", () => {
     p.kill("SIGTERM");
     expect(await p.exited).toBe(143);
     expect(entryOf(root)).toMatchObject({ state: "failed", result: "killed" });
-    const kinds = ws(root).db.db.query<{ kind: string }, []>("SELECT kind FROM events WHERE kind LIKE 'land.%'").all().map((e) => e.kind);
+    const kinds = ws(root).db.db.query<{ kind: string }, []>("SELECT kind FROM events WHERE kind LIKE 'land.%' AND kind != 'land.turn'").all().map((e) => e.kind);
     expect(kinds).toEqual(["land.killed"]); // an interruption, not a check's refusal (BR-2067)
     const other = ws(root, "agent:b");
     const b = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
@@ -554,5 +554,17 @@ describe("a lander killed by a signal", () => {
     expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(before);
     expect(sh(s.worktree, "status", "--porcelain")).toBe("");
     expect(entryOf(root)).toMatchObject({ state: "failed", result: "killed" });
+  });
+});
+
+describe("queue wait", () => {
+  test("BR-2122: a lander that gets its turn records land.turn with how long it waited", async () => {
+    const root = project();
+    const s = startNew(root, "Timed");
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    const turns = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'land.turn'").all().map((e) => JSON.parse(e.detail) as { waited_ms: number; entry: number });
+    expect(turns.length).toBe(1);
+    expect(turns[0]!.waited_ms).toBeGreaterThanOrEqual(0);
+    expect(typeof turns[0]!.entry).toBe("number");
   });
 });

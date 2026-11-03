@@ -44,7 +44,7 @@ describe("work start", () => {
     }
   });
 
-  test("BR-2011: through the CLI a second actor starting a change another actor holds is refused with exit 5; the holder re-enters it", () => {
+  test("BR-2011: through the CLI a start of a change with a live claim is refused with exit 5, the holder's own actor included", () => {
     const root = project();
     mkdirSync(join(root, "canon/changes"), { recursive: true });
     writeFileSync(join(root, "canon/changes/C-1.md"), "---\nid: C-1\ntitle: Held\nstatus: open\n---\n## 为什么\n\nHeld.\n");
@@ -58,9 +58,11 @@ describe("work start", () => {
     expect(other.exitCode).toBe(5);
     expect(other.stderr.toString()).toContain("claimed by agent:a");
     expect(claims(ws(root).db).map((c) => [c.subject, c.actor])).toEqual([[s.change, "agent:a"]]);
+    // Subagents of one Claude Code session share the actor, so the same actor is refused too, and told where its work is.
     const same = cli("agent:a");
-    expect(same.exitCode).toBe(0);
-    expect(same.stdout.toString()).toContain(`cd ${s.worktree}`);
+    expect(same.exitCode).toBe(5);
+    expect(same.stderr.toString()).toContain(`if this is your own work, continue in it: cd ${s.worktree}`);
+    expect(claims(ws(root).db).map((c) => [c.subject, c.actor])).toEqual([[s.change, "agent:a"]]);
   });
 
   test("BR-2104: in a worktree another actor holds, stop, stop --release and land are refused with exit 5; nothing changes", () => {
@@ -354,6 +356,7 @@ describe("same-file overlap", () => {
     commitFile(a.value.worktree, "shared.txt", "a\n");
     commitFile(b.value.worktree, "shared.txt", "b\n");
     const lines: string[] = [];
+    stop(ws(a.value.worktree), "resume later", undefined, true); // a live claim refuses every start (BR-2011)
     expect(start(ws(root), { change: "C-1" }, (l) => lines.push(l)).ok).toBe(true);
     expect(lines.filter((l) => l.startsWith("overlap:"))).toEqual([`overlap: ${b.value.change} also changes shared.txt; whoever lands second resolves the conflict`]);
     expect(notices(root)).toEqual([{ subject: "C-1", at: "start", with: b.value.change, files: ["shared.txt"] }]);

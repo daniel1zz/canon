@@ -29,15 +29,17 @@ export function takeClaim(db: CoordDb, subject: string, holder: string, actor: s
     const cur = db.db
       .query<{ holder: string; expires_at: string; worktree: string | null; pid: number | null; pid_start: string | null }, [string]>("SELECT holder, expires_at, worktree, pid, pid_start FROM claims WHERE subject = ?")
       .get(subject);
-    const other = cur !== null && (cur.worktree !== holder || cur.holder !== actor);
-    const binds = other && bindsStill(cur);
+    // reason: a live claim refuses every start, the same actor included: Claude Code gives a session's
+    // subagents one session id and one process, so the actor cannot tell two of them apart (BR-2011, D-11).
+    const binds = cur !== null && bindsStill(cur);
     // A lease that has not expired but whose session process is gone frees at once (BR-2100).
-    const gone = other && !binds && new Date(cur.expires_at) > now();
+    const gone = cur !== null && !binds && new Date(cur.expires_at) > now();
     if (binds) {
       db.event(actor, "claim.refuse", subject, { reason: "held", by: cur.worktree, actor: cur.holder, until: cur.expires_at });
+      const own = cur.holder === actor ? `; if this is your own work, continue in it: cd ${cur.worktree}` : "";
       return err(
         "conflict",
-        `${subject} is claimed by ${cur.holder} in ${cur.worktree} until ${cur.expires_at}; it frees when that session runs \`canon work stop --release\` there or the lease expires`,
+        `${subject} is claimed by ${cur.holder} in ${cur.worktree} until ${cur.expires_at}${own}; it frees when the holder runs \`canon work stop --release\` there or the lease expires`,
       );
     }
     const expires = iso(new Date(now().getTime() + leaseMs));
@@ -46,7 +48,7 @@ export function takeClaim(db: CoordDb, subject: string, holder: string, actor: s
         "INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(subject) DO UPDATE SET holder = excluded.holder, worktree = excluded.worktree, expires_at = excluded.expires_at, pid = excluded.pid, pid_start = excluded.pid_start, version = version + 1",
       )
       .run(subject, actor, holder, expires, owner?.pid ?? null, owner?.start ?? null);
-    db.event(actor, cur && !other ? "claim.renew" : "claim.take", subject, { worktree: holder, ...(gone ? { from: cur.holder, reason: "holder-process-gone" } : {}) });
+    db.event(actor, "claim.take", subject, { worktree: holder, ...(gone ? { from: cur.holder, reason: "holder-process-gone" } : {}) });
     return ok({ subject, holder, actor, expires_at: expires });
   });
   return tx.immediate();
@@ -103,15 +105,16 @@ export function holdClaim(db: CoordDb, subject: string, worktree: string, actor:
   // reason: the process probe runs outside the write transaction (as in tryTurn); the transaction re-reads and
   // only proceeds when the row is still the one probed.
   const seen = read();
-  // Another command's hold binds whoever runs it, the same actor included (issue #18).
-  const binds = seen !== null && (seen.holder !== actor || isHold(seen.worktree)) && bindsStill(seen);
+  // reason: any live claim or hold binds, the same actor included: subagents of one session share the actor,
+  // so a drop must not archive away a sibling's worktree while it works there (BR-2064, issue #18).
+  const binds = seen !== null && bindsStill(seen);
   const self = selfProcess();
   const mark = holdMark(worktree);
   const tx = db.db.transaction((): Result<Hold> => {
     const cur = read();
     const same = JSON.stringify(cur) === JSON.stringify(seen);
     if (cur && (onlyIfUnclaimed || !same || binds)) {
-      return err("conflict", `${subject} is claimed by ${cur.holder} in ${cur.worktree} until ${cur.expires_at}; nothing was deleted`);
+      return err("conflict", `${subject} is claimed by ${cur.holder} in ${cur.worktree} until ${cur.expires_at}; nothing was deleted (the holder frees it with \`canon work stop --release\` in that worktree)`);
     }
     // The hold names this process, so it frees as soon as a killed clean or drop is gone (BR-2100, issue #16).
     db.db

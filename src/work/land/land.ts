@@ -132,10 +132,15 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
   const main = ws.config.main;
   const { entry, subject } = t;
   const deadline = Date.now() + opts.timeoutMs;
+  const queued = Date.now();
   let lastAhead = -1;
   for (;;) {
     const turn = tryTurn(ws.db, entry, ws.config.landerStaleMs);
-    if (turn.mine) break;
+    if (turn.mine) {
+      // How long this lander waited in the queue, separate from how long its floor takes (BR-2122).
+      ws.db.event(ws.actor, "land.turn", subject, { entry, waited_ms: Date.now() - queued });
+      break;
+    }
     if (turn.ahead !== lastAhead) say(`waiting: ${turn.ahead} landing(s) ahead`);
     lastAhead = turn.ahead;
     if (Date.now() > deadline) {
