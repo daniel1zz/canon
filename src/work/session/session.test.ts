@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claims, takeClaim } from "../claims/claims.ts";
 import { clean, start, stop } from "./session.ts";
+import { writeSchemaFile } from "../../config/reference/reference.ts";
 import { land } from "../land/land.ts";
 import { git } from "../../kernel/git.ts";
 
@@ -298,6 +299,23 @@ describe("clean keeps what git does not show", () => {
     expect(r.value.removed).toEqual([deps.worktree]);
     expect(existsSync(join(secret.worktree, ".env"))).toBe(true);
     expect(r.value.kept.join("\n")).toContain(`${secret.worktree}: ignored files that cannot be regenerated: .env`);
+  });
+
+  test("BR-2179: canon's generated .canon is regenerable even when regenerable does not list it; a .env beside it is still work", async () => {
+    const root = project();
+    ignoring(root, "regenerable: [node_modules]\n");
+    const only = await landed(root, "Only schema");
+    const w = writeSchemaFile(only.worktree);
+    if (!w.ok) throw new Error(w.error.message);
+    const both = await landed(root, "Schema and env");
+    if (!writeSchemaFile(both.worktree).ok) throw new Error("cannot write the schema");
+    writeFileSync(join(both.worktree, ".env"), "TOKEN=1\n");
+    const r = clean(ws(root), quiet);
+    if (!r.ok) throw new Error(r.error.message);
+    expect(r.value.removed).toEqual([only.worktree]);
+    const kept = r.value.kept.join("\n");
+    expect(kept).toContain(`${both.worktree}: ignored files that cannot be regenerated: .env`);
+    expect(kept).not.toContain(".canon");
   });
 
   test("BR-2019: names listed under regenerable replace the default list", async () => {

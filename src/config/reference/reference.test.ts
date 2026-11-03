@@ -6,7 +6,6 @@ import Ajv from "ajv";
 import { stringify } from "yaml";
 import { CONFIG_KEYS, readConfig } from "../config.ts";
 import { git } from "../../kernel/git.ts";
-import { clean } from "../../work/session/session.ts";
 import { land } from "../../work/land/land.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../work/testkit.ts";
 import { configSchema, MODELINE, SCHEMA_FILE, schemaText, writeSchemaFile } from "./reference.ts";
@@ -226,6 +225,28 @@ describe("the generated schema file", () => {
     expect(readFileSync(file, "utf8")).toBe(".env\n/.canon/\n");
   });
 
+  test("BR-2176: with /.canon/ already listed twice, brief appends nothing", () => {
+    const root = withConfig("floor: test ! -e FAIL\ntests: []\n");
+    const common = git(root, "rev-parse", "--git-common-dir");
+    if (!common.ok) throw new Error(common.error.message);
+    const file = join(common.value.startsWith("/") ? common.value : join(root, common.value), "info", "exclude");
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(file, "/.canon/\n/.canon/\n");
+    expect(canon(root, "brief").code).toBe(0);
+    expect(readFileSync(file, "utf8")).toBe("/.canon/\n/.canon/\n");
+  });
+
+  test("BR-2176: when .canon cannot be a directory, canon config still lists every key, says so in one line and exits 0", () => {
+    const root = withConfig("floor: test ! -e FAIL\ntests: []\n");
+    writeFileSync(join(root, ".canon"), "not a directory\n");
+    sh(root, "add", ".canon");
+    sh(root, "commit", "-qm", "a file named .canon");
+    const r = canon(root, "config");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("claim_lease_hours = 12 (default)");
+    expect(r.out.split("\n").filter((l) => l.startsWith(`cannot write ${SCHEMA_FILE}:`))).toHaveLength(1);
+  });
+
   test("BR-2176: canon config writes it too", () => {
     const root = withConfig("floor: test ! -e FAIL\ntests: []\n");
     expect(canon(root, "config").code).toBe(0);
@@ -240,19 +261,6 @@ describe("the generated schema file", () => {
     const r = canon(root, "brief");
     expect(r.code).toBe(0);
     expect(r.out.split("\n").filter((l) => l.startsWith(`cannot write ${SCHEMA_FILE}:`))).toHaveLength(1);
-  });
-
-  test("BR-2176: a worktree whose only ignored file is .canon is cleaned even when regenerable does not list it", async () => {
-    const root = withConfig("floor: test ! -e FAIL\ntests: []\nregenerable: [node_modules]\n");
-    const s = startNew(root, "Has schema");
-    const out = await land(ws(s.worktree), { ...FAST, finish: true }, quiet);
-    if (out.kind !== "landed") throw new Error(`expected landed, got ${out.kind}`);
-    const w = writeSchemaFile(s.worktree);
-    if (!w.ok) throw new Error(w.error.message);
-    expect(existsSync(join(s.worktree, SCHEMA_FILE))).toBe(true);
-    const r = clean(ws(root), quiet);
-    if (!r.ok) throw new Error(r.error.message);
-    expect(r.value.removed).toEqual([s.worktree]);
   });
 
   test("BR-2176: landing from a worktree that holds .canon is not refused as dirty", async () => {

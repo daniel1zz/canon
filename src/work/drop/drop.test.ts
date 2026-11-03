@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { processOf } from "../claims/liveness.ts";
 import { claims } from "../claims/claims.ts";
 import { drop } from "./drop.ts";
+import { writeSchemaFile } from "../../config/reference/reference.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 import { stop } from "../session/session.ts";
 
@@ -78,6 +79,18 @@ describe("dropping a change", () => {
     if (!r.ok || !r.value.archive) throw new Error("expected an archive");
     expect(r.value.losses).toEqual(["ignored: .env"]);
     expect(sh(root, "show", `${r.value.archive}:.env`)).toBe("TOKEN=1");
+  });
+
+  test("BR-2179: a landed change whose only ignored file is canon's .canon is dropped without an archive, whatever regenerable says", async () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\nregenerable: [node_modules]\n");
+    sh(root, "commit", "-qam", "regenerable");
+    const s = released(startNew(root, "Schema only"));
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    const w = writeSchemaFile(s.worktree);
+    if (!w.ok) throw new Error(w.error.message);
+    expect(drop(ws(root), s.change, quiet)).toMatchObject({ ok: true, value: { archive: null } });
+    expect(existsSync(s.worktree)).toBe(false);
   });
 
   test("BR-2064: a change another operator holds a live claim on is not dropped and not archived: exit 5", () => {
