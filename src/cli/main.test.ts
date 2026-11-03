@@ -311,6 +311,7 @@ describe("dropping from the command line", () => {
     committed(root);
     const wt = canon(root, "work", "start", "--title", "Risky").out.match(/cd (.+)/)![1]!.trim();
     writeFileSync(join(wt, "wip.txt"), "wip");
+    expect(canon(wt, "work", "stop", "--release", "--next", "drop it").code).toBe(0); // a live claim refuses the drop (BR-2064)
     Bun.spawnSync(["git", "update-ref", "refs/canon/archive/C-1", "HEAD"], { cwd: root });
     const blocked = canon(root, "work", "drop", "C-1");
     expect(blocked.code).toBe(4);

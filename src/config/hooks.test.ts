@@ -79,6 +79,7 @@ describe("lifecycle hooks", () => {
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "setup then after_start; a planned change");
     const first = start(ws(root), { change: "C-1" }, quiet);
+    if (first.ok) stop(ws(first.value.worktree), "later", undefined, true); // a live claim refuses every start (BR-2011)
     const again = start(ws(root), { change: "C-1" }, quiet); // the worktree exists: no setup, after_start again
     expect(first.ok && again.ok && again.value.created).toBe(false);
     if (!first.ok) return;
