@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
@@ -82,7 +82,15 @@ export function ensureGuard(root: string, main: string): Result<boolean> {
   if (st.value.state === "current") return ok(false);
   if (st.value.state === "foreign") return foreignGuard(st.value.path);
   mkdirSync(join(st.value.path, ".."), { recursive: true });
-  writeFileSync(st.value.path, guardScript(main));
-  chmodSync(st.value.path, 0o755);
+  // reason: git may run the hook at any moment; a temporary file made executable and renamed into place means it
+  // only ever sees the old hook or the whole new one, never an empty, half-written or not-yet-executable one (#24)
+  const tmp = `${st.value.path}.canon-${process.pid}.tmp`;
+  try {
+    writeFileSync(tmp, guardScript(main), { mode: 0o755 });
+    chmodSync(tmp, 0o755);
+    renameSync(tmp, st.value.path);
+  } finally {
+    rmSync(tmp, { force: true });
+  }
   return ok(true);
 }

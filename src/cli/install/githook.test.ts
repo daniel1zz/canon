@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { GUARD_HEADER } from "./githook.ts";
@@ -72,6 +72,7 @@ describe("installing the guard", () => {
     expect(old.out).toContain("older form");
     expect(canon(root, "install").code).toBe(0);
     expect(readFileSync(path, "utf8")).not.toContain("\nexit 0\n");
+    expect(readdirSync(join(root, ".git/hooks")).filter((f) => f.includes(".tmp"))).toEqual([]); // replaced by rename, nothing left over
     expect(canon(root, "update", "--check").code).toBe(0);
 
     const other = repo();
