@@ -146,13 +146,30 @@ export function skillsStatus(root: string, source: string): Result<SkillsStatus>
   return ok({ state: outdated.length === 0 ? "current" : "outdated", version, outdated: outdated.sort(), edited: edited.sort() });
 }
 
-/** Copies every `canon-*` skill from `source` into `<root>/.claude/skills`, keeping local edits safe. */
-export function installSkills(root: string, source: string, force: boolean): Result<InstallReport> {
+/** What an install would write, remove and keep, computed before anything is touched (BR-2081, BR-2083). */
+export interface SkillsPlan {
+  readonly target: string;
+  readonly manifestPath: string;
+  readonly wanted: ReadonlyMap<string, Buffer>;
+  readonly write: readonly string[];
+  readonly unchanged: readonly string[];
+  readonly remove: readonly string[];
+  readonly kept: readonly string[];
+  /** Edited in this project and would be overwritten or deleted: the install is refused unless forced (BR-2081). */
+  readonly conflicts: readonly string[];
+  /** canon's own repository: the source is the target, nothing to write. */
+  readonly source: boolean;
+}
+
+/** Reads only: refuses a bad manifest or a symlink on any path it would touch (exit 2), and lists the conflicts. */
+export function planSkills(root: string, source: string, force: boolean): Result<SkillsPlan> {
   const target = join(root, ".claude", "skills");
-  if (existsSync(target) && realpathSync(target) === realpathSync(source)) return ok({ written: [], unchanged: [], removed: [], kept: [] });
+  const manifestPath = join(target, MANIFEST);
+  if (existsSync(target) && realpathSync(target) === realpathSync(source)) {
+    return ok({ target, manifestPath, wanted: new Map(), write: [], unchanged: [], remove: [], kept: [], conflicts: [], source: true });
+  }
 
   const wanted = sourceFiles(source);
-  const manifestPath = join(target, MANIFEST);
   let manifest: Record<string, string> = {};
   if (existsSync(manifestPath)) {
     try {
@@ -170,7 +187,6 @@ export function installSkills(root: string, source: string, force: boolean): Res
     if (link) return err("invalid", `${relative(root, link)} is a symbolic link; canon writes skills only as plain files inside the project. Replace the link with a directory and run again.`);
   }
 
-  // Plan first, so a conflict refuses the whole install and nothing is half-updated.
   const write: string[] = [];
   const unchanged: string[] = [];
   const remove: string[] = [];
@@ -194,18 +210,33 @@ export function installSkills(root: string, source: string, force: boolean): Res
     if (manifest[rel] === sha(readFileSync(full)) || force) remove.push(rel);
     else conflicts.push(rel);
   }
-  if (conflicts.length > 0) {
-    return err("conflict", `these canon skill files were edited in this project and would be overwritten:\n${conflicts.map((c) => `  .claude/skills/${c}`).join("\n")}\nMove the edits into canon itself, or run again with --force to discard them.`);
-  }
+  return ok({ target, manifestPath, wanted, write, unchanged, remove, kept, conflicts, source: false });
+}
 
-  for (const rel of write) {
-    const full = join(target, rel);
+/** The refusal for skill files edited here that an install would overwrite (BR-2081). */
+export function editedSkills(conflicts: readonly string[], rerun: string): Result<never> {
+  return err("conflict", `these canon skill files were edited in this project and would be overwritten:\n${conflicts.map((c) => `  .claude/skills/${c}`).join("\n")}\nMove the edits into canon itself, or ${rerun} to discard them.`);
+}
+
+/** Writes a plan that has no conflicts (or was forced). */
+export function applySkills(plan: SkillsPlan): InstallReport {
+  if (plan.source) return { written: [], unchanged: [], removed: [], kept: [] };
+  for (const rel of plan.write) {
+    const full = join(plan.target, rel);
     mkdirSync(dirname(full), { recursive: true });
-    writeFileSync(full, wanted.get(rel)!);
+    writeFileSync(full, plan.wanted.get(rel)!);
   }
-  for (const rel of remove) rmSync(join(target, rel));
-  const files = Object.fromEntries([...wanted].map(([rel, content]) => [rel, sha(content)]));
-  mkdirSync(target, { recursive: true });
-  writeFileSync(manifestPath, `${JSON.stringify({ note: "Written by canon install; edit the skills in canon, not here.", version: versionOf(files), files }, null, 2)}\n`);
-  return ok({ written: write, unchanged, removed: remove, kept });
+  for (const rel of plan.remove) rmSync(join(plan.target, rel));
+  const files = Object.fromEntries([...plan.wanted].map(([rel, content]) => [rel, sha(content)]));
+  mkdirSync(plan.target, { recursive: true });
+  writeFileSync(plan.manifestPath, `${JSON.stringify({ note: "Written by canon install; edit the skills in canon, not here.", version: versionOf(files), files }, null, 2)}\n`);
+  return { written: plan.write, unchanged: plan.unchanged, removed: plan.remove, kept: plan.kept };
+}
+
+/** Copies every `canon-*` skill from `source` into `<root>/.claude/skills`, keeping local edits safe; plans first, so a conflict refuses the whole install and nothing is half-updated. */
+export function installSkills(root: string, source: string, force: boolean): Result<InstallReport> {
+  const plan = planSkills(root, source, force);
+  if (!plan.ok) return plan;
+  if (plan.value.conflicts.length > 0) return editedSkills(plan.value.conflicts, "run again with --force");
+  return ok(applySkills(plan.value));
 }

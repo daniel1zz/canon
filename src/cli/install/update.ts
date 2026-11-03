@@ -1,15 +1,15 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openWorkspace, type Workspace } from "../../work/workspace.ts";
-import { err, ok, type Result } from "../../kernel/result.ts";
+import { ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
 import { land } from "../../work/land/land.ts";
 import { start } from "../../work/session/session.ts";
 import { type Say } from "../../work/workspace.ts";
-import { ensureHook, hookStatus } from "./hook.ts";
+import { hookStatus, planHook, writeHook, type Settings } from "./hook.ts";
 import { ensureGuard, foreignGuard, guardStatus } from "./githook.ts";
 import { readConfig } from "../../config/config.ts";
-import { installSkills, skillsStatus, type InstallReport } from "./install.ts";
+import { applySkills, editedSkills, planSkills, skillsStatus, type InstallReport, type SkillsPlan } from "./install.ts";
 
 /**
  * Everything canon puts into a project, and how up to date it is (D-10). Discovery is automatic and live:
@@ -30,8 +30,6 @@ export interface AssetsStatus {
   readonly edited: readonly string[];
   /** Only the git guard is out of date: it is not in the tree, so an update installs it without a change. */
   readonly guardOnly: boolean;
-  /** A reference-transaction hook canon did not write; install and update refuse it (BR-2124). */
-  readonly foreignGuard: string | undefined;
 }
 
 export function assetsStatus(root: string, source: string): Result<AssetsStatus> {
@@ -48,18 +46,18 @@ export function assetsStatus(root: string, source: string): Result<AssetsStatus>
   const g = guardLine(root);
   if (!g.ok) return g;
   const outdated = [...s.value.outdated.map((f) => `skill ${f}`), ...hook, ...g.value.line];
-  return ok({ version: s.value.version, current: outdated.length === 0, outdated, edited: s.value.edited, guardOnly: s.value.outdated.length === 0 && hook.length === 0 && g.value.line.length > 0, foreignGuard: g.value.foreign });
+  return ok({ version: s.value.version, current: outdated.length === 0, outdated, edited: s.value.edited, guardOnly: s.value.outdated.length === 0 && hook.length === 0 && g.value.line.length > 0 });
 }
 
-/** The update-check line for the git guard (BR-2123, BR-2124), and the path of a hook canon did not write. */
-function guardLine(root: string): Result<{ line: string[]; foreign?: string }> {
+/** The update-check line for the git guard (BR-2123, BR-2124). */
+function guardLine(root: string): Result<{ line: string[] }> {
   const config = readConfig(root);
   if (!config.ok) return config;
   const g = guardStatus(root, config.value.main);
   if (!g.ok) return g;
   const what = `git hook: main moves only through canon work land (${g.value.path})`;
   const line = { current: [], missing: [what], old: [`${what}, older form`], foreign: [`${what}, not installed: that file was not written by canon`] }[g.value.state];
-  return ok({ line, ...(g.value.state === "foreign" ? { foreign: g.value.path } : {}) });
+  return ok({ line });
 }
 
 /** The one-line notice `canon brief` and `canon work start` print when something is out of date (BR-2085). */
@@ -68,21 +66,34 @@ export function updateNotice(st: AssetsStatus): string | undefined {
   return `canon's project files are out of date (${st.outdated.length} item(s), version ${st.version}): tell the user; when they want it, run \`canon update\` (details: \`canon update --check\`).`;
 }
 
-/** Installs every asset into `root` (the current tree). Used by `canon init` and by `canon update` in its worktree. */
-export function installAssets(root: string, source: string, force: boolean): Result<InstallReport & { hook: boolean; guard: boolean }> {
+/**
+ * Every check an install makes, in the order the rules give, with nothing written yet: the main branch name and someone
+ * else's git hook (BR-2123, BR-2124), then the skills (symlinks and the manifest, BR-2083, before edited files, BR-2081),
+ * then `.claude/settings.json` (BR-2087). Edited skill files are returned, not refused, so each caller words the refusal.
+ */
+function preflight(root: string, source: string, force: boolean): Result<{ main: string; skills: SkillsPlan; settings: Settings | undefined }> {
   const config = readConfig(root);
   if (!config.ok) return config;
-  // Someone else's git hook refuses the install before anything is written (BR-2124).
   const g = guardStatus(root, config.value.main);
   if (!g.ok) return g;
   if (g.value.state === "foreign") return foreignGuard(g.value.path);
-  const skills = installSkills(root, source, force);
+  const skills = planSkills(root, source, force);
   if (!skills.ok) return skills;
-  const hook = ensureHook(root);
-  if (!hook.ok) return hook;
-  const guard = ensureGuard(root, config.value.main);
+  const settings = planHook(root);
+  if (!settings.ok) return settings;
+  return ok({ main: config.value.main, skills: skills.value, settings: settings.value });
+}
+
+/** Installs every asset into `root` (the current tree), only after every check passed. Used by `canon init`, `canon install` and by `canon update` in its worktree. */
+export function installAssets(root: string, source: string, force: boolean): Result<InstallReport & { hook: boolean; guard: boolean }> {
+  const p = preflight(root, source, force);
+  if (!p.ok) return p;
+  if (p.value.skills.conflicts.length > 0) return editedSkills(p.value.skills.conflicts, "run again with --force");
+  const skills = applySkills(p.value.skills);
+  const hook = writeHook(root, p.value.settings);
+  const guard = ensureGuard(root, p.value.main);
   if (!guard.ok) return guard;
-  return ok({ ...skills.value, hook: hook.value, guard: guard.value });
+  return ok({ ...skills, hook, guard: guard.value });
 }
 
 export type UpdateOutcome =
@@ -96,19 +107,23 @@ export type UpdateOutcome =
  * canon check, review), so the project's main only ever gets it the way it gets any other work.
  */
 export async function updateProject(ws: Workspace, source: string, force: boolean, timeoutMs: number, say: Say): Promise<Result<UpdateOutcome>> {
+  // Someone else's git hook refuses before any other check, a broken settings.json included (BR-2124).
+  const g = guardStatus(ws.root, ws.config.main);
+  if (!g.ok) return g;
+  if (g.value.state === "foreign") return foreignGuard(g.value.path);
   const st = assetsStatus(ws.root, source);
   if (!st.ok) return st;
   if (st.value.current) return ok({ kind: "current", version: st.value.version });
-  if (st.value.foreignGuard) return foreignGuard(st.value.foreignGuard);
   if (st.value.guardOnly) {
     // reason: the git hook lives outside the tree, so there is nothing to land; it is installed in place (BR-2086, BR-2123)
-    const g = ensureGuard(ws.root, ws.config.main);
-    if (!g.ok) return g;
+    const guard = ensureGuard(ws.root, ws.config.main);
+    if (!guard.ok) return guard;
     return ok({ kind: "guard", version: st.value.version });
   }
-  if (st.value.edited.length > 0 && !force) {
-    return err("conflict", `these canon skill files were edited in this project and would be overwritten:\n${st.value.edited.map((e) => `  .claude/skills/${e}`).join("\n")}\nMove the edits into canon itself, or run \`canon update --force\` to discard them.`);
-  }
+  // Every refusal an install can make is made here, before a change or worktree exists (BR-2086, BR-2083).
+  const p = preflight(ws.root, source, force);
+  if (!p.ok) return p;
+  if (p.value.skills.conflicts.length > 0) return editedSkills(p.value.skills.conflicts, "run `canon update --force`");
   const started = start(ws, { title: `更新 canon 装进项目的文件到版本 ${st.value.version}` }, say);
   if (!started.ok) return started;
   const wt = started.value.worktree;

@@ -16,16 +16,20 @@ import { LAND_MARKER } from "../../work/land/land.ts";
 export const GUARD_HEADER = "# canon: reference-transaction guard. Written by `canon install`; canon replaces this file, so change it in canon.";
 const NAME = "reference-transaction";
 
-/** The hook script for a project whose main branch is `main`. */
+/**
+ * The hook script for a project whose main branch is `main`, a name git accepts (checked by guardStatus). The name is
+ * written inside double quotes, so the characters the shell still reads there (`$`, backquote, `"`, backslash) are escaped.
+ */
 export function guardScript(main: string): string {
-  if (!/^[A-Za-z0-9._\/-]+$/.test(main)) throw new Error(`main branch name ${JSON.stringify(main)} cannot be written into the hook`);
+  // reason: names of letters, digits and ._/- come out byte for byte as before, so installed guards stay current (BR-2123)
+  const name = main.replace(/[$`"\\]/g, (c) => `\\${c}`);
   return `#!/bin/sh
 ${GUARD_HEADER}
 # main moves only through \`canon work land\` (BR-2123, D-16).
 [ "$1" = prepared ] || exit 0
 status=0
 while read -r old new ref; do
-  [ "$ref" = "refs/heads/${main}" ] || continue
+  [ "$ref" = "refs/heads/${name}" ] || continue
   # a deletion, including pack-refs removing the loose copy, puts nothing on main
   case "$new" in *[!0]*) ;; *) continue ;; esac
   # main does not exist yet: the repository's first commit
@@ -35,7 +39,7 @@ while read -r old new ref; do
   # before canon is on main there is nothing to land through (canon init's own commit)
   git cat-file -e "$cur:canon/config.yaml" 2>/dev/null || continue
   [ "$new" = "\${${LAND_MARKER}:-}" ] && continue
-  echo "canon: refusing to move ${main}: in this project ${main} moves only through canon work land. Do the work in a change (canon work start), commit it there, then run canon work land." >&2
+  echo "canon: refusing to move ${name}: in this project ${name} moves only through canon work land. Do the work in a change (canon work start), commit it there, then run canon work land." >&2
   status=1
 done
 exit $status
@@ -51,6 +55,8 @@ export function hooksDir(root: string): Result<string> {
 export type GuardState = "current" | "missing" | "old" | "foreign";
 
 export function guardStatus(root: string, main: string): Result<{ state: GuardState; path: string }> {
+  // A name git would refuse as a branch is a config error, found before anything is written (BR-2123, BR-2045).
+  if (!git(root, "check-ref-format", `refs/heads/${main}`).ok) return err("invalid", `canon/config.yaml: main ${JSON.stringify(main)} is not a valid git branch name; fix it and run again`);
   const dir = hooksDir(root);
   if (!dir.ok) return dir;
   const path = join(dir.value, NAME);

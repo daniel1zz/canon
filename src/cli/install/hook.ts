@@ -42,7 +42,7 @@ function read(root: string): Result<Record<string, unknown> | undefined> {
 
 type HookState = "present" | "old" | "missing";
 
-type Settings = Record<string, unknown>;
+export type Settings = Record<string, unknown>;
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
@@ -117,15 +117,16 @@ export function hookStatus(root: string): Result<SettingsState> {
 }
 
 /**
- * Adds the SessionStart entry when it is missing, or rewrites the old form's command in place, so a project
- * never ends up with two, and removes canon's withdrawn entries; everything else in the file is kept as it was.
+ * The settings with the SessionStart entry added when it is missing, or the old form's command rewritten in place, so a
+ * project never ends up with two, and canon's withdrawn entries removed; everything else is kept as it was. Reads only:
+ * undefined when nothing needs writing, an error (exit 2) for a file canon will not edit (BR-2087).
  */
-export function ensureHook(root: string): Result<boolean> {
+export function planHook(root: string): Result<Settings | undefined> {
   const s = read(root);
   if (!s.ok) return s;
   const state = briefState(s.value);
   const retired = retiredIn(s.value);
-  if (state === "present" && retired.length === 0) return ok(false);
+  if (state === "present" && retired.length === 0) return ok(undefined);
   const settings = retired.length > 0 ? withoutRetired(s.value ?? {}) : { ...(s.value ?? {}) };
   if (state !== "present") {
     const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
@@ -136,7 +137,13 @@ export function ensureHook(root: string): Result<boolean> {
     hooks["SessionStart"] = start;
     settings["hooks"] = hooks;
   }
+  return ok(settings);
+}
+
+/** Writes what planHook computed; true when it wrote anything. */
+export function writeHook(root: string, settings: Settings | undefined): boolean {
+  if (settings === undefined) return false;
   mkdirSync(join(root, ".claude"), { recursive: true });
   writeFileSync(join(root, SETTINGS), `${JSON.stringify(settings, null, 2)}\n`);
-  return ok(true);
+  return true;
 }

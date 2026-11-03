@@ -130,6 +130,30 @@ describe("installing stays inside the project", () => {
     expect(!r.ok && r.error.message).toContain("symbolic link");
     expect(readFileSync(join(elsewhere, "SKILL.md"), "utf8")).toBe("someone else's file\n");
   });
+  test("BR-2083: through the CLI, a manifest path outside canon-* and a symlink exit 2, the symlink checked before an edited file, and nothing is written", () => {
+    const src = source();
+    const root = gitRepo();
+    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "install").code).toBe(0);
+    const manifest = join(root, ".claude/skills", MANIFEST);
+    const good = readFileSync(manifest, "utf8");
+    const m = JSON.parse(good);
+    m.files["../../../victim.txt"] = "0".repeat(64);
+    writeFileSync(manifest, JSON.stringify(m));
+    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "install", "--force").code).toBe(2);
+    writeFileSync(manifest, good);
+
+    const elsewhere = mkdtempSync(join(tmpdir(), "canon-skills-elsewhere-"));
+    writeFileSync(join(elsewhere, "SKILL.md"), "someone else's file\n");
+    Bun.spawnSync(["rm", "-r", join(root, ".claude/skills/canon-a")]);
+    Bun.spawnSync(["ln", "-s", elsewhere, join(root, ".claude/skills/canon-a")]);
+    writeFileSync(join(root, ".claude/skills/canon-b/SKILL.md"), "b edited here\n");
+    writeFileSync(join(src, "canon-b/SKILL.md"), "b v2\n"); // alone this would be a BR-2081 conflict, exit 5
+    const r = canon(root, { CANON_SKILLS_SOURCE: src }, "install");
+    expect([r.code, r.err]).toEqual([2, expect.stringContaining("symbolic link")]);
+    expect(readFileSync(join(elsewhere, "SKILL.md"), "utf8")).toBe("someone else's file\n");
+    expect(readFileSync(join(root, ".claude/skills/canon-b/SKILL.md"), "utf8")).toBe("b edited here\n");
+    expect(readFileSync(manifest, "utf8")).toBe(good);
+  });
 });
 
 describe("text canon ships into other projects", () => {

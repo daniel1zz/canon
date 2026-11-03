@@ -114,6 +114,46 @@ describe("installing the guard", () => {
   });
 });
 
+describe("the main branch name in the guard", () => {
+  /** A repository on branch `main` (any name git accepts) with canon adopted and that name in canon/config.yaml. */
+  function adoptedOn(main: string): string {
+    const root = mkdtempSync(join(tmpdir(), "canon-guard-"));
+    for (const args of [["init", "-q", "-b", main], ["config", "user.email", "t@t"], ["config", "user.name", "t"]]) sh(root, ...args);
+    mkdirSync(join(root, "canon"));
+    writeFileSync(join(root, "canon/config.yaml"), `main: ${JSON.stringify(main)}\nfloor: "true"\n`);
+    expect(canon(root, "install").code).toBe(0);
+    sh(root, "add", "-A");
+    expect(git(root, ["commit", "-qm", "adopt canon"]).code).toBe(0); // the first commit: the branch does not exist yet
+    return root;
+  }
+
+  test("BR-2123: the guard takes main from canon/config.yaml, any name git accepts included, and guards only that branch", () => {
+    for (const main of ["trunk", "rel+1", 'a$b"`c']) {
+      const root = adoptedOn(main);
+      expect(canon(root, "update", "--check").code).toBe(0);
+      writeFileSync(join(root, "app.txt"), "two\n");
+      sh(root, "add", "app.txt");
+      const commit = git(root, ["commit", "-qm", "direct"]);
+      expect(commit.code).not.toBe(0);
+      expect(commit.err).toContain(`canon: refusing to move ${main}:`);
+      sh(root, "checkout", "-qb", "main");
+      expect(git(root, ["commit", "-qm", "on a branch named main"]).code).toBe(0); // main is just another branch here
+    }
+  });
+
+  test("BR-2123 BR-2045: a main git would refuse as a branch name is a config error, exit 2 before anything is written", () => {
+    const root = repo();
+    mkdirSync(join(root, "canon"));
+    writeFileSync(join(root, "canon/config.yaml"), 'main: "a..b"\nfloor: "true"\n');
+    for (const args of [["install"], ["update", "--check"]]) {
+      const r = canon(root, ...args);
+      expect([r.code, r.err]).toEqual([2, expect.stringContaining('"a..b" is not a valid git branch name')]);
+    }
+    expect(existsSync(join(root, ".claude"))).toBe(false);
+    expect(existsSync(hookPath(root))).toBe(false);
+  });
+});
+
 describe("what the guard refuses", () => {
   test("BR-2126: once canon is on main, commit, merge, update-ref and push onto main are refused and main stays", () => {
     const root = adopted();

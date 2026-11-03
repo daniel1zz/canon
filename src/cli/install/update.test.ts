@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { BRIEF_COMMAND } from "./hook.ts";
@@ -100,6 +100,62 @@ describe("finding and applying updates", () => {
     expect(r.code).toBe(5);
     expect(r.err).toContain(".claude/skills/canon-b/SKILL.md");
     expect(existsSync(join(root, "..", `${root.split("/").pop()}.worktrees`))).toBe(false);
+  });
+
+  test("BR-2086 BR-2083: an update that would write through a symlink, or a manifest naming a path outside canon-*, is refused with 2 before any change is opened", () => {
+    const worktrees = (root: string) => join(root, "..", `${root.split("/").pop()}.worktrees`);
+    const branches = (root: string) => git(root, "branch", "--list", "change/*");
+    const linked = project();
+    const ext = dir({ "SKILL.md": "a v1\n" });
+    rmSync(join(linked.root, ".claude/skills/canon-a"), { recursive: true });
+    symlinkSync(ext, join(linked.root, ".claude/skills/canon-a"));
+    git(linked.root, "add", "-A");
+    commitOnMain(linked.root, "link");
+    writeFileSync(join(linked.src, "canon-b/SKILL.md"), "b v2\n");
+    const r = canon(linked.root, linked.env, "update");
+    expect([r.code, r.err]).toEqual([2, expect.stringContaining(".claude/skills/canon-a is a symbolic link")]);
+    expect([branches(linked.root), existsSync(worktrees(linked.root))]).toEqual(["", false]);
+
+    const listed = project();
+    const manifest = join(listed.root, ".claude/skills/.canon-skills.json");
+    const m = JSON.parse(readFileSync(manifest, "utf8"));
+    m.files["../outside.txt"] = "0".repeat(64);
+    writeFileSync(manifest, JSON.stringify(m));
+    writeFileSync(join(listed.src, "canon-b/SKILL.md"), "b v2\n");
+    const l = canon(listed.root, listed.env, "update");
+    expect([l.code, l.err]).toEqual([2, expect.stringContaining("lists paths canon never writes")]);
+    expect([branches(listed.root), existsSync(worktrees(listed.root))]).toEqual(["", false]);
+  });
+
+  test("BR-2087 BR-2080: an invalid or symlinked settings.json refuses install and init with 2 before any skill is written", () => {
+    const src = dir({ "canon-a/SKILL.md": "a\n" });
+    for (const command of ["install", "init"]) {
+      const root = mkdtempSync(join(tmpdir(), "canon-update-repo-"));
+      git(root, "init", "-q");
+      mkdirSync(join(root, ".claude"));
+      writeFileSync(join(root, ".claude/settings.json"), "{ not json");
+      const r = canon(root, { CANON_SKILLS_SOURCE: src }, command, "--floor", "true");
+      expect([command, r.code]).toEqual([command, 2]);
+      expect(readdirSync(join(root, ".claude"))).toEqual(["settings.json"]);
+      expect(readFileSync(join(root, ".claude/settings.json"), "utf8")).toBe("{ not json");
+      expect(existsSync(join(root, "canon"))).toBe(false);
+    }
+    const root = mkdtempSync(join(tmpdir(), "canon-update-repo-"));
+    git(root, "init", "-q");
+    mkdirSync(join(root, ".claude"));
+    symlinkSync(join(mkdtempSync(join(tmpdir(), "canon-outside-")), "settings.json"), join(root, ".claude/settings.json"));
+    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "install").code).toBe(2);
+    expect(readdirSync(join(root, ".claude"))).toEqual(["settings.json"]);
+  });
+
+  test("BR-2124: someone else's git hook is reported before an invalid settings.json: install and update exit 5", () => {
+    const { root, env } = project();
+    writeFileSync(join(root, ".git/hooks/reference-transaction"), "#!/bin/sh\nexit 0\n");
+    writeFileSync(join(root, ".claude/settings.json"), "{ not json");
+    for (const command of ["install", "update"]) {
+      const r = canon(root, env, command);
+      expect([command, r.code, r.err]).toEqual([command, 5, expect.stringContaining("was not written by canon")]);
+    }
   });
 
   test("BR-2087: init merges the session hook into existing settings and keeps every other key", () => {
