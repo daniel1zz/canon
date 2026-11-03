@@ -113,6 +113,7 @@ describe("code layout config", () => {
     ["a code_root with ..", "code_root: ../src\n", "`code_root`"],
     ["a code_root that is not a string", "code_root: [src]\n", "`code_root`"],
     ["shared that is not a list", "code_root: src\nshared: src/kernel\n", "`shared`"],
+    ["shared with a null code_root", "code_root: null\nshared: [src/kernel]\n", "`shared` needs `code_root`"],
   ];
   for (const [what, yaml, message] of cases) {
     test(`BR-2116: ${what} makes every command fail with exit 2`, () => {
@@ -121,6 +122,11 @@ describe("code layout config", () => {
       expect(r.err).toContain(message);
     });
   }
+
+  test("BR-2116: shared: null is unset, so it needs no code_root (issue #62)", () => {
+    const r = readConfig(repo({ "canon/config.yaml": "shared: null\n" }));
+    expect(r.ok && [r.value.codeRoot, r.value.shared]).toEqual([undefined, []]);
+  });
 
   test("BR-2116: code_root puts each domain's code at <code_root>/<domain path>; without it the top-level README decides", () => {
     const files = {

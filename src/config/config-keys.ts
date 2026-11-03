@@ -91,7 +91,7 @@ export const documentKeys = {
     doc: "Directories (or files) under code_root that belong to no business domain, such as a shared kernel; empty without code_root (BR-2116).",
     default: [],
     schema: { type: ["array", "null"], items: relPath, default: [] },
-        needs: ["code_root"],
+    needs: ["code_root"],
     read: (v, ctx) => {
       if (v === null) return ok([]);
       const root = ctx.raw["code_root"];

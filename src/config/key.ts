@@ -16,7 +16,7 @@ export interface ConfigKey<T> {
    * not milliseconds). It accepts every value `read` accepts; what it cannot express it leaves to `read` (BR-2175, D-28).
    */
   readonly schema: JsonSchema;
-  /** Keys that must be set whenever this one is (they become the schema's `dependencies`). */
+  /** Keys that must be set, not null, whenever this one is set and not null (they become the schema's `dependencies`). */
   readonly needs?: readonly string[];
   /**
    * Validates a value that is present (null included) and returns what Config holds, or an invalid error whose message

@@ -21,7 +21,14 @@ export const MODELINE = `# yaml-language-server: $schema=../${SCHEMA_FILE}`;
 const KEYS = [...CONFIG_KEYS].map(([, k]) => k).sort((a, b) => a.listed - b.listed);
 
 export function configSchema(): JsonSchema {
-  const dependencies = Object.fromEntries(KEYS.filter((k) => k.needs?.length).map((k) => [k.key, [...k.needs!]]));
+  // reason: null means unset (BR-2116), so a key's needs apply only when it is not null, and are met only by values
+  // that are not null; a plain property dependency would refuse `shared: null` that canon accepts (BR-2175, issue #62)
+  const dependencies = Object.fromEntries(
+    KEYS.filter((k) => k.needs?.length).map((k) => [
+      k.key,
+      { anyOf: [{ properties: { [k.key]: { type: "null" } } }, { required: [...k.needs!], properties: Object.fromEntries(k.needs!.map((n) => [n, { not: { type: "null" } }])) }] },
+    ]),
+  );
   return {
     $schema: "http://json-schema.org/draft-07/schema#",
     title: "canon/config.yaml",
