@@ -13,6 +13,7 @@ import { readCorpus } from "../knowledge/read.ts";
 import { createDoc, createDomain, setMeta } from "../knowledge/write.ts";
 import { git } from "../repo/git.ts";
 import { overlapsOf } from "../work/overlap.ts";
+import { installSkills, skillsSource, type InstallReport } from "../skills/install.ts";
 import { computeStats, renderStats } from "../stats/stats.ts";
 import { drop } from "../work/drop.ts";
 import { clean, land, mainCorpus, start, stop } from "../work/work.ts";
@@ -409,6 +410,7 @@ const init = defineCommand({
   args: { floor: { type: "string", description: "Command that must pass before anything lands, e.g. \"bun run typecheck && bun test\"" } },
   run({ args }) {
     const root = must(git(process.cwd(), "rev-parse", "--show-toplevel"));
+    const source = must(skillsSource()); // resolved first: a missing source fails before anything is written (BR-2082)
     const files: Record<string, string> = {
       "canon/product.md": "---\ntitle: 产品\n---\n# 产品\n\n## 目的\n\n## 使用者\n\n## 承诺\n\n## 不做的事\n",
       "canon/config.yaml": `main: main\nfloor: ${JSON.stringify(args.floor ?? "")}\n`,
@@ -423,7 +425,29 @@ const init = defineCommand({
       }
     }
     for (const dir of ["rules", "decisions", "changes", "notes"]) mkdirSync(join(root, "canon", dir), { recursive: true });
+    reportSkills(must(installSkills(root, source, false)));
     if (!args.floor) say("set `floor` in canon/config.yaml before landing anything");
+  },
+});
+
+function reportSkills(r: InstallReport) {
+  for (const f of r.written) say(`skill ${f}`);
+  for (const f of r.removed) say(`removed skill file ${f}`);
+  say(r.written.length + r.removed.length === 0 ? "skills: up to date" : "skills installed in .claude/skills; commit them with the project");
+}
+
+/** Project-level Claude Code skills shipped with canon (D-9). */
+const skills = defineCommand({
+  meta: { description: "canon's Claude Code skills, installed into this project's .claude/skills (never the user's global ~/.claude)" },
+  subCommands: {
+    install: defineCommand({
+      meta: { description: "Install or update canon's skills in this project; files edited here are not overwritten without --force" },
+      args: { force: { type: "boolean", description: "Overwrite skill files that were edited in this project" } },
+      run({ args }) {
+        const root = must(git(process.cwd(), "rev-parse", "--show-toplevel"));
+        reportSkills(must(installSkills(root, must(skillsSource()), Boolean(args.force))));
+      },
+    }),
   },
 });
 
@@ -460,7 +484,7 @@ const stats = defineCommand({
 
 const main = defineCommand({
   meta: { name: "canon", description: "Shared memory and coordination for a project built by many concurrent AI sessions" },
-  subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, doc, work, human, stats },
+  subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, doc, work, human, stats, skills },
 });
 
 /**
