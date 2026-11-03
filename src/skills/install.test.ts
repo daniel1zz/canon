@@ -57,7 +57,7 @@ describe("project-level skills", () => {
   test("BR-2080: in canon's own repository the source is the target, so installing changes nothing", () => {
     const repo = dir({ ".claude/skills/canon-a/SKILL.md": "a\n" });
     const r = installSkills(repo, join(repo, ".claude/skills"), false);
-    expect(r.ok && r.value).toEqual({ written: [], unchanged: [], removed: [] });
+    expect(r.ok && r.value).toEqual({ written: [], unchanged: [], removed: [], kept: [] });
     expect(existsSync(join(repo, ".claude/skills", MANIFEST))).toBe(false);
     Bun.spawnSync(["git", "init", "-q"], { cwd: repo });
     const cli = canon(repo, { CANON_SKILLS_SOURCE: join(repo, ".claude/skills") }, "install");

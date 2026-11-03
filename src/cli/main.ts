@@ -435,6 +435,7 @@ const init = defineCommand({
 function reportInstall(r: InstallReport & { hook: boolean }) {
   for (const f of r.written) say(`skill ${f}`);
   for (const f of r.removed) say(`removed skill file ${f}`);
+  for (const f of r.kept) say(`kept skill ${f} (edited in this project; canon has no newer version)`);
   if (r.hook) say("hook: canon brief at session start (.claude/settings.json)");
   say(r.written.length + r.removed.length === 0 && !r.hook ? "canon project files: up to date" : "canon project files installed; commit them with the project");
 }

@@ -20,6 +20,8 @@ export interface InstallReport {
   readonly written: readonly string[];
   readonly unchanged: readonly string[];
   readonly removed: readonly string[];
+  /** Edited in this project while canon has nothing newer: left as they are (BR-2089). */
+  readonly kept: readonly string[];
 }
 
 const sha = (text: Buffer | string) => createHash("sha256").update(text).digest("hex");
@@ -61,7 +63,7 @@ function safeKey(rel: string): boolean {
 }
 
 /** The first symlink on the way from `root` down to `full` (both included), if any (BR-2083). */
-function symlinkOnPath(root: string, full: string): string | undefined {
+export function symlinkOnPath(root: string, full: string): string | undefined {
   const parts = relative(root, full).split(sep);
   let p = root;
   for (const part of parts) {
@@ -128,6 +130,8 @@ export function skillsStatus(root: string, source: string): Result<SkillsStatus>
     else {
       const current = readFileSync(full);
       if (current.equals(content)) continue;
+      // reason: edited here while canon kept the version it last installed: a local edit, not an update (BR-2089)
+      if (manifest[rel] === sha(content)) continue;
       outdated.push(rel);
       if (manifest[rel] !== sha(current)) edited.push(rel);
     }
@@ -145,7 +149,7 @@ export function skillsStatus(root: string, source: string): Result<SkillsStatus>
 /** Copies every `canon-*` skill from `source` into `<root>/.claude/skills`, keeping local edits safe. */
 export function installSkills(root: string, source: string, force: boolean): Result<InstallReport> {
   const target = join(root, ".claude", "skills");
-  if (existsSync(target) && realpathSync(target) === realpathSync(source)) return ok({ written: [], unchanged: [], removed: [] });
+  if (existsSync(target) && realpathSync(target) === realpathSync(source)) return ok({ written: [], unchanged: [], removed: [], kept: [] });
 
   const wanted = sourceFiles(source);
   const manifestPath = join(target, MANIFEST);
@@ -171,6 +175,7 @@ export function installSkills(root: string, source: string, force: boolean): Res
   const unchanged: string[] = [];
   const remove: string[] = [];
   const conflicts: string[] = [];
+  const kept: string[] = [];
   for (const [rel, content] of wanted) {
     const full = join(target, rel);
     if (!existsSync(full)) write.push(rel);
@@ -178,6 +183,7 @@ export function installSkills(root: string, source: string, force: boolean): Res
       const current = readFileSync(full);
       if (current.equals(content)) unchanged.push(rel);
       else if (manifest[rel] === sha(current) || force) write.push(rel);
+      else if (manifest[rel] === sha(content)) kept.push(rel); // reason: canon has nothing new for it; keep the local edit (BR-2089)
       else conflicts.push(rel);
     }
   }
@@ -200,6 +206,6 @@ export function installSkills(root: string, source: string, force: boolean): Res
   for (const rel of remove) rmSync(join(target, rel));
   const files = Object.fromEntries([...wanted].map(([rel, content]) => [rel, sha(content)]));
   mkdirSync(target, { recursive: true });
-  writeFileSync(manifestPath, `${JSON.stringify({ note: "Written by canon skills install; edit the skills in canon, not here.", version: versionOf(files), files }, null, 2)}\n`);
-  return ok({ written: write, unchanged, removed: remove });
+  writeFileSync(manifestPath, `${JSON.stringify({ note: "Written by canon install; edit the skills in canon, not here.", version: versionOf(files), files }, null, 2)}\n`);
+  return ok({ written: write, unchanged, removed: remove, kept });
 }

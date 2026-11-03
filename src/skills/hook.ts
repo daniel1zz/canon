@@ -1,5 +1,6 @@
-import { existsSync, lstatSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { join, relative } from "node:path";
+import { symlinkOnPath } from "./install.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 /**
@@ -18,8 +19,10 @@ interface HookEntry {
 
 function read(root: string): Result<Record<string, unknown> | undefined> {
   const path = join(root, SETTINGS);
+  // reason: checked before existsSync, which follows links: a dangling link would look absent and be written through (BR-2087, #10)
+  const link = symlinkOnPath(root, path);
+  if (link) return err("invalid", `${relative(root, link)} is a symbolic link; canon edits ${SETTINGS} only as a plain file inside the project`);
   if (!existsSync(path)) return ok(undefined);
-  if (lstatSync(path).isSymbolicLink()) return err("invalid", `${SETTINGS} is a symbolic link; canon edits it only as a plain file`);
   try {
     const v = JSON.parse(readFileSync(path, "utf8")) as unknown;
     if (typeof v !== "object" || v === null || Array.isArray(v)) return err("invalid", `${SETTINGS} must be a JSON object`);

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -104,5 +104,37 @@ describe("finding and applying updates", () => {
     expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8")).hooks.SessionStart.length).toBe(2); // added once
     writeFileSync(join(root, ".claude/settings.json"), "{ not json");
     expect(canon(root, { CANON_SKILLS_SOURCE: src }, "install").code).toBe(2);
+  });
+
+  test("BR-2087: a settings.json or .claude that is a symlink, even a dangling one, is refused and nothing is written through it", () => {
+    const src = dir({ "canon-a/SKILL.md": "a\n" });
+    const outside = mkdtempSync(join(tmpdir(), "canon-outside-"));
+    const root = mkdtempSync(join(tmpdir(), "canon-update-repo-"));
+    git(root, "init", "-q");
+    mkdirSync(join(root, ".claude"));
+    symlinkSync(join(outside, "settings.json"), join(root, ".claude/settings.json")); // target does not exist yet
+    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "install").code).toBe(2);
+    expect(existsSync(join(outside, "settings.json"))).toBe(false);
+    const root2 = mkdtempSync(join(tmpdir(), "canon-update-repo-"));
+    git(root2, "init", "-q");
+    symlinkSync(outside, join(root2, ".claude"));
+    expect(canon(root2, { CANON_SKILLS_SOURCE: src }, "install", "--force").code).toBe(2);
+    expect(existsSync(join(outside, "settings.json"))).toBe(false);
+  });
+
+  test("BR-2089: a skill edited here while canon kept its version is not out of date, is kept by install and update, and is overwritten only with --force", () => {
+    const { src, root, env } = project();
+    writeFileSync(join(root, ".claude/skills/canon-b/SKILL.md"), "b edited here\n");
+    git(root, "commit", "-qam", "local edit");
+    expect(canon(root, env, "update", "--check").code).toBe(0);
+    expect(canon(root, env, "brief").out).not.toContain("out of date");
+    writeFileSync(join(src, "canon-a/SKILL.md"), "a v2\n");
+    const r = canon(root, env, "update");
+    expect(r.code).toBe(0);
+    expect(git(root, "show", "main:.claude/skills/canon-a/SKILL.md")).toBe("a v2");
+    expect(git(root, "show", "main:.claude/skills/canon-b/SKILL.md")).toBe("b edited here");
+    expect(canon(root, env, "install").out).toContain("kept skill canon-b/SKILL.md");
+    canon(root, env, "install", "--force");
+    expect(readFileSync(join(root, ".claude/skills/canon-b/SKILL.md"), "utf8")).toBe("b v1\n");
   });
 });
