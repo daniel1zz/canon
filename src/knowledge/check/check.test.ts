@@ -71,6 +71,7 @@ describe("canon check", () => {
       `it('${id}', () => {});`,
       `test(\`${id}: \${what} fails\`, () => {});`,
       `test.each([1, 2])("${id} case %d", (n) => {});`,
+      "test.each`a | b\n${1} | ${2}`(\"" + id + " $a\", ({ a }) => {});",
       `describe("${id}", () => { test("x", () => {}); });`,
       `test.only("${id}", () => {}); test.concurrent("y", () => {});`,
       `const ok = /\\(/.test(s); test("${id}", () => {});`,

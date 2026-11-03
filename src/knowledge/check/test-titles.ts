@@ -11,7 +11,8 @@ export interface TestTitle {
   readonly runs: boolean;
 }
 
-type Token = { readonly kind: "ident" | "punct" | "string"; readonly text: string };
+/** `spans`: on a template literal, how many tokens of its `${…}` expressions follow it. */
+type Token = { readonly kind: "ident" | "punct" | "string"; readonly text: string; readonly spans?: number };
 
 const CALLS = new Set(["test", "it", "describe", "xtest", "xit", "xdescribe"]);
 // reason: only modifiers that still run the test unconditionally count (BR-2005); `.skip`, `.todo`,
@@ -71,7 +72,7 @@ function lex(src: string): Token[] {
         }
         i++;
         // The literal comes first so a title stays the first token after `(`; its expressions follow.
-        out.push({ kind: "string", text }, ...inner);
+        out.push({ kind: "string", text, spans: inner.length }, ...inner);
       } else if (c === "/" && regexAllowed()) {
         let j = i + 1;
         let cls = false;
@@ -141,6 +142,8 @@ export function testTitles(src: string): TestTitle[] {
       if (!RUNNING.has(mod)) runs = false;
       k += 2;
       if (WITH_ARGS.has(mod) && tokens[k]?.text === "(") k = closing(tokens, k) + 1;
+      // reason: `.each` also takes its table as a tagged template, `test.each\`a | b\`("…", fn)` (BR-2005)
+      else if (mod === "each" && tokens[k]?.spans !== undefined) k += 1 + tokens[k]!.spans!;
     }
     if (tokens[k]?.kind !== "punct" || tokens[k]!.text !== "(") continue;
     const first = tokens[k + 1];
