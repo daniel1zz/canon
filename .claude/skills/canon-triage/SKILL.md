@@ -11,8 +11,11 @@ Every open issue leaves triage with exactly one outcome: closed with a reason, f
 
 ```
 gh issue list --label canon-review --state open --json number,title,createdAt   # oldest first
+canon issues                                   # every open issue, and the commits on main that name it as fixed
 gh issue view <n> --comments
 ```
+
+An issue `canon issues` shows as named fixed is a lead, not a verdict: read that commit against the issue before closing it with the commit in the comment.
 
 Without a label filter the same steps apply to any issue. For each one, before judging it:
 

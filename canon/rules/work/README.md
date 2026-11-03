@@ -10,6 +10,7 @@
 - `work/drop`：放弃变更，会丢的东西先存档。
 - `work/humans`：留给人的问题。
 - `work/stats`：每个检查的运行和拒绝统计。
+- `work/issues`：列出项目开着的 GitHub issue，标出 main 上已写明修复的。
 
 ## 术语
 

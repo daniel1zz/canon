@@ -26,6 +26,7 @@ import { assetsStatus, installAssets, updateNotice, updateProject } from "./inst
 import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "../work/stats/stats.ts";
 import { eventsSince, lastEventId, parseSince, renderEvents, renderWindow, windowSummary } from "../work/stats/window.ts";
 import { drop } from "../work/drop/drop.ts";
+import { issueStatus, renderIssues } from "../work/issues/issues.ts";
 import { clean, mainCorpus, start, stop } from "../work/session/session.ts";
 import { land } from "../work/land/land.ts";
 
@@ -645,9 +646,21 @@ const events = defineCommand({
   },
 });
 
+/** Open GitHub issues and the commits on main that name them as fixed; read only (BR-2168, BR-2170). */
+const issues = defineCommand({
+  meta: { description: "List the project's open GitHub issues (through gh, read only) and whether a commit on main names each as fixed" },
+  args: { json: { type: "boolean" } },
+  run({ args }) {
+    const ws = workspace();
+    const list = must(issueStatus(ws));
+    if (args.json) return json(list);
+    for (const line of renderIssues(list, ws.config.main)) say(line);
+  },
+});
+
 const main = defineCommand({
   meta: { name: "canon", description: "Shared memory and coordination for a project built by many concurrent AI sessions" },
-  subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, doc, work, human, stats, events, install, update },
+  subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, doc, work, human, stats, events, install, update, issues },
 });
 
 /**
