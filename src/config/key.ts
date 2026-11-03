@@ -12,6 +12,13 @@ export interface ConfigKey<T> {
   /** The value when the key is absent. */
   readonly default: T;
   /**
+   * The key's JSON Schema (draft-07) fragment for editors, `default` written the way canon/config.yaml writes it (hours,
+   * not milliseconds). It accepts every value `read` accepts; what it cannot express it leaves to `read` (BR-2175, D-28).
+   */
+  readonly schema: JsonSchema;
+  /** Keys that must be set whenever this one is (they become the schema's `dependencies`). */
+  readonly needs?: readonly string[];
+  /**
    * Validates a value that is present (null included) and returns what Config holds, or an invalid error whose message
    * names the key; config.ts adds the `canon/config.yaml:` prefix. Keys are read in `checked` order and the first
    * error wins, so a reader may look at a key with a lower `checked` in `ctx.raw` knowing it is already valid.
@@ -43,6 +50,15 @@ export type FieldsOf<S extends KeySet> = { readonly [F in keyof S]: S[F] extends
 
 export const configKey = <T>(k: ConfigKey<T>): ConfigKey<T> => k;
 
+/** A JSON Schema fragment; kept loose because only editors and the schema tests read it. */
+export type JsonSchema = Readonly<Record<string, unknown>>;
+
+/** The schema of a string key that may be left empty or null (both mean unset, see stringValue). */
+export const optionalString: JsonSchema = { type: ["string", "null"] };
+
+/** The schema of a `positiveValue` key, in the unit canon/config.yaml writes. */
+export const positiveNumber = (dflt: number): JsonSchema => ({ type: "number", exclusiveMinimum: 0, default: dflt });
+
 // ---------------------------------------------------------------- readers several domains use
 
 /** A string; empty and null mean unset. */
@@ -60,3 +76,6 @@ export const MINUTE = 60_000;
 
 /** A repo-relative directory: no absolute path, no `..` or `.` segment, no trailing slash. */
 export const REL_DIR = /^(?!\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[^\s]+(?<!\/)$/;
+
+/** The schema of one repo-relative path (REL_DIR). */
+export const relPath: JsonSchema = { type: "string", pattern: REL_DIR.source };

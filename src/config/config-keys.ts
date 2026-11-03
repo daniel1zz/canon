@@ -3,10 +3,13 @@ import { join } from "node:path";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { templateFor } from "../knowledge/documents/templates.ts";
 import { BUILTIN_TYPES, RESERVED_DIRS, RESERVED_FIELDS, type DocType } from "../knowledge/documents/types.ts";
-import { configKey, REL_DIR } from "./key.ts";
+import { configKey, REL_DIR, relPath, type JsonSchema } from "./key.ts";
 
 export type HookEvent = "after_start" | "before_land" | "after_land" | "after_stop";
 export const HOOK_EVENTS: readonly HookEvent[] = ["after_start", "before_land", "after_land", "after_stop"];
+
+/** A command: a string with something other than white space (readHooks rejects a blank one). */
+const NON_BLANK: JsonSchema = { type: "string", pattern: "\\S" };
 
 /** canon/config.yaml keys of the lifecycle hooks (D-2, D-3, C-135). */
 export const hookKeys = {
@@ -14,6 +17,7 @@ export const hookKeys = {
     key: "hooks",
     doc: "Commands per lifecycle event, run in order; each event takes a command or a list of commands.",
     default: { after_start: [], before_land: [], after_land: [], after_stop: [] },
+    schema: { type: ["object", "null"], additionalProperties: false, properties: Object.fromEntries(HOOK_EVENTS.map((e) => [e, { anyOf: [NON_BLANK, { type: "array", items: NON_BLANK }] }])), default: {} },
     read: readHooks,
     commands: (v) => Object.values(v).flat(),
     replaces: { after_land: "hooks.after_land" },
@@ -37,12 +41,34 @@ function readHooks(v: unknown): Result<Record<HookEvent, readonly string[]>> {
 
 const TYPE_KEYS = new Set(["prefix", "dir", "statuses", "default", "fields", "sections"]);
 
+/**
+ * What readTypes accepts, as far as JSON Schema can say it; prefix and dir uniqueness, which keys a built-in type may
+ * set, and that a declared type needs prefix and dir are left to readTypes (BR-2175).
+ */
+const TYPES_SCHEMA: JsonSchema = {
+  type: ["object", "null"],
+  propertyNames: { pattern: "^[a-z][a-z0-9-]*$" },
+  additionalProperties: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      prefix: { type: "string", pattern: "^[A-Z][A-Z0-9]*$" },
+      dir: { type: "string", pattern: "^[a-z0-9][a-z0-9-]*$" },
+      statuses: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+      default: { type: "string" },
+      fields: { type: ["array", "null"], items: { type: "string", pattern: "^[a-z_][a-z0-9_]*$", not: { enum: [...RESERVED_FIELDS] } } },
+      sections: { type: "array", items: { type: "string", pattern: "^[^#\\n]*\\S[^#\\n]*$" } },
+    },
+  },
+};
+
 /** canon/config.yaml keys of document types and of where each domain's code lives (C-135). */
 export const documentKeys = {
   types: configKey<readonly DocType[]>({
     key: "types",
     doc: "Document types beyond the built-in ones, and the fields and sections of built-in ones (BR-2050); Config holds the built-in types followed by the declared ones.",
     default: BUILTIN_TYPES,
+    schema: TYPES_SCHEMA,
     read: readTypes,
     listed: 80,
     checked: 180,
@@ -51,6 +77,7 @@ export const documentKeys = {
     key: "code_root",
     doc: "The directory whose subdirectories mirror the rule domains one to one (`<codeRoot>/<domain path>`, D-15); unset means top-level domain READMEs list their code directories instead.",
     default: undefined,
+    schema: { type: ["string", "null"], pattern: REL_DIR.source },
     read: (v) => {
       if (v !== null && (typeof v !== "string" || !REL_DIR.test(v))) return err("invalid", "`code_root` must be a directory relative to the repository root, such as src");
       return ok(typeof v === "string" ? v : undefined);
@@ -63,6 +90,8 @@ export const documentKeys = {
     key: "shared",
     doc: "Directories (or files) under code_root that belong to no business domain, such as a shared kernel; empty without code_root (BR-2116).",
     default: [],
+    schema: { type: ["array", "null"], items: relPath, default: [] },
+        needs: ["code_root"],
     read: (v, ctx) => {
       if (v === null) return ok([]);
       const root = ctx.raw["code_root"];

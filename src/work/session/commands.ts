@@ -1,4 +1,5 @@
 import { defineCommand } from "citty";
+import { writeSchemaFile } from "../../config/reference/reference.ts";
 import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
 import { takesMany } from "../../cli/strict.ts";
 import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
@@ -129,6 +130,9 @@ function briefState(ws: Workspace) {
       say(`Open changes in the owner's order (canon change list); with no task, take the first unclaimed one: ${order.join(", ")}`);
     }
   }
+  // The schema editors read for canon/config.yaml, from this canon; a failure is said, never fatal (BR-2176).
+  const schema = writeSchemaFile(ws.root);
+  if (!schema.ok) say(schema.error.message);
   const background = backgroundNotice(settleBackgroundHooks(ws.db, ws.actor));
   if (background) say(background);
   noticeUpdates(ws, say);

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { err, ok } from "../../kernel/result.ts";
-import { configKey, stringValue } from "../../config/key.ts";
+import { configKey, optionalString, stringValue } from "../../config/key.ts";
 
 /** Build output, dependency and cache directories of common toolchains: rebuilt by `setup` or a build, never hand-made. */
 export const DEFAULT_REGENERABLE: readonly string[] = [
@@ -14,6 +14,7 @@ export const sessionKeys = {
     key: "setup",
     doc: 'Shell command run once in a new worktree (e.g. "bun install").',
     default: undefined,
+    schema: optionalString,
     read: stringValue("setup"),
     commands: (v) => (v === undefined ? [] : [v]),
     listed: 50,
@@ -23,6 +24,7 @@ export const sessionKeys = {
     key: "worktrees",
     doc: "Where change worktrees live, relative to the primary checkout; unset means `<primary>.worktrees` (BR-2047).",
     default: undefined,
+    schema: optionalString,
     read: stringValue("worktrees"),
     listed: 120,
     checked: 50,
@@ -31,6 +33,7 @@ export const sessionKeys = {
     key: "regenerable",
     doc: "Names (globs, matched against each path segment) of git-ignored files a worktree can rebuild, such as node_modules; removing a worktree loses nothing by deleting them (BR-2019). Any other ignored file counts as work.",
     default: DEFAULT_REGENERABLE,
+    schema: { type: "array", items: { type: "string", pattern: "^[^/]*[^\\s/][^/]*$" }, default: DEFAULT_REGENERABLE },
     read: (v) =>
       !Array.isArray(v) || v.some((t) => typeof t !== "string" || t.trim() === "" || t.includes("/"))
         ? err("invalid", "`regenerable` must be a list of file or directory names (globs allowed, no `/`)")

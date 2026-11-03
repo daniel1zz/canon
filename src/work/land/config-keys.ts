@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { configKey, MINUTE, positiveValue, REL_DIR, stringValue } from "../../config/key.ts";
+import { configKey, MINUTE, optionalString, positiveNumber, positiveValue, REL_DIR, relPath, stringValue } from "../../config/key.ts";
 
 /** canon/config.yaml keys of landing (C-135). */
 export const landKeys = {
@@ -7,6 +7,7 @@ export const landKeys = {
     key: "main",
     doc: "The branch changes land on.",
     default: "main",
+    schema: { ...optionalString, default: "main" },
     read: (v) => {
       const s = stringValue("main")(v);
       return s.ok ? ok(s.value ?? "main") : s;
@@ -18,6 +19,7 @@ export const landKeys = {
     key: "floor",
     doc: "Shell command that must exit 0 on the exact tree that becomes main (required to land).",
     default: undefined,
+    schema: optionalString,
     read: stringValue("floor"),
     commands: (v) => (v === undefined ? [] : [v]),
     listed: 20,
@@ -27,6 +29,7 @@ export const landKeys = {
     key: "lander_stale_minutes",
     doc: "A lander silent this long is skipped (BR-2044).",
     default: 10 * MINUTE,
+    schema: positiveNumber(10),
     read: positiveValue("lander_stale_minutes", MINUTE),
     listed: 100,
     checked: 140,
@@ -35,6 +38,7 @@ export const landKeys = {
     key: "land_timeout_minutes",
     doc: "Default wait in the landing queue before giving up (BR-2048).",
     default: 60 * MINUTE,
+    schema: positiveNumber(60),
     read: positiveValue("land_timeout_minutes", MINUTE),
     listed: 110,
     checked: 150,
@@ -43,6 +47,7 @@ export const landKeys = {
     key: "floor_skip_paths",
     doc: "Repo-relative directories or files the project declares no test reads: a landing that changes only paths under them skips the floor, since its code tree is main's already-tested one (BR-2164). Empty: never skip.",
     default: [],
+    schema: { type: ["array", "null"], items: { allOf: [relPath, { not: { enum: ["canon", "canon/config.yaml", "canon/templates"] } }, { not: { type: "string", pattern: "^canon/templates/" } }] }, default: [] },
     read: readFloorSkipPaths,
     listed: 180,
     checked: 100,
@@ -51,6 +56,7 @@ export const landKeys = {
     key: "land_batch_max",
     doc: "At most this many landings are tested together under one floor run (D-26, BR-2172); 1 means never batch.",
     default: 1,
+    schema: { type: "integer", minimum: 1, default: 1 },
     read: (v) => (typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`land_batch_max` must be a whole number of at least 1")),
     listed: 190,
     checked: 160,

@@ -1,4 +1,5 @@
 import { defineCommand } from "citty";
+import { MODELINE } from "../../config/reference/reference.ts";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { entry, EXIT, must, say, workspace, type DomainCommands } from "../command.ts";
@@ -18,7 +19,7 @@ const init = defineCommand({
     reportInstall(must(installAssets(root, must(skillsSource()), false)));
     const files: Record<string, string> = {
       "canon/product.md": "---\ntitle: 产品\n---\n# 产品\n\n## 目的\n\n## 使用者\n\n## 承诺\n\n## 不做的事\n",
-      "canon/config.yaml": `main: main\nfloor: ${JSON.stringify(args.floor ?? "")}\n`,
+      "canon/config.yaml": `${MODELINE}\nmain: main\nfloor: ${JSON.stringify(args.floor ?? "")}\n`,
     };
     for (const [p, text] of Object.entries(files)) {
       const full = join(root, p);

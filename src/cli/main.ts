@@ -4,6 +4,7 @@ import { assemble, EXIT } from "./command.ts";
 import { resolve, unknownArgument } from "./strict.ts";
 import { installCommands } from "./install/commands.ts";
 import { configCommands } from "../config/commands.ts";
+import { referenceCommands } from "../config/reference/commands.ts";
 import { checkCommands } from "../knowledge/check/commands.ts";
 import { documentCommands } from "../knowledge/documents/commands.ts";
 import { queryCommands } from "../knowledge/query/commands.ts";
@@ -25,6 +26,7 @@ const main = defineCommand({
   subCommands: assemble([
     installCommands,
     configCommands,
+    referenceCommands,
     checkCommands,
     documentCommands,
     queryCommands,

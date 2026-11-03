@@ -10,6 +10,7 @@ export const verifyKeys = {
     key: "test_command",
     doc: "Shell command `canon work test` runs once per selected test file, `{file}` replaced by its path (BR-2160, D-23).",
     default: undefined,
+    schema: { anyOf: [{ type: "null" }, { type: "string", maxLength: 0 }, { type: "string", pattern: "\\{file\\}" }] },
     read: (v) => {
       const s = stringValue("test_command")(v);
       if (s.ok && s.value !== undefined && !s.value.includes(FILE_PLACEHOLDER)) {

@@ -6,6 +6,7 @@ import { dropHandoff } from "../session/handoffs.ts";
 import { holdClaim, unholdClaim } from "../claims/claims.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git, gitEnv, ignoredPaths, unregenerable } from "../../kernel/git.ts";
+import { GENERATED_DIR } from "../../config/reference/reference.ts";
 import { processesIn } from "../../kernel/process.ts";
 import { describeOccupants, worktreesDir } from "../session/session.ts";
 
@@ -67,7 +68,8 @@ function losses(ws: Workspace, t: Target): Result<{ lines: string[]; ignored: st
     // `git status` hides git-ignored files; the ones a build cannot regenerate are work too (BR-2064).
     const all = ignoredPaths(t.worktree);
     if (!all.ok) return all;
-    ignored = unregenerable(all.value, ws.config.regenerable);
+    // reason: canon's own generated files are always regenerable, whatever the project lists (BR-2176)
+    ignored = unregenerable(all.value, [...ws.config.regenerable, GENERATED_DIR]);
     for (const p of ignored) lines.push(`ignored: ${p}`);
   }
   return ok({ lines, ignored });

@@ -1,3 +1,4 @@
+# yaml-language-server: $schema=../.canon/config.schema.json
 main: main
 # 必须在即将成为 main 的代码树上执行成功
 floor: "bun install --frozen-lockfile && bunx tsc --noEmit -p tsconfig.json && bun test"

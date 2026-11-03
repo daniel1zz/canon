@@ -14,6 +14,7 @@ import { readCorpus } from "../../knowledge/documents/read.ts";
 import { createDoc } from "../../knowledge/documents/write.ts";
 import { worktreesDirOf } from "./config-keys.ts";
 import { git, ignoredPaths, isClean, listWorktrees, unregenerable, type WorktreeInfo } from "../../kernel/git.ts";
+import { GENERATED_DIR } from "../../config/reference/reference.ts";
 import { processesIn, type Occupant } from "../../kernel/process.ts";
 
 /**
@@ -305,7 +306,8 @@ function keepReason(ws: Workspace, w: WorktreeInfo, held: ReadonlySet<string>): 
   // `git status` and `git worktree remove` both ignore git-ignored files, so a `.env` would vanish silently.
   const ignored = ignoredPaths(w.path);
   if (!ignored.ok) return `cannot list ignored files (${ignored.error.message})`;
-  const work = unregenerable(ignored.value, ws.config.regenerable);
+  // reason: canon's own generated files are always regenerable, whatever the project lists (BR-2176)
+  const work = unregenerable(ignored.value, [...ws.config.regenerable, GENERATED_DIR]);
   if (work.length > 0) return `ignored files that cannot be regenerated: ${work.join(", ")} (if they can be, add their names to \`regenerable\` in canon/config.yaml)`;
   return undefined;
 }

@@ -8,6 +8,7 @@ export const statsKeys = {
     key: "check_reviews",
     doc: "Check name → the date (YYYY-MM-DD) it is due for review (BR-2069).",
     default: {},
+    schema: { type: ["object", "null"], propertyNames: { enum: CHECKS }, additionalProperties: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, default: {} },
     read: readCheckReviews,
     listed: 130,
     checked: 190,
