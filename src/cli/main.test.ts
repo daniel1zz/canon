@@ -346,7 +346,7 @@ describe("session continuity", () => {
     canon(root, "init", "--floor", "true");
     const idle = canon(root, "brief").out;
     expect(idle.trim()).toBe(WORKFLOW_GUIDE);
-    for (const cmd of ["canon context", "canon work start", "canon work land --finish", "canon work stop --next", "--relayed", "canon work drop"]) expect(idle).toContain(cmd);
+    for (const cmd of ["canon context", "canon work start", "canon work land --finish", "canon work stop --next", "--relayed", "canon work drop", "canon work after-land --wait"]) expect(idle).toContain(cmd);
     committed(root);
     const wt = canon(root, "work", "start", "--title", "Refunds").out.match(/cd (.+)/)![1]!.trim();
     const b = canon(wt, "brief").out;

@@ -110,32 +110,39 @@ export interface BackgroundBatch {
   /** False when the log file is gone, so the exit codes cannot be known. */
   readonly logFound: boolean;
   readonly failed: readonly { readonly command: string; readonly exit: number }[];
+  /** Every command of the batch in order, with its exit code, or null while it has not finished (BR-2166). */
+  readonly commands: readonly { readonly index: number; readonly command: string; readonly exit: number | null }[];
+  /** The log's lines that start with `code-review:`, as written (BR-2166). */
+  readonly review: readonly string[];
 }
 
 const EXIT_LINE = /^\[hook (\d+)\/\d+ exited (\d+)\]$/gm;
+const REVIEW_LINE = /^code-review:.*$/gm;
 
 /**
  * Reads the exit codes of the latest background batch from its log and records each finished command once as a
  * `hook.exit` event (BR-2137). Returns the batch, or undefined when no background run recorded a log path.
+ * With `change`, the batch is that change's latest landing instead of the latest of all (BR-2166).
  */
-export function settleBackgroundHooks(db: CoordDb, actor: string): BackgroundBatch | undefined {
+export function settleBackgroundHooks(db: CoordDb, actor: string, change?: string): BackgroundBatch | undefined {
   // reason: a landing releases its queue turn before it records its batch, so a later landing's rows can be written
   // first; the queue entry, not the event id, says which landing came last (BR-2138, issue #28)
   const latest = db.db
-    .query<{ detail: string }, []>(
-      "SELECT detail FROM events WHERE kind = 'hook.run' AND json_extract(detail, '$.log') IS NOT NULL ORDER BY json_extract(detail, '$.batch') DESC, id DESC LIMIT 1",
+    .query<{ detail: string }, [string | null]>(
+      "SELECT detail FROM events WHERE kind = 'hook.run' AND json_extract(detail, '$.log') IS NOT NULL AND (?1 IS NULL OR subject = ?1) ORDER BY json_extract(detail, '$.batch') DESC, id DESC LIMIT 1",
     )
-    .get();
+    .get(change ?? null);
   if (!latest) return undefined;
   const log = (JSON.parse(latest.detail) as { log: string }).log;
   const runs = db.db
     .query<{ subject: string | null; detail: string }, [string]>("SELECT subject, detail FROM events WHERE kind = 'hook.run' AND json_extract(detail, '$.log') = ? ORDER BY id")
     .all(log)
     .map((e): BackgroundRun => ({ subject: e.subject, ...(JSON.parse(e.detail) as Omit<BackgroundRun, "subject">) }));
-  const change = runs[0]?.subject ?? null;
-  if (!existsSync(log)) return { change, log, logFound: false, failed: [] };
+  const subject = runs[0]?.subject ?? null;
+  if (!existsSync(log)) return { change: subject, log, logFound: false, failed: [], commands: runs.map((r) => ({ index: r.index, command: r.command, exit: null })), review: [] };
+  const text = readFileSync(log, "utf8");
   const exits = new Map<number, number>();
-  for (const m of readFileSync(log, "utf8").matchAll(EXIT_LINE)) exits.set(Number(m[1]), Number(m[2]));
+  for (const m of text.matchAll(EXIT_LINE)) exits.set(Number(m[1]), Number(m[2]));
   // reason: several sessions may run canon brief at once; check-then-insert inside one write transaction records each command once (BR-2137)
   db.db
     .transaction(() => {
@@ -156,7 +163,8 @@ export function settleBackgroundHooks(db: CoordDb, actor: string): BackgroundBat
     const exit = exits.get(r.index);
     return exit !== undefined && exit !== 0 ? [{ command: r.command, exit }] : [];
   });
-  return { change, log, logFound: true, failed };
+  const commands = runs.map((r) => ({ index: r.index, command: r.command, exit: exits.get(r.index) ?? null }));
+  return { change: subject, log, logFound: true, failed, commands, review: [...text.matchAll(REVIEW_LINE)].map((m) => m[0]) };
 }
 
 /** The `canon brief` line about the latest background batch (BR-2138), or undefined when there is nothing to say. */
@@ -167,6 +175,46 @@ export function backgroundNotice(batch: BackgroundBatch | undefined): string | u
   if (batch.failed.length === 0) return undefined;
   const what = batch.failed.map((f) => `\`${f.command}\` exited ${f.exit}`).join(", ");
   return `after_land${after} failed in the background: ${what} (log: ${batch.log})`;
+}
+
+/**
+ * Where a background batch stands (BR-2166): `failed` as soon as one finished command exited non-zero, `ok` when
+ * every command exited 0, `running` while some have not finished, `unknown` when the log is gone.
+ */
+export type BatchState = "ok" | "failed" | "running" | "unknown";
+
+export function batchState(b: BackgroundBatch): BatchState {
+  if (!b.logFound) return "unknown";
+  if (b.failed.length > 0) return "failed";
+  return b.commands.every((c) => c.exit !== null) ? "ok" : "running";
+}
+
+/** How long `canon work after-land --wait` waits by default (BR-2167). */
+export const AFTER_LAND_WAIT_MS = 20 * 60_000;
+
+/**
+ * Settles the batch until every command has finished, the log is gone or `timeoutMs` passes (BR-2167).
+ * Returns the batch as last read, or undefined when there is none.
+ */
+export async function waitBackgroundHooks(db: CoordDb, actor: string, change: string | undefined, timeoutMs: number, pollMs = 1000): Promise<BackgroundBatch | undefined> {
+  const deadline = Date.now() + timeoutMs;
+  for (;;) {
+    const b = settleBackgroundHooks(db, actor, change);
+    if (!b) return undefined;
+    if (!b.logFound || b.commands.every((c) => c.exit !== null) || Date.now() >= deadline) return b;
+    await Bun.sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
+  }
+}
+
+/** The `canon work after-land` report: one line per command, then the code-review lines (BR-2166). */
+export function renderAfterLand(b: BackgroundBatch): string {
+  const head = `after_land${b.change ? ` after ${b.change}` : ""} (log: ${b.log})`;
+  if (!b.logFound) return `${head}: the log is missing, so whether the background commands succeeded is unknown`;
+  const n = b.commands.length;
+  const lines = b.commands.map((c) => `  [${c.index}/${n}] ${c.command}: ${c.exit === null ? "still running" : `exited ${c.exit}`}`);
+  const st = batchState(b);
+  const verdict = st === "ok" ? "all finished, all exited 0" : st === "running" ? "not finished yet" : b.commands.some((c) => c.exit === null) ? "failed; others still running" : "finished; some failed";
+  return [`${head}: ${verdict}`, ...lines, ...b.review].join("\n");
 }
 
 export const logFile = (db: CoordDb, name: string) => join(dirname(db.db.filename), "logs", name);
