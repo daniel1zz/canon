@@ -142,6 +142,32 @@ describe("search events", () => {
   });
 });
 
+describe("event windows", () => {
+  test("BR-2154 BR-2155 BR-2156: --since must be an event id; stats --json gains since, checks and window only with it; events prints rows, newest last", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    canon(root, "search", "anything");
+    const all = JSON.parse(canon(root, "events", "--json").out) as { id: number; kind: string; detail: unknown }[];
+    expect(all.length).toBeGreaterThan(0);
+    const last = all.at(-1)!;
+    expect(last.kind).toBe("search");
+    expect(typeof last.detail).toBe("object");
+    expect(canon(root, "events", "--since", String(last.id)).out.trim()).toBe("(no events)");
+    expect(canon(root, "events", "--since", String(last.id - 1), "--kind", "search").out.trim()).toMatch(new RegExp(`^#${last.id} .* search - \\{`));
+    for (const bad of ["x", "1.5"]) {
+      const r = canon(root, "events", "--since", bad);
+      expect([r.code, r.err.includes("--since must be an event id")]).toEqual([2, true]);
+      expect(canon(root, "stats", "--since", bad).code).toBe(2);
+    }
+    expect(canon(root, "events", "--since", "-1").code).toBe(2);
+    expect(Array.isArray(JSON.parse(canon(root, "stats", "--json").out))).toBe(true);
+    const windowed = JSON.parse(canon(root, "stats", "--json", "--since", String(last.id)).out) as { since: number; checks: unknown[]; window: { events: number } };
+    expect([windowed.since, Array.isArray(windowed.checks), windowed.window.events]).toEqual([last.id, true, 0]);
+    expect(canon(root, "stats", "--since", "0").out).toContain("window: events after #0");
+    expect(canon(root, "stats").out).not.toContain("window:");
+  });
+});
+
 describe("undeclared arguments", () => {
   test("BR-2097 BR-2022: an option or positional the command does not declare exits 2, names it and lists the valid options", () => {
     const root = repo();

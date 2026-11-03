@@ -24,6 +24,7 @@ import { WORKFLOW_GUIDE } from "./guide.ts";
 import { resolve, takesMany, unknownArgument } from "./strict.ts";
 import { assetsStatus, installAssets, updateNotice, updateProject } from "./install/update.ts";
 import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "../work/stats/stats.ts";
+import { eventsSince, parseSince, renderEvents, renderWindow, windowSummary } from "../work/stats/window.ts";
 import { drop } from "../work/drop/drop.ts";
 import { clean, mainCorpus, start, stop } from "../work/session/session.ts";
 import { land } from "../work/land/land.ts";
@@ -571,25 +572,54 @@ function briefState(ws: Workspace) {
   noticeUpdates(ws, say);
 }
 
+/** `--since`, or a usage error naming what was given (BR-2154, BR-2156). */
+function sinceArg(v: unknown): number {
+  const n = parseSince(v);
+  if (n === undefined) fail({ code: "invalid", message: `--since must be an event id (a whole number, 0 or more), got ${JSON.stringify(v)}` });
+  return n;
+}
+
 const stats = defineCommand({
-  meta: { description: "Check precision: runs, refusals and what happened after each refusal; checks due for review" },
-  args: { json: { type: "boolean" } },
+  meta: { description: "Check precision: runs, refusals and what happened after each refusal; checks due for review. --since <event id> counts only later events and adds a concurrency summary of them" },
+  args: { json: { type: "boolean" }, since: { type: "string", description: "Only events after this event id; adds the window summary (landings, queue waits, conflicts, who took part)" } },
   run({ args }) {
     const ws = workspace();
+    const since = args.since === undefined ? undefined : sinceArg(args.since);
     const today = new Date().toLocaleDateString("sv"); // YYYY-MM-DD, local time
-    const s = computeStats(ws.db, ws.config.checkReviews, today);
-    if (args.json) return json(s);
+    const s = computeStats(ws.db, ws.config.checkReviews, today, since ?? 0);
+    const window = since === undefined ? undefined : windowSummary(ws.db, since);
+    if (args.json) return json(window ? { since, checks: s, window } : s);
+    if (window) say(`${renderWindow(window)}\n`);
     say(renderStats(s));
     const share = sharedShare(ws.root, ws.config);
     if (share) say(`\n${renderSharedShare(share)}`);
-    const searches = searchStats(ws.db);
+    const searches = searchStats(ws.db, since ?? 0);
     if (searches.searches > 0) say(`\n${renderSearchStats(searches)}`);
+  },
+});
+
+const events = defineCommand({
+  meta: { description: "List raw coordination events (id, time, actor, worktree, kind, subject, detail), newest last" },
+  args: {
+    since: { type: "string", description: "Only events after this event id (default 0: all)" },
+    kind: { type: "string", description: "Only this event kind, e.g. land.ok; repeat for several" },
+    subject: { type: "string", description: "Only events about this subject, e.g. C-12" },
+    json: { type: "boolean" },
+  },
+  run({ args }) {
+    const ws = workspace();
+    const since = args.since === undefined ? 0 : sinceArg(args.since);
+    const raw = (args as Record<string, unknown>)["kind"];
+    const kinds = raw === undefined ? [] : (Array.isArray(raw) ? raw : [raw]).map(String);
+    const rows = eventsSince(ws.db, { since, kinds, ...(typeof args.subject === "string" ? { subject: args.subject } : {}) });
+    if (args.json) return json(rows);
+    say(renderEvents(rows));
   },
 });
 
 const main = defineCommand({
   meta: { name: "canon", description: "Shared memory and coordination for a project built by many concurrent AI sessions" },
-  subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, doc, work, human, stats, install, update },
+  subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, doc, work, human, stats, events, install, update },
 });
 
 /**
