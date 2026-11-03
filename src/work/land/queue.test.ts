@@ -41,4 +41,18 @@ describe("landing queue", () => {
     expect(tryTurn(d, b, 30 * 60_000)).toEqual({ mine: false, ahead: 1 });
     expect(tryTurn(d, b, 10 * 60_000)).toEqual({ mine: true, ahead: 0 });
   });
+
+  test("BR-2144: an entry a later lander marked abandoned never takes a turn again, even once the queue is empty", () => {
+    const d = db();
+    const a = enqueue(d, "/wt/a", "C-1", "x");
+    const b = enqueue(d, "/wt/b", "C-2", "x");
+    d.db.query("UPDATE queue SET heartbeat = ? WHERE id = ?").run(new Date(Date.now() - QUEUE_STALE_MS - 1000).toISOString(), a);
+    expect(tryTurn(d, b)).toEqual({ mine: true, ahead: 0 });
+    const woke = tryTurn(d, a);
+    expect(woke.mine).toBe(false);
+    expect(woke.lost).toBe("abandoned: no heartbeat");
+    finishEntry(d, b, "landed", "sha");
+    expect(tryTurn(d, a).mine).toBe(false);
+    expect(d.db.query<{ state: string }, [number]>("SELECT state FROM queue WHERE id = ?").get(a)?.state).toBe("abandoned");
+  });
 });

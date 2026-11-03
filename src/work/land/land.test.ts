@@ -538,6 +538,53 @@ describe("boundaries record and clean up", () => {
     expect(tryTurn(other.db, b, 1200).mine).toBe(true);
   });
 
+  test("BR-2144: a lander whose waiting entry was marked abandoned is refused when it wakes, and nothing moves", async () => {
+    const root = project();
+    const s = startNew(root, "Skipped");
+    writeFileSync(join(s.worktree, "s.txt"), "s\n");
+    sh(s.worktree, "add", "s.txt");
+    sh(s.worktree, "commit", "-qm", "s");
+    const head = sh(s.worktree, "rev-parse", "HEAD");
+    const other = ws(root, "agent:b");
+    const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
+    expect(tryTurn(other.db, ahead).mine).toBe(true);
+    const before = sh(root, "rev-parse", "main");
+    const landing = land(ws(s.worktree), FAST, quiet);
+    let mine: number | undefined;
+    for (let i = 0; i < 50 && mine === undefined; i++) {
+      await Bun.sleep(100);
+      mine = other.db.db.query<{ id: number }, [string]>("SELECT id FROM queue WHERE worktree = ?").get(s.worktree)?.id;
+    }
+    // A later lander saw this entry silent past the stale time and skipped it; then the one ahead finishes.
+    other.db.db.query("UPDATE queue SET state = 'abandoned', result = 'no heartbeat' WHERE id = ?").run(mine!);
+    finishEntry(other.db, ahead, "landed", "x");
+    const out = await landing;
+    expect(out.kind === "refused" && out.reason).toBe("lost-turn");
+    expect(out.kind === "refused" && out.message).toContain("main was not moved");
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(head);
+    expect(other.db.db.query<{ state: string }, [number]>("SELECT state FROM queue WHERE id = ?").get(mine!)?.state).toBe("abandoned");
+    expect(events(root, "land.refuse").map((e) => JSON.parse(e.detail).reason)).toEqual(["lost-turn"]);
+  });
+
+  test("BR-2144: a lander marked abandoned during its turn does not move main", async () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), "floor: \"true\"\ntests: []\nhooks:\n  before_land: sleep 1.5\n");
+    sh(root, "commit", "-qam", "slow before_land");
+    const s = startNew(root, "Skipped mid-turn");
+    writeFileSync(join(s.worktree, "m.txt"), "m\n");
+    sh(s.worktree, "add", "m.txt");
+    sh(s.worktree, "commit", "-qm", "m");
+    const other = ws(root, "agent:b");
+    const before = sh(root, "rev-parse", "main");
+    const landing = land(ws(s.worktree), FAST, quiet);
+    await Bun.sleep(700); // inside before_land
+    other.db.db.query("UPDATE queue SET state = 'abandoned', result = 'no heartbeat' WHERE worktree = ?").run(s.worktree);
+    const out = await landing;
+    expect(out.kind === "refused" && out.reason).toBe("lost-turn");
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+  });
+
   test("BR-2031: landing from main is refused", async () => {
     const root = project();
     const out = await land(ws(root), FAST, quiet);

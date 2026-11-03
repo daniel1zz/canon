@@ -6,7 +6,7 @@ import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../..
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { bindToLander, keepClaim, releaseOwnClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
 import { dropHandoff } from "../session/handoffs.ts";
-import { enqueue, failIfActive, finishEntry, heartbeat, tryTurn } from "./queue.ts";
+import { enqueue, failIfActive, finishEntry, heartbeat, holdsTurn, tryTurn } from "./queue.ts";
 import { selfProcess, sessionProcess } from "../claims/liveness.ts";
 import { logFile, runHooks, runHooksInBackground } from "../../config/hooks.ts";
 import { noticeOverlaps } from "../session/overlap.ts";
@@ -35,7 +35,7 @@ export interface LandOptions {
 
 export type LandOutcome =
   | { readonly kind: "landed"; readonly sha: string; readonly change: string | null; readonly finished: boolean }
-  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "no-floor" | "no-claim" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
+  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "lost-turn" | "no-floor" | "no-claim" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
   | { readonly kind: "timeout"; readonly ahead: number };
 
 /**
@@ -143,6 +143,8 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
   let lastAhead = -1;
   for (;;) {
     const turn = tryTurn(ws.db, entry, ws.config.landerStaleMs);
+    // A later lander skipped this entry while it was silent; it may already have moved main (BR-2144, issue #29).
+    if (turn.lost !== undefined) return abandoned(ws, subject, wt, turn.lost);
     if (turn.mine) {
       // How long this lander waited in the queue, separate from how long its floor takes (BR-2122).
       ws.db.event(ws.actor, "land.turn", subject, { entry, waited_ms: Date.now() - queued });
@@ -166,6 +168,16 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
   } finally {
     clearInterval(beat);
   }
+}
+
+/**
+ * The refusal of an entry that another lander marked abandoned: nothing moves, and the entry keeps the state
+ * that lander gave it (BR-2144).
+ */
+function abandoned(ws: Workspace, subject: string | null, wt: string, state: string): LandOutcome {
+  const message = `this landing's queue entry is no longer active (${state}): another lander skipped it after it stopped heart-beating, so ${ws.config.main} was not moved; land again`;
+  ws.db.event(ws.actor, "land.refuse", subject, { reason: "lost-turn", message, diff: ownDiffId(wt, ws.config.main) });
+  return { kind: "refused", reason: "lost-turn", message };
 }
 
 /** Per-kind counts and the files involved, so `canon stats` can tell which checks are precise (BR-2094, P6). */
@@ -299,6 +311,10 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
     for (const e of edits) lines.push(`uncommitted: ${e}`);
     return refuse("moved-during-land", `the worktree changed after the rebase, so what was tested is not what would land; land again:\n${lines.map((l) => `  ${l}`).join("\n")}`);
   }
+  // A lander that was silent past the stale time during its turn may have been skipped meanwhile; it no longer
+  // holds the turn and must not move main next to the one that took it over (BR-2144).
+  const turn = holdsTurn(ws.db, entry);
+  if (!turn.held) return abandoned(ws, subject, wt, turn.state);
   const fingerprint = ownDiffId(wt, main); // before main moves: afterwards the merge base is HEAD itself
   const moved = moveMain(ws, base.value, head.value);
   if (moved !== "moved") return refuse(moved.reason, moved.message);
