@@ -90,6 +90,49 @@ describe("work start", () => {
     expect(claims(db).map((c) => c.actor)).toEqual(["agent:b"]);
   });
 
+  test("BR-2107: a change that exists only on its branch is resumed by id: in its worktree, or in a new one from the branch", () => {
+    const root = project();
+    const s = startNew(root, "Only on branch");
+    writeFileSync(join(s.worktree, "wip.txt"), "wip\n");
+    sh(s.worktree, "add", "wip.txt");
+    sh(s.worktree, "commit", "-qm", "wip");
+    const db = ws(root).db;
+    const expire = () => db.db.query("UPDATE claims SET expires_at = ?").run(new Date(Date.now() - 60_000).toISOString());
+    const cli = (actor: string) => Bun.spawnSync(["bun", join(import.meta.dir, "../cli/main.ts"), "work", "start", s.change], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: actor } });
+
+    const held = cli("agent:b"); // agent:a's claim is live
+    expect(held.exitCode).toBe(5);
+
+    expire(); // agent:a's session ended without a handoff
+    const inPlace = cli("agent:b");
+    expect(inPlace.exitCode).toBe(0);
+    expect(inPlace.stdout.toString()).toContain(`cd ${s.worktree}`);
+    expect(claims(db).map((c) => [c.subject, c.actor, c.holder])).toEqual([[s.change, "agent:b", s.worktree]]);
+
+    expire();
+    sh(root, "worktree", "remove", s.worktree);
+    const fresh = cli("agent:c");
+    expect(fresh.exitCode).toBe(0);
+    expect(readFileSync(join(s.worktree, "wip.txt"), "utf8")).toBe("wip\n");
+    expect(sh(s.worktree, "rev-parse", "--abbrev-ref", "HEAD")).toBe(s.branch);
+  });
+
+  test("BR-2107: an id with neither a change on main nor a change branch is not found; a lookalike branch does not count", () => {
+    const root = project();
+    sh(root, "branch", "change/C-12-other");
+    const r = start(ws(root), { change: "C-1" }, quiet);
+    expect(!r.ok && r.error.code).toBe("not_found");
+  });
+
+  test("BR-2107: two branches for one change are refused as invalid, listing both", () => {
+    const root = project();
+    sh(root, "branch", "change/C-1-a");
+    sh(root, "branch", "change/C-1-b");
+    const r = start(ws(root), { change: "C-1" }, quiet);
+    expect(!r.ok && r.error.code).toBe("invalid");
+    expect(!r.ok && r.error.message).toContain("change/C-1-a, change/C-1-b");
+  });
+
   test("BR-2011: work commands in the holding worktree renew the lease, so a long session is never taken over", async () => {
     const root = project();
     const s = startNew(root, "Long");

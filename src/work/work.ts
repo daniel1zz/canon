@@ -41,7 +41,11 @@ export interface Started {
   readonly created: boolean;
 }
 
-/** Starts work on an existing change (on main) or on a new one (`title`), in its own worktree. */
+/**
+ * Starts work on an existing change or on a new one (`title`), in its own worktree. An existing change is looked
+ * up on main, and else on its own `change/C-n` branch: a change made with --title lives only there until it
+ * lands, and a session that stopped without a handoff must still be able to resume it (BR-2107).
+ */
 export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[] }, say: Say): Result<Started> {
   const main = ws.config.main;
   let changeId: string;
@@ -49,12 +53,20 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   let fresh = false;
   const onMain = mainCorpus(ws);
   if (!onMain.ok) return onMain;
+  let existing: { branch: string; worktree: string | undefined } | undefined;
   if ("change" in target) {
-    const corpus = onMain.value;
-    const doc = findDoc(corpus, target.change);
+    let doc = findDoc(onMain.value, target.change);
+    if (!doc || doc.kind !== "change") {
+      const off = changeOffMain(ws, target.change.toUpperCase());
+      if (!off.ok) return off;
+      if (off.value) {
+        doc = off.value.doc;
+        existing = { branch: off.value.branch, worktree: off.value.worktree };
+      }
+    }
     if (!doc || doc.kind !== "change") {
       ws.db.event(ws.actor, "start.refuse", target.change, { reason: "not-found" });
-      return err("not_found", `${target.change} is not a change on ${main}; start a new one with --title`);
+      return err("not_found", `${target.change} is not a change on ${main} or on a change/${target.change} branch; start a new one with --title`);
     }
     if (doc.status !== "open") {
       ws.db.event(ws.actor, "start.refuse", doc.id, { reason: "not-open", status: doc.status });
@@ -68,8 +80,8 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     slug = slugify(target.title);
     fresh = true;
   }
-  const branch = (slug ? `change/${changeId}-${slug}` : `change/${changeId}`).slice(0, 80);
-  const path = join(worktreesDir(ws), changeId);
+  const branch = existing?.branch ?? (slug ? `change/${changeId}-${slug}` : `change/${changeId}`).slice(0, 80);
+  const path = existing?.worktree ?? join(worktreesDir(ws), changeId);
 
   const claim = takeClaim(ws.db, changeId, path, ws.actor, ws.config.claimLeaseMs, sessionProcess());
   if (!claim.ok) return claim;
@@ -120,7 +132,33 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
  * from git, so a primary checkout on another branch is never mistaken for main.
  */
 export function mainCorpus(ws: Workspace): Result<Corpus> {
-  const main = ws.config.main;
+  return corpusOf(ws, ws.config.main);
+}
+
+/**
+ * A change that is not on main but on its own branch, `change/C-n` or `change/C-n-<slug>`: read from that
+ * branch's worktree when it has one, else from the branch itself. Undefined when no such branch exists; more
+ * than one is refused, since canon cannot tell which holds the work.
+ */
+function changeOffMain(ws: Workspace, id: string): Result<{ doc: Change; branch: string; worktree: string | undefined } | undefined> {
+  const refs = git(ws.primary, "for-each-ref", "--format=%(refname:short)", "refs/heads/change/");
+  if (!refs.ok) return refs;
+  const branches = refs.value.split("\n").filter((b) => b === `change/${id}` || b.startsWith(`change/${id}-`));
+  if (branches.length === 0) return ok(undefined);
+  if (branches.length > 1) return err("invalid", `${id} has more than one branch (${branches.join(", ")}); remove the stray ones with \`canon work drop\` first`);
+  const branch = branches[0]!;
+  const corpus = corpusOf(ws, branch);
+  if (!corpus.ok) return corpus;
+  const doc = findDoc(corpus.value, id);
+  if (!doc || doc.kind !== "change") return ok(undefined);
+  const wts = listWorktrees(ws.primary);
+  if (!wts.ok) return wts;
+  return ok({ doc, branch, worktree: wts.value.find((w) => w.branch === branch)?.path });
+}
+
+/** The corpus as committed on a branch, or as it stands in the worktree that has the branch checked out. */
+function corpusOf(ws: Workspace, ref: string): Result<Corpus> {
+  const main = ref;
   const wts = listWorktrees(ws.primary);
   if (!wts.ok) return wts;
   const holder = wts.value.find((w) => w.branch === main);
@@ -129,7 +167,7 @@ export function mainCorpus(ws: Workspace): Result<Corpus> {
   try {
     const hasCorpus = git(ws.primary, "cat-file", "-e", `${main}:canon`).ok;
     if (hasCorpus) {
-      const tar = Bun.spawnSync(["sh", "-c", `git archive ${main} canon | tar -x -C ${JSON.stringify(dir)}`], { cwd: ws.primary, stderr: "pipe" });
+      const tar = Bun.spawnSync(["sh", "-c", `git archive ${JSON.stringify(main)} canon | tar -x -C ${JSON.stringify(dir)}`], { cwd: ws.primary, stderr: "pipe" });
       if (tar.exitCode !== 0) return err("io", `cannot read canon/ from ${main}: ${tar.stderr.toString().trim()}`);
     }
     return ok(readCorpus(dir, ws.config.types).corpus);
