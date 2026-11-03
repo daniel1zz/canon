@@ -3,6 +3,7 @@ import { join, relative } from "node:path";
 import { stripCode, type Corpus, type Rule } from "../knowledge/model.ts";
 import type { FileProblem } from "../knowledge/read.ts";
 import { idsIn as idsOf } from "../knowledge/types.ts";
+import { testTitles } from "./test-titles.ts";
 import { EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, RULE_SECTION, section } from "../knowledge/templates.ts";
 
 /**
@@ -65,20 +66,25 @@ export function check(input: CheckInput): Finding[] {
   for (const d of input.corpus.docs) if (d.kind === "rule") rules.set(d.id, d);
   const tested = new Set<string>();
   const testFiles = input.testFiles ?? findTestFiles(input.root);
+  const rulePrefix = `${input.corpus.types.find((t) => t.name === "rule")!.prefix}-`;
   for (const file of testFiles) {
     const text = readFileSync(join(input.root, file), "utf8");
-    const rulePrefix = `${input.corpus.types.find((t) => t.name === "rule")!.prefix}-`;
-    for (const ref of idsIn(text)) {
-      if (!ref.startsWith(rulePrefix)) continue;
-      const rule = rules.get(ref);
-      if (!rule) findings.push({ path: file, rule: "ref-dangling", message: `test names ${ref}, which does not exist` });
-      else if (rule.status === "retired") findings.push({ path: file, rule: "test-retired-rule", message: `test still names retired rule ${ref}` });
-      else tested.add(ref);
+    // reason: in JS/TS files only test titles name rules, and only titles that run make a rule tested (BR-2005,
+    // D-12); other languages have no title parser, so their whole text still counts.
+    const titles = JS_TS.test(file) ? testTitles(text) : [{ title: text, runs: true }];
+    for (const { title, runs } of titles) {
+      for (const ref of idsIn(title)) {
+        if (!ref.startsWith(rulePrefix)) continue;
+        const rule = rules.get(ref);
+        if (!rule) findings.push({ path: file, rule: "ref-dangling", message: `test names ${ref}, which does not exist` });
+        else if (rule.status === "retired") findings.push({ path: file, rule: "test-retired-rule", message: `test still names retired rule ${ref}` });
+        else if (runs) tested.add(ref);
+      }
     }
   }
   for (const rule of rules.values()) {
     if (rule.status === "active" && rule.untested === undefined && !tested.has(rule.id)) {
-      findings.push({ path: rule.path, rule: "rule-untested", message: `${rule.id} has no test naming it and no \`untested:\` reason` });
+      findings.push({ path: rule.path, rule: "rule-untested", message: `${rule.id} has no running test whose title names it and no \`untested:\` reason` });
     }
   }
   findings.push(...structureFindings(input.corpus));
@@ -119,6 +125,8 @@ function structureFindings(corpus: Corpus): Finding[] {
   }
   return out;
 }
+
+const JS_TS = /\.[cm]?[jt]sx?$/;
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "canon", "dist", ".cache"]);
 

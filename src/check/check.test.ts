@@ -6,7 +6,7 @@ import { CoordDb } from "../coord/db.ts";
 import { readCorpus } from "../knowledge/read.ts";
 import { check } from "./check.ts";
 
-// Ids are assembled at runtime so this file does not itself name rules when canon check scans the repo.
+// Fixture ids are assembled at runtime. Since only test titles name rules (BR-2005), ids in fixture strings would not count anyway.
 const br = (n: number) => ["BR", n].join("-");
 const d = (n: number) => ["D", n].join("-");
 
@@ -57,6 +57,52 @@ describe("canon check", () => {
         "test-retired-rule src/billing/a.test.ts",
       ].sort(),
     );
+  });
+
+  test("BR-2005: only titles of tests that run make a rule tested; comments, strings, fixtures and skipped tests do not", () => {
+    const untested = (body: string, file = "src/billing/a.test.ts") => {
+      const root = repo({ "canon/rules/billing/README.md": domainReadme, [`canon/rules/billing/${br(1)}.md`]: ruleFile(1), [file]: body });
+      return check({ root, ...readCorpus(root), testFiles: [file] }).filter((f) => f.rule === "rule-untested").length;
+    };
+    const id = br(1);
+    for (const tested of [
+      `test("${id}: refunds day 30", () => {});`,
+      `it('${id}', () => {});`,
+      `test(\`${id}: \${what} fails\`, () => {});`,
+      `test.each([1, 2])("${id} case %d", (n) => {});`,
+      `describe("${id}", () => { test("x", () => {}); });`,
+      `test.only("${id}", () => {}); test.concurrent("y", () => {});`,
+      `const ok = /\\(/.test(s); test("${id}", () => {});`,
+    ]) expect([tested, untested(tested)]).toEqual([tested, 0]);
+    for (const loose of [
+      `// ${id}\ntest("x", () => {});`,
+      `/* ${id} */ test("x", () => {});`,
+      `const s = "${id}"; test("x", () => expect(s).toBe(s));`,
+      `const files = { "a.test.ts": \`it("${id}", () => {});\` };`,
+      `test.skip("${id}: later", () => {});`,
+      `test.todo("${id}");`,
+      `xit("${id}", () => {}); xtest("${id}", () => {});`,
+      `test.failing("${id}", () => {});`,
+      `test.if(process.env.X)("${id}", () => {}); test.skipIf(true)("${id}", () => {});`,
+      `describe.skip("x", () => { test("${id}", () => {}); });`,
+      `xdescribe("x", () => { describe("y", () => { it("${id}", () => {}); }); });`,
+      `const title = "${id}"; test(title, () => {});`,
+      `helper.test("${id}"); runner.it("${id}");`,
+    ]) expect([loose, untested(loose)]).toEqual([loose, 1]);
+    expect(untested(`describe.skip("x", () => {}); test("${id}", () => {});`)).toBe(0); // the skip ends with its describe
+    expect(untested(`# ${id} in a comment`, "tools/a.py")).toBe(0); // no title parser for other languages: whole text
+  });
+
+  test("BR-2004 BR-2042: ids in test titles are checked even when the test is skipped; ids outside titles are not", () => {
+    const root = repo({
+      "canon/rules/billing/README.md": domainReadme,
+      [`canon/rules/billing/${br(1)}.md`]: ruleFile(1),
+      [`canon/rules/billing/${br(2)}.md`]: ruleFile(2, "status: retired\n"),
+      "src/billing/a.test.ts": `// ${br(8)} and ${br(2)} in a comment\ntest("${br(1)}", () => { const s = "${br(9)}"; });`,
+      "src/billing/b.test.ts": `test.skip("${br(7)} later", () => {}); xit("${br(2)} old", () => {});`,
+    });
+    const got = check({ root, ...readCorpus(root) }).map((f) => `${f.rule} ${f.path} ${f.message}`);
+    expect(got).toEqual([`ref-dangling src/billing/b.test.ts test names ${br(7)}, which does not exist`, `test-retired-rule src/billing/b.test.ts test still names retired rule ${br(2)}`]);
   });
 
   test("BR-2006: a domain without README is invalid, so its code scope is never silently empty", () => {
