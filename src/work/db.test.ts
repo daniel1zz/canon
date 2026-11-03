@@ -1,10 +1,21 @@
-import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { addColumns, CoordDb } from "./db.ts";
 import { questions } from "./humans/questions.ts";
+import { project, startNew, ws } from "./testkit.ts";
+
+// reason: the CLI cases spawn canon, which spawns git; under load a spawn can take seconds (C-111)
+setDefaultTimeout(30_000);
+
+const MAIN = join(import.meta.dir, "..", "cli", "main.ts");
+
+function canon(cwd: string, ...args: string[]) {
+  const r = Bun.spawnSync([process.execPath, MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:test" } });
+  return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
+}
 
 describe("schema upgrades", () => {
   test("BR-2078: an old DB gains the new columns, keeps its rows, and a second opener that finds them already added still succeeds", () => {
@@ -36,5 +47,33 @@ describe("schema upgrades", () => {
       { kind: "claim.take", worktree: null },
       { kind: "claim.renew", worktree: "/r.worktrees/C-1" },
     ]);
+  });
+});
+
+describe("where the coordination database lives", () => {
+  test("BR-2208: the primary checkout and its worktrees open one file under the git common dir; another repository has its own", () => {
+    const root = project();
+    const s = startNew(root, "Shared");
+    const main = ws(root).root;
+    const fromMain = CoordDb.pathFor(root);
+    const fromWorktree = CoordDb.pathFor(s.worktree);
+    expect(fromMain.ok && fromWorktree.ok).toBe(true);
+    if (!fromMain.ok || !fromWorktree.ok) return;
+    expect(realpathSync(fromWorktree.value)).toBe(realpathSync(fromMain.value));
+    expect(realpathSync(fromMain.value)).toBe(realpathSync(join(main, ".git", "canon", "state.db")));
+    ws(s.worktree).db.event("agent:a", "probe.write", s.change, {});
+    expect(canon(root, "events", "--kind", "probe.write").out).toContain(` probe.write ${s.change} `);
+    expect(canon(project(), "events", "--kind", "probe.write").out.trim()).toBe("(no events)");
+  });
+
+  test("BR-2209: a coordination database that cannot be opened exits 4 and names its path; a missing directory is created", () => {
+    const root = project();
+    writeFileSync(join(root, ".git/canon"), "not a directory\n");
+    const r = canon(root, "events");
+    expect(r.code).toBe(4);
+    expect(r.err).toContain("cannot open coordination DB at");
+    expect(r.err).toContain(join(".git", "canon", "state.db"));
+    expect(r.out).toBe("");
+    expect(canon(project(), "events").code).toBe(0);
   });
 });

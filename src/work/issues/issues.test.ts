@@ -16,11 +16,11 @@ const change = (n: number) => ["C", n].join("-");
  * A PATH holding only git and, unless `gh` is false, a fake gh: `issue list` prints issues.json (or fails with
  * list.err), `auth status` exits with the code in auth.code; every call is appended to calls.log.
  */
-function fakePath(opts: { gh: boolean; issues?: unknown; listErr?: string; authCode?: number }) {
+function fakePath(opts: { gh: boolean; issues?: unknown; raw?: string; listErr?: string; authCode?: number }) {
   const bin = mkdtempSync(join(tmpdir(), "canon-fake-gh-"));
   symlinkSync(GIT, join(bin, "git"));
   if (opts.gh) {
-    writeFileSync(join(bin, "issues.json"), JSON.stringify(opts.issues ?? []));
+    writeFileSync(join(bin, "issues.json"), opts.raw ?? JSON.stringify(opts.issues ?? []));
     const script = [
       "#!/bin/sh",
       `echo "$*" >> ${bin}/calls.log`,
@@ -115,7 +115,41 @@ describe("canon issues", () => {
     const r = canon(project(), bin, "issues");
     expect(r.code).toBe(4);
     expect(r.err).toContain("no git remotes found");
+    expect(r.out).not.toContain("open issue(s)");
     expect(existsSync(join(bin, "calls.log"))).toBe(true);
+  });
+
+  test("BR-2206: each commit naming an issue as fixed has its own line, newest first; --json has exactly number, title, url and fixedBy", () => {
+    const root = project();
+    commit(root, `Fix part (${change(1)}, #5)`);
+    commit(root, `Fix rest (${change(2)}, #5)`);
+    const bin = fakePath({ gh: true, issues: [issue(5, "two fixes"), issue(7, "none yet")] });
+    const lines = canon(root, bin, "issues").out.split("\n");
+    expect(lines.slice(0, 3).map((l) => l.replace(/[0-9a-f]{9}/, "<sha>"))).toEqual([
+      "#7  none yet",
+      "    open: no commit on main names it as fixed",
+      "#5  two fixes",
+    ]);
+    expect(lines.slice(3, 5).map((l) => l.replace(/[0-9a-f]{9}/, "<sha>"))).toEqual([
+      `    named as fixed on main by <sha> Fix rest (${change(2)}, #5)`,
+      `    named as fixed on main by <sha> Fix part (${change(1)}, #5)`,
+    ]);
+    const parsed = JSON.parse(canon(root, bin, "issues", "--json").out) as Record<string, unknown>[];
+    expect(parsed.map((i) => Object.keys(i).sort())).toEqual([["fixedBy", "number", "title", "url"], ["fixedBy", "number", "title", "url"]]);
+    expect(parsed[0]).toEqual({ ...issue(7, "none yet"), fixedBy: [] });
+    const fixes = parsed[1]!["fixedBy"] as { sha: string; subject: string }[];
+    expect(fixes.map((c) => c.subject)).toEqual([`Fix rest (${change(2)}, #5)`, `Fix part (${change(1)}, #5)`]);
+    expect(fixes.every((c) => /^[0-9a-f]{40}$/.test(c.sha))).toBe(true);
+  });
+
+  test("BR-2207: gh output that is not JSON, or JSON that is not a list, exits 4 and lists nothing; an empty list is fine", () => {
+    const root = project();
+    const html = canon(root, fakePath({ gh: true, raw: "<html>" }), "issues");
+    expect([html.code, html.err.includes("not JSON"), html.err.includes("<html>"), html.out.includes("open issue(s)")]).toEqual([4, true, true, false]);
+    const obj = canon(root, fakePath({ gh: true, raw: "{}" }), "issues");
+    expect([obj.code, obj.err.includes("did not print a list"), obj.out.includes("open issue(s)")]).toEqual([4, true, false]);
+    const empty = canon(root, fakePath({ gh: true, raw: "[]" }), "issues");
+    expect([empty.code, empty.out.trim()]).toEqual([0, "0 open issue(s); 0 named as fixed by a commit on main"]);
   });
 });
 

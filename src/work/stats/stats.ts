@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { lstatSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CoordDb } from "../db.ts";
 import type { Layout } from "../../knowledge/documents/model.ts";
@@ -125,22 +125,24 @@ export function computeStats(db: CoordDb, reviews: Readonly<Record<string, strin
 }
 
 export function renderStats(stats: readonly CheckStats[]): string {
-  const lines = [`${"check".padEnd(11)} ${"runs".padStart(5)} ${"refused".padStart(8)} ${"changed".padStart(8)} ${"same".padStart(5)} ${"abandoned".padStart(10)} ${"pending".padStart(8)} ${"unknown".padStart(8)}  review`];
+  // reason: the longest check name (moved-during-land) is wider than the header, so the column takes the widest name
+  const w = Math.max("check".length, ...stats.map((s) => s.check.length));
+  const lines = [`${"check".padEnd(w)} ${"runs".padStart(5)} ${"refused".padStart(8)} ${"changed".padStart(8)} ${"same".padStart(5)} ${"abandoned".padStart(10)} ${"pending".padStart(8)} ${"unknown".padStart(8)}  review`];
   const n = (v: number | undefined, w: number) => (v === undefined ? "-" : String(v)).padStart(w);
   for (const s of stats) {
     const o = s.outcomes ?? undefined;
     lines.push(
-      `${s.check.padEnd(11)} ${n(s.runs, 5)} ${n(s.refused, 8)} ${n(o?.changed, 8)} ${n(o?.same, 5)} ${n(o?.abandoned, 10)} ${n(o?.pending, 8)} ${n(o?.unknown, 8)}  ${s.review ?? "(no date)"}`,
+      `${s.check.padEnd(w)} ${n(s.runs, 5)} ${n(s.refused, 8)} ${n(o?.changed, 8)} ${n(o?.same, 5)} ${n(o?.abandoned, 10)} ${n(o?.pending, 8)} ${n(o?.unknown, 8)}  ${s.review ?? "(no date)"}`,
     );
   }
   const kinds = stats.find((s) => s.check === "check")?.kinds ?? [];
   if (kinds.length > 0) {
-    const w = Math.max(18, ...kinds.map((k) => k.kind.length));
+    const kw = Math.max(18, ...kinds.map((k) => k.kind.length));
     lines.push("", "check refusals by finding kind:");
-    lines.push(`  ${"kind".padEnd(w)} ${"refused".padStart(8)} ${"findings".padStart(9)} ${"changed".padStart(8)} ${"same".padStart(5)} ${"abandoned".padStart(10)} ${"pending".padStart(8)} ${"unknown".padStart(8)}`);
+    lines.push(`  ${"kind".padEnd(kw)} ${"refused".padStart(8)} ${"findings".padStart(9)} ${"changed".padStart(8)} ${"same".padStart(5)} ${"abandoned".padStart(10)} ${"pending".padStart(8)} ${"unknown".padStart(8)}`);
     for (const k of kinds) {
       const o = k.outcomes;
-      lines.push(`  ${k.kind.padEnd(w)} ${n(k.refused, 8)} ${n(k.findings, 9)} ${n(o.changed, 8)} ${n(o.same, 5)} ${n(o.abandoned, 10)} ${n(o.pending, 8)} ${n(o.unknown, 8)}`);
+      lines.push(`  ${k.kind.padEnd(kw)} ${n(k.refused, 8)} ${n(k.findings, 9)} ${n(o.changed, 8)} ${n(o.same, 5)} ${n(o.abandoned, 10)} ${n(o.pending, 8)} ${n(o.unknown, 8)}`);
     }
   }
   const due = stats.filter((s) => s.due);
@@ -179,7 +181,9 @@ export function sharedShare(root: string, layout: Layout): SharedShare | undefin
   let totalLines = 0;
   for (const f of files.value.split("\n").filter(Boolean)) {
     const full = join(root, f);
-    if (!existsSync(full)) continue;
+    // reason: only regular files hold code; a tracked symlink to a directory or a submodule made readFileSync throw EISDIR (BR-2205)
+    const stat = lstatSync(full, { throwIfNoEntry: false });
+    if (!stat?.isFile()) continue;
     const text = readFileSync(full, "utf8");
     const n = text === "" ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
     totalLines += n;
