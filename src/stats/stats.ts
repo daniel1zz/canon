@@ -22,6 +22,18 @@ export interface CheckStats {
   /** Configured review date, if any (BR-2069). */
   readonly review: string | null;
   readonly due: boolean;
+  /** `check` refusals broken down by finding kind (BR-2095); null for every other check. */
+  readonly kinds: readonly KindStats[] | null;
+}
+
+export interface KindStats {
+  /** A finding kind of `canon check`, or `unrecorded` for refusals recorded before kinds were (BR-2094). */
+  readonly kind: string;
+  /** Refusals that had at least one finding of this kind. */
+  readonly refused: number;
+  /** Findings of this kind across those refusals. */
+  readonly findings: number;
+  readonly outcomes: Readonly<Record<Outcome, number>>;
 }
 
 interface Row {
@@ -56,6 +68,24 @@ export function computeStats(db: CoordDb, reviews: Readonly<Record<string, strin
     return "pending";
   };
 
+  const zero = (): Record<Outcome, number> => ({ changed: 0, same: 0, abandoned: 0, pending: 0, unknown: 0 });
+  const kindsOf = (refusals: readonly Row[]): KindStats[] => {
+    const by = new Map<string, { refused: number; findings: number; outcomes: Record<Outcome, number> }>();
+    for (const r of refusals) {
+      const recorded = r.detail["findings"];
+      const counts: Record<string, number> = recorded && typeof recorded === "object" ? (recorded as Record<string, number>) : { unrecorded: 0 };
+      const outcome = outcomeOf(r);
+      for (const [kind, n] of Object.entries(counts)) {
+        const k = by.get(kind) ?? { refused: 0, findings: 0, outcomes: zero() };
+        k.refused++;
+        k.findings += n;
+        k.outcomes[outcome]++;
+        by.set(kind, k);
+      }
+    }
+    return [...by].map(([kind, k]) => ({ kind, ...k })).sort((a, b) => b.refused - a.refused || a.kind.localeCompare(b.kind));
+  };
+
   const out: CheckStats[] = [];
   for (const check of CHECKS) {
     let runs: number;
@@ -67,7 +97,7 @@ export function computeStats(db: CoordDb, reviews: Readonly<Record<string, strin
       runs = reachedLater + landed;
       const mine = refusalsOf(check);
       refused = mine.length;
-      outcomes = { changed: 0, same: 0, abandoned: 0, pending: 0, unknown: 0 };
+      outcomes = zero();
       for (const r of mine) outcomes[outcomeOf(r)]++;
     } else if (check === "claim") {
       refused = count((r) => r.kind === "claim.refuse");
@@ -77,7 +107,8 @@ export function computeStats(db: CoordDb, reviews: Readonly<Record<string, strin
       runs = refused + count((r) => r.kind === "start.ok" && r.detail["setup"] === true);
     }
     const review = reviews[check] ?? null;
-    out.push({ check, runs, refused, outcomes, review, due: review !== null && review <= today });
+    const kinds = check === "check" ? kindsOf(refusalsOf(check)) : null;
+    out.push({ check, runs, refused, outcomes, review, due: review !== null && review <= today, kinds });
   }
   return out;
 }
@@ -90,6 +121,16 @@ export function renderStats(stats: readonly CheckStats[]): string {
     lines.push(
       `${s.check.padEnd(11)} ${n(s.runs, 5)} ${n(s.refused, 8)} ${n(o?.changed, 8)} ${n(o?.same, 5)} ${n(o?.abandoned, 10)} ${n(o?.pending, 8)} ${n(o?.unknown, 8)}  ${s.review ?? "(no date)"}`,
     );
+  }
+  const kinds = stats.find((s) => s.check === "check")?.kinds ?? [];
+  if (kinds.length > 0) {
+    const w = Math.max(18, ...kinds.map((k) => k.kind.length));
+    lines.push("", "check refusals by finding kind:");
+    lines.push(`  ${"kind".padEnd(w)} ${"refused".padStart(8)} ${"findings".padStart(9)} ${"changed".padStart(8)} ${"same".padStart(5)} ${"abandoned".padStart(10)} ${"pending".padStart(8)} ${"unknown".padStart(8)}`);
+    for (const k of kinds) {
+      const o = k.outcomes;
+      lines.push(`  ${k.kind.padEnd(w)} ${n(k.refused, 8)} ${n(k.findings, 9)} ${n(o.changed, 8)} ${n(o.same, 5)} ${n(o.abandoned, 10)} ${n(o.pending, 8)} ${n(o.unknown, 8)}`);
+    }
   }
   const due = stats.filter((s) => s.due);
   if (due.length > 0) {

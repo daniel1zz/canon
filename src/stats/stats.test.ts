@@ -104,6 +104,57 @@ describe("canon stats", () => {
     expect(of(computeStats(ws(root).db, {}, "2026-11-03"), "floor").outcomes).toMatchObject({ abandoned: 1, pending: 1 });
   });
 
+  test("BR-2094: a check refusal records how many findings of each kind and the files involved; other refusals record neither", async () => {
+    const root = project();
+    const bad = startNew(root, "Bad");
+    const change = (id: string, why: string) => `---\nid: ${id}\ntitle: Bad\n---\n## 为什么\n\n${why}\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] <任务>\n`;
+    writeFileSync(join(bad.worktree, "canon/changes/C-1-bad.md"), change("C-1", "See D-98 and D-99."));
+    writeFileSync(join(bad.worktree, "canon/changes/C-2-other.md"), change("C-2", "See D-97."));
+    sh(bad.worktree, "add", "-A");
+    sh(bad.worktree, "commit", "-qm", "dangling");
+    expect((await land(ws(bad.worktree), FAST, quiet)).kind).toBe("refused");
+    const floor = startNew(root, "Floor");
+    commit(floor.worktree, "FAIL", "x");
+    expect((await land(ws(floor.worktree), FAST, quiet)).kind).toBe("refused");
+
+    const details = ws(root)
+      .db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'land.refuse' ORDER BY id")
+      .all()
+      .map((r) => JSON.parse(r.detail) as Record<string, unknown>);
+    expect(details[0]).toMatchObject({
+      reason: "check",
+      findings: { "ref-dangling": 3, "template-unfilled": 2 },
+      paths: ["canon/changes/C-1-bad.md", "canon/changes/C-2-other.md"],
+    });
+    expect(details[1]!["reason"]).toBe("floor");
+    expect(details[1]).not.toHaveProperty("findings");
+    expect(details[1]).not.toHaveProperty("paths");
+  });
+
+  test("BR-2095: check refusals are broken down per finding kind with what happened after; old refusals are unrecorded", () => {
+    const opened = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
+    if (!opened.ok) throw new Error(opened.error.message);
+    const d = opened.value;
+    expect(of(computeStats(d, {}, "2026-11-03"), "check").kinds).toEqual([]);
+    expect(renderStats(computeStats(d, {}, "2026-11-03"))).not.toContain("by finding kind");
+    d.event("a", "land.refuse", "C-1", { reason: "check", diff: "a", findings: { "ref-dangling": 2, "template-unfilled": 1 } });
+    d.event("a", "land.ok", "C-1", { diff: "b" });
+    d.event("a", "land.refuse", "C-2", { reason: "check", diff: "c", findings: { "ref-dangling": 1 } });
+    d.event("a", "land.refuse", "C-3", { reason: "check", diff: "d" });
+    d.event("a", "land.refuse", "C-4", { reason: "floor", diff: "e" });
+    const s = computeStats(d, {}, "2026-11-03");
+    const zero = { changed: 0, same: 0, abandoned: 0, pending: 0, unknown: 0 };
+    expect(of(s, "check").kinds).toEqual([
+      { kind: "ref-dangling", refused: 2, findings: 3, outcomes: { ...zero, changed: 1, pending: 1 } },
+      { kind: "template-unfilled", refused: 1, findings: 1, outcomes: { ...zero, changed: 1 } },
+      { kind: "unrecorded", refused: 1, findings: 0, outcomes: { ...zero, pending: 1 } },
+    ]);
+    expect(of(s, "floor").kinds).toBeNull();
+    const text = renderStats(s);
+    expect(text).toContain("check refusals by finding kind:");
+    expect(text).toMatch(/ref-dangling +2 +3 +1 +0 +0 +1 +0/);
+  });
+
   test("BR-2069: checks whose review date has come are listed as due, undated ones are named, and an unknown check is a config error", () => {
     const root = project();
     const s = computeStats(ws(root).db, { floor: "2026-01-01", check: "2027-02-03", review: "2026-11-03" }, "2026-11-03");

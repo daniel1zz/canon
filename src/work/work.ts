@@ -217,13 +217,20 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   }
 }
 
+/** Per-kind counts and the files involved, so `canon stats` can tell which checks are precise (BR-2094, P6). */
+function findingDetail(findings: readonly Finding[]): { findings: Record<string, number>; paths: string[] } {
+  const kinds: Record<string, number> = {};
+  for (const f of findings) kinds[f.rule] = (kinds[f.rule] ?? 0) + 1;
+  return { findings: kinds, paths: [...new Set(findings.map((f) => f.path))].sort().slice(0, 50) };
+}
+
 async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string }): Promise<LandOutcome> {
   const wt = ws.root;
   const main = ws.config.main;
   const { entry, subject } = t;
   const refuse = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], message: string, findings?: readonly Finding[]): LandOutcome => {
     finishEntry(ws.db, entry, "failed", `${reason}: ${message.slice(0, 500)}`);
-    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main) });
+    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main), ...(findings ? findingDetail(findings) : {}) });
     return { kind: "refused", reason, message, ...(findings ? { findings } : {}) };
   };
 
