@@ -2,7 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claims, takeClaim } from "../claims/claims.ts";
+import { claims, holdClaim, takeClaim } from "../claims/claims.ts";
+import { processOf } from "../claims/liveness.ts";
 import { clean, start, stop } from "./session.ts";
 import { writeSchemaFile } from "../../config/reference/reference.ts";
 import { land } from "../land/land.ts";
@@ -530,4 +531,123 @@ describe("clean named changes", () => {
     const all = cli(root);
     expect([all.code, all.out]).toEqual([0, `removed ${three.worktree}\n`]);
   }, 30_000); // reason: four spawned CLI runs plus three landings; the CLI surface is what it tests (C-111)
+});
+
+describe("start and clean leave nothing half made", () => {
+  const startEvents = (root: string) =>
+    ws(root).db.db.query<{ subject: string; detail: string }, []>("SELECT subject, detail FROM events WHERE kind = 'start.refuse' ORDER BY id").all().map((e) => [e.subject, JSON.parse(e.detail).reason]);
+  const hasBranch = (root: string, branch: string) => git(root, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`).ok;
+
+  test("BR-2012 BR-2047: by default the branch is change/<C-n>-<slug> and the worktree is <primary>.worktrees/<C-n>; a long title's slug is cut at 60 characters", () => {
+    const root = project();
+    const s = startNew(root, "Refund window");
+    expect(s.branch).toBe("change/C-1-refund-window");
+    expect(s.worktree).toBe(`${realpathSync(root)}.worktrees/C-1`);
+    expect(sh(s.worktree, "rev-parse", "--abbrev-ref", "HEAD")).toBe("change/C-1-refund-window");
+    const long = startNew(root, "a".repeat(100));
+    expect(long.branch).toBe(`change/C-2-${"a".repeat(60)}`);
+    expect(hasBranch(root, long.branch)).toBe(true);
+  });
+
+  test("BR-2029: after a failed setup is fixed, starting again creates the worktree and runs setup again", () => {
+    const root = project();
+    const marker = join(root, "..", `${root.split("/").pop()}-setup-ran`);
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nsetup: "echo run >> ${marker}; test -e .ok"\n`);
+    sh(root, "commit", "-qam", "setup that fails");
+    expect(start(ws(root), { title: "Needs setup" }, quiet).ok).toBe(false);
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nsetup: "echo run >> ${marker}"\n`);
+    sh(root, "commit", "-qam", "setup that passes");
+    const again = start(ws(root), { title: "Needs setup" }, quiet);
+    expect(again.ok).toBe(true);
+    expect(readFileSync(marker, "utf8")).toBe("run\nrun\n");
+    if (again.ok) expect(existsSync(again.value.worktree)).toBe(true);
+  });
+
+  test("BR-2029 BR-2026: a change file that cannot be committed removes the new worktree, branch and claim, and is recorded", () => {
+    const root = project();
+    writeFileSync(join(root, ".git/hooks/pre-commit"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const r = start(ws(root), { title: "Blocked" }, quiet);
+    expect(!r.ok && r.error.code).toBe("io");
+    expect(sh(root, "worktree", "list").split("\n").length).toBe(1);
+    expect(sh(root, "branch", "--list", "change/*")).toBe("");
+    expect(claims(ws(root).db)).toEqual([]);
+    expect(startEvents(root)).toEqual([["C-1", "change-file"]]);
+  });
+
+  test("BR-2026: a worktree that cannot be created releases the claim and is recorded with its own reason", () => {
+    const root = project();
+    writeFileSync(`${realpathSync(root)}.worktrees`, "a file where the worktree directory goes\n");
+    const r = start(ws(root), { title: "No room" }, quiet);
+    expect(!r.ok && r.error.code).toBe("io");
+    expect(claims(ws(root).db)).toEqual([]);
+    expect(startEvents(root)).toEqual([["C-1", "worktree"]]);
+  });
+
+  test("BR-2062: a refused start prints no overlap and records no overlap.notice", () => {
+    const root = project();
+    const a = startNew(root, "A");
+    const b = startNew(root, "B");
+    for (const wt of [a.worktree, b.worktree]) {
+      writeFileSync(join(wt, "shared.txt"), `${wt}\n`);
+      sh(wt, "add", "shared.txt");
+      sh(wt, "commit", "-qm", "shared");
+    }
+    const lines: string[] = [];
+    const r = start(ws(root, "agent:b"), { change: a.change }, (l) => lines.push(l));
+    expect(!r.ok && r.error.code).toBe("conflict");
+    expect(lines.some((l) => l.startsWith("overlap:"))).toBe(false);
+    expect(ws(root).db.db.query("SELECT 1 FROM events WHERE kind = 'overlap.notice'").all()).toEqual([]);
+  });
+
+  test("BR-2019: a clean killed while it removed a worktree leaves a hold that does not stop a later start", async () => {
+    const root = project();
+    const s = startNew(root, "Killed clean");
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    stop(ws(s.worktree), "done for now", undefined, true);
+    const w = ws(root);
+    if (!holdClaim(w.db, s.change, s.worktree, "agent:a", true).ok) throw new Error("hold refused");
+    const p = Bun.spawn(["sleep", "30"]);
+    const dead = processOf(p.pid);
+    if (!dead) throw new Error("no start time for a live child");
+    p.kill("SIGKILL");
+    await p.exited;
+    w.db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(dead.pid, dead.start, s.change);
+    sh(root, "worktree", "remove", s.worktree); // killed after git removed it, before the hold was let go
+    const again = start(ws(root, "agent:b"), { change: s.change }, quiet);
+    expect(again.ok).toBe(true);
+    expect(claims(ws(root).db).map((c) => [c.subject, c.actor])).toEqual([[s.change, "agent:b"]]);
+  });
+
+  test("BR-2152: a change id in lower case names the same change as in upper case", async () => {
+    const root = project();
+    const s = startNew(root, "Lower");
+    expect((await land(ws(s.worktree), { ...FAST, finish: true }, quiet)).kind).toBe("landed");
+    const r = clean(ws(root), quiet, [s.change.toLowerCase(), s.change]);
+    if (!r.ok) throw new Error(r.error.message);
+    expect(r.value.removed).toEqual([s.worktree]);
+    expect(r.value.kept).toEqual([]);
+  });
+
+  test("BR-2188: clean deletes a removed worktree's branch, keeps a kept one's, and leaves a branch git will not delete", async () => {
+    const root = project();
+    const one = startNew(root, "One");
+    expect((await land(ws(one.worktree), { ...FAST, finish: true }, quiet)).kind).toBe("landed");
+    const busy = startNew(root, "Busy");
+    stop(ws(busy.worktree), "later", undefined, true);
+    const r = clean(ws(root), quiet);
+    if (!r.ok) throw new Error(r.error.message);
+    expect(r.value.removed).toEqual([one.worktree]);
+    expect(hasBranch(root, one.branch)).toBe(false);
+    expect(hasBranch(root, busy.branch)).toBe(true);
+    // The primary checkout on a branch without the landed commits: git branch -d refuses, the branch stays.
+    sh(root, "checkout", "-q", "-b", "other", "main~2");
+    const three = startNew(root, "Three");
+    expect((await land(ws(three.worktree), { ...FAST, finish: true }, quiet)).kind).toBe("landed");
+    const lines: string[] = [];
+    const again = clean(ws(root), (l) => lines.push(l), [three.change]);
+    if (!again.ok) throw new Error(again.error.message);
+    expect(again.value.removed).toEqual([three.worktree]);
+    expect(lines).toEqual([`removed ${three.worktree}`]);
+    expect(hasBranch(root, three.branch)).toBe(true);
+  });
 });

@@ -100,6 +100,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     const add = hasBranch ? git(ws.primary, "worktree", "add", path, branch) : git(ws.primary, "worktree", "add", "-b", branch, path, main);
     if (!add.ok) {
       releaseClaim(ws.db, changeId, ws.actor);
+      ws.db.event(ws.actor, "start.refuse", changeId, { reason: "worktree", error: add.error.message });
       return add;
     }
     created = true;
@@ -107,10 +108,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
       say(`setup: ${ws.config.setup}`);
       const r = Bun.spawnSync(["sh", "-c", ws.config.setup], { cwd: path, stdout: "inherit", stderr: "inherit" });
       if (r.exitCode !== 0) {
-        // The worktree was created a moment ago and holds nothing but the checkout: remove it so a retry runs setup again.
-        git(ws.primary, "worktree", "remove", "--force", path);
-        if (!hasBranch) git(ws.primary, "branch", "-q", "-D", branch);
-        releaseClaim(ws.db, changeId, ws.actor);
+        undoStart(ws, changeId, path, branch, !hasBranch);
         ws.db.event(ws.actor, "start.refuse", changeId, { reason: "setup", exit: r.exitCode });
         return err("refused", `setup command exited ${r.exitCode}; the new worktree was removed and ${changeId} released, so a retry starts clean`);
       }
@@ -120,11 +118,18 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   if (fresh && "title" in target) {
     const corpus = readCorpus(path, ws.config.types, ws.config).corpus;
     const made = createDoc(path, corpus, ws.db, ws.actor, { kind: "change", title: target.title, rules: target.rules ?? [], id: changeId }, ws.config.templates);
-    if (!made.ok) return made;
-    const c = git(path, "add", made.value);
-    if (!c.ok) return c;
-    const m = git(path, "commit", "-q", "-m", `canon: open ${changeId} ${target.title}`);
-    if (!m.ok) return m;
+    const commit = (file: string): Result<unknown> => {
+      const a = git(path, "add", file);
+      return a.ok ? git(path, "commit", "-q", "-m", `canon: open ${changeId} ${target.title}`) : a;
+    };
+    const committed = made.ok ? commit(made.value) : made;
+    if (!committed.ok) {
+      // reason: a new change whose file is not committed is half made; undo the worktree, branch and claim like a failed setup (BR-2029)
+      if (created) undoStart(ws, changeId, path, branch, !hasBranch);
+      else releaseClaim(ws.db, changeId, ws.actor);
+      ws.db.event(ws.actor, "start.refuse", changeId, { reason: "change-file", error: committed.error.message });
+      return err(committed.error.code, `${committed.error.message}; the new worktree was removed and ${changeId} released, so a retry starts clean`);
+    }
   }
   ws.db.event(ws.actor, "start.ok", changeId, { created, setup: created && ws.config.setup !== undefined });
   say(`${changeId} → ${path} (branch ${branch})`);
@@ -132,6 +137,13 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   // after_start never changes the result (BR-2056): the worktree and claim stand whatever it exits with.
   runHooksSync({ db: ws.db, actor: ws.actor, event: "after_start", change: changeId, cwd: path, env: { CANON_BRANCH: branch } }, ws.config.hooks.after_start, say);
   return ok({ change: changeId, worktree: path, branch, created });
+}
+
+/** Undoes a start whose worktree was created a moment ago and holds nothing but the checkout, so a retry starts clean (BR-2029). */
+function undoStart(ws: Workspace, changeId: string, path: string, branch: string, newBranch: boolean): void {
+  git(ws.primary, "worktree", "remove", "--force", path);
+  if (newBranch) git(ws.primary, "branch", "-q", "-D", branch);
+  releaseClaim(ws.db, changeId, ws.actor);
 }
 
 /**
@@ -229,7 +241,10 @@ export function clean(ws: Workspace, say: Say, only?: readonly string[]): Result
   const ours = wts.value.filter((w) => w.path.startsWith(worktreesDir(ws) + "/"));
   let named: Set<string> | undefined;
   if (only !== undefined && only.length > 0) {
-    named = new Set(only);
+    // reason: ids are matched as `canon work start` matches them, whatever their case; messages keep the name as typed (BR-2152, issue #54)
+    const typed = new Map<string, string>();
+    for (const name of only) if (!typed.has(name.toUpperCase())) typed.set(name.toUpperCase(), name);
+    named = new Set(typed.keys());
     const withWorktree = new Set(ours.map((w) => basename(w.path)));
     let onMain: Corpus | undefined;
     for (const id of named) {
@@ -245,7 +260,7 @@ export function clean(ws: Workspace, say: Say, only?: readonly string[]): Result
       }
       const off = changeOffMain(ws, id);
       if (!off.ok) return off;
-      if (!off.value) return err("not_found", `${id} is not a change: nothing was removed`);
+      if (!off.value) return err("not_found", `${typed.get(id)} is not a change: nothing was removed`);
       kept.push(`${id}: no worktree`);
     }
   }
