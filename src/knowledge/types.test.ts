@@ -139,6 +139,12 @@ describe("declared document types", () => {
     const tpl = repo("", { "canon/templates/change.md": "## 为什么\n\n<x>\n\n## 要改什么\n\n<y>\n" });
     const r = canon(tpl, "check");
     expect([r.code, r.err.includes("`## 任务`")]).toEqual([2, true]);
+    const extra = "types:\n  decision:\n    sections: [背景, 风险]\n";
+    const builtin = canon(repo(extra), "check");
+    expect([builtin.code, builtin.err.includes("built-in decision template")]).toEqual([2, true]);
+    const own = canon(repo(extra, { "canon/templates/decision.md": "## 背景\n\n<b>\n\n## 风险\n\n<r>\n" }), "check");
+    expect([own.code, own.err]).toEqual([1, ""]); // config loads; the check runs and reports only the fixture's missing code dir
+    expect(own.out).toContain("domain-code-missing");
   });
 
   test("BR-2093: a declared type without a template starts from its required sections as placeholders", () => {

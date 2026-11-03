@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { err, ok, type Result } from "../kernel/result.ts";
+import { templateFor } from "../knowledge/templates.ts";
 import { BUILTIN_TYPES, RESERVED_DIRS, RESERVED_FIELDS, type DocType } from "../knowledge/types.ts";
 import { CHECKS } from "../stats/checks.ts";
 
@@ -132,10 +133,15 @@ export function readConfig(root: string): Result<Config> {
       const name = file.slice(0, -3);
       if (!types.value.some((t) => t.name === name)) return bad(`canon/templates/${file} is a template for \`${name}\`, which is not a document type`);
       templates[name] = readFileSync(join(tdir, file), "utf8");
-      const lines = templates[name]!.split("\n").map((l) => l.trim());
-      const missing = types.value.find((t) => t.name === name)!.sections.filter((s) => !lines.includes(`## ${s}`));
-      if (missing.length) return bad(`canon/templates/${file} lacks required section(s) ${missing.map((s) => `\`## ${s}\``).join(", ")} of type \`${name}\``);
     }
+  }
+  // The template a new document starts from, the project's or the built-in one, carries every required section (BR-2092).
+  for (const t of types.value) {
+    const lines = templateFor(t.name, templates, t.sections).split("\n").map((l) => l.trim());
+    const missing = t.sections.filter((s) => !lines.includes(`## ${s}`));
+    if (!missing.length) continue;
+    const where = t.name in templates ? `canon/templates/${t.name}.md` : `the built-in ${t.name} template (add canon/templates/${t.name}.md)`;
+    return bad(`${where} lacks required section(s) ${missing.map((s) => `\`## ${s}\``).join(", ")} of type \`${t.name}\``);
   }
 
   return ok({
