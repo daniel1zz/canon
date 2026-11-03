@@ -88,6 +88,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   let hasBranch = false;
   if (!existsSync(path)) {
     hasBranch = git(ws.primary, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`).ok;
+    // reason: BR-2132 — branch from the local main, never a remote-tracking ref: that writes upstream config and concurrent starts fail to lock .git/config.
     const add = hasBranch ? git(ws.primary, "worktree", "add", path, branch) : git(ws.primary, "worktree", "add", "-b", branch, path, main);
     if (!add.ok) {
       releaseClaim(ws.db, changeId, ws.actor);

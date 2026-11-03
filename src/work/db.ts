@@ -86,6 +86,25 @@ export function addColumns(db: Database): void {
   }
 }
 
+/**
+ * Switches the DB to WAL. SQLite answers "database is locked" at once, without calling the busy handler, when
+ * another connection is switching the same fresh file at the same moment, so the switch is retried until the
+ * busy timeout is spent; any other error, or a lock that outlasts it, still fails the open.
+ */
+// reason: BR-2132 — concurrent first `canon work start`s failed to open the DB on this switch (2 of 10 runs of 8).
+function enableWal(db: Database): void {
+  const deadline = Date.now() + 5000;
+  for (;;) {
+    try {
+      db.exec("PRAGMA journal_mode = WAL;");
+      return;
+    } catch (e) {
+      if (!/database is locked/i.test((e as Error).message) || Date.now() > deadline) throw e;
+      Bun.sleepSync(5 + Math.random() * 20);
+    }
+  }
+}
+
 export class CoordDb {
   /** `worktree`: the toplevel of the worktree the command runs in, recorded on every event (BR-2131). */
   private constructor(
@@ -97,7 +116,8 @@ export class CoordDb {
     try {
       mkdirSync(dirname(path), { recursive: true });
       const db = new Database(path, { create: true, strict: true });
-      db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
+      db.exec("PRAGMA busy_timeout = 5000;");
+      enableWal(db);
       db.exec(SCHEMA);
       addColumns(db);
       return ok(new CoordDb(db, worktree ?? null));

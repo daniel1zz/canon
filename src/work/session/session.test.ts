@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { claims, takeClaim } from "../claims/claims.ts";
 import { clean, start, stop } from "./session.ts";
 import { land } from "../land/land.ts";
+import { git } from "../../kernel/git.ts";
 
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
@@ -393,4 +394,26 @@ describe("same-file overlap", () => {
     expect(lines.filter((l) => l.startsWith("overlap:"))).toEqual([`overlap: ${b.value.change} also changes shared.txt; whoever lands second resolves the conflict`]);
     expect(notices(root)).toEqual([{ subject: "C-1", at: "start", with: b.value.change, files: ["shared.txt"] }]);
   });
+});
+
+describe("concurrent starts", () => {
+  test("BR-2132: 8 concurrent CLI starts of different new changes all succeed and write no upstream config, even with origin/main present", async () => {
+    const root = project();
+    const remote = mkdtempSync(join(tmpdir(), "canon-next-remote-"));
+    sh(remote, "init", "-q", "--bare");
+    sh(root, "remote", "add", "origin", remote);
+    sh(root, "push", "-q", "origin", "main");
+    sh(root, "fetch", "-q", "origin");
+    expect(sh(root, "rev-parse", "--verify", "refs/remotes/origin/main")).not.toBe("");
+    const procs = Array.from({ length: 8 }, (_, i) =>
+      Bun.spawn(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "start", "--title", `Parallel ${i}`], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: `agent:p${i}` } }),
+    );
+    const results = await Promise.all(procs.map(async (p) => ({ code: await p.exited, err: await new Response(p.stderr).text() })));
+    expect(results.filter((r) => r.code !== 0)).toEqual([]);
+    const wts = sh(root, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ") && l.includes(".worktrees/"));
+    expect(wts.length).toBe(8);
+    expect(new Set(claims(ws(root).db).map((c) => c.subject)).size).toBe(8);
+    const upstream = git(root, "config", "--get-regexp", "^branch\\.change/");
+    expect(upstream.ok ? upstream.value : "").toBe("");
+  }, 60_000);
 });
