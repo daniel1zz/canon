@@ -37,6 +37,13 @@ describe("canon stats", () => {
     const early = computeStats(d, {}, "2026-11-03");
     expect([of(early, "dirty").runs, of(early, "on-main").runs, of(early, "dirty").refused]).toEqual([7, 7, 1]); // one stage, same runs
 
+    const skipped = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
+    if (!skipped.ok) throw new Error(skipped.error.message);
+    skipped.value.event("agent:a", "land.ok", "C-1", { floor_skipped: true });
+    skipped.value.event("agent:a", "land.refuse", "C-2", { reason: "check", floor_skipped: true });
+    const sk = computeStats(skipped.value, {}, "2026-11-03");
+    expect([of(sk, "floor").runs, of(sk, "check").runs, of(sk, "check").refused]).toEqual([0, 2, 1]); // BR-2164: no floor ran
+
     const src = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
     if (!src.ok) throw new Error(src.error.message);
     for (let i = 0; i < 2; i++) src.value.event("agent:a", "land.ok", `C-${i + 1}`, {});
