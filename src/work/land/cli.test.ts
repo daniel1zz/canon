@@ -25,7 +25,7 @@ const commitFile = (wt: string, path: string, text: string) => {
 };
 
 const events = (root: string, kind: string) =>
-  ws(root).db.db.query<{ subject: string | null; detail: string }, [string]>("SELECT subject, detail FROM events WHERE kind = ? ORDER BY id").all(kind).map((e) => ({ subject: e.subject, ...(JSON.parse(e.detail) as Record<string, unknown>) }));
+  ws(root).db.db.query<{ subject: string | null; detail: string }, [string]>("SELECT subject, detail FROM events WHERE kind = ? ORDER BY id").all(kind).map((e): Record<string, unknown> => ({ subject: e.subject, ...(JSON.parse(e.detail) as Record<string, unknown>) }));
 
 describe("canon work land refuses before queuing, with the exit code the rule names", () => {
   test("BR-2013: uncommitted work exits 2 and says to commit first", async () => {

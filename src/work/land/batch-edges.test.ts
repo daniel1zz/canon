@@ -31,7 +31,7 @@ const until = async (what: () => boolean, tries = 400) => {
   expect(what()).toBe(true);
 };
 const events = (root: string, kind: string) =>
-  ws(root).db.db.query<{ subject: string | null; detail: string }, [string]>("SELECT subject, detail FROM events WHERE kind = ? ORDER BY id").all(kind).map((e) => ({ subject: e.subject, ...(JSON.parse(e.detail) as Record<string, unknown>) }));
+  ws(root).db.db.query<{ subject: string | null; detail: string }, [string]>("SELECT subject, detail FROM events WHERE kind = ? ORDER BY id").all(kind).map((e): Record<string, unknown> => ({ subject: e.subject, ...(JSON.parse(e.detail) as Record<string, unknown>) }));
 const entryOf = (root: string, wt: string) => ws(root).db.db.query<{ id: number; state: string; result: string | null; solo: number | null }, [string]>("SELECT id, state, result, solo FROM queue WHERE worktree = ? ORDER BY id DESC LIMIT 1").get(wt);
 const spawnLand = (wt: string) => Bun.spawn(["bun", CLI, "work", "land"], { cwd: wt, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
 
