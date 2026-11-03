@@ -42,4 +42,4 @@ canon human answer <n> <回答> --relayed "<人的原话>"  # 人在对话里回
 
 ## 现在的状态
 
-旧系统 lore 归档在 `~/Projects/zz/lore`（GitHub `daniel1zz/lore`），不要在这里使用 `lore` 命令或旧 lore 的 skill。全局配置里还有旧 lore 的规则和 hook，处理方案见 C-3；在它完成之前，和本文件冲突的全局规则以本文件为准。
+旧系统 lore 归档在 `~/Projects/zz/lore`（GitHub `daniel1zz/lore`），不要在这里使用 `lore` 命令或旧 lore 的 skill。全局配置里旧 lore 的规则、hook、skill 和 agent 已由 C-3、C-96 清除（备份在 `~/.claude/hooks/BACKUPS/`）；和本文件冲突的全局规则以本文件为准。
