@@ -99,3 +99,31 @@ describe("project-level skills", () => {
     expect(existsSync(join(root, "canon"))).toBe(false);
   });
 });
+
+describe("installing stays inside the project", () => {
+  test("BR-2083: a manifest naming a path outside canon-* skills is refused and nothing outside is deleted", () => {
+    const src = source();
+    const root = gitRepo();
+    expect(installSkills(root, src, false).ok).toBe(true);
+    const outside = join(root, "..", `${root.split("/").pop()}-victim.txt`);
+    writeFileSync(outside, "keep me\n");
+    const m = JSON.parse(readFileSync(join(root, ".claude/skills", MANIFEST), "utf8"));
+    m.files[`../../../${outside.split("/").pop()}`] = require("node:crypto").createHash("sha256").update("keep me\n").digest("hex");
+    writeFileSync(join(root, ".claude/skills", MANIFEST), JSON.stringify(m));
+    const r = installSkills(root, src, true);
+    expect(!r.ok && r.error.code).toBe("invalid");
+    expect(readFileSync(outside, "utf8")).toBe("keep me\n");
+  });
+
+  test("BR-2083: a committed symlink inside .claude/skills is refused even with --force, so nothing is written through it", () => {
+    const src = source();
+    const root = gitRepo();
+    const elsewhere = mkdtempSync(join(tmpdir(), "canon-skills-elsewhere-"));
+    writeFileSync(join(elsewhere, "SKILL.md"), "someone else's file\n");
+    mkdirSync(join(root, ".claude/skills"), { recursive: true });
+    Bun.spawnSync(["ln", "-s", elsewhere, join(root, ".claude/skills/canon-a")]);
+    const r = installSkills(root, src, true);
+    expect(!r.ok && r.error.message).toContain("symbolic link");
+    expect(readFileSync(join(elsewhere, "SKILL.md"), "utf8")).toBe("someone else's file\n");
+  });
+});

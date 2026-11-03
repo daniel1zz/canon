@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, relative } from "node:path";
+import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 /**
@@ -53,6 +53,33 @@ function filesUnder(dir: string): string[] {
   return out;
 }
 
+/** A manifest key canon could have written: a relative path inside a `canon-*` skill, no `..`, no absolute path (BR-2083). */
+function safeKey(rel: string): boolean {
+  if (rel === "" || isAbsolute(rel) || rel.includes("\0")) return false;
+  const n = normalize(rel);
+  return n === rel && n.startsWith(PREFIX) && !n.split(sep).includes("..");
+}
+
+/** The first symlink on the way from `root` down to `full` (both included), if any (BR-2083). */
+function symlinkOnPath(root: string, full: string): string | undefined {
+  const parts = relative(root, full).split(sep);
+  let p = root;
+  for (const part of parts) {
+    p = join(p, part);
+    if (!existsSync(p) && !isBrokenLink(p)) return undefined;
+    if (lstatSync(p).isSymbolicLink()) return p;
+  }
+  return undefined;
+}
+
+function isBrokenLink(p: string): boolean {
+  try {
+    return lstatSync(p).isSymbolicLink();
+  } catch {
+    return false;
+  }
+}
+
 /** Copies every `canon-*` skill from `source` into `<root>/.claude/skills`, keeping local edits safe. */
 export function installSkills(root: string, source: string, force: boolean): Result<InstallReport> {
   const target = join(root, ".claude", "skills");
@@ -70,6 +97,14 @@ export function installSkills(root: string, source: string, force: boolean): Res
     } catch {
       return err("invalid", `${relative(root, manifestPath)} is not valid JSON; fix or delete it`);
     }
+    const bad = Object.keys(manifest).filter((k) => !safeKey(k));
+    if (bad.length > 0) return err("invalid", `${relative(root, manifestPath)} lists paths canon never writes (${bad.join(", ")}); fix or delete it`);
+  }
+  // Nothing is written or deleted through a symlink: a committed link could point outside the project (BR-2083).
+  const touched = [...wanted.keys(), ...Object.keys(manifest)].map((rel) => join(target, rel));
+  for (const full of [manifestPath, ...touched]) {
+    const link = symlinkOnPath(root, full);
+    if (link) return err("invalid", `${relative(root, link)} is a symbolic link; canon writes skills only as plain files inside the project. Replace the link with a directory and run again.`);
   }
 
   // Plan first, so a conflict refuses the whole install and nothing is half-updated.
