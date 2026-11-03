@@ -117,6 +117,16 @@ describe("post-land code review", () => {
     expect(r.stderr.toString()).toContain("CANON_BASE and CANON_HEAD are required");
   });
 
+  test("BR-2070: a failing reviewer is an error, never no findings", () => {
+    const t = setup({ findings: [] });
+    const r = codeReview({ ...t.env, ai: "sh -c 'echo broken >&2; exit 1'" });
+    expect(r.ok).toBe(false);
+    expect(t.lines).not.toContain("no findings");
+    const garbled = setup({ findings: [] });
+    expect(codeReview({ ...garbled.env, ai: "echo not-json" }).ok).toBe(false);
+    expect(garbled.lines).not.toContain("no findings");
+  });
+
   test("BR-2070: a landing that changed no code does not call the reviewer", () => {
     const t = setup({ findings: [finding()] });
     const docsOnly = { ...t.env, base: sh(t.root, "rev-parse", "HEAD"), head: sh(t.root, "rev-parse", "HEAD") };
