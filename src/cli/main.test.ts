@@ -50,8 +50,6 @@ describe("exit codes", () => {
     expect(d.code).toBe(0);
     expect(d.out.trim()).toMatch(/^canon\/decisions\/D-1\.md$/);
     expect(canon(root, "show", ["D", 1].join("-")).out).toContain("## 背景"); // BR-2037: Chinese template
-    const change = canon(root, "change", "new", "--title", "Template check").out.trim();
-    expect(readFileSync(join(root, change), "utf8")).toContain("## 陷阱和假设");
     Bun.spawnSync(["git", "add", "-A"], { cwd: root });
     Bun.spawnSync(["git", "commit", "-qm", "init"], { cwd: root });
     const w = canon(root, "work", "start", "--title", "中文变更");
@@ -59,6 +57,8 @@ describe("exit codes", () => {
     expect(w.out).toContain("(branch change/C-1)");
     expect(canon(root, "note", "new", "--title", "调研 API 方案").out.trim()).toBe("canon/notes/N-1.md");
     expect(canon(root, "decision", "new", "--title", "Use files").out.trim()).toBe(`canon/decisions/${["D", 2].join("-")}-use-files.md`);
+    const change = canon(root, "change", "new", "--title", "Template check").out.trim(); // after the C-1 assertions above
+    expect(readFileSync(join(root, change), "utf8")).toContain("## 陷阱和假设");
   });
 
   test("BR-2037: a rule created without a body holds the template, which canon check reports until it is filled", () => {
