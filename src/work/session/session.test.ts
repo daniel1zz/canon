@@ -172,6 +172,43 @@ describe("work start", () => {
     expect(existsSync(marker)).toBe(false);
   });
 
+  // A drop that runs to completion between start reading the branch and start taking the claim (issue #20).
+  const dropBeforeClaim = (root: string, s: { worktree: string; branch: string }, removeBranch: boolean) => {
+    const w = ws(root, "agent:b");
+    const tx = w.db.db.transaction.bind(w.db.db);
+    let once = false;
+    w.db.db.transaction = ((fn: Parameters<typeof tx>[0]) => {
+      if (!once) {
+        once = true;
+        sh(root, "worktree", "remove", "--force", s.worktree);
+        if (removeBranch) sh(root, "branch", "-q", "-D", s.branch);
+      }
+      return tx(fn);
+    }) as typeof tx;
+    return w;
+  };
+
+  test("BR-2136: a branch deleted between reading it and taking the claim is not found, and nothing is created", () => {
+    const root = project();
+    const s = startNew(root, "Dropped meanwhile");
+    stop(ws(s.worktree), "x", undefined, true);
+    const r = start(dropBeforeClaim(root, s, true), { change: s.change }, quiet);
+    expect(!r.ok && r.error.code).toBe("not_found");
+    expect(git(root, "rev-parse", "--verify", "--quiet", `refs/heads/${s.branch}`).ok).toBe(false);
+    expect(existsSync(s.worktree)).toBe(false);
+    expect(claims(ws(root).db)).toEqual([]);
+  });
+
+  test("BR-2136: a branch still there after the claim, with only its worktree gone, is resumed from the branch", () => {
+    const root = project();
+    const s = startNew(root, "Worktree gone meanwhile");
+    stop(ws(s.worktree), "x", undefined, true);
+    const r = start(dropBeforeClaim(root, s, false), { change: s.change }, quiet);
+    expect(r.ok && r.value.branch).toBe(s.branch);
+    expect(existsSync(s.worktree)).toBe(true);
+    expect(claims(ws(root).db).map((c) => [c.subject, c.actor])).toEqual([[s.change, "agent:b"]]);
+  });
+
   test("BR-2107: two branches for one change are refused as invalid, listing both", () => {
     const root = project();
     sh(root, "branch", "change/C-1-a");

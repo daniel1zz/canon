@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Say, Workspace } from "../workspace.ts";
-import { holdClaim, unholdClaim, releaseClaim, renewClaim, takeClaim } from "../claims/claims.ts";
+import { holdClaim, unholdClaim, releaseClaim, releaseOwnClaim, renewClaim, takeClaim } from "../claims/claims.ts";
 import { writeHandoff } from "./handoffs.ts";
 import { sessionProcess } from "../claims/liveness.ts";
 import { runHooksSync } from "../../config/hooks.ts";
@@ -83,6 +83,13 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
 
   const claim = takeClaim(ws.db, changeId, path, ws.actor, ws.config.claimLeaseMs, sessionProcess());
   if (!claim.ok) return claim;
+  // reason: the branch was read before the claim; a drop that held the claim meanwhile may have deleted it.
+  // Seen after the claim, the branch is as a finished or not-yet-started drop leaves it (BR-2136, issue #20).
+  if (existing && !git(ws.primary, "rev-parse", "--verify", "--quiet", `refs/heads/${existing.branch}`).ok) {
+    releaseOwnClaim(ws.db, changeId, path, ws.actor);
+    ws.db.event(ws.actor, "start.refuse", changeId, { reason: "gone", branch: existing.branch });
+    return err("not_found", `${changeId} was removed while starting: its branch ${existing.branch} no longer exists`);
+  }
 
   let created = false;
   let hasBranch = false;
