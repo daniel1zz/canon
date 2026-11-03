@@ -1,7 +1,7 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync, rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Say, Workspace } from "../workspace.ts";
-import type { Config } from "../../config/config.ts";
+import { readConfig, type Config } from "../../config/config.ts";
 import { check, type Finding } from "../../knowledge/check/check.ts";
 import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../../knowledge/check/sources.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
@@ -327,7 +327,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
 
   // A landing that changes only paths the project declares no test reads has main's already-tested code tree,
   // so the floor would prove nothing new (BR-2164).
-  const skip = floorSkip(wt, ws.config, base.value, tested.value);
+  const skip = floorSkip(wt, base.value, tested.value);
   if (skip) {
     floorSkipped = true;
     say(`floor: skipped — all ${skip.paths.length} changed path(s) are under floor_skip_paths (${skip.under.join(", ")})`);
@@ -493,7 +493,7 @@ async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry:
     }
     const co = git(dir, "checkout", "-q", "--detach", tip);
     if (!co.ok) return fallBack(`checkout of ${tip.slice(0, 9)} failed: ${co.error.message}`);
-    const skip = floorSkip(dir, ws.config, t.base, tip);
+    const skip = floorSkip(dir, t.base, tip);
     if (skip) {
       say(`floor: skipped — all ${skip.paths.length} changed path(s) of the batch are under floor_skip_paths (${skip.under.join(", ")})`);
       ws.db.event(ws.actor, "floor.skip", t.subject, { entry: t.entry, paths: skip.paths.slice(0, 50), under: skip.under });
@@ -654,7 +654,12 @@ async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: { wt:
  * The paths `base..head` changes, when every one is under a `floor_skip_paths` entry and none is a test file
  * (BR-2164); undefined when the floor must run. Renames count on both sides (`--no-renames`).
  */
-export function floorSkip(wt: string, config: Config, base: string, head: string): { paths: string[]; under: string[] } | undefined {
+export function floorSkip(wt: string, base: string, head: string): { paths: string[]; under: string[] } | undefined {
+  // reason: the config of the tree that is landing decides, not the one read when the workspace opened, before
+  // the rebase onto a main that may have changed floor_skip_paths or tests (BR-2164, issue #40).
+  const read = readConfig(wt);
+  if (!read.ok) return undefined;
+  const config = read.value;
   if (config.floorSkipPaths.length === 0) return undefined;
   const d = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", base, head);
   if (!d.ok) return undefined;

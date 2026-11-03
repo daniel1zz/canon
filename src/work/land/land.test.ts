@@ -1098,6 +1098,17 @@ describe("floor skip for landings that change only declared paths", () => {
     for (const root of [outside, sibling, tests, unset]) expect(events(root, "floor.skip")).toEqual([]);
   });
 
+  test("BR-2164: the config on the tree that lands decides: an entry main dropped while the change waited no longer skips", async () => {
+    const root = skipProject(SKIP);
+    const s = startNew(root, "Stale config");
+    commitFile(s.worktree, "canon/notes/N-1.md", "---\nid: N-1\ntitle: 笔记\n---\n\n内容。\n");
+    writeFileSync(join(root, "canon/config.yaml"), 'floor: "false"\ntests: []\nfloor_skip_paths: [canon/changes]\n');
+    sh(root, "commit", "-qam", "tests now read canon/notes");
+    const out = await land(ws(s.worktree), FAST, quiet); // the workspace was opened on the old config
+    expect(out.kind === "refused" && out.reason).toBe("floor");
+    expect(events(root, "floor.skip")).toEqual([]);
+  });
+
   test("BR-2164: canon check still refuses after a skipped floor, marked floor_skipped, and stats count no floor run", async () => {
     const root = skipProject(SKIP);
     const s = startNew(root, "Dangling");
