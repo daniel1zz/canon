@@ -170,6 +170,13 @@ describe("process liveness", () => {
     }
   });
 
+  test("BR-2100: a start time recorded in local time before the switch to UTC still names the running process", () => {
+    const d = db();
+    const local = Bun.spawnSync(["ps", "-o", "lstart=", "-p", String(process.pid)], { stdout: "pipe", env: { ...process.env, LC_ALL: "C" } }).stdout.toString().trim().replace(/\s+/g, " ");
+    takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * 3600_000, { pid: process.pid, start: local });
+    expect(takeClaim(d, "C-1", "/wt/C-1", "agent:b").ok).toBe(false);
+  });
+
   test("BR-2100: CLAUDE_PID is believed only inside Claude Code and only when it is an ancestor of this process", () => {
     const parent = process.ppid;
     expect(sessionProcess({ CLAUDECODE: "1", CLAUDE_PID: String(parent) })?.pid).toBe(parent);

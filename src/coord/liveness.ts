@@ -9,10 +9,11 @@ export interface Proc {
   readonly start: string;
 }
 
-function ps(args: readonly string[]): { code: number; out: string } | undefined {
+function ps(args: readonly string[], zone: "utc" | "local" = "utc"): { code: number; out: string } | undefined {
   try {
     // reason: lstart is printed in the caller's time zone; fixing locale and zone makes two sessions read one string (BR-2100).
-    const r = Bun.spawnSync(["ps", ...args], { stdout: "pipe", stderr: "pipe", env: { ...process.env, LC_ALL: "C", TZ: "UTC" } });
+    const env = zone === "utc" ? { ...process.env, LC_ALL: "C", TZ: "UTC" } : { ...process.env, LC_ALL: "C" };
+    const r = Bun.spawnSync(["ps", ...args], { stdout: "pipe", stderr: "pipe", env });
     return { code: r.exitCode ?? -1, out: r.stdout.toString() };
   } catch {
     return undefined;
@@ -20,8 +21,8 @@ function ps(args: readonly string[]): { code: number; out: string } | undefined 
 }
 
 /** The start time of a live process; null when no process has this pid; undefined when the table cannot be read. */
-export function processStart(pid: number): string | null | undefined {
-  const r = ps(["-o", "lstart=", "-p", String(pid)]);
+export function processStart(pid: number, zone: "utc" | "local" = "utc"): string | null | undefined {
+  const r = ps(["-o", "lstart=", "-p", String(pid)], zone);
   if (!r) return undefined;
   const start = r.out.trim().replace(/\s+/g, " ");
   if (start !== "") return start;
@@ -42,7 +43,10 @@ export function processOf(pid: number): Proc | undefined {
 export function isGone(p: Proc): boolean | undefined {
   const start = processStart(p.pid);
   if (start === undefined) return undefined;
-  return start === null || start !== p.start;
+  if (start === null) return true;
+  if (start === p.start) return false;
+  // reason: records written before C-74 hold the start in the writer's local zone; read it that way too before calling it gone (BR-2100).
+  return processStart(p.pid, "local") !== p.start;
 }
 
 /** This canon process. */
