@@ -130,6 +130,8 @@ const decision = defineCommand({
       run({ args }) {
         const superseded = (corpus: ReturnType<typeof readCorpus>["corpus"], doc: Doc) => {
           if (doc.kind !== "decision" || !doc.supersedes) return undefined;
+          // reason: a decision cannot replace itself; accepting it would leave it superseded (BR-2027)
+          if (doc.supersedes === doc.id) fail({ code: "invalid", message: `${doc.id} supersedes itself; fix \`supersedes\` in ${doc.path}` });
           const old = findDoc(corpus, doc.supersedes);
           if (!old || old.kind !== "decision") fail({ code: "not_found", message: `${doc.id} supersedes ${doc.supersedes}, which is not a decision` });
           return old;
