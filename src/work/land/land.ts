@@ -37,7 +37,7 @@ export interface LandOptions {
 
 export type LandOutcome =
   | { readonly kind: "landed"; readonly sha: string; readonly change: string | null; readonly finished: boolean }
-  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "lost-turn" | "no-floor" | "no-claim" | "lessons" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
+  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "lost-turn" | "no-floor" | "no-claim" | "lessons" | "on-main" | "environment"; readonly message: string; readonly findings?: readonly Finding[] }
   | { readonly kind: "timeout"; readonly ahead: number };
 
 /**
@@ -102,11 +102,18 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
       if (doc?.kind === "change" && doc.status === "open") {
         // reason: lessons are known when the work ends, so closing is where they are required; old closed changes stay valid (BR-2161, D-24)
         if (!hasLessons(doc.body)) return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
+        // reason: a file write or git commit that fails is an environment error, not a check's verdict (BR-2193); the change file is put back as it was.
         const s = setMeta(wt, doc, { status: "done" });
-        if (!s.ok) return early("check", s.error.message);
+        if (!s.ok) {
+          git(wt, "checkout", "HEAD", "--", doc.path);
+          return early("environment", `the close commit could not be made: ${s.error.message}`);
+        }
         git(wt, "add", doc.path);
         const c = git(wt, "commit", "-q", "-m", closeSubject(subject));
-        if (!c.ok) return early("check", c.error.message);
+        if (!c.ok) {
+          git(wt, "checkout", "HEAD", "--", doc.path);
+          return early("environment", `the close commit could not be made: ${c.error.message}`);
+        }
         close = { subject, path: doc.path };
       }
     }
@@ -328,19 +335,22 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   if (waited.length > 0) return refuse("dirty", `the worktree got uncommitted changes while waiting to land; commit them and land again:\n${waited.map((l) => `  ${l}`).join("\n")}`);
 
   const base = git(wt, "rev-parse", main);
-  if (!base.ok) return refuse("main-moved", base.error.message);
+  // reason: git failing is an environment error, not a check's verdict, so it pollutes no check in `canon stats` (BR-2193).
+  if (!base.ok) return refuse("environment", base.error.message);
   say(`rebase onto ${main} ${base.value.slice(0, 9)}`);
   const reb = git(wt, "rebase", "-q", base.value);
   if (!reb.ok) {
     // reason: a signal that killed the rebase is handled on the next tick (BR-2099); let it run before calling this a conflict.
     await Bun.sleep(0);
     const files = git(wt, "diff", "--name-only", "--diff-filter=U");
-    git(wt, "rebase", "--abort");
+    if (rebaseInProgress(wt)) git(wt, "rebase", "--abort");
+    // reason: a rebase that fails with no conflicted file did not conflict (a lock, a hook); it keeps no place (BR-2193, BR-2177).
+    if (!files.ok || files.value === "") return refuse("environment", `rebase onto ${main} failed without a conflict: ${reb.error.message}`);
     return refuse("conflict", `rebase onto ${main} conflicts in: ${files.ok ? files.value.split("\n").join(", ") : "?"}\nResolve with \`git rebase ${main}\` in ${wt}, then land again.`);
   }
   // The commit the floor, canon check, the review and before_land prove; only this commit may become main (BR-2106).
   const tested = git(wt, "rev-parse", "HEAD");
-  if (!tested.ok) return refuse("main-moved", tested.error.message);
+  if (!tested.ok) return refuse("environment", tested.error.message);
 
   // Landings waiting right behind this one are tested with it under one floor run (BR-2172, D-26); a batch that
   // does not land as a whole sends them back to land on their own, and this landing goes on alone (BR-2173).
@@ -449,7 +459,7 @@ interface Link {
  * Returns undefined when nothing joined or the batch fell back (members go back to wait and land on their own,
  * BR-2173); "landed" when main moved; a refusal only for main moving or the turn being lost meanwhile.
  */
-async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running; base: string; head: string }): Promise<{ kind: "landed" } | { kind: "refused"; reason: "main-moved" | "main-dirty"; message: string } | { kind: "lost"; outcome: LandOutcome } | undefined> {
+async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running; base: string; head: string }): Promise<{ kind: "landed" } | { kind: "refused"; reason: "main-moved" | "main-dirty" | "environment"; message: string } | { kind: "lost"; outcome: LandOutcome } | undefined> {
   const main = ws.config.main;
   const members: { id: number; subject: string | null; worktree: string; branch: string; joined: string }[] = [];
   for (const c of batchCandidates(ws.db, t.entry, ws.config.landBatchMax - 1, ws.config.landerStaleMs)) {
@@ -751,10 +761,10 @@ export function ownDiffId(wt: string, main: string): string | null {
  */
 export const LAND_MARKER = "CANON_LAND_MAIN";
 
-function moveMain(ws: Workspace, expected: string, next: string): "moved" | { reason: "main-moved" | "main-dirty"; message: string } {
+function moveMain(ws: Workspace, expected: string, next: string): "moved" | { reason: "main-moved" | "main-dirty" | "environment"; message: string } {
   const main = ws.config.main;
   const wts = listWorktrees(ws.primary);
-  if (!wts.ok) return { reason: "main-moved", message: wts.error.message };
+  if (!wts.ok) return { reason: "environment", message: wts.error.message };
   const holder = wts.value.find((w) => w.branch === main);
   if (holder) {
     if (holder.head !== expected) return { reason: "main-moved", message: `${main} moved to ${holder.head.slice(0, 9)} during the landing; land again` };

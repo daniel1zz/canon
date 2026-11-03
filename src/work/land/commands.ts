@@ -26,6 +26,7 @@ const landCmd = defineCommand({
     console.error(`canon: land refused (${out.reason}): ${out.message}`);
     for (const f of out.findings ?? []) console.error(`  ${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
     if (out.reason === "claimed") process.exit(EXIT.conflict);
+    if (out.reason === "environment") process.exit(EXIT.env);
     process.exit(out.reason === "dirty" || out.reason === "on-main" || out.reason === "no-floor" || out.reason === "no-claim" ? EXIT.usage : EXIT.refused);
   },
 });
