@@ -10,8 +10,11 @@ setup: "bun install"
 review: "scripts/review-claude.sh"
 # 生命周期 hook（D-2、D-3）：每项是一条命令或命令列表
 hooks:
-  # 合入后在主 checkout 重新构建 dist/canon，让 PATH 上的 canon 和 main 一致
-  after_land: "bun run build"
+  after_land:
+    # 合入后在主 checkout 重新构建 dist/canon，让 PATH 上的 canon 和 main 一致
+    - "bun run build"
+    # 合入后的代码评审（C-2）：只找安全和并发问题，一个根因一个 issue，写到 GitHub（负责人 2026-11-03 同意开启）
+    - "bun scripts/code-review.ts"
 # 每个检查的复审日期（BR-2069）：到期后 `canon stats` 把它列为待复审
 check_reviews:
   on-main: "2027-02-03"
