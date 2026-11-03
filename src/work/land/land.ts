@@ -284,7 +284,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: t.branch, diff: fingerprint });
   say(`landed ${head.value.slice(0, 9)} on ${main}`);
   if (ws.config.hooks.after_land.length > 0) {
-    const log = runHooksInBackground({ db: ws.db, actor: ws.actor, event: "after_land", change: subject, cwd: ws.primary, env: hookEnv }, ws.config.hooks.after_land, logFile(ws.db, `after-land-${entry}.log`));
+    const log = runHooksInBackground({ db: ws.db, actor: ws.actor, event: "after_land", change: subject, cwd: ws.primary, env: hookEnv }, ws.config.hooks.after_land, logFile(ws.db, `after-land-${entry}.log`), entry);
     say(`after_land running in the background (log: ${log})`);
   }
 

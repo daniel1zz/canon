@@ -80,8 +80,11 @@ export function runHooksSync(ctx: HookContext, commands: readonly string[], say:
   return first;
 }
 
-/** Starts the commands one after another in the background and returns the log path; exit codes are not awaited. */
-export function runHooksInBackground(ctx: HookContext, commands: readonly string[], logPath: string): string {
+/**
+ * Starts the commands one after another in the background and returns the log path; exit codes are not awaited.
+ * `batch` is the landing's queue entry: turns go in entry order, so it orders batches by landing (BR-2138).
+ */
+export function runHooksInBackground(ctx: HookContext, commands: readonly string[], logPath: string, batch: number): string {
   mkdirSync(dirname(logPath), { recursive: true });
   const fd = openSync(logPath, "w");
   // Each command runs in its own subshell; its exit code is written to the log after its output.
@@ -89,7 +92,7 @@ export function runHooksInBackground(ctx: HookContext, commands: readonly string
   const p = Bun.spawn(["sh", "-c", script], { cwd: ctx.cwd, env: envFor(ctx), stdout: fd, stderr: fd, stdin: "ignore" });
   p.unref();
   closeSync(fd);
-  commands.forEach((command, i) => ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit: null, background: true, log: logPath, index: i + 1 }));
+  commands.forEach((command, i) => ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit: null, background: true, log: logPath, index: i + 1, batch }));
   return logPath;
 }
 
@@ -116,8 +119,12 @@ const EXIT_LINE = /^\[hook (\d+)\/\d+ exited (\d+)\]$/gm;
  * `hook.exit` event (BR-2137). Returns the batch, or undefined when no background run recorded a log path.
  */
 export function settleBackgroundHooks(db: CoordDb, actor: string): BackgroundBatch | undefined {
+  // reason: a landing releases its queue turn before it records its batch, so a later landing's rows can be written
+  // first; the queue entry, not the event id, says which landing came last (BR-2138, issue #28)
   const latest = db.db
-    .query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'hook.run' AND json_extract(detail, '$.log') IS NOT NULL ORDER BY id DESC LIMIT 1")
+    .query<{ detail: string }, []>(
+      "SELECT detail FROM events WHERE kind = 'hook.run' AND json_extract(detail, '$.log') IS NOT NULL ORDER BY json_extract(detail, '$.batch') DESC, id DESC LIMIT 1",
+    )
     .get();
   if (!latest) return undefined;
   const log = (JSON.parse(latest.detail) as { log: string }).log;

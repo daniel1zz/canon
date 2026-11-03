@@ -6,7 +6,7 @@ import { claims } from "../work/claims/claims.ts";
 import { handoffs } from "../work/session/handoffs.ts";
 import { start, stop } from "../work/session/session.ts";
 import { land } from "../work/land/land.ts";
-import { backgroundNotice, settleBackgroundHooks } from "./hooks.ts";
+import { backgroundNotice, logFile, runHooksInBackground, settleBackgroundHooks } from "./hooks.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../work/testkit.ts";
 
 function configured(hooks: string) {
@@ -150,6 +150,21 @@ describe("background hook exit codes", () => {
     expect(runs.map((r) => r.index)).toEqual([1, 2]);
     expect(runs[0]!.log).toMatch(/after-land-\d+\.log$/);
     expect(runs[1]!.log).toBe(runs[0]!.log);
+    const entry = Number(runs[0]!.log.match(/after-land-(\d+)\.log$/)![1]);
+    expect((runs as unknown as { batch: number }[]).map((r) => r.batch)).toEqual([entry, entry]);
+  });
+
+  test("BR-2138: the latest batch is the latest landing's, even when an earlier landing recorded its batch after it", async () => {
+    const root = project();
+    const w = ws(root);
+    const ctx = (change: string) => ({ db: w.db, actor: "agent:a", event: "after_land" as const, change, cwd: root, env: {} });
+    // Landing 11 records its failing batch first; landing 10, descheduled after releasing its turn, records afterwards.
+    const later = runHooksInBackground(ctx("C-11"), ["exit 1"], logFile(w.db, "after-land-11.log"), 11);
+    const earlier = runHooksInBackground(ctx("C-10"), ["exit 0"], logFile(w.db, "after-land-10.log"), 10);
+    await finished(later, 1);
+    await finished(earlier, 1);
+    expect(backgroundNotice(settleBackgroundHooks(w.db, "agent:test"))).toBe(`after_land after C-11 failed in the background: \`exit 1\` exited 1 (log: ${later})`);
+    expect(exits(root).map((e) => [e.subject, e.exit])).toEqual([["C-11", 1]]);
   });
 
   test("BR-2137: brief records each finished background command once as hook.exit; an unfinished one is not recorded", async () => {
@@ -203,6 +218,23 @@ describe("background hook exit codes", () => {
     expect(backgroundNotice(settleBackgroundHooks(ws(root).db, "agent:test"))).toBe(
       `after_land after ${s.change}: the log ${log} is missing, so whether the background commands succeeded is unknown`,
     );
+  });
+
+  test("BR-2138 BR-2137: a failed command is named while the next one still runs; a missing log records no hook.exit", async () => {
+    const root = project();
+    const w = ws(root);
+    const ctx = { db: w.db, actor: "agent:a", event: "after_land" as const, change: "C-3", cwd: root, env: {} };
+    const log = runHooksInBackground(ctx, ["exit 2", `while [ ! -e ${root}/go ]; do sleep 0.05; done`], logFile(w.db, "after-land-3.log"), 3);
+    await finished(log, 1);
+    expect(backgroundNotice(settleBackgroundHooks(w.db, "agent:test"))).toBe(`after_land after C-3 failed in the background: \`exit 2\` exited 2 (log: ${log})`);
+    writeFileSync(join(root, "go"), "");
+    await finished(log, 2);
+
+    const gone = runHooksInBackground({ ...ctx, change: "C-4" }, ["exit 0"], logFile(w.db, "after-land-4.log"), 4);
+    await finished(gone, 1);
+    rmSync(gone);
+    expect(settleBackgroundHooks(w.db, "agent:test")?.logFound).toBe(false);
+    expect(exits(root).map((e) => e.log)).toEqual([log]);
   });
 
   test("BR-2138: with no background run recorded, there is nothing to say", () => {
