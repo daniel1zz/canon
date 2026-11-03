@@ -167,7 +167,15 @@ export function questions(db: CoordDb, which: "pending" | "all"): Question[] {
   return rows.map((r) => ({ ...r, options: JSON.parse(r.options) as string[] }));
 }
 
+/**
+ * Records a human's answer. Only a `human:` actor may answer (BR-2021): a terminal alone proves nothing, since
+ * an agent can open a pseudo-terminal; BR-2023 guarantees an agent session is never recorded as human.
+ */
 export function answer(db: CoordDb, id: number, text: string, by: string): Result<void> {
+  if (!by.startsWith("human:")) {
+    db.event(by, "human.answer.refuse", String(id), { reason: "not-human" });
+    return err("invalid", `only a human answers questions; ${by} is not a human actor (BR-2021)`);
+  }
   const q = db.db.query<{ answer: string | null }, [number]>("SELECT answer FROM questions WHERE id = ?").get(id);
   if (!q) return err("not_found", `no question #${id}`);
   if (q.answer !== null) return err("conflict", `question #${id} is already answered`);

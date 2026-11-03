@@ -44,6 +44,16 @@ describe("landing queue", () => {
 });
 
 describe("human questions", () => {
+  test("BR-2021: an agent actor cannot answer, even from a terminal; the refusal is recorded", () => {
+    const d = db();
+    const q = ask(d, "agent:a", "C-1", "Ship it?", ["yes", "no"]);
+    const r = answer(d, q, "yes", "agent:x");
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe("invalid");
+    expect(questions(d, "pending").map((x) => x.id)).toEqual([q]);
+    expect(d.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'human.answer.refuse'").get()?.n).toBe(1);
+  });
+
   test("BR-2040: a question is answered once and the answer records who gave it", () => {
     const d = db();
     const q = ask(d, "agent:a", "C-1", "Ship on Friday?", ["yes", "no"]);

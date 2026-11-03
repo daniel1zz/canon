@@ -85,7 +85,8 @@ describe("dropping a change", () => {
     const byAgent = withCommit(root, "Agent said yes");
     const q3 = drop(ws(root), byAgent.change, quiet);
     if (!q3.ok || q3.value.kind !== "asked") throw new Error("expected a question");
-    answer(ws(root).db, q3.value.question, "yes", "agent:x");
+    // answer() refuses an agent; drop must still refuse an agent's answer that reached the table some other way
+    ws(root).db.db.query("UPDATE questions SET answer = 'yes', answered_by = 'agent:x' WHERE id = ?").run(q3.value.question);
     expect(drop(ws(root), byAgent.change, quiet)).toMatchObject({ ok: true, value: { kind: "declined" } });
     expect(existsSync(byAgent.worktree)).toBe(true);
   });
