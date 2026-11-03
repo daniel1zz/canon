@@ -10,8 +10,10 @@ import { check } from "./check.ts";
 const br = (n: number) => ["BR", n].join("-");
 const d = (n: number) => ["D", n].join("-");
 
+/** Fixture repo; the code directories the fixture domains name exist, as BR-2079 requires. */
 function repo(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "canon-next-check-"));
+  for (const dir of ["src/billing", "src/auth"]) mkdirSync(join(root, dir), { recursive: true });
   for (const [p, text] of Object.entries(files)) {
     mkdirSync(dirname(join(root, p)), { recursive: true });
     writeFileSync(join(root, p), text);
@@ -142,5 +144,16 @@ describe("id allocation", () => {
     expect(db.value.allocate("BR", 0, "test")).toBe(br(1564));
     expect(db.value.allocate("D", 0, "test")).toBe(d(1));
     db.value.close();
+  });
+});
+
+describe("domain code paths", () => {
+  test("BR-2079: a code path that does not exist is reported on the README; existing files and directories are fine", () => {
+    const root = repo({
+      "canon/rules/billing/README.md": "---\ncode: [src/billing, src/gone, src/main.ts]\n---\n# billing\n\nMoney.\n",
+      "src/main.ts": "export {};\n",
+    });
+    const findings = check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "domain-code-missing");
+    expect(findings.map((f) => `${f.path} ${f.message}`)).toEqual(["canon/rules/billing/README.md code path src/gone does not exist; fix it or remove it from the README"]);
   });
 });

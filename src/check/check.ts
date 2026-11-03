@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { stripCode, type Corpus, type Rule } from "../knowledge/model.ts";
 import type { FileProblem } from "../knowledge/read.ts";
@@ -24,6 +24,7 @@ export type CheckRule =
   | "test-retired-rule" // a test still names a retired rule
   | "rule-no-statement" // an active rule has no non-empty "## 规则" section
   | "rule-no-example" // an active rule with tests has no example in "## 例子"
+  | "domain-code-missing" // a domain README lists a code path that does not exist (BR-2079)
   | "template-unfilled"; // a rule, decision, change, declared-type document or domain README still holds a template placeholder line
 
 export interface CheckInput {
@@ -50,6 +51,10 @@ export function check(input: CheckInput): Finding[] {
     }
   }
   for (const dom of input.corpus.domains) {
+    // A path that does not exist silently drops the domain from `canon context <path>` (BR-2079).
+    for (const c of dom.code) {
+      if (!existsSync(join(input.root, c))) findings.push({ path: dom.path, rule: "domain-code-missing", message: `code path ${c} does not exist; fix it or remove it from the README` });
+    }
     for (const ref of idsIn(stripCode(dom.body))) {
       if (!byId.has(ref)) findings.push({ path: dom.path, rule: "ref-dangling", message: `names ${ref}, which does not exist` });
     }

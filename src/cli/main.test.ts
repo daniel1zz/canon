@@ -50,6 +50,8 @@ describe("exit codes", () => {
     expect(d.code).toBe(0);
     expect(d.out.trim()).toMatch(/^canon\/decisions\/D-1\.md$/);
     expect(canon(root, "show", ["D", 1].join("-")).out).toContain("## 背景"); // BR-2037: Chinese template
+    const change = canon(root, "change", "new", "--title", "Template check").out.trim();
+    expect(readFileSync(join(root, change), "utf8")).toContain("## 陷阱和假设");
     Bun.spawnSync(["git", "add", "-A"], { cwd: root });
     Bun.spawnSync(["git", "commit", "-qm", "init"], { cwd: root });
     const w = canon(root, "work", "start", "--title", "中文变更");

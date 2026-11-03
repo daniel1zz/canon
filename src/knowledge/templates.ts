@@ -49,7 +49,7 @@ export function templateFor(type: string, projectTemplates: Readonly<Record<stri
     case "decision":
       return "## 背景\n\n<为什么需要做这个决定，有哪些事实和数据。>\n\n## 方案\n\n1. <方案一>：<采用或否决，以及理由>\n2. <方案二>：<采用或否决，以及理由>\n\n## 决定\n\n<决定了什么。>\n\n## 后果\n\n<带来哪些变化、代价和后续工作。>\n";
     case "change":
-      return "## 为什么\n\n<要解决什么问题。>\n\n## 要改什么\n\n<具体改动，以及会新增或修改哪些规则。>\n\n## 任务\n\n- [ ] <任务>\n";
+      return "## 为什么\n\n<要解决什么问题。>\n\n## 要改什么\n\n<具体改动，以及会新增或修改哪些规则。>\n\n## 陷阱和假设\n\n<新会话接手时最容易踩的坑，以及这个变更依赖的假设；没有就删掉这一节。>\n\n## 任务\n\n- [ ] <任务>\n";
     default:
       return "";
   }

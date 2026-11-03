@@ -105,6 +105,8 @@ describe("rule review at land", () => {
     );
     mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
     writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n");
+    mkdirSync(join(root, "src/billing"), { recursive: true });
+    writeFileSync(join(root, "src/billing/.keep"), ""); // the domain's code path exists (BR-2079)
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "domain");
     return { root, promptFile };
@@ -134,6 +136,8 @@ describe("rule review at land", () => {
     writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: "exit 3"\n`);
     mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
     writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n");
+    mkdirSync(join(root, "src/billing"), { recursive: true });
+    writeFileSync(join(root, "src/billing/.keep"), ""); // the domain's code path exists (BR-2079)
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "domain");
     const s = startNew(root, "New rule");
@@ -150,6 +154,8 @@ describe("rule review at land", () => {
     const root = project();
     mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
     writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n");
+    mkdirSync(join(root, "src/billing"), { recursive: true });
+    writeFileSync(join(root, "src/billing/.keep"), ""); // the domain's code path exists (BR-2079)
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "domain");
     const s = startNew(root, "New rule");
