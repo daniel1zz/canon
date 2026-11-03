@@ -11,6 +11,6 @@ export const WORKFLOW_GUIDE = `canon keeps this project's shared memory in canon
 - Finish with canon work land --finish. Landing is the only gate: when refused, fix what it names and land again. Stopping before that: canon work stop --next "<next step>".
 - Landing can take minutes while it waits behind other landings: run it with a long timeout or in the background, and read its exit code directly, not through a pipe.
 - In a worktree run only the tests for your change; the floor runs the full suite when landing.
-- Ask the human only about direction, choices left to them, spending money, irreversible actions on shared things, or credentials. Ask in the conversation, then record their exact words: canon human answer <n> <answer> --relayed "<their words>". Never answer for them.
-- Removing a worktree or branch that holds unlanded work: canon work drop <C-n>, never plain git.
-- A problem you will not fix now: open an issue, one root cause per issue, with a command that reproduces it.`;
+- Ask the human only about direction, choices left to them, spending money (paid APIs, cloud resources), irreversible actions on shared things (publishing, deleting remote data, pushing to someone else's repository), or credentials and second factors; do not wait for them on anything else. Ask in the conversation, then record their exact words: canon human answer <n> <answer> --relayed "<their words>". Never answer for them.
+- Removing a worktree or branch that holds unlanded work: canon work drop <C-n>, never plain git; it archives what would be lost before deleting, so it needs no one's approval.
+- A problem you will not fix now: open an issue, one root cause per issue, with a command that reproduces it, the expected result and the actual result.`;
