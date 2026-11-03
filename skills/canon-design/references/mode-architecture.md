@@ -2,7 +2,7 @@
 
 **Purpose**: Multi-perspective system architecture design
 → See [architecture-patterns.md](architecture-patterns.md) for patterns
-→ See [../shared/docs-lookup-guide.md](../../shared/docs-lookup-guide.md) for docs lookup
+→ Check current official docs (context7 / the vendor docs) before naming any library, version or API
 → Visualization: C4 Model (Context → Container → Component → Code) — choose appropriate abstraction level
 
 ## Phase 1: Context, Constraints & Quality Attribute Analysis
@@ -32,10 +32,10 @@ For each high-priority NFR, define:
 
 These scenarios feed directly into the multi-role evaluation (Phase 2) and become testable acceptance criteria for the implement/test skills.
 
-## Phase 2: Multi-Role Parallel Architecture Evaluation
+## Phase 2: Multi-Role Architecture Evaluation
 
-After initial analysis, launch **6 parallel subagents** to evaluate architecture options from competing concerns.
-Use `Agent` tool — send ALL 6 in a single message for true parallel execution.
+By default, review the draft yourself against each of the 6 lenses below, one at a time, and write down what each finds.
+Parallel subagents are optional and costly (each starts from zero context, typically tens of thousands of tokens): use them only when the blast radius is large (cross-module, public API, data migration, security). Then send all 6 in one message, each with the prompt template below.
 
 ### Role Matrix
 
@@ -70,7 +70,7 @@ Use `Agent` tool — send ALL 6 in a single message for true parallel execution.
 
 ### Subagent Prompt Template
 
-Each subagent receives:
+Each subagent (when used) receives:
 
 ```
 ## Role
@@ -99,7 +99,7 @@ Keep output concise (300 words max). Be specific about components, not abstract.
 
 ## Phase 3: Synthesis & Design
 
-After all 6 agents return, synthesize into final architecture:
+After all lenses are reviewed (by you or by subagents), synthesize into final architecture:
 
 ### Synthesis Framework
 

@@ -15,7 +15,7 @@ Design is done when a later session can read **why** (a decision, `canon/decisio
 | `api` | `references/mode-api.md`, `references/api-design.md` | endpoints / commands, errors, auth, pagination |
 | `database` | `references/mode-database.md`, `references/database-design.md` | schema, indexes, migrations, access patterns |
 | `system` | `references/mode-system.md`, `references/system-design.md` | SLAs, failure modes, capacity |
-| `module` | `references/mode-module.md` | responsibility, public surface, dependencies |
+| `module` | `references/mode-module.md` | responsibility, depth (deletion test), seams, dependency categories |
 
 Read only the files of the mode you need. Cross-cutting references (`references/cross-cutting/`: authorization, error handling, idempotency, session identity) when the design touches them.
 
@@ -31,6 +31,8 @@ Read only the files of the mode you need. Cross-cutting references (`references/
 - Give at least two real options with their trade-offs, and a recommendation. Three or more options or several dimensions → reason step by step (sequential thinking) instead of a pros/cons list from memory.
 - Check current official docs before proposing any library, version or API.
 - Quantify vague goals first ("fast" → p99 under X ms at Y rps).
+- Every scenario the design serves names at least one business-level failure it must handle (limit hit, payment declined, permission revoked mid-flow, upstream outage) and how it fails loudly and recoverably; "no failure mode applies" has to be argued, not assumed.
+- Review the draft against the mode's lenses yourself. Parallel review subagents (one per lens, see the mode file) are optional: each starts from zero context and costs tens of thousands of tokens, so use them only when the blast radius is large (cross-module, public API, data migration, security).
 
 ### Quality gates (all must pass, or say which one does not and why)
 
@@ -40,7 +42,7 @@ Read only the files of the mode you need. Cross-cutting references (`references/
 | `api` | every operation has its errors; every operation has its auth requirement; security issues resolved or accepted with rationale; pagination and rate limits stated |
 | `database` | all foreign keys indexed; every table justified by an access pattern; zero-downtime migration for every schema change; no float for money, time zones on timestamps |
 | `system` | SLA targets (throughput, p99, availability); no unmitigated single point of failure; every component has a failure mode and degradation; capacity at 1×/10×/100× |
-| `module` | no dependency cycles; one clear responsibility per module; public surface enough to test as a black box; dependencies injectable |
+| `module` | no dependency cycles; one clear responsibility per module; every module passes the deletion test; no seam with a single adapter; public surface enough to test as a black box; dependencies injectable |
 
 ### Cross-cutting (evaluate every time; skip only with a stated reason)
 
@@ -50,6 +52,7 @@ Read only the files of the mode you need. Cross-cutting references (`references/
 | Concurrency | shared state, several sessions or processes | name the interleaving that could break it and what makes it atomic |
 | Performance | latency-sensitive paths, large data | set a budget and show the design meets it |
 | Observability | new component | what is logged or recorded, and how a failure is noticed |
+| Data privacy | PII or other user data | classify its sensitivity; encryption at rest and in transit; retention period and deletion; audit trail of who reads or changes it |
 
 ## 4. Record the design
 

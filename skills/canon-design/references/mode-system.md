@@ -2,7 +2,7 @@
 
 **Purpose**: Multi-perspective distributed system and scalability design
 → See [system-design.md](system-design.md) for patterns and decision tables
-→ See [../shared/docs-lookup-guide.md](../../shared/docs-lookup-guide.md) for docs lookup
+→ Check current official docs (context7 / the vendor docs) before naming any library, version or API
 
 ## Phase 1: Requirements & Capacity Modeling
 
@@ -24,8 +24,8 @@ Output: **System Brief** — SLA targets, capacity model, constraints, technolog
 
 ## Phase 2: Multi-Perspective System Review
 
-Launch **4 parallel subagents**, each evaluating the system design from a different concern.
-Use `Agent` tool — send ALL 4 in a single message for true parallel execution.
+By default, review the draft yourself against each of the 4 lenses below, one at a time, and write down what each finds.
+Parallel subagents are optional and costly (each starts from zero context, typically tens of thousands of tokens): use them only when the blast radius is large (cross-module, public API, data migration, security). Then send all 4 in one message, each with the prompt template below.
 
 ### Perspective Matrix
 
@@ -38,7 +38,7 @@ Use `Agent` tool — send ALL 4 in a single message for true parallel execution.
 
 ### Subagent Prompt Template
 
-Each subagent receives:
+Each subagent (when used) receives:
 
 ```
 ## System Review Perspective
@@ -66,7 +66,7 @@ Provide:
 
 ## Phase 3: Synthesis & Design
 
-After all 4 agents return, synthesize:
+After all lenses are reviewed (by you or by subagents), synthesize:
 
 1. **Consensus** — system decisions all perspectives agree on (high confidence)
 2. **Tension Points** — where perspectives disagree (document as explicit trade-offs)

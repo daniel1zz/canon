@@ -2,7 +2,7 @@
 
 **Purpose**: Multi-perspective data model and schema design
 → See [database-design.md](database-design.md) for conventions
-→ See [../shared/docs-lookup-guide.md](../../shared/docs-lookup-guide.md) for docs lookup
+→ Check current official docs (context7 / the vendor docs) before naming any library, version or API
 
 ## Phase 1: Domain Concept Analysis
 
@@ -23,8 +23,8 @@ Output: **Domain Model Draft** — entities with invariants, relationships, life
 
 ## Phase 2: Multi-Perspective Data Review
 
-Launch **4 parallel subagents**, each reviewing the data model from a different concern.
-Use `Agent` tool — send ALL 4 in a single message for true parallel execution.
+By default, review the draft yourself against each of the 4 lenses below, one at a time, and write down what each finds.
+Parallel subagents are optional and costly (each starts from zero context, typically tens of thousands of tokens): use them only when the blast radius is large (cross-module, public API, data migration, security). Then send all 4 in one message, each with the prompt template below.
 
 ### Perspective Matrix
 
@@ -37,7 +37,7 @@ Use `Agent` tool — send ALL 4 in a single message for true parallel execution.
 
 ### Subagent Prompt Template
 
-Each subagent receives:
+Each subagent (when used) receives:
 
 ```
 ## Data Review Perspective
@@ -65,7 +65,7 @@ Provide:
 
 ## Phase 3: Synthesis & Schema Design
 
-After all 4 agents return, synthesize:
+After all lenses are reviewed (by you or by subagents), synthesize:
 
 1. **Cross-perspective issues** — flagged by 2+ perspectives (must fix)
 2. **Security blockers** — any security/privacy issue = must fix
