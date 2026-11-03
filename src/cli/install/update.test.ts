@@ -172,8 +172,8 @@ describe("finding and applying updates", () => {
     writeFileSync(join(root, ".claude/settings.json"), JSON.stringify(withdrawn));
     const r = canon(root, env, "update", "--check");
     expect(r.code).toBe(1);
-    expect(r.out).toContain("hook: canon hook pre-bash before each Bash call, withdrawn by canon");
-    expect(r.out).toContain("permission: Bash(export CANON_ACTOR='agent:*'), withdrawn by canon");
+    expect(r.out).toContain("hook: canon hook pre-bash before each Bash call, withdrawn by canon; install or update removes it (.claude/settings.json)");
+    expect(r.out).toContain("permission: Bash(export CANON_ACTOR='agent:*'), withdrawn by canon; install or update removes it (.claude/settings.json)");
     expect(r.out).not.toContain("canon brief at session start");
     expect(canon(root, env, "install").code).toBe(0);
     expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual(before);
