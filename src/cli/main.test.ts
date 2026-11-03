@@ -113,6 +113,31 @@ function committed(root: string) {
   Bun.spawnSync(["git", "commit", "-qm", "c"], { cwd: root });
 }
 
+describe("search events", () => {
+  test("BR-2134 BR-2135: each search records its query, results and full matches; canon stats reports them", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    canon(root, "note", "new", "--title", "sessions last hours");
+    committed(root);
+    expect(canon(root, "stats").out).not.toContain("searches:");
+    canon(root, "search", "sessions hours");
+    canon(root, "search", "sessions zzqq");
+    const none = canon(root, "search", "zzqq", "--json");
+    expect(JSON.parse(none.out)).toEqual([]);
+    const { Database } = require("bun:sqlite") as typeof import("bun:sqlite");
+    const db = new Database(join(root, ".git/canon/state.db"), { readonly: true });
+    const rows = db.query<{ subject: string | null; detail: string }, []>("SELECT subject, detail FROM events WHERE kind = 'search' ORDER BY id").all();
+    db.close();
+    expect(rows.map((r) => r.subject)).toEqual([null, null, null]);
+    expect(rows.map((r) => JSON.parse(r.detail))).toEqual([
+      { query: "sessions hours", results: 1, full: 1 },
+      { query: "sessions zzqq", results: 1, full: 0 },
+      { query: "zzqq", results: 0, full: 0 },
+    ]);
+    expect(canon(root, "stats").out).toContain("searches: 3, no result: 1 (33.3%), no full match: 2 (66.7%)");
+  });
+});
+
 describe("undeclared arguments", () => {
   test("BR-2097 BR-2022: an option or positional the command does not declare exits 2, names it and lists the valid options", () => {
     const root = repo();
@@ -386,7 +411,14 @@ describe("subdomains from the CLI", () => {
     mkdirSync(join(root, "src/billing"), { recursive: true });
     canon(root, "rule", "domain", "billing", "--code", "src/billing");
     canon(root, "rule", "domain", "billing/refunds");
-    const add = (n: number) => { for (let i = 0; i < n; i++) canon(root, "rule", "new", "--domain", "billing", "--title", `R${i}`, "--untested", "fixture"); };
+    // reason: written directly, not by 26 `rule new` processes, which outran the 5 s test timeout under load
+    let next = 1;
+    const add = (n: number) => {
+      for (let i = 0; i < n; i++, next++) {
+        const rid = ["BR", next].join("-");
+        writeFileSync(join(root, `canon/rules/billing/${rid}.md`), `---\nid: ${rid}\ntitle: R${next}\nstatus: active\nuntested: fixture\n---\n## 规则\n\nX.\n`);
+      }
+    };
     add(25);
     let out = canon(root, "rule", "domains").out;
     expect(out).toMatch(/\n?billing\s+25 rules/);

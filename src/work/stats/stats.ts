@@ -185,3 +185,28 @@ export function renderSharedShare(s: SharedShare): string {
   const line = `shared code: ${s.sharedLines} of ${s.totalLines} lines under ${s.codeRoot} (${pct.toFixed(1)}%)`;
   return pct > SHARED_LIMIT_PERCENT ? `${line}: above ${SHARED_LIMIT_PERCENT}%; move code that serves one domain into that domain's directory` : line;
 }
+
+export interface SearchStats {
+  readonly searches: number;
+  /** Searches that listed nothing. */
+  readonly empty: number;
+  /** Searches where no listed document contained every word; includes the empty ones (BR-2135). */
+  readonly noFull: number;
+}
+
+export function searchStats(db: CoordDb): SearchStats {
+  const rows = db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'search'").all();
+  let empty = 0;
+  let noFull = 0;
+  for (const r of rows) {
+    const d = JSON.parse(r.detail) as { results?: number; full?: number };
+    if (d.results === 0) empty++;
+    if (d.full === 0) noFull++;
+  }
+  return { searches: rows.length, empty, noFull };
+}
+
+export function renderSearchStats(s: SearchStats): string {
+  const pct = (n: number) => (s.searches === 0 ? 0 : (100 * n) / s.searches).toFixed(1);
+  return `searches: ${s.searches}, no result: ${s.empty} (${pct(s.empty)}%), no full match: ${s.noFull} (${pct(s.noFull)}%)`;
+}

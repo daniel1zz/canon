@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { check } from "../check/check.ts";
-import { contextFor, search, renderContext } from "./query.ts";
+import { contextFor, isIdQuery, renderSearch, search, renderContext, SEARCH_HINT } from "./query.ts";
 import { reviewPrompt } from "../review/review.ts";
 import { readCorpus } from "../documents/read.ts";
 
@@ -82,10 +82,39 @@ describe("search", () => {
     expect(search(corpus, "合入").map((h) => h.doc.id)).toEqual([id("N", 1)]);
   });
 
-  test("BR-2073: several words must all appear", () => {
+  test("BR-2073: documents with every word come first; partial ones follow, ordered by words matched", () => {
     const { corpus } = corpusOf(files);
-    expect(search(corpus, "sessions hours").map((h) => h.doc.id)).toEqual([id("BR", 3)]);
-    expect(search(corpus, "sessions refunds")).toEqual([]);
+    const both = search(corpus, "sessions hours");
+    expect(both[0]!.doc.id).toBe(id("BR", 3));
+    expect([both[0]!.matched, both[0]!.terms]).toEqual([2, 2]);
+    const partial = search(corpus, "sessions refunds");
+    expect(partial.map((h) => h.doc.id).sort()).toEqual([id("BR", 1), id("BR", 3), id("C", 1)].sort()); // C-1 "Shorten refunds"
+    expect(partial.every((h) => h.matched === 1 && h.terms === 2)).toBe(true);
+    const abc = corpusOf({
+      [`canon/notes/${id("N", 1)}-x.md`]: `---\nid: ${id("N", 1)}\ntitle: X\n---\nalpha beta\n`,
+      [`canon/notes/${id("N", 2)}-y.md`]: `---\nid: ${id("N", 2)}\ntitle: Y\n---\nalpha alpha alpha alpha alpha\n`,
+      [`canon/notes/${id("N", 3)}-z.md`]: `---\nid: ${id("N", 3)}\ntitle: Z\n---\nalpha beta gamma\n`,
+      [`canon/notes/${id("N", 4)}-w.md`]: `---\nid: ${id("N", 4)}\ntitle: W\n---\nnothing here\n`,
+    }).corpus;
+    const hits = search(abc, "alpha beta gamma");
+    expect(hits.map((h) => [h.doc.id, h.matched])).toEqual([[id("N", 3), 3], [id("N", 1), 2], [id("N", 2), 1]]);
+    const lines = renderSearch(hits, false);
+    expect(lines[0]).not.toContain("words]");
+    expect(lines[1]).toContain("[2/3 words]");
+    expect(lines[2]).toContain("[1/3 words]");
+    expect(search(corpus, "sessions").every((h) => h.matched === h.terms)).toBe(true);
+  });
+
+  test("BR-2133: the hint follows when no document has every word, after (no match) when nothing matched; never for an id or a full match", () => {
+    const { corpus } = corpusOf(files);
+    const partial = renderSearch(search(corpus, "sessions refunds"), false);
+    expect(partial.at(-1)).toBe(SEARCH_HINT);
+    expect(partial).not.toContain("(no match)");
+    expect(renderSearch(search(corpus, "zzqq"), false)).toEqual(["(no match)", SEARCH_HINT]);
+    expect(renderSearch(search(corpus, "sessions hours"), false)).not.toContain(SEARCH_HINT);
+    expect(isIdQuery(corpus, id("BR", 999))).toBe(true);
+    expect(renderSearch(search(corpus, id("BR", 999)), isIdQuery(corpus, id("BR", 999)))).toEqual(["(no match)"]);
+    expect(SEARCH_HINT).toContain("Chinese keywords");
   });
 });
 

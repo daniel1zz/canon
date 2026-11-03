@@ -8,14 +8,16 @@ export interface Hit {
   readonly doc: Doc;
   readonly score: number;
   readonly line: string;
+  /** How many of the query's words the document contains; equals `terms` for an id search (BR-2073). */
+  readonly matched: number;
+  readonly terms: number;
 }
 
 export function search(corpus: Corpus, query: string, limit = 20): Hit[] {
   const q = query.trim();
   if (q === "") return [];
-  const upper = q.toUpperCase();
-  const exactId = corpus.types.some((t) => new RegExp(`^${t.prefix}-\\d+$`).test(upper)) ? upper : undefined;
-  const terms = q.toLowerCase().split(/\s+/).filter(Boolean);
+  const exactId = isIdQuery(corpus, q) ? q.toUpperCase() : undefined;
+  const terms = [...new Set(q.toLowerCase().split(/\s+/).filter(Boolean))];
   const hits: Hit[] = [];
   for (const doc of corpus.docs) {
     const title = doc.title.toLowerCase();
@@ -25,18 +27,36 @@ export function search(corpus: Corpus, query: string, limit = 20): Hit[] {
       // An id matches whole ids only: BR-1 never matches BR-12 (BR-2008).
       if (doc.id === exactId) score += 100;
       if (referencedIds(doc, corpus.types).has(exactId) || new RegExp(`\\b${exactId}\\b`).test(doc.body)) score += 10;
-      if (score > 0) hits.push({ doc, score, line: bestLine(doc.body, [exactId.toLowerCase()]) });
+      if (score > 0) hits.push({ doc, score, line: bestLine(doc.body, [exactId.toLowerCase()]), matched: 1, terms: 1 });
       continue;
     }
+    let matched = 0;
     for (const t of terms) {
       if (doc.id.toLowerCase() === t) score += 100;
       if (title.includes(t)) score += 5;
       score += Math.min(count(body, t), 5);
+      if (doc.id.toLowerCase() === t || title.includes(t) || body.includes(t)) matched++;
     }
-    if (terms.length > 1 && !terms.every((t) => title.includes(t) || body.includes(t))) continue;
-    if (score > 0) hits.push({ doc, score, line: bestLine(doc.body, terms) });
+    if (matched > 0) hits.push({ doc, score, line: bestLine(doc.body, terms), matched, terms: terms.length });
   }
-  return hits.sort((a, b) => b.score - a.score || a.doc.id.localeCompare(b.doc.id)).slice(0, limit);
+  // reason: documents with every word come first, then partial ones by words matched (BR-2073)
+  return hits.sort((a, b) => b.matched - a.matched || b.score - a.score || a.doc.id.localeCompare(b.doc.id)).slice(0, limit);
+}
+
+/** True when a query is a single document id, which gets no hint (BR-2133). */
+export function isIdQuery(corpus: Corpus, query: string): boolean {
+  const upper = query.trim().toUpperCase();
+  return corpus.types.some((t) => new RegExp(`^${t.prefix}-\\d+$`).test(upper));
+}
+
+export const SEARCH_HINT = "no document contains every word: canon/ is written in Chinese, so try Chinese keywords (canon search 合入), or an id (canon search BR-12)";
+
+/** Text lines of a search's output: partial hits marked with how many words they contain, the hint when nothing has every word (BR-2073, BR-2133). */
+export function renderSearch(hits: readonly Hit[], idQuery: boolean): string[] {
+  const out = hits.map((h) => `${h.doc.id.padEnd(8)} ${h.doc.title}${h.matched < h.terms ? `  [${h.matched}/${h.terms} words]` : ""}\n         ${h.line}`);
+  if (hits.length === 0) out.push("(no match)");
+  if (!idQuery && !hits.some((h) => h.matched === h.terms)) out.push(SEARCH_HINT);
+  return out;
 }
 
 /** Every id a document points at: in its text and in its structured fields (a change's rules, a decision's supersedes). */

@@ -11,7 +11,7 @@ import { claimOfWorktree, claims } from "../work/claims/claims.ts";
 import { handoffs } from "../work/session/handoffs.ts";
 import type { CanonError, Result } from "../kernel/result.ts";
 import type { Doc, Kind } from "../knowledge/documents/model.ts";
-import { contextFor, findDoc, rawText, renderContext, search } from "../knowledge/query/query.ts";
+import { contextFor, findDoc, isIdQuery, rawText, renderContext, renderSearch, search } from "../knowledge/query/query.ts";
 import { readCorpus } from "../knowledge/documents/read.ts";
 import { createDoc, createDomain, setMeta } from "../knowledge/documents/write.ts";
 import { git } from "../kernel/git.ts";
@@ -20,7 +20,7 @@ import { skillsSource, type InstallReport } from "./install/install.ts";
 import { WORKFLOW_GUIDE } from "./guide.ts";
 import { resolve, unknownArgument } from "./strict.ts";
 import { assetsStatus, installAssets, updateNotice, updateProject } from "./install/update.ts";
-import { computeStats, renderSharedShare, renderStats, sharedShare } from "../work/stats/stats.ts";
+import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "../work/stats/stats.ts";
 import { drop } from "../work/drop/drop.ts";
 import { clean, mainCorpus, start, stop } from "../work/session/session.ts";
 import { land } from "../work/land/land.ts";
@@ -248,10 +248,12 @@ const searchCmd = defineCommand({
   args: { query: { type: "positional", required: true }, limit: { type: "string", default: "20" }, json: { type: "boolean" } },
   run({ args }) {
     const ws = workspace();
-    const hits = search(corpusOf(ws).corpus, args.query, Number(args.limit));
-    if (args.json) return json(hits.map((h) => ({ id: h.doc.id, kind: h.doc.kind, title: h.doc.title, path: h.doc.path, line: h.line })));
-    for (const h of hits) say(`${h.doc.id.padEnd(8)} ${h.doc.title}\n         ${h.line}`);
-    if (hits.length === 0) say("(no match)");
+    const corpus = corpusOf(ws).corpus;
+    const hits = search(corpus, args.query, Number(args.limit));
+    const full = hits.filter((h) => h.matched === h.terms).length;
+    ws.db.event(ws.actor, "search", null, { query: args.query, results: hits.length, full }); // BR-2134
+    if (args.json) return json(hits.map((h) => ({ id: h.doc.id, kind: h.doc.kind, title: h.doc.title, path: h.doc.path, line: h.line, matched: h.matched, terms: h.terms })));
+    for (const line of renderSearch(hits, isIdQuery(corpus, args.query))) say(line);
   },
 });
 
@@ -544,6 +546,8 @@ const stats = defineCommand({
     say(renderStats(s));
     const share = sharedShare(ws.root, ws.config);
     if (share) say(`\n${renderSharedShare(share)}`);
+    const searches = searchStats(ws.db);
+    if (searches.searches > 0) say(`\n${renderSearchStats(searches)}`);
   },
 });
 

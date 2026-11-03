@@ -8,7 +8,7 @@ import { readConfig } from "../../config/config.ts";
 import { drop } from "../drop/drop.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 import { findingDetail, land } from "../land/land.ts";
-import { computeStats, renderSharedShare, renderStats, sharedShare } from "./stats.ts";
+import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "./stats.ts";
 
 const of = (stats: ReturnType<typeof computeStats>, check: string) => stats.find((s) => s.check === check)!;
 
@@ -212,5 +212,20 @@ describe("shared code share", () => {
     expect(sharedShare(root, { codeRoot: "src", shared: ["src/kernel"] })).toEqual({ codeRoot: "src", sharedLines: 2, totalLines: 2 });
     expect(sharedShare(layout(1, 1), { codeRoot: "src", shared: [] })).toBeUndefined();
     expect(sharedShare(layout(1, 1), { codeRoot: undefined, shared: [] })).toBeUndefined();
+  });
+
+  test("BR-2135: searches report the share with no result and with no full match; none recorded means no line", () => {
+    const opened = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
+    if (!opened.ok) throw new Error(opened.error.message);
+    const d = opened.value;
+    expect(searchStats(d)).toEqual({ searches: 0, empty: 0, noFull: 0 });
+    for (let i = 0; i < 6; i++) d.event("a", "search", null, { query: "q", results: 2, full: 1 });
+    for (let i = 0; i < 2; i++) d.event("a", "search", null, { query: "q", results: 0, full: 0 });
+    for (let i = 0; i < 2; i++) d.event("a", "search", null, { query: "q", results: 3, full: 0 });
+    expect(renderSearchStats(searchStats(d))).toBe("searches: 10, no result: 2 (20.0%), no full match: 4 (40.0%)");
+    const one = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
+    if (!one.ok) throw new Error(one.error.message);
+    one.value.event("a", "search", null, { query: "q", results: 1, full: 1 });
+    expect(renderSearchStats(searchStats(one.value))).toBe("searches: 1, no result: 0 (0.0%), no full match: 0 (0.0%)");
   });
 });
