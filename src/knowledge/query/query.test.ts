@@ -159,13 +159,15 @@ describe("subdomains", () => {
       "src/billing/index.ts": "",
     });
     const ctx = contextFor(corpus, "src/work/drop/drop.ts", root);
-    expect(ctx.imports.map((i) => [i.domain.name, i.via])).toEqual([["billing", ["src/billing/index.ts"]], ["work/land", ["src/work/land/land.ts"]]]);
+    expect(ctx.imports.map((i) => [i.domain.name, i.via, i.elsewhere])).toEqual([["billing", ["src/billing/index.ts"], true], ["work/land", ["src/work/land/land.ts"], false]]);
     expect(ctx.others).toEqual([]); // work/land came in as an import
     const out = renderContext(root, ctx, { full: false });
     expect(out).toContain("# Imported domain: work/land  (the target imports src/work/land/land.ts");
     expect(out).toContain(`- ${id("BR", 3)} Land in order`);
     expect(out).not.toContain("Landing."); // an imported domain's README is not printed
     expect(out).not.toContain("Money.");
+    expect(out).not.toContain("Refund window"); // another top-level domain: named, its rules not listed
+    expect(out).toContain("Imported from other domains, not included: billing (src/billing/index.ts) (canon context <name>)");
     expect(contextFor(corpus, "src/work/drop", root).imports).toEqual([]); // a directory: imports are not read
   });
 

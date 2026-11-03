@@ -86,7 +86,10 @@ export interface ImportedDomain {
   readonly domain: Domain;
   /** The imported repo paths that fall in this domain. */
   readonly via: readonly string[];
+  /** Empty for a domain under another top-level domain: it is listed by name only (BR-2119). */
   readonly rules: readonly Rule[];
+  /** True when the imported domain is under a top-level domain other than the target's. */
+  readonly elsewhere: boolean;
 }
 
 /** `root` lets a file target bring the domains of the code it imports (BR-2119); without it only matching counts. */
@@ -120,7 +123,14 @@ export function contextFor(corpus: Corpus, target: string, root?: string): Conte
       if (!owner || names.has(owner.name)) continue;
       via.set(owner.name, [...(via.get(owner.name) ?? []), path]);
     }
-    for (const d of corpus.domains) if (via.has(d.name)) imports.push({ domain: d, via: via.get(d.name)!, rules: active(d.name) });
+    // reason: a behaviour that spans subdomains of one top-level domain is the easy one to miss, so those
+    // imports bring their rule titles; other top-level domains are named only, to keep the context short (BR-2119)
+    const ownTops = new Set(domains.map((d) => d.name.split("/")[0]!));
+    for (const d of corpus.domains) {
+      if (!via.has(d.name)) continue;
+      const elsewhere = !ownTops.has(d.name.split("/")[0]!);
+      imports.push({ domain: d, via: via.get(d.name)!, rules: elsewhere ? [] : active(d.name), elsewhere });
+    }
   }
   const shown = new Set([...names, ...imports.map((i) => i.domain.name)]);
   const tops = new Set(domains.map((d) => d.name.split("/")[0]!));
@@ -204,10 +214,12 @@ export function renderContext(root: string, ctx: Context, opts: { readonly full:
     out.push(`# Domain: ${d.name}  (code: ${d.code.length ? d.code.join(", ") : `through ${d.parent ?? "the enclosing domain"}`})\n\n${d.body.trim()}\n`);
     rulesOf(ctx.rules.filter((x) => x.domain === d.name));
   }
-  for (const i of ctx.imports) {
+  for (const i of ctx.imports.filter((x) => !x.elsewhere)) {
     out.push(`# Imported domain: ${i.domain.name}  (the target imports ${i.via.join(", ")}; README: canon context ${i.domain.name})\n`);
     rulesOf(i.rules);
   }
+  const elsewhere = ctx.imports.filter((x) => x.elsewhere);
+  if (elsewhere.length) out.push(`Imported from other domains, not included: ${elsewhere.map((i) => `${i.domain.name} (${i.via.join(", ")})`).join("; ")} (canon context <name>)\n`);
   if (ctx.others.length) out.push(`Other subdomains, not included: ${ctx.others.join(", ")} (canon context <name>)\n`);
   if (ctx.decisions.length) out.push(`# Decisions\n\n${ctx.decisions.map((d) => `- ${d.id} ${d.title} (${d.path})`).join("\n")}\n`);
   if (ctx.changes.length) out.push(`# Open changes\n\n${ctx.changes.map((c) => `- ${c.id} ${c.title} (${c.path})`).join("\n")}\n`);
