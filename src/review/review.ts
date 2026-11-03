@@ -45,12 +45,13 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
   }
   if (extras.readmes?.length) parts.push(`# Domain READMEs changed: ${extras.readmes.join(", ")} (their new text is in the current context below)`);
   const seen = new Set<string>();
-  for (const name of extras.readmes ?? []) {
+  for (const name of [...new Set((extras.readmes ?? []).map((n) => n.split("/")[0]!))]) {
     seen.add(name);
     parts.push(`# Current context for ${name}\n\n${renderContext(root, contextFor(corpus, name), { full: true })}`);
   }
   for (const d of changed) {
-    const target = d.kind === "rule" ? d.domain : d.id;
+    // reason: the review reads the whole top-level domain, so a contradiction across its subdomains is still seen (BR-2113)
+    const target = d.kind === "rule" ? d.domain.split("/")[0]! : d.id;
     if (seen.has(target)) continue;
     seen.add(target);
     parts.push(`# Current context for ${target}\n\n${renderContext(root, contextFor(corpus, target), { full: true })}`);

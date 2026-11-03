@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { WORKFLOW_GUIDE } from "./guide.ts";
@@ -322,5 +322,39 @@ describe("dropping from the command line", () => {
     expect(r.out).toContain("uncommitted: ?? wip.txt");
     expect(r.out).toContain("restore --source=refs/canon/archive/C-1/");
     expect(Bun.spawnSync(["test", "-d", wt]).exitCode).toBe(1);
+  });
+});
+
+describe("subdomains from the CLI", () => {
+  test("BR-2115: a subdomain is created only under an existing domain, and every segment must be a valid name", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    mkdirSync(join(root, "src/billing"), { recursive: true });
+    writeFileSync(join(root, "src/billing/refund.ts"), "");
+    expect(canon(root, "rule", "domain", "billing/refunds", "--code", "src/billing/refund.ts").code).toBe(3);
+    expect(existsSync(join(root, "canon/rules/billing"))).toBe(false);
+    expect(canon(root, "rule", "domain", "billing", "--code", "src/billing").code).toBe(0);
+    expect(canon(root, "rule", "domain", "billing/refunds", "--code", "src/billing/refund.ts").code).toBe(0);
+    expect(existsSync(join(root, "canon/rules/billing/refunds/README.md"))).toBe(true);
+    expect(canon(root, "rule", "domain", "Billing/x", "--code", "src").code).toBe(2);
+    expect(canon(root, "rule", "new", "--domain", "billing/refunds", "--title", "Refund window", "--untested", "fixture").code).toBe(0);
+    expect(canon(root, "rule", "list", "--domain", "billing").out).toContain("Refund window"); // a domain's list includes its subdomains
+  });
+
+  test("BR-2114: rule domains indents subdomains and suggests splitting only above 25 direct rules", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    mkdirSync(join(root, "src/billing"), { recursive: true });
+    canon(root, "rule", "domain", "billing", "--code", "src/billing");
+    canon(root, "rule", "domain", "billing/refunds", "--code", "src/billing");
+    const add = (n: number) => { for (let i = 0; i < n; i++) canon(root, "rule", "new", "--domain", "billing", "--title", `R${i}`, "--untested", "fixture"); };
+    add(25);
+    let out = canon(root, "rule", "domains").out;
+    expect(out).toMatch(/\n?billing\s+25 rules/);
+    expect(out).toMatch(/\n  billing\/refunds\s+0 rules/);
+    expect(out).not.toContain("consider subdomains");
+    add(1);
+    out = canon(root, "rule", "domains").out;
+    expect(out).toContain("consider subdomains, canon rule domain billing/<name>");
   });
 });

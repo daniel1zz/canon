@@ -88,9 +88,14 @@ export function contextFor(corpus: Corpus, target: string): Context {
     const ruleIds = referencedIds(asDoc, corpus.types);
     const names = new Set(corpus.docs.filter((d): d is Rule => d.kind === "rule" && ruleIds.has(d.id)).map((r) => r.domain));
     if (asDoc.kind === "rule") names.add(asDoc.domain);
-    domains = corpus.domains.filter((d) => names.has(d.name));
+    domains = withAncestors(corpus, corpus.domains.filter((d) => names.has(d.name)));
+  } else if (corpus.domains.some((d) => d.name === t)) {
+    // A domain name: that domain with every subdomain under it, and the enclosing domains' READMEs (BR-2113).
+    domains = withAncestors(corpus, corpus.domains.filter((d) => d.name === t || d.name.startsWith(`${t}/`)));
   } else {
-    domains = corpus.domains.filter((d) => d.name === t || d.code.some((c) => isUnder(t, c) || isUnder(c, t)));
+    // A path: every domain or subdomain whose code covers it, plus the domains enclosing them (BR-2113).
+    // A sibling subdomain is left out unless its own code covers the path, which is what makes this narrow.
+    domains = withAncestors(corpus, corpus.domains.filter((d) => d.code.some((c) => isUnder(t, c) || isUnder(c, t))));
   }
   const names = new Set(domains.map((d) => d.name));
   const rules = corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status === "active" && names.has(d.domain));
@@ -100,6 +105,13 @@ export function contextFor(corpus: Corpus, target: string): Context {
   const changes = corpus.docs.filter((d): d is Change => d.kind === "change" && d.status === "open" && (mentions(d) || d.rules.some((r) => ruleIds.has(r))));
   const extras = corpus.docs.filter((d): d is Extra => d.kind === "extra" && mentions(d));
   return { domains, rules, decisions, changes, extras, ...(targetDoc ? { target: targetDoc } : {}) };
+}
+
+/** Adds every enclosing domain, keeping corpus order (a parent is read before its subdomains). */
+function withAncestors(corpus: Corpus, picked: readonly Domain[]): Domain[] {
+  const names = new Set(picked.map((d) => d.name));
+  for (const d of picked) for (let p = d.parent; p; p = corpus.domains.find((x) => x.name === p)?.parent) names.add(p);
+  return corpus.domains.filter((d) => names.has(d.name));
 }
 
 function isUnder(path: string, dir: string): boolean {

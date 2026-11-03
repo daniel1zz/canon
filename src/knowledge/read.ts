@@ -57,8 +57,9 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
   const ruleType = types.find((t) => t.name === "rule")!;
   const rulesDir = join(base, ruleType.dir);
   const ruleFile = new RegExp(`^${ruleType.prefix}-\\d+\\.md$`);
-  for (const domain of listDirs(rulesDir)) {
-    const dir = join(rulesDir, domain);
+  // reason: a domain may hold subdomains as subdirectories; each level is a domain of its own (BR-2113)
+  const walk = (domain: string, parent: string | undefined): void => {
+    const dir = join(rulesDir, ...domain.split("/"));
     const readme = join(dir, "README.md");
     if (!existsSync(readme)) problems.push({ path: rel(dir), message: "domain has no README.md (scope, code directories, Terms)" });
     else {
@@ -68,7 +69,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         const code = parsed.value.meta["code"];
         const codeList = Array.isArray(code) ? code.filter((c): c is string => typeof c === "string") : [];
         if (!Array.isArray(code) || codeList.length === 0) problems.push({ path: rel(readme), message: "front matter `code` must list at least one code directory this domain governs" });
-        domains.push({ name: domain, path: rel(readme), code: codeList, body: parsed.value.body });
+        domains.push({ name: domain, path: rel(readme), code: codeList, body: parsed.value.body, ...(parent ? { parent } : {}) });
       }
     }
     for (const file of listFiles(dir)) {
@@ -97,7 +98,9 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         ...(typeof untested === "string" ? { untested } : {}),
       });
     }
-  }
+    for (const sub of listDirs(dir)) walk(`${domain}/${sub}`, domain);
+  };
+  for (const domain of listDirs(rulesDir)) walk(domain, undefined);
 
   for (const type of types) {
     if (type.name === "rule") continue;

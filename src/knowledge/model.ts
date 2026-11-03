@@ -70,7 +70,10 @@ export type Doc = Rule | Decision | Change | Note | Extra;
 export const typeNameOf = (d: Doc): string => (d.kind === "extra" ? d.type : d.kind);
 
 export interface Domain {
+  /** Path under canon/rules with "/" between levels, e.g. "work" or "work/land" (a subdomain, BR-2113). */
   readonly name: string;
+  /** The enclosing domain of a subdomain; undefined for a top-level domain. */
+  readonly parent?: string;
   readonly path: string;
   /** Code directories this domain's rules govern; `canon context <path>` resolves through them. */
   readonly code: readonly string[];

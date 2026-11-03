@@ -79,11 +79,16 @@ export function createDoc(root: string, corpus: Corpus, db: CoordDb, actor: stri
 }
 
 export function createDomain(root: string, name: string, code: readonly string[], description: string): Result<string> {
-  if (!/^[a-z0-9][a-z0-9-]*$/.test(name)) return err("invalid", "a domain name is lowercase letters, digits and dashes");
+  const segments = name.split("/");
+  if (!segments.every((s) => /^[a-z0-9][a-z0-9-]*$/.test(s))) return err("invalid", "a domain name is lowercase letters, digits and dashes; a subdomain is <domain>/<name> (BR-2113)");
   if (code.length === 0) return err("invalid", "a domain must name at least one code directory (--code)");
-  const path = join(CANON_DIR, "rules", name, "README.md");
+  const path = join(CANON_DIR, "rules", ...segments, "README.md");
   const full = join(root, path);
   if (existsSync(full)) return err("conflict", `domain ${name} already exists`);
+  const parent = segments.slice(0, -1);
+  if (parent.length > 0 && !existsSync(join(root, CANON_DIR, "rules", ...parent, "README.md"))) {
+    return err("not_found", `domain ${parent.join("/")} does not exist; create it before its subdomain ${name}`);
+  }
   mkdirSync(dirname(full), { recursive: true });
   writeFileSync(full, renderDocFile({ code: [...code] }, domainReadme(name, description)));
   return ok(path);

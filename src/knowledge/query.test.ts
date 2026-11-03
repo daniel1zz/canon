@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { check } from "../check/check.ts";
 import { contextFor, search, renderContext } from "./query.ts";
+import { reviewPrompt } from "../review/review.ts";
 import { readCorpus } from "./read.ts";
 
 const id = (p: string, n: number) => [p, n].join("-");
@@ -97,5 +98,43 @@ describe("check: duplicates", () => {
     });
     const dups = check({ ...r, testFiles: [] }).filter((f) => f.rule === "id-duplicate");
     expect(dups.map((f) => f.path).sort()).toEqual([`canon/notes/${id("N", 1)}-a.md`, `canon/notes/${id("N", 1)}-b.md`]);
+  });
+});
+
+describe("subdomains", () => {
+  const sub = {
+    "canon/rules/work/README.md": "---\ncode: [src/work, src/coord]\n---\n# work\n\nOverview of work.\n",
+    "canon/rules/work/drop/README.md": "---\ncode: [src/work/drop.ts]\n---\n# work/drop\n\nDropping.\n",
+    "canon/rules/work/land/README.md": "---\ncode: [src/work/work.ts]\n---\n# work/land\n\nLanding.\n",
+    [`canon/rules/work/${id("BR", 1)}.md`]: rule(1, "Every write names its actor", "Actor."),
+    [`canon/rules/work/drop/${id("BR", 2)}.md`]: rule(2, "Drop archives first", "Archive."),
+    [`canon/rules/work/land/${id("BR", 3)}.md`]: rule(3, "Land in order", "Queue."),
+  };
+  const names = (target: string) => contextFor(corpusOf(sub).corpus, target).domains.map((d) => d.name);
+
+  test("BR-2113: a path resolves to the deepest subdomain covering it plus the domains enclosing it", () => {
+    expect(names("src/work/drop.ts")).toEqual(["work", "work/drop"]);
+    expect(names("src/coord/db.ts")).toEqual(["work"]);
+    const ctx = contextFor(corpusOf(sub).corpus, "src/work/drop.ts");
+    expect(ctx.rules.map((r) => r.id).sort()).toEqual([id("BR", 1), id("BR", 2)]); // the enclosing domain's own rules come too, not work/land's
+  });
+
+  test("BR-2113: a domain name brings every subdomain under it; a rule id brings its subdomain and the enclosing domain", () => {
+    expect(names("work")).toEqual(["work", "work/drop", "work/land"]);
+    expect(names("work/land")).toEqual(["work", "work/land"]);
+    expect(names(id("BR", 2))).toEqual(["work", "work/drop"]);
+  });
+
+  test("BR-2006: a subdomain directory without a README is reported", () => {
+    const r = corpusOf({ ...sub, [`canon/rules/work/tokens/${id("BR", 4)}.md`]: rule(4, "T", "t") });
+    expect(r.problems.map((p) => p.path)).toContain("canon/rules/work/tokens");
+  });
+
+  test("BR-2009: the review of a subdomain's rule reads the whole top-level domain, so a contradiction across subdomains is visible", () => {
+    const { root, corpus } = corpusOf(sub);
+    const changed = corpus.docs.filter((d) => d.id === id("BR", 2));
+    const prompt = reviewPrompt(root, corpus, changed);
+    expect(prompt).toContain("# Current context for work\n");
+    expect(prompt).toContain("Queue."); // work/land's rule text, a sibling subdomain
   });
 });

@@ -100,7 +100,7 @@ function listCommand(kind: Kind, describe: string) {
       const live = (d: (typeof docs)[number]) => kind === "extra" || args.all || !("status" in d) || d.status === undefined || ["active", "accepted", "proposed", "open"].includes(d.status);
       const rows = docs
         .filter(live)
-        .filter((d) => !args.domain || (d.kind === "rule" && d.domain === args.domain))
+        .filter((d) => !args.domain || (d.kind === "rule" && (d.domain === args.domain || d.domain.startsWith(`${args.domain}/`))))
         .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true })); // SP-2 before SP-10 (BR-2061)
       if (args.json) return json(rows.map(({ body: _b, ...r }) => r));
       for (const d of rows) say(`${d.id.padEnd(8)} ${("status" in d && d.status ? d.status : "").padEnd(10)} ${d.title}`);
@@ -136,7 +136,7 @@ const rule = defineCommand({
       run: ({ args }) => void setStatus(String(args.id), "rule", "retired"),
     }),
     domain: defineCommand({
-      meta: { description: "Create a domain: canon/rules/<name>/README.md with the code directories it governs" },
+      meta: { description: "Create a domain (canon/rules/<name>/README.md) or a subdomain (<domain>/<name>) with the code paths it governs" },
       args: { name: { type: "positional", required: true }, code: { type: "string", required: true, description: "Comma-separated code directories" }, description: { type: "string" } },
       run({ args }) {
         const ws = workspace();
@@ -150,12 +150,17 @@ const rule = defineCommand({
         const { corpus } = corpusOf(ws);
         for (const d of corpus.domains) {
           const n = corpus.docs.filter((r) => r.kind === "rule" && r.domain === d.name && r.status === "active").length;
-          say(`${d.name.padEnd(20)} ${String(n).padStart(4)} rules  ${d.code.join(", ")}`);
+          // reason: a hint, not a check: a big domain makes `canon context` long, splitting is a judgement call (BR-2114)
+          const hint = n > SPLIT_HINT ? `  (more than ${SPLIT_HINT} rules: consider subdomains, canon rule domain ${d.name}/<name>)` : "";
+          say(`${`${"  ".repeat(d.name.split("/").length - 1)}${d.name}`.padEnd(24)} ${String(n).padStart(4)} rules  ${d.code.join(", ")}${hint}`);
         }
       },
     }),
   },
 });
+
+/** Above this many direct rules, `canon rule domains` suggests subdomains (BR-2114). */
+const SPLIT_HINT = 25;
 
 const decision = defineCommand({
   meta: { description: "Decisions: why a non-trivial choice was made" },
