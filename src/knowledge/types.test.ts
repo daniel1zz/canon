@@ -12,7 +12,7 @@ const SPEC = "types:\n  spec:\n    prefix: SP\n    dir: specs\n    statuses: [dr
 function repo(config: string, files: Record<string, string> = {}): string {
   const root = mkdtempSync(join(tmpdir(), "canon-types-"));
   Bun.spawnSync(["git", "init", "-q", "-b", "main"], { cwd: root });
-  const all = { "canon/config.yaml": `floor: "true"\n${config}`, "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n", ...files };
+  const all = { "canon/config.yaml": `floor: "true"\n${config}`, "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n", ...files };
   for (const [p, text] of Object.entries(all)) {
     mkdirSync(dirname(join(root, p)), { recursive: true });
     writeFileSync(join(root, p), text);
@@ -119,7 +119,7 @@ describe("declared document types", () => {
   });
 
   test("BR-2055: a project template replaces the built-in one; a declared type without one starts empty", () => {
-    const root = repo(SPEC, { "canon/templates/decision.md": "## 我们的背景\n\nx\n", "canon/templates/spec.md": "## 需求\n\ny\n" });
+    const root = repo(SPEC, { "canon/templates/decision.md": "## 我们的背景\n\nx\n\n## 背景\n\n## 方案\n\n## 决定\n\n## 后果\n", "canon/templates/spec.md": "## 需求\n\ny\n" });
     expect(readFileSync(join(root, canon(root, "decision", "new", "--title", "A").out.trim()), "utf8")).toContain("## 我们的背景");
     expect(readFileSync(join(root, canon(root, "doc", "new", "--type", "spec", "--title", "B").out.trim()), "utf8")).toContain("## 需求");
     const plain = repo("types:\n  memo:\n    prefix: M\n    dir: memos\n");
@@ -127,4 +127,27 @@ describe("declared document types", () => {
     const memo = readFileSync(join(plain, canon(plain, "doc", "new", "--type", "memo", "--title", "B").out.trim()), "utf8");
     expect(memo.split("---\n")[2]?.trim()).toBe("");
   });
+
+  test("BR-2092: a type may declare its required sections; a rule may not, nor may a template lack one", () => {
+    const decision = (n: number, body: string) => ({ [`canon/decisions/${id("D", n)}.md`]: doc("D", n, "", body) });
+    const ok = repo("types:\n  decision:\n    sections: [背景, 决定]\n", { ...decision(1, "## 背景\n\nB.\n\n## 决定\n\nA.") });
+    expect(canon(ok, "check").out).not.toContain("doc-missing-section");
+    for (const bad of ["types:\n  rule:\n    sections: [规则]\n", 'types:\n  change:\n    sections: ["## 为什么"]\n', "types:\n  change:\n    sections: []\n".replace("[]", "[\"\"]")]) {
+      const r = canon(repo(bad), "check");
+      expect([r.code, r.err.includes("sections")]).toEqual([2, true]);
+    }
+    const tpl = repo("", { "canon/templates/change.md": "## 为什么\n\n<x>\n\n## 要改什么\n\n<y>\n" });
+    const r = canon(tpl, "check");
+    expect([r.code, r.err.includes("`## 任务`")]).toEqual([2, true]);
+  });
+
+  test("BR-2093: a declared type without a template starts from its required sections as placeholders", () => {
+    const root = repo("types:\n  risk:\n    prefix: RK\n    dir: risks\n    sections: [影响, 应对]\n");
+    const made = canon(root, "doc", "new", "--type", "risk", "--title", "A").out.trim();
+    expect(readFileSync(join(root, made), "utf8").split("---\n")[2]?.trim()).toBe("## 影响\n\n<影响>\n\n## 应对\n\n<应对>");
+    const out = canon(root, "check").out;
+    expect(out).toContain("doc-missing-section");
+    expect(out).toContain("template-unfilled");
+  });
 });
+

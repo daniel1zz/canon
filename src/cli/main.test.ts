@@ -66,7 +66,7 @@ describe("exit codes", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     canon(root, "rule", "domain", "billing", "--code", "src/billing", "--description", "Money.");
-    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n");
+    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n");
     canon(root, "rule", "new", "--domain", "billing", "--title", "Refunds", "--untested", "fixture");
     const id = ["BR", 1].join("-");
     const shown = canon(root, "show", id).out;

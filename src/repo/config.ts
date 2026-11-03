@@ -65,7 +65,7 @@ export const DEFAULT_CONFIG: Config = {
 };
 
 const TOP_KEYS = new Set(["main", "floor", "tests", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews"]);
-const TYPE_KEYS = new Set(["prefix", "dir", "statuses", "default", "fields"]);
+const TYPE_KEYS = new Set(["prefix", "dir", "statuses", "default", "fields", "sections"]);
 const MOVED: Record<string, string> = { after_land: "hooks.after_land" };
 
 export function readConfig(root: string): Result<Config> {
@@ -132,6 +132,9 @@ export function readConfig(root: string): Result<Config> {
       const name = file.slice(0, -3);
       if (!types.value.some((t) => t.name === name)) return bad(`canon/templates/${file} is a template for \`${name}\`, which is not a document type`);
       templates[name] = readFileSync(join(tdir, file), "utf8");
+      const lines = templates[name]!.split("\n").map((l) => l.trim());
+      const missing = types.value.find((t) => t.name === name)!.sections.filter((s) => !lines.includes(`## ${s}`));
+      if (missing.length) return bad(`canon/templates/${file} lacks required section(s) ${missing.map((s) => `\`## ${s}\``).join(", ")} of type \`${name}\``);
     }
   }
 
@@ -195,11 +198,16 @@ function readTypes(v: unknown): Result<DocType[]> {
     const reserved = (fields as string[]).find((f) => RESERVED_FIELDS.has(f));
     if (reserved) return err("invalid", `\`${at}.fields\`: \`${reserved}\` is a field canon owns`);
 
+    const sectionsRaw = decl["sections"];
+    if (sectionsRaw !== undefined && (!Array.isArray(sectionsRaw) || sectionsRaw.some((x) => typeof x !== "string" || x.trim() === "" || /[#\n]/.test(x)))) {
+      return err("invalid", `\`${at}.sections\` must be a list of section titles (without \`##\`)`);
+    }
     const builtin = types.find((t) => t.builtin && t.name === name);
     if (builtin) {
       const reshaped = ["prefix", "dir", "statuses", "default"].find((k) => k in decl);
-      if (reshaped) return err("invalid", `\`${at}.${reshaped}\`: built-in type ${name} can only declare \`fields\``);
-      types[types.indexOf(builtin)] = { ...builtin, fields: fields as string[] };
+      if (reshaped) return err("invalid", `\`${at}.${reshaped}\`: built-in type ${name} can only declare \`fields\` and \`sections\``);
+      if (name === "rule" && sectionsRaw !== undefined) return err("invalid", `\`${at}.sections\`: a rule's shape is fixed (\`## 规则\` and \`## 例子\`)`);
+      types[types.indexOf(builtin)] = { ...builtin, fields: fields as string[], ...(sectionsRaw !== undefined ? { sections: sectionsRaw as string[] } : {}) };
       continue;
     }
     const prefix = decl["prefix"];
@@ -215,7 +223,7 @@ function readTypes(v: unknown): Result<DocType[]> {
     }
     const list = statuses as string[] | undefined;
     if (dflt !== undefined && (list === undefined || typeof dflt !== "string" || !list.includes(dflt))) return err("invalid", `\`${at}.default\` must be one of \`${at}.statuses\``);
-    types.push({ name, prefix, dir, statuses: list, defaultStatus: list ? ((dflt as string | undefined) ?? list[0]) : undefined, fields: fields as string[], builtin: false });
+    types.push({ name, prefix, dir, statuses: list, defaultStatus: list ? ((dflt as string | undefined) ?? list[0]) : undefined, fields: fields as string[], sections: (sectionsRaw as string[] | undefined) ?? [], builtin: false });
   }
   return ok(types);
 }

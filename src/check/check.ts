@@ -25,6 +25,7 @@ export type CheckRule =
   | "rule-no-statement" // an active rule has no non-empty "## 规则" section
   | "rule-no-example" // an active rule with tests has no example in "## 例子"
   | "domain-code-missing" // a domain README lists a code path that does not exist (BR-2079)
+  | "doc-missing-section" // a document lacks a section its type requires, or the section is empty (BR-2091)
   | "template-unfilled"; // a rule, decision, change, declared-type document or domain README still holds a template placeholder line
 
 export interface CheckInput {
@@ -84,11 +85,22 @@ export function check(input: CheckInput): Finding[] {
   return findings;
 }
 
-/** Rule shape (BR-2033, BR-2034) and unfilled templates (BR-2035): outcomes of the document, checked at land. */
+const TERMS_SECTION = "术语";
+
+/** Required sections (BR-2091), rule shape (BR-2033, BR-2034) and unfilled templates (BR-2035): outcomes of the document, checked at land. */
 function structureFindings(corpus: Corpus): Finding[] {
   const out: Finding[] = [];
   const unfilled = hasPlaceholderLine;
+  const filled = (body: string, title: string) => {
+    const text = section(body, `## ${title}`);
+    return text !== undefined && text.split("\n").some((l) => l.trim() !== "" && !isPlaceholderLine(l));
+  };
   for (const d of corpus.docs) {
+    const required = corpus.types.find((t) => t.name === (d.kind === "extra" ? d.type : d.kind))?.sections ?? [];
+    const missing = required.filter((s) => !filled(d.body, s));
+    if (missing.length) {
+      out.push({ path: d.path, rule: "doc-missing-section", message: `${d.id} lacks or leaves empty: ${missing.map((s) => `## ${s}`).join(", ")}` });
+    }
     if (d.kind !== "note" && unfilled(d.body)) {
       out.push({ path: d.path, rule: "template-unfilled", message: `${d.id} still contains a template placeholder line` });
     }
@@ -102,6 +114,7 @@ function structureFindings(corpus: Corpus): Finding[] {
     if (examples.length === 0) out.push({ path: d.path, rule: "rule-no-example", message: `${d.id} has no example under "${EXAMPLE_SECTION}"` });
   }
   for (const dom of corpus.domains) {
+    if (!filled(dom.body, TERMS_SECTION)) out.push({ path: dom.path, rule: "doc-missing-section", message: `domain ${dom.name} README lacks or leaves empty: ## ${TERMS_SECTION}` });
     if (unfilled(dom.body)) out.push({ path: dom.path, rule: "template-unfilled", message: `domain ${dom.name} README still contains a template placeholder line` });
   }
   return out;

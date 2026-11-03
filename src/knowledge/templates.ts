@@ -30,7 +30,7 @@ export function hasPlaceholderLine(markdown: string): boolean {
  * The initial body of a new document (BR-2037, BR-2055): the project's `canon/templates/<type>.md` when it
  * exists, otherwise the built-in template; a declared type without a template file starts empty.
  */
-export function templateFor(type: string, projectTemplates: Readonly<Record<string, string>> = {}): string {
+export function templateFor(type: string, projectTemplates: Readonly<Record<string, string>> = {}, sections: readonly string[] = []): string {
   const own = projectTemplates[type];
   if (own !== undefined) return own;
   switch (type) {
@@ -51,7 +51,8 @@ export function templateFor(type: string, projectTemplates: Readonly<Record<stri
     case "change":
       return "## 为什么\n\n<要解决什么问题。>\n\n## 要改什么\n\n<具体改动，以及会新增或修改哪些规则。>\n\n## 陷阱和假设\n\n<新会话接手时最容易踩的坑，以及这个变更依赖的假设；没有就删掉这一节。>\n\n## 任务\n\n- [ ] <任务>\n";
     default:
-      return "";
+      // A declared type without a template file starts from its required sections (BR-2093).
+      return sections.map((s) => `## ${s}\n\n<${s}>\n`).join("\n");
   }
 }
 

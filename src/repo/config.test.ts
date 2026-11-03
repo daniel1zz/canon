@@ -67,7 +67,7 @@ describe("config validation", () => {
 describe("test discovery", () => {
   const rule = (n: number) => `---\nid: ${br(n)}\ntitle: R\n---\n## 规则\n\nS.\n\n## 例子\n\n- a → b\n`;
   const base = {
-    "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n",
+    "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n",
     [`canon/rules/billing/${br(1)}.md`]: rule(1),
   };
   const untested = (root: string) => {

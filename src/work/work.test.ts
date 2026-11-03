@@ -104,7 +104,7 @@ describe("rule review at land", () => {
       `floor: "true"\ntests: []\nreview: 'cat > ${promptFile}; echo ''{"verdict":"${verdict}","findings":["${["BR", 1].join("-")} is vague"]}'''\n`,
     );
     mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
-    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n");
+    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
     mkdirSync(join(root, "src/billing"), { recursive: true });
     writeFileSync(join(root, "src/billing/.keep"), ""); // the domain's code path exists (BR-2079)
     sh(root, "add", "-A");
@@ -135,7 +135,7 @@ describe("rule review at land", () => {
     const root = project();
     writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: "exit 3"\n`);
     mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
-    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n");
+    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
     mkdirSync(join(root, "src/billing"), { recursive: true });
     writeFileSync(join(root, "src/billing/.keep"), ""); // the domain's code path exists (BR-2079)
     sh(root, "add", "-A");
@@ -153,7 +153,7 @@ describe("rule review at land", () => {
   test("BR-2074: changed rule text without a configured reviewer lands with a notice and a review.skip event", async () => {
     const root = project();
     mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
-    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n");
+    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
     mkdirSync(join(root, "src/billing"), { recursive: true });
     writeFileSync(join(root, "src/billing/.keep"), ""); // the domain's code path exists (BR-2079)
     sh(root, "add", "-A");
@@ -173,7 +173,7 @@ describe("rule review at land", () => {
     const { root, promptFile } = reviewedProject("block");
     const before = sh(root, "rev-parse", "main");
     const s = startNew(root, "Readme only");
-    writeFileSync(join(s.worktree, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\nRules here are optional.\n");
+    writeFileSync(join(s.worktree, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\nRules here are optional.\n\n## 术语\n\n- **退款**：钱退回\n");
     sh(s.worktree, "commit", "-qam", "readme");
     const out = await land(ws(s.worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("review");
@@ -279,7 +279,7 @@ describe("work land", () => {
   test("BR-2016: refuses when canon check finds a broken corpus", async () => {
     const root = project();
     const s = startNew(root, "Bad ref");
-    writeFileSync(join(s.worktree, "canon/changes/C-1-bad-ref.md"), "---\nid: C-1\ntitle: Bad ref\n---\nSee D-99.\n");
+    writeFileSync(join(s.worktree, "canon/changes/C-1-bad-ref.md"), "---\nid: C-1\ntitle: Bad ref\n---\n## 为什么\n\nSee D-99.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n");
     sh(s.worktree, "commit", "-qam", "dangling");
     const out = await land(ws(s.worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("check");

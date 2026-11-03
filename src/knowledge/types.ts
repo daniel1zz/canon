@@ -15,14 +15,19 @@ export interface DocType {
   readonly defaultStatus: string | undefined;
   /** Extra front-matter fields every document of this type must fill (BR-2054). */
   readonly fields: readonly string[];
+  /**
+   * `## ` sections every document of this type must have, each with content (BR-2091). Extra sections are
+   * allowed. Rules keep their own fixed shape (BR-2033, BR-2034), so the rule type declares none here.
+   */
+  readonly sections: readonly string[];
   readonly builtin: boolean;
 }
 
 export const BUILTIN_TYPES: readonly DocType[] = [
-  { name: "rule", prefix: "BR", dir: "rules", statuses: ["active", "retired"], defaultStatus: "active", fields: [], builtin: true },
-  { name: "decision", prefix: "D", dir: "decisions", statuses: ["proposed", "accepted", "superseded"], defaultStatus: "proposed", fields: [], builtin: true },
-  { name: "change", prefix: "C", dir: "changes", statuses: ["open", "done", "dropped"], defaultStatus: "open", fields: [], builtin: true },
-  { name: "note", prefix: "N", dir: "notes", statuses: undefined, defaultStatus: undefined, fields: [], builtin: true },
+  { name: "rule", prefix: "BR", dir: "rules", statuses: ["active", "retired"], defaultStatus: "active", fields: [], sections: [], builtin: true },
+  { name: "decision", prefix: "D", dir: "decisions", statuses: ["proposed", "accepted", "superseded"], defaultStatus: "proposed", fields: [], sections: ["背景", "方案", "决定", "后果"], builtin: true },
+  { name: "change", prefix: "C", dir: "changes", statuses: ["open", "done", "dropped"], defaultStatus: "open", fields: [], sections: ["为什么", "要改什么", "任务"], builtin: true },
+  { name: "note", prefix: "N", dir: "notes", statuses: undefined, defaultStatus: undefined, fields: [], sections: [], builtin: true },
 ];
 
 /** Front-matter keys canon itself owns; a declared field may not reuse one. */

@@ -74,7 +74,7 @@ export function createDoc(root: string, corpus: Corpus, db: CoordDb, actor: stri
   const full = join(root, path);
   if (existsSync(full)) return err("conflict", `${path} already exists`);
   mkdirSync(dirname(full), { recursive: true });
-  writeFileSync(full, renderDocFile(meta, input.body ?? templateFor(type.name, templates)));
+  writeFileSync(full, renderDocFile(meta, input.body ?? templateFor(type.name, templates, type.sections)));
   return ok(path);
 }
 

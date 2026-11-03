@@ -21,7 +21,7 @@ function repo(files: Record<string, string>): string {
   return root;
 }
 
-const domainReadme = "---\ncode: [src/billing]\n---\n# Billing\n";
+const domainReadme = "---\ncode: [src/billing]\n---\n# Billing\n\n## 术语\n\n- **退款**：钱退回\n";
 const ruleFile = (n: number, extra = "") => `---\nid: ${br(n)}\ntitle: Rule ${n}\n${extra}---\n## 规则\n\nStatement ${n}.\n\n## 例子\n\n- day 30 → refunded\n`;
 
 describe("canon check", () => {
@@ -29,7 +29,7 @@ describe("canon check", () => {
     const root = repo({
       "canon/rules/billing/README.md": domainReadme,
       [`canon/rules/billing/${br(1)}.md`]: ruleFile(1),
-      [`canon/decisions/${d(1)}-x.md`]: `---\nid: ${d(1)}\ntitle: X\nstatus: accepted\n---\nBecause ${br(1)}. Example only: \`${br(77)}\`.\n\n\`\`\`\n${br(78)}\n\`\`\`\n`,
+      [`canon/decisions/${d(1)}-x.md`]: `---\nid: ${d(1)}\ntitle: X\nstatus: accepted\n---\n## 背景\n\nBecause ${br(1)}. Example only: \`${br(77)}\`.\n\n\`\`\`\n${br(78)}\n\`\`\`\n\n## 方案\n\nA.\n\n## 决定\n\nA.\n\n## 后果\n\nB.\n`,
       "src/billing/refund.test.ts": `it("${br(1)}: refuses day 31", () => {});`,
     });
     const r = readCorpus(root);
@@ -43,7 +43,7 @@ describe("canon check", () => {
       [`canon/rules/billing/${br(2)}.md`]: ruleFile(2, "status: retired\n"),
       [`canon/rules/billing/${br(3)}.md`]: ruleFile(3, "untested: covered by the payment provider's contract\n"),
       [`canon/rules/billing/${br(4)}.md`]: `---\nid: ${br(5)}\ntitle: Wrong id\n---\nx\n`,
-      [`canon/changes/C-1-a.md`]: `---\nid: C-1\ntitle: A\nrules: [${br(9)}]\n---\nTouches ${br(1)}.\n`,
+      [`canon/changes/C-1-a.md`]: `---\nid: C-1\ntitle: A\nrules: [${br(9)}]\n---\n## 为什么\n\nTouches ${br(1)}.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n`,
       "src/billing/a.test.ts": `it("${br(2)} old", () => {}); it("${br(7)}", () => {});`,
     });
     const findings = check({ root, ...readCorpus(root) });
@@ -67,9 +67,9 @@ describe("canon check", () => {
 
   test("BR-2006: a README without `code`, or with an empty list, is invalid; one code directory is enough", () => {
     const root = repo({
-      "canon/rules/a/README.md": "---\ntitle: a\n---\n# a\n",
-      "canon/rules/b/README.md": "---\ncode: []\n---\n# b\n",
-      "canon/rules/c/README.md": "---\ncode: [src/auth]\n---\n# c\n",
+      "canon/rules/a/README.md": "---\ntitle: a\n---\n# a\n\n## 术语\n\n- **退款**：钱退回\n",
+      "canon/rules/b/README.md": "---\ncode: []\n---\n# b\n\n## 术语\n\n- **退款**：钱退回\n",
+      "canon/rules/c/README.md": "---\ncode: [src/auth]\n---\n# c\n\n## 术语\n\n- **退款**：钱退回\n",
     });
     const findings = check({ root, ...readCorpus(root), testFiles: [] });
     expect(findings.map((f) => `${f.rule} ${f.path}`).sort()).toEqual(["file-invalid canon/rules/a/README.md", "file-invalid canon/rules/b/README.md"]);
@@ -83,7 +83,7 @@ describe("canon check", () => {
 });
 
 describe("rule shape", () => {
-  const readme = { "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n" };
+  const readme = { "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n" };
   const fileOf = (n: number, body: string, extra = "") => ({ [`canon/rules/billing/${br(n)}.md`]: `---\nid: ${br(n)}\ntitle: R${n}\n${extra}---\n${body}` });
   const run = (files: Record<string, string>) => {
     const ids = Object.keys(files).map((p) => p.split("/").pop()!.replace(/\.md$/, ""));
@@ -135,6 +135,31 @@ describe("rule shape", () => {
   });
 });
 
+describe("required sections", () => {
+  test("BR-2091: a missing or placeholder-only required section is reported whatever the status; extra sections are not", () => {
+    const terms = "## 术语\n\n- **退款**：钱退回\n";
+    const change = (n: number, body: string) => ({ [`canon/changes/C-${n}.md`]: `---\nid: C-${n}\ntitle: C${n}\nstatus: done\n---\n${body}` });
+    const root = repo({
+      "canon/rules/billing/README.md": `---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n${terms}`,
+      "canon/rules/auth/README.md": "---\ncode: [src/auth]\n---\n# auth\n\nLogin.\n\n## 术语\n\n",
+      ...change(1, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n"),
+      ...change(2, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] <任务>\n"),
+      ...change(3, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n\n## 陷阱和假设\n\nY.\n\n## 任务\n\n- [x] X\n"),
+      [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: X\nstatus: superseded\n---\n## 背景\n\nB.\n\n## 方案\n\nA.\n\n## 决定\n\nA.\n`,
+      "canon/notes/N-1.md": "---\nid: N-1\ntitle: Free\n---\nAnything.\n",
+    });
+    const got = check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "doc-missing-section").map((f) => `${f.path.split("/").pop()} ${f.message}`);
+    expect(got.sort()).toEqual(
+      [
+        "C-1.md C-1 lacks or leaves empty: ## 任务",
+        "C-2.md C-2 lacks or leaves empty: ## 任务",
+        `${d(1)}.md ${d(1)} lacks or leaves empty: ## 后果`,
+        "README.md domain auth README lacks or leaves empty: ## 术语",
+      ].sort(),
+    );
+  });
+});
+
 describe("id allocation", () => {
   test("BR-2002: never hands out an id at or below the highest one already in the files", () => {
     const root = repo({});
@@ -150,7 +175,7 @@ describe("id allocation", () => {
 describe("domain code paths", () => {
   test("BR-2079: a code path that does not exist is reported on the README; existing files and directories are fine", () => {
     const root = repo({
-      "canon/rules/billing/README.md": "---\ncode: [src/billing, src/gone, src/main.ts]\n---\n# billing\n\nMoney.\n",
+      "canon/rules/billing/README.md": "---\ncode: [src/billing, src/gone, src/main.ts]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n",
       "src/main.ts": "export {};\n",
     });
     const findings = check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "domain-code-missing");
