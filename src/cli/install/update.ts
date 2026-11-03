@@ -121,7 +121,7 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
   const head = text.slice(0, text.indexOf("---\n", 4) + 4);
   writeFileSync(
     join(changeDir, file),
-    `${head}\n## 为什么\n\n项目里 canon 装的文件（skill、会话开始时的 hook）落后于当前的 canon，按负责人的要求更新。\n\n## 要改什么\n\n${st.value.outdated.map((o) => `- ${o}`).join("\n")}\n\n## 任务\n\n- [x] 由 \`canon update\` 安装并合入\n`,
+    `${head}\n## 为什么\n\n项目里 canon 装的文件（skill、会话开始时的 hook）落后于当前的 canon，按负责人的要求更新。\n\n## 要改什么\n\n${st.value.outdated.map((o) => `- ${o}`).join("\n")}\n\n## 教训\n\n无。\n\n## 任务\n\n- [x] 由 \`canon update\` 安装并合入\n`,
   );
   for (const args of [["add", "-A", ".claude", "canon/changes"], ["commit", "-q", "-m", `Update canon project files to ${st.value.version} (${started.value.change})`]]) {
     const r = git(wt, ...args);

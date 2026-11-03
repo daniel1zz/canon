@@ -64,6 +64,9 @@ describe("exit codes", () => {
     expect(canon(root, "decision", "new", "--title", "Use files").out.trim()).toBe(`canon/decisions/${["D", 2].join("-")}-use-files.md`);
     const change = canon(root, "change", "new", "--title", "Template check").out.trim(); // after the C-1 assertions above
     expect(readFileSync(join(root, change), "utf8")).toContain("## 陷阱和假设");
+    const template = readFileSync(join(root, change), "utf8");
+    expect(template.indexOf("## 教训")).toBeGreaterThan(template.indexOf("## 陷阱和假设")); // BR-2037: lessons before the tasks
+    expect(template.indexOf("## 教训")).toBeLessThan(template.indexOf("## 任务"));
   });
 
   test("BR-2037: a rule created without a body holds the template, which canon check reports until it is filled", () => {
@@ -317,6 +320,31 @@ describe("session continuity", () => {
     expect(b).not.toContain("write the refund test");
     expect(canon(root, "brief").out).toContain("Unfinished changes with handoffs: C-1");
     expect(canon(root, "work", "status").out).toContain("C-1"); // claim kept without --release
+  });
+
+  test("BR-2163: stop and land --finish end with the lessons reminder; land without --finish does not", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    committed(root);
+    const last = (out: string) => out.trim().split("\n").pop()!;
+    const fill = (wt: string, change: string) => {
+      const dir = join(wt, "canon/changes");
+      const name = readdirSync(dir).find((f) => f === `${change}.md` || f.startsWith(`${change}-`))!;
+      const text = readFileSync(join(dir, name), "utf8");
+      writeFileSync(join(dir, name), `${text.slice(0, text.indexOf("---\n", 4) + 4)}\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n## 教训\n\n无。\n\n## 任务\n\n- [x] x\n`);
+      Bun.spawnSync(["git", "commit", "-qam", "fill"], { cwd: wt });
+    };
+    const one = canon(root, "work", "start", "--title", "One").out.match(/cd (.+)/)![1]!.trim();
+    const stopped = canon(one, "work", "stop", "--next", "write the test");
+    expect(stopped.code).toBe(0);
+    expect(last(stopped.out)).toMatch(/^lessons: .*## 教训.*ask the owner/);
+    fill(one, ["C", 1].join("-"));
+    const plain = canon(one, "work", "land");
+    expect(plain.code).toBe(0);
+    expect(plain.out).not.toContain("lessons:");
+    const finished = canon(one, "work", "land", "--finish");
+    expect(finished.code).toBe(0);
+    expect(last(finished.out)).toBe(last(stopped.out));
   });
 
   test("BR-2024: in a claimed worktree brief shows only its own change; other handoffs and the question count only where nothing is claimed", () => {

@@ -192,6 +192,13 @@ function createDocProbe(ws: Workspace, corpus: Corpus, _title: string): { id: st
 }
 
 /** Records where the change stands so the next session can continue without a human re-briefing (P3). */
+/**
+ * The last line of `canon work stop` and of `canon work land --finish` (BR-2163): a lesson goes into the change's
+ * 教训 section, and becomes a mechanism only once the owner confirms it (D-24).
+ */
+export const LESSON_REMINDER =
+  "lessons: if this work found a lesson that could become a mechanism (a rule, check or command), record it under ## 教训 in the change file and ask the owner before making it one";
+
 export function stop(ws: Workspace, next: string, note: string | undefined, release: boolean, say: Say = () => {}): Result<string> {
   // Release too goes through the holder check: only the holder lets its claim go (BR-2104).
   const renewed = renewClaim(ws.db, ws.root, ws.actor, ws.config.claimLeaseMs, sessionProcess());

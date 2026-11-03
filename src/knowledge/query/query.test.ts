@@ -251,3 +251,26 @@ describe("amended decisions", () => {
     expect(plainPrompt).toContain(`## ${id("D", 1)} Why 30 days (decision, accepted)\n\nBecause of`);
   });
 });
+
+describe("lessons in the rule review", () => {
+  const withLessons = (body: string) => ({ ...files, [`canon/changes/${id("C", 1)}-x.md`]: `---\nid: ${id("C", 1)}\ntitle: Shorten refunds\nstatus: open\nrules: [${id("BR", 1)}]\n---\n${body}` });
+
+  test("BR-2162: the review prompt carries the landing change's lessons and asks for notes, never a block, on where they went", () => {
+    const { root, corpus } = corpusOf(withLessons("## 为什么\n\nx\n\n## 教训\n\n- 合入前要跑测试 → 只靠文字\n\n## 任务\n\n- [ ] x\n"));
+    const changed = corpus.docs.filter((d) => d.id === id("BR", 1));
+    const change = corpus.docs.find((d) => d.id === id("C", 1));
+    const prompt = reviewPrompt(root, corpus, changed, { change });
+    expect(prompt).toContain(`# Lessons of ${id("C", 1)} Shorten refunds (the change this landing belongs to)\n\n- 合入前要跑测试 → 只靠文字\n`);
+    expect(prompt).not.toContain("## 任务\n\n- [ ] x"); // only the lessons section, not the whole change
+    expect(prompt).toContain("add a note (never block for it)");
+    expect(prompt).toContain("text-only (只靠文字) without a reason");
+    expect(prompt).toContain("does not say the owner confirmed it");
+  });
+
+  test("BR-2162: a change without a lessons section, or no change at all, adds no lessons part", () => {
+    const { root, corpus } = corpusOf(withLessons("## 为什么\n\nx\n"));
+    const changed = corpus.docs.filter((d) => d.id === id("BR", 1));
+    expect(reviewPrompt(root, corpus, changed, { change: corpus.docs.find((d) => d.id === id("C", 1)) })).not.toContain("# Lessons of");
+    expect(reviewPrompt(root, corpus, changed)).not.toContain("# Lessons of");
+  });
+});

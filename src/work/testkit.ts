@@ -43,7 +43,7 @@ export function startNew(root: string, title: string, actor = "agent:a") {
   const dir = join(r.value.worktree, "canon/changes");
   const file = readdirSync(dir).find((f) => f.startsWith(`${r.value.change}-`) || f === `${r.value.change}.md`)!;
   const text = readFileSync(join(dir, file), "utf8");
-  writeFileSync(join(dir, file), text.slice(0, text.indexOf("---\n", 4) + 4) + `\n## 为什么\n\n${title}.\n\n## 要改什么\n\n${title}.\n\n## 任务\n\n- [ ] ${title}\n`);
+  writeFileSync(join(dir, file), text.slice(0, text.indexOf("---\n", 4) + 4) + `\n## 为什么\n\n${title}.\n\n## 要改什么\n\n${title}.\n\n## 教训\n\n无。\n\n## 任务\n\n- [ ] ${title}\n`);
   sh(r.value.worktree, "commit", "-q", "--amend", "--no-edit", "-a");
   return r.value;
 }

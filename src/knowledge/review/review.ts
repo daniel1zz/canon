@@ -4,6 +4,7 @@ import { parse } from "yaml";
 import type { Corpus, Doc } from "../documents/model.ts";
 import { contextFor, renderContext } from "../query/query.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
+import { LESSONS_SECTION, section } from "../documents/templates.ts";
 
 /**
  * AI review of rule and decision text, the one place the data showed AI judgment pays (spec/ADR rejects
@@ -27,6 +28,8 @@ export interface ReviewExtras {
   /** Domains whose README the landing changes; the review sees each whole domain. */
   readonly readmes?: readonly string[];
   readonly deletedReadmes?: readonly string[];
+  /** The change this landing belongs to; the review reads its lessons (BR-2162). */
+  readonly change?: Doc | undefined;
 }
 
 export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras = {}): string {
@@ -37,6 +40,8 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
     "Do not block for wording, style or formatting.",
     "One rule is one trigger (one command, event or kind of input) and one outcome (D-5). The error cases, exit codes and boundaries of the same trigger belong in that rule as examples, and a definition table (such as a list of exit codes) is one rule: do not suggest splitting those. Suggest a split only when a rule covers two different triggers, or two outcomes that could change independently; never block for it.",
     "Write the findings in the language the documents are written in.",
+    // reason: turning a lesson into a mechanism needs the owner's confirmation; the review only reminds, never blocks (BR-2162, D-24)
+    "When the change's lessons section is shown below, add a note (never block for it) naming the change id: for a lesson marked text-only (只靠文字) without a reason although a rule, check or command could enforce it; and for a lesson whose mechanism is a rule, check or command this landing adds (in the changed documents) when the lesson does not say the owner confirmed it.",
     'Answer with JSON only: {"verdict":"ok"|"block","findings":["<one sentence each, naming the id>"]}',
     "",
     "# Changed documents (new text)",
@@ -45,6 +50,11 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
     // reason: the body has no front matter, so the reviewer could not see what a decision supersedes or amends (BR-2141)
     const links = d.kind === "decision" ? [...(d.supersedes ? [`supersedes: ${d.supersedes}`] : []), ...(d.amends.length ? [`amends: ${d.amends.join(", ")}`] : [])] : [];
     parts.push(`## ${d.id} ${d.title} (${d.kind}${"status" in d ? `, ${d.status}` : ""})\n\n${links.map((l) => `${l}\n`).join("")}${links.length ? "\n" : ""}${d.body.trim()}\n`);
+  }
+  const change = extras.change;
+  if (change?.kind === "change") {
+    const lessons = section(change.body, LESSONS_SECTION);
+    if (lessons !== undefined) parts.push(`# Lessons of ${change.id} ${change.title} (the change this landing belongs to)\n\n${lessons.trim()}\n`);
   }
   if (extras.deleted?.length || extras.deletedReadmes?.length) {
     parts.push("# Deleted documents (text on main before this landing; deleting a rule removes a behaviour the product promised, retiring it keeps the record)");

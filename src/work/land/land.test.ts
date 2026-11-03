@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claims, renewClaim, takeClaim } from "../claims/claims.ts";
 import { enqueue, finishEntry, tryTurn } from "./queue.ts";
@@ -486,6 +486,41 @@ describe("work land", () => {
     expect(r.value.removed).toEqual([done.worktree]);
     expect(existsSync(open.worktree)).toBe(true);
     expect(r.value.kept.join("\n")).toContain("not on main");
+  });
+});
+
+describe("lessons when a change closes", () => {
+  const setLessons = (wt: string, change: string, lessons: string | undefined) => {
+    const name = readdirSync(join(wt, "canon/changes")).find((f) => f === `${change}.md` || f.startsWith(`${change}-`))!;
+    const path = join(wt, "canon/changes", name);
+    const text = readFileSync(path, "utf8").replace(/\n## 教训\n\n[^#]*/, "\n");
+    writeFileSync(path, lessons === undefined ? text : text.replace("\n## 任务", `\n## 教训\n\n${lessons}\n\n## 任务`));
+    sh(wt, "commit", "-qam", "lessons");
+  };
+  const subjects = (root: string) => sh(root, "log", "--format=%s", "main");
+
+  test("BR-2161: --finish refuses an open change without a filled lessons section, before any close commit", async () => {
+    const root = project();
+    const s = startNew(root, "No lessons");
+    setLessons(s.worktree, s.change, undefined);
+    const out = await land(ws(s.worktree), { ...FAST, finish: true }, quiet);
+    expect(out).toMatchObject({ kind: "refused", reason: "check" });
+    expect(out.kind === "refused" && out.message).toContain("## 教训");
+    expect(sh(s.worktree, "log", "-1", "--format=%s")).toBe("lessons"); // no close commit
+    expect(subjects(root)).not.toContain(`close ${s.change}`);
+
+    setLessons(s.worktree, s.change, "<每条教训一行>");
+    expect(await land(ws(s.worktree), { ...FAST, finish: true }, quiet)).toMatchObject({ kind: "refused", reason: "check" });
+  });
+
+  test("BR-2161: a lessons section saying 无 closes the change; land without --finish never asks for it", async () => {
+    const root = project();
+    const plain = startNew(root, "Plain land");
+    setLessons(plain.worktree, plain.change, undefined);
+    expect((await land(ws(plain.worktree), FAST, quiet)).kind).toBe("landed");
+    const s = startNew(root, "With lessons"); // startNew writes "## 教训\n\n无。"
+    const out = await land(ws(s.worktree), { ...FAST, finish: true }, quiet);
+    expect(out.kind === "landed" && out.finished).toBe(true);
   });
 });
 

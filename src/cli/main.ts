@@ -27,7 +27,7 @@ import { computeStats, renderSearchStats, renderSharedShare, renderStats, search
 import { eventsSince, lastEventId, parseSince, renderEvents, renderWindow, windowSummary } from "../work/stats/window.ts";
 import { drop } from "../work/drop/drop.ts";
 import { issueStatus, renderIssues } from "../work/issues/issues.ts";
-import { clean, mainCorpus, start, stop } from "../work/session/session.ts";
+import { clean, LESSON_REMINDER, mainCorpus, start, stop } from "../work/session/session.ts";
 import { land } from "../work/land/land.ts";
 
 /**
@@ -323,7 +323,10 @@ const work = defineCommand({
         const ws = workspace();
         const timeoutMs = minutes === undefined ? ws.config.landTimeoutMs : minutes * 60_000;
         const out = await land(ws, { finish: Boolean(args.finish), timeoutMs, guide: WORKFLOW_GUIDE }, say);
-        if (out.kind === "landed") return;
+        if (out.kind === "landed") {
+          if (out.finished) say(LESSON_REMINDER);
+          return;
+        }
         if (out.kind === "timeout") {
           console.error(`canon: still ${out.ahead} landing(s) ahead after ${timeoutMs / 60_000} min; run again`);
           process.exit(EXIT.timeout);
@@ -341,6 +344,7 @@ const work = defineCommand({
         const ws = workspace();
         const subject = must(stop(ws, String(args.next), typeof args.note === "string" ? args.note : undefined, Boolean(args.release), say));
         say(`${subject}: handoff recorded${args.release ? ", claim released" : ""}`);
+        say(LESSON_REMINDER);
       },
     }),
     status: defineCommand({

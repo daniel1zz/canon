@@ -15,6 +15,7 @@ import { type Doc } from "../../knowledge/documents/model.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { setMeta } from "../../knowledge/documents/write.ts";
+import { hasLessons, LESSONS_SECTION } from "../../knowledge/documents/templates.ts";
 import { git, gitEnv, isClean, listWorktrees } from "../../kernel/git.ts";
 import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, type DeletedDoc } from "../../knowledge/review/review.ts";
 
@@ -72,6 +73,8 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     const corpus = readCorpus(wt, ws.config.types, ws.config).corpus;
     const doc = findDoc(corpus, subject);
     if (doc?.kind === "change" && doc.status === "open") {
+      // reason: lessons are known when the work ends, so closing is where they are required; old closed changes stay valid (BR-2161, D-24)
+      if (!hasLessons(doc.body)) return early("check", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
       const s = setMeta(wt, doc, { status: "done" });
       if (!s.ok) return early("check", s.error.message);
       git(wt, "add", doc.path);
@@ -366,7 +369,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
       ws.db.event(ws.actor, "review.skip", subject, { docs: reviewed });
     } else {
       say(`review: ${reviewed.join(", ")}`);
-      const v = await runReview(ws.config.review, wt, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes }));
+      const v = await runReview(ws.config.review, wt, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined }));
       if (!v.ok) return refuse("review", `the rule review could not run: ${v.error.message}`);
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings });
       if (v.value.verdict === "block") return refuse("review", `rule review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
