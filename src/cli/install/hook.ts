@@ -4,8 +4,9 @@ import { symlinkOnPath } from "./install.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 
 /**
- * The one hook canon puts into a project (BR-2087, D-10): at session start Claude Code runs `canon brief`,
- * so a new session learns what it is working on and whether canon's project assets are out of date.
+ * The hooks canon puts into a project: at session start Claude Code runs `canon brief` (BR-2087, D-10), so a new
+ * session learns what it is working on and whether canon's project assets are out of date; before each Bash call it
+ * runs `canon snapshot take` (BR-2185, D-30), so uncommitted work can always be recovered.
  * It is a *merged* asset: canon owns only its own entry in `.claude/settings.json` and never touches
  * anything else in that file. It reports; it never blocks (D-1: no hook checks how an agent works). The entries
  * canon withdrew (C-91's PreToolUse hook and allow rule, D-18) are removed by the same write.
@@ -16,6 +17,12 @@ import { err, ok, type Result } from "../../kernel/result.ts";
  */
 export const BRIEF_COMMAND =
   "canon brief || echo 'canon brief failed (see above), or canon is not on PATH. This project keeps its rules, decisions and work in canon/, and every change lands through canon work land: do not edit the main branch directly. Fix the error or install canon (ask the user if needed), then run canon brief.'";
+/**
+ * Before each Bash call, a snapshot of the worktree's uncommitted work (BR-2182, D-30). It never blocks: when canon
+ * fails or is not on PATH, the echo tells the user in a systemMessage and the call goes ahead (BR-2185).
+ */
+export const SNAPSHOT_COMMAND =
+  `canon snapshot take --hook || echo '{"systemMessage":"canon snapshot take failed or canon is not on PATH: uncommitted work was not snapshotted before this Bash call"}'`;
 /** The form canon installed before BR-2087 required the fallback; found once and replaced in place. */
 const OLD_BRIEF_COMMAND = "canon brief";
 const SETTINGS = join(".claude", "settings.json");
@@ -50,6 +57,15 @@ const sessionStart = (settings: Settings | undefined): HookEntry[] => {
   const start = (settings?.["hooks"] as Record<string, unknown> | undefined)?.["SessionStart"];
   return Array.isArray(start) ? (start as HookEntry[]) : [];
 };
+
+const preToolUse = (settings: Settings | undefined): HookEntry[] => {
+  const pre = (settings?.["hooks"] as Record<string, unknown> | undefined)?.["PreToolUse"];
+  return Array.isArray(pre) ? (pre as HookEntry[]) : [];
+};
+
+/** Whether the Bash PreToolUse entry with canon's snapshot command is there (BR-2185). */
+const hasSnapshot = (settings: Settings | undefined) =>
+  preToolUse(settings).some((e) => isObject(e) && e.matcher === "Bash" && Array.isArray(e.hooks) && e.hooks.some((h) => h.command?.trim() === SNAPSHOT_COMMAND));
 
 function briefState(settings: Settings | undefined): HookState {
   const commands = sessionStart(settings).flatMap((e) => (Array.isArray(e.hooks) ? e.hooks : []).map((h) => h.command?.trim()));
@@ -108,6 +124,8 @@ function withoutRetired(settings: Settings): Settings {
 export interface SettingsState {
   /** The SessionStart `canon brief` entry (BR-2087). */
   readonly brief: HookState;
+  /** Whether the snapshot hook before each Bash call is installed (BR-2185). */
+  readonly snapshot: boolean;
   /** Withdrawn canon entries still in the file; each is out of date until removed (BR-2087, D-18). */
   readonly retired: readonly Retired[];
 }
@@ -116,11 +134,11 @@ export interface SettingsState {
 export function hookStatus(root: string): Result<SettingsState> {
   const s = read(root);
   if (!s.ok) return s;
-  return ok({ brief: briefState(s.value), retired: retiredIn(s.value) });
+  return ok({ brief: briefState(s.value), snapshot: hasSnapshot(s.value), retired: retiredIn(s.value) });
 }
 
 /**
- * The settings with the SessionStart entry added when it is missing, or the old form's command rewritten in place, so a
+ * The settings with the SessionStart entry and the Bash snapshot entry (BR-2185) added when missing, or the old form's command rewritten in place, so a
  * project never ends up with two, and canon's withdrawn entries removed; everything else is kept as it was. Reads only:
  * undefined when nothing needs writing, an error (exit 2) for a file canon will not edit (BR-2087).
  */
@@ -129,7 +147,8 @@ export function planHook(root: string): Result<Settings | undefined> {
   if (!s.ok) return s;
   const state = briefState(s.value);
   const retired = retiredIn(s.value);
-  if (state === "present" && retired.length === 0) return ok(undefined);
+  const snapshot = hasSnapshot(s.value);
+  if (state === "present" && snapshot && retired.length === 0) return ok(undefined);
   const settings = retired.length > 0 ? withoutRetired(s.value ?? {}) : { ...(s.value ?? {}) };
   if (state !== "present") {
     const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
@@ -138,6 +157,11 @@ export function planHook(root: string): Result<Settings | undefined> {
       start = start.map((e) => (Array.isArray(e.hooks) ? { ...e, hooks: e.hooks.map((h) => (h.command?.trim() === OLD_BRIEF_COMMAND ? { ...h, command: BRIEF_COMMAND } : h)) } : e));
     } else start = [...start, { hooks: [{ type: "command", command: BRIEF_COMMAND }] }];
     hooks["SessionStart"] = start;
+    settings["hooks"] = hooks;
+  }
+  if (!snapshot) {
+    const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
+    hooks["PreToolUse"] = [...preToolUse(settings), { matcher: "Bash", hooks: [{ type: "command", command: SNAPSHOT_COMMAND }] }];
     settings["hooks"] = hooks;
   }
   return ok(settings);

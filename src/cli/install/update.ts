@@ -42,7 +42,8 @@ export function assetsStatus(root: string, source: string): Result<AssetsStatus>
     "pre-bash hook": "hook: canon hook pre-bash before each Bash call, withdrawn by canon; install or update removes it (.claude/settings.json)",
     "actor permission": "permission: Bash(export CANON_ACTOR='agent:*'), withdrawn by canon; install or update removes it (.claude/settings.json)",
   };
-  const hook = [...brief, ...h.value.retired.map((r) => withdrawn[r])];
+  const snapshot = h.value.snapshot ? [] : ["hook: canon snapshot take before each Bash call (.claude/settings.json)"];
+  const hook = [...brief, ...snapshot, ...h.value.retired.map((r) => withdrawn[r])];
   const g = guardLine(root);
   if (!g.ok) return g;
   const outdated = [...s.value.outdated.map((f) => `skill ${f}`), ...hook, ...g.value.line];

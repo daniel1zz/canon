@@ -14,6 +14,7 @@ import { humanCommands } from "../work/humans/commands.ts";
 import { issueCommands } from "../work/issues/commands.ts";
 import { landCommands } from "../work/land/commands.ts";
 import { sessionCommands } from "../work/session/commands.ts";
+import { snapshotCommands } from "../work/snapshots/commands.ts";
 import { statsCommands } from "../work/stats/commands.ts";
 import { verifyCommands } from "../work/verify/commands.ts";
 
@@ -37,6 +38,7 @@ const main = defineCommand({
     dropCommands,
     humanCommands,
     statsCommands,
+    snapshotCommands,
     issueCommands,
   ]),
 });

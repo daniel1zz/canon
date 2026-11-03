@@ -9,6 +9,17 @@
           }
         ]
       }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "canon snapshot take --hook || echo '{\"systemMessage\":\"canon snapshot take failed or canon is not on PATH: uncommitted work was not snapshotted before this Bash call\"}'"
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {

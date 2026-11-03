@@ -7,6 +7,7 @@ import { humanGuide } from "../work/humans/guide.ts";
 import { issueGuide } from "../work/issues/guide.ts";
 import { landGuide } from "../work/land/guide.ts";
 import { sessionGuide } from "../work/session/guide.ts";
+import { snapshotGuide } from "../work/snapshots/guide.ts";
 import { verifyGuide } from "../work/verify/guide.ts";
 
 /** One line of the workflow guide, from the domain it is about; `rank` is its place in the guide (lower first). */
@@ -36,4 +37,4 @@ export function assembleGuide(header: string, domains: readonly (readonly GuideL
  * How to work in a canon project, printed by `canon brief` at every session start (BR-2090, D-10).
  * It ships with the binary instead of being installed as a file, so it always matches the canon that runs.
  */
-export const WORKFLOW_GUIDE = assembleGuide(HEADER, [configGuide, documentGuide, queryGuide, reviewGuide, dropGuide, humanGuide, issueGuide, landGuide, sessionGuide, verifyGuide]);
+export const WORKFLOW_GUIDE = assembleGuide(HEADER, [configGuide, documentGuide, queryGuide, reviewGuide, dropGuide, humanGuide, issueGuide, landGuide, sessionGuide, snapshotGuide, verifyGuide]);
