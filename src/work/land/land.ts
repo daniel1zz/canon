@@ -268,6 +268,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const readmes = read.corpus.domains.filter((dom) => live.has(dom.path)).map((dom) => dom.name);
   const deletedReadmes = entries.filter((e) => e.status === "D" && e.path.endsWith("/README.md")).map((e) => e.path);
   const reviewed = [...changedDocs.map((d) => d.id), ...deleted.map((d) => `${d.id} (deleted)`), ...readmes.map((n) => `${n} README`), ...deletedReadmes.map((p) => `${p} (deleted)`)];
+  let reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined;
   if (reviewed.length > 0) {
     if (!ws.config.review) {
       say(`review: not configured — ${reviewed.join(", ")} land without a rule review`);
@@ -279,6 +280,9 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings });
       if (v.value.verdict === "block") return refuse("review", `rule review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
       for (const f of v.value.findings) say(`review note: ${f}`);
+      // reason: notes do not block and are not changes of their own; they wait on the document they name (BR-2145, D-21)
+      reviewNotes = { reviewed: [...changedDocs.map((d) => d.id), ...deleted.map((d) => d.id)], notes: v.value.findings };
+      if (v.value.findings.length > 0) say("review notes do not block and are not changes of their own: canon context shows them to whoever next changes these documents, who handles them then");
     }
   }
   // Standing instructions added or edited by this landing are reviewed for requirements stated twice (BR-2143).
@@ -321,7 +325,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   if (moved !== "moved") return refuse(moved.reason, moved.message);
 
   finishEntry(ws.db, entry, "landed", head.value);
-  ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: t.branch, diff: fingerprint });
+  ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: t.branch, diff: fingerprint, ...(reviewNotes ?? {}) });
   say(`landed ${head.value.slice(0, 9)} on ${main}`);
   if (ws.config.hooks.after_land.length > 0) {
     const log = runHooksInBackground({ db: ws.db, actor: ws.actor, event: "after_land", change: subject, cwd: ws.primary, env: hookEnv }, ws.config.hooks.after_land, logFile(ws.db, `after-land-${entry}.log`), entry);

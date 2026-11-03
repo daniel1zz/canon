@@ -4,6 +4,7 @@ import { join, relative } from "node:path";
 import { stripCode, type Corpus, type Rule } from "../documents/model.ts";
 import type { FileProblem } from "../documents/read.ts";
 import { idsIn as idsOf } from "../documents/types.ts";
+import { BACKLOG_FILE, readBacklog } from "../documents/backlog.ts";
 import { testTitles } from "./test-titles.ts";
 import { EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, RULE_SECTION, section } from "../documents/templates.ts";
 
@@ -63,6 +64,11 @@ export function check(input: CheckInput): Finding[] {
         if (target && target.kind !== "decision") findings.push({ path: d.path, rule: "amends-not-decision", message: `amends ${a}, which is a ${target.kind}, not a decision (BR-2139)` });
       }
     }
+  }
+  // The owner's order names changes only; a typo would silently drop a change from where the owner put it (BR-2150).
+  for (const e of readBacklog(input.root, input.corpus.types)) {
+    const target = input.corpus.docs.find((x) => x.id === e.id);
+    if (!target || target.kind !== "change") findings.push({ path: `${BACKLOG_FILE}:${e.line}`, rule: "ref-dangling", message: `lists ${e.id}, which is not a change` });
   }
   const { codeRoot } = input.corpus.layout;
   for (const dom of input.corpus.domains) {

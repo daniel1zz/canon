@@ -4,7 +4,8 @@
  */
 export const WORKFLOW_GUIDE = `canon keeps this project's shared memory in canon/: rules (rules/<domain>/BR-n.md, how the product must behave), decisions (D-n, why), changes (C-n, the work). How to work here:
 - Before changing code read the area: canon context <path|C-n|domain> lists its rules by title; read the ones you touch with canon show <id> (--full prints them all). Find anything: canon search <word|id>.
-- Every piece of work is a change in its own worktree: canon work start <C-n>, or --title "<what>" for a new one. Fill its 为什么 and 要改什么 before the code.
+- Every piece of work is a change in its own worktree: canon work start <C-n>, or --title "<what>" for a new one. Fill its 为什么 and 要改什么 before the code. With no task given, take the first unclaimed change in canon change list: it follows the owner's order in canon/backlog.md, which only the owner edits; a new change goes to the end by itself.
+- Notes the rule review gives without blocking are not changes: never open a change for them. canon context and canon brief show the notes still open on a rule or decision; handle them when you next change that document. Blocks and real defects are fixed at once.
 - When behavior changes, change its rule in the same commit (new rule: canon rule new --domain <domain> --title "..."). One rule = one testable behavior, with ## 规则 and ## 例子; tests name the rule they prove: it("BR-n: ...").
 - Pick the domain by business capability, not by command name or technical layer: see canon rule domains; when none fits, create a subdomain (canon rule domain <domain>/<name>). Code lives in the matching directory, and the change file names the subdomain.
 - A significant choice with real alternatives becomes a decision (canon decision new --title "..."), rejected options included.

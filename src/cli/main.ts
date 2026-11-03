@@ -10,8 +10,10 @@ import { answer, answeredBy, ask, questions } from "../work/humans/questions.ts"
 import { claimOfWorktree, claims } from "../work/claims/claims.ts";
 import { handoffs } from "../work/session/handoffs.ts";
 import type { CanonError, Result } from "../kernel/result.ts";
-import type { Doc, Kind } from "../knowledge/documents/model.ts";
-import { amendedBy, contextFor, findDoc, isIdQuery, rawText, renderContext, renderSearch, search } from "../knowledge/query/query.ts";
+import type { Change, Doc, Kind } from "../knowledge/documents/model.ts";
+import { BACKLOG_FILE, inBacklogOrder, parseBacklog, readBacklog } from "../knowledge/documents/backlog.ts";
+import { openNotes, renderNote } from "../knowledge/review/notes.ts";
+import { amendedBy, contextFor, findDoc, isIdQuery, rawText, referencedIds, renderContext, renderSearch, search } from "../knowledge/query/query.ts";
 import { readCorpus } from "../knowledge/documents/read.ts";
 import { createDoc, createDomain, setMeta } from "../knowledge/documents/write.ts";
 import { git } from "../kernel/git.ts";
@@ -107,6 +109,8 @@ function listCommand(kind: Kind, describe: string) {
         .filter(live)
         .filter((d) => !args.domain || (d.kind === "rule" && (d.domain === args.domain || d.domain.startsWith(`${args.domain}/`))))
         .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true })); // SP-2 before SP-10 (BR-2061)
+      // Changes come in the owner's order (canon/backlog.md), unlisted ones after by id (BR-2148, D-20).
+      if (kind === "change") rows.splice(0, rows.length, ...inBacklogOrder(rows, readBacklog(ws.root, ws.config.types)));
       if (args.json) return json(rows.map(({ body: _b, ...r }) => r));
       for (const d of rows) say(`${d.id.padEnd(8)} ${("status" in d && d.status ? d.status : "").padEnd(10)} ${d.title}`);
       if (rows.length === 0) say(`(no ${kind}s)`);
@@ -198,7 +202,7 @@ const change = defineCommand({
   meta: { description: "Changes: units of intended work (start one with `canon work start --title`)" },
   subCommands: {
     new: newDocCommand("change", { rules: { type: "string", description: "Comma-separated rule ids it adds, edits or retires" } }),
-    list: listCommand("change", "List open changes (--all for done and dropped)"),
+    list: listCommand("change", "List open changes in the owner's order (canon/backlog.md, then the rest by id; --all for done and dropped)"),
     drop: defineCommand({
       meta: { description: "Mark a change dropped (work will not happen)" },
       args: { id: { type: "positional", required: true } },
@@ -268,7 +272,12 @@ const context = defineCommand({
   },
   run({ args }) {
     const ws = workspace();
-    say(renderContext(ws.root, contextFor(corpusOf(ws).corpus, args.target, ws.root), { full: Boolean(args.full), target: args.target }));
+    const ctx = contextFor(corpusOf(ws).corpus, args.target, ws.root);
+    say(renderContext(ws.root, ctx, { full: Boolean(args.full), target: args.target }));
+    // Open review notes on what this context covers, shown to whoever is about to change it (BR-2146, D-21).
+    const ids = [...(ctx.target && ctx.target.kind !== "change" ? [ctx.target.id] : []), ...ctx.rules.map((r) => r.id), ...ctx.decisions.map((d) => d.id)];
+    const notes = openNotes(ws.db, ids);
+    if (notes.length) say(`# Open review notes\n\nNot blocking and not changes of their own: handle them when you change the document they name.\n${notes.map((n) => `- ${renderNote(n)}`).join("\n")}\n`);
   },
 });
 
@@ -519,6 +528,15 @@ const brief = defineCommand({
   },
 });
 
+/** The backlog as committed on main, which is where the owner's order lives (D-20). */
+function mainBacklog(ws: Workspace) {
+  const at = `${ws.config.main}:${BACKLOG_FILE}`;
+  if (!git(ws.primary, "cat-file", "-e", at).ok) return [];
+  const text = git(ws.primary, "show", at);
+  if (!text.ok) throw new Error(`cannot read ${at}: ${text.error.message}`);
+  return parseBacklog(text.value, ws.config.types);
+}
+
 /** What `canon brief` says after the guide: in a claimed worktree only its own change; elsewhere the handoffs and questions; then the update notice. */
 function briefState(ws: Workspace) {
   const mine = claimOfWorktree(ws.db, ws.root);
@@ -528,12 +546,24 @@ function briefState(ws: Workspace) {
     const h = hs.find((x) => x.subject === mine.subject);
     if (h) say(`Handoff from ${h.actor} at ${h.updated_at}: next — ${h.next}${h.note ? `\n${h.note}` : ""}`);
     for (const o of overlapsOf(ws, ws.root)) say(`Overlap: ${o.change} also changes ${o.files.join(", ")}`);
+    // Open review notes on the rules and decisions this change names, handled in this change if it touches them (BR-2147).
+    const own = findDoc(corpusOf(ws).corpus, mine.subject);
+    if (own) for (const n of openNotes(ws.db, [...referencedIds(own, ws.config.types)].filter((id) => id !== own.id))) say(`Open review note on ${renderNote(n)}`);
   } else {
     // reason: other sessions' handoffs and the question queue are shown only where no change is claimed; injected
     // into a change's session they draw it into work that is not its own (BR-2024)
     if (hs.length) say(`Unfinished changes with handoffs: ${hs.map((h) => h.subject).join(", ")} (canon work status)`);
     const pending = questions(ws.db, "pending").length;
     if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
+    // The owner's order of open changes on main, so an agent without a task takes the first unclaimed one (BR-2149, D-20).
+    const onMain = mainCorpus(ws);
+    if (!onMain.ok) throw new Error(onMain.error.message);
+    const open = onMain.value.docs.filter((d): d is Change => d.kind === "change" && d.status === "open");
+    if (open.length) {
+      const held = new Set(claims(ws.db).map((c) => c.subject));
+      const order = inBacklogOrder(open, mainBacklog(ws)).map((c) => (held.has(c.id) ? `${c.id} (claimed)` : c.id));
+      say(`Open changes in the owner's order (canon change list); with no task, take the first unclaimed one: ${order.join(", ")}`);
+    }
   }
   const background = backgroundNotice(settleBackgroundHooks(ws.db, ws.actor));
   if (background) say(background);
