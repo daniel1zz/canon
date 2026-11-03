@@ -59,6 +59,24 @@ CREATE TABLE IF NOT EXISTS events (
 );
 `;
 
+/** Columns added after the first schema, as `table`, `column definition`. */
+const ADDED_COLUMNS: readonly (readonly [string, string])[] = [["questions", "relayed TEXT"]];
+
+/**
+ * Brings an older DB up to the current schema (BR-2078). SQLite has no ADD COLUMN IF NOT EXISTS, and checking
+ * first races with another session opening the same DB, so every ALTER is attempted and "duplicate column"
+ * (someone else added it first) is the expected answer, not an error.
+ */
+export function addColumns(db: Database): void {
+  for (const [table, column] of ADDED_COLUMNS) {
+    try {
+      db.exec(`ALTER TABLE ${table} ADD COLUMN ${column}`);
+    } catch (e) {
+      if (!/duplicate column name/i.test((e as Error).message)) throw e;
+    }
+  }
+}
+
 export class CoordDb {
   private constructor(readonly db: Database) {}
 
@@ -68,9 +86,7 @@ export class CoordDb {
       const db = new Database(path, { create: true, strict: true });
       db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
       db.exec(SCHEMA);
-      // Columns added after the first schema; SQLite has no ADD COLUMN IF NOT EXISTS.
-      const cols = db.query<{ name: string }, []>("PRAGMA table_info(questions)").all().map((c) => c.name);
-      if (!cols.includes("relayed")) db.exec("ALTER TABLE questions ADD COLUMN relayed TEXT");
+      addColumns(db);
       return ok(new CoordDb(db));
     } catch (e) {
       return err("io", `cannot open coordination DB at ${path}: ${(e as Error).message}`);
