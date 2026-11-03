@@ -179,5 +179,7 @@ export function codeReview(e: Env): Result<ReviewReport> {
       e.say(`created ${r.value.trim()}: ${f.title}`);
     }
   }
+  // reason: an empty after-land log must tell "reviewed, nothing found" from "never ran" (BR-2070)
+  if (groups.size === 0) e.say("no findings");
   return ok({ created, commented });
 }

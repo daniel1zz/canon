@@ -229,13 +229,15 @@ describe("amended decisions", () => {
     expect(findings(`[${id("BR", 1)}]`).map((f) => f.rule)).toEqual(["amends-not-decision"]);
   });
 
-  test("BR-2140: context marks a decision an accepted decision amends; a proposed amendment does not count", () => {
+  test("BR-2140: context marks a decision an accepted decision amends; a proposed or superseded amendment does not count", () => {
     const { corpus } = corpusOf(withAmends(`[${id("D", 1)}]`));
     const out = renderContext("", contextFor(corpus, "billing"), { full: false });
     expect(out).toContain(`- ${id("D", 1)} Why 30 days (canon/decisions/${id("D", 1)}-a.md) — partly amended by ${id("D", 3)}`);
     expect(renderContext("", contextFor(corpus, id("D", 1)), { full: false })).toContain(`# ${id("D", 1)} Why 30 days — partly amended by ${id("D", 3)}`);
     const proposed = corpusOf(withAmends(`[${id("D", 1)}]`, "proposed")).corpus;
     expect(renderContext("", contextFor(proposed, "billing"), { full: false })).not.toContain("partly amended by");
+    const superseded = corpusOf(withAmends(`[${id("D", 1)}]`, "superseded")).corpus;
+    expect(renderContext("", contextFor(superseded, id("D", 1)), { full: false })).not.toContain("partly amended by");
   });
 
   test("BR-2141: the review prompt asks for amends and shows a changed decision's supersedes and amends", () => {

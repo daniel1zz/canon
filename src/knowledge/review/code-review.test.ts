@@ -81,6 +81,7 @@ describe("post-land code review", () => {
   test("BR-2070: the reviewer sees the whole landed diff and the full text of each changed code file, and is asked only about security and concurrency", () => {
     const t = setup({ findings: [] });
     expect(codeReview(t.env).ok).toBe(true);
+    expect(t.lines).toContain("no findings");
     const p = t.prompt();
     expect(p).toContain("ONLY for security problems and concurrency problems");
     expect(p).toContain("-export const a = 1;");
@@ -129,6 +130,7 @@ describe("post-land code review", () => {
     const r = codeReview(t.env);
     expect(r.ok && r.value).toEqual({ created: [], commented: [] });
     expect(t.lines.filter((l) => l.startsWith("dropped")).length).toBe(4);
+    expect(t.lines).toContain("no findings");
     expect(t.calls().some((c) => c[1] === "create")).toBe(false);
   });
 
