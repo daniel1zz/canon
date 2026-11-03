@@ -12,7 +12,7 @@ import { slugify, type Change, type Corpus } from "../../knowledge/documents/mod
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { createDoc } from "../../knowledge/documents/write.ts";
-import { worktreesDirOf } from "../../config/config.ts";
+import { worktreesDirOf } from "./config-keys.ts";
 import { git, ignoredPaths, isClean, listWorktrees, unregenerable, type WorktreeInfo } from "../../kernel/git.ts";
 import { processesIn, type Occupant } from "../../kernel/process.ts";
 

@@ -1,7 +1,7 @@
 import { basename } from "node:path";
 import type { Workspace } from "../workspace.ts";
 import { git, listWorktrees } from "../../kernel/git.ts";
-import { worktreesDirOf } from "../../config/config.ts";
+import { worktreesDirOf } from "./config-keys.ts";
 
 /**
  * Same-file overlap between changes in flight (C-7): two change branches that both changed a file relative

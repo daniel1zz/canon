@@ -1,7 +1,7 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CoordDb } from "../work/db.ts";
-import type { HookEvent } from "./config.ts";
+import type { HookEvent } from "./config-keys.ts";
 
 /**
  * Lifecycle hooks (D-2 §3, D-3): commands from `hooks.<event>` in `canon/config.yaml`, run with the event's

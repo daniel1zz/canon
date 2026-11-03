@@ -1,112 +1,54 @@
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { isAbsolute, join, resolve } from "node:path";
 import { parse } from "yaml";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { templateFor } from "../knowledge/documents/templates.ts";
-import { BUILTIN_TYPES, RESERVED_DIRS, RESERVED_FIELDS, type DocType } from "../knowledge/documents/types.ts";
-import { CHECKS } from "../work/stats/checks.ts";
+import { checkKeys } from "../knowledge/check/config-keys.ts";
+import { reviewKeys } from "../knowledge/review/config-keys.ts";
+import { claimKeys } from "../work/claims/config-keys.ts";
+import { landKeys } from "../work/land/config-keys.ts";
+import { sessionKeys } from "../work/session/config-keys.ts";
+import { statsKeys } from "../work/stats/config-keys.ts";
+import { verifyKeys } from "../work/verify/config-keys.ts";
+import { documentKeys, hookKeys, readTemplates } from "./config-keys.ts";
+import type { ConfigKey, FieldsOf, KeySet } from "./key.ts";
 
 /**
  * `canon/config.yaml`: the project facts canon cannot infer and every extension point (D-2, D-3).
  * Reading is strict (BR-2045): an unknown key, a wrong type, a missing script or a template for an
  * undeclared type makes every command fail with exit 2 instead of silently using a default.
+ *
+ * Every key is declared (name, type, default, validation, doc) by the domain that uses it, in `config-keys.ts` in that
+ * domain's directory; this file only composes them, so it changes when a domain is added, not when a key is (C-135).
  */
-export type HookEvent = "after_start" | "before_land" | "after_land" | "after_stop";
-export const HOOK_EVENTS: readonly HookEvent[] = ["after_start", "before_land", "after_land", "after_stop"];
+const DOMAINS = [hookKeys, checkKeys, documentKeys, reviewKeys, claimKeys, landKeys, sessionKeys, statsKeys, verifyKeys] as const;
 
-export interface Config {
-  /** The branch changes land on. */
-  readonly main: string;
-  /** Shell command that must exit 0 on the exact tree that becomes main (required to land). */
-  readonly floor: string | undefined;
-  /** Globs of test files scanned for rule ids; undefined means the default discovery (BR-2046). */
-  readonly tests: readonly string[] | undefined;
-  /** Shell command `canon work test` runs once per selected test file, `{file}` replaced by its path (BR-2160, D-23). */
-  readonly testCommand: string | undefined;
-  /** Shell command run once in a new worktree (e.g. "bun install"). */
-  readonly setup: string | undefined;
-  /**
-   * Reviewer for rule and decision text, the built-in first `before_land` step (D-3). Receives the review
-   * prompt on stdin and prints JSON `{"verdict":"ok"|"block","findings":["..."]}`.
-   */
-  readonly review: string | undefined;
-  /** Commands per lifecycle event, run in order. */
-  readonly hooks: Readonly<Record<HookEvent, readonly string[]>>;
-  /** How long a claim lasts without being renewed (BR-2011). */
-  readonly claimLeaseMs: number;
-  /** A lander silent this long is skipped (BR-2044). */
-  readonly landerStaleMs: number;
-  /** Default wait in the landing queue before giving up (BR-2048). */
-  readonly landTimeoutMs: number;
-  /** Where change worktrees live; undefined means `<primary>.worktrees` (BR-2047). */
-  readonly worktrees: string | undefined;
-  /** Built-in types followed by the declared ones. */
-  readonly types: readonly DocType[];
+type Sections = typeof DOMAINS[number];
+type UnionToIntersection<U> = (U extends unknown ? (x: U) => void : never) extends (x: infer I) => void ? I : never;
+
+export type Config = UnionToIntersection<Sections extends infer S ? (S extends KeySet ? FieldsOf<S> : never) : never> & {
   /** Type name → template body from `canon/templates/<name>.md`. */
   readonly templates: Readonly<Record<string, string>>;
-  /** Check name → the date (YYYY-MM-DD) it is due for review (BR-2069). */
-  readonly checkReviews: Readonly<Record<string, string>>;
-  /**
-   * Names (globs, matched against each path segment) of git-ignored files a worktree can rebuild, such as
-   * node_modules; removing a worktree loses nothing by deleting them (BR-2019). Any other ignored file counts as work.
-   */
-  readonly regenerable: readonly string[];
-  /**
-   * The directory whose subdirectories mirror the rule domains one to one (`<codeRoot>/<domain path>`, D-15);
-   * undefined means top-level domain READMEs list their code directories instead.
-   */
-  readonly codeRoot: string | undefined;
-  /** Directories (or files) under codeRoot that belong to no business domain, such as a shared kernel; empty without codeRoot. */
-  readonly shared: readonly string[];
-  /** Repo-relative files every session reads at start; changing one triggers the duplicate review (BR-2143). */
-  readonly instructions: readonly string[];
-  /**
-   * Repo-relative directories or files the project declares no test reads: a landing that changes only paths
-   * under them skips the floor, since its code tree is main's already-tested one (BR-2164). Empty: never skip.
-   */
-  readonly floorSkipPaths: readonly string[];
-  /** At most this many landings are tested together under one floor run (D-26, BR-2172); 1 means never batch. */
-  readonly landBatchMax: number;
-}
-
-const HOUR = 3_600_000;
-
-/** Build output, dependency and cache directories of common toolchains: rebuilt by `setup` or a build, never hand-made. */
-export const DEFAULT_REGENERABLE: readonly string[] = [
-  "node_modules", "dist", "build", "out", "coverage", ".next", ".nuxt", ".turbo", ".cache", ".parcel-cache",
-  "target", "__pycache__", ".pytest_cache", ".mypy_cache", ".venv", "venv", ".gradle", "*.pyc", ".DS_Store",
-];
-const MINUTE = 60_000;
-
-export const DEFAULT_CONFIG: Config = {
-  main: "main",
-  floor: undefined,
-  tests: undefined,
-  testCommand: undefined,
-  setup: undefined,
-  review: undefined,
-  hooks: { after_start: [], before_land: [], after_land: [], after_stop: [] },
-  claimLeaseMs: 12 * HOUR,
-  landerStaleMs: 10 * MINUTE,
-  landTimeoutMs: 60 * MINUTE,
-  worktrees: undefined,
-  types: BUILTIN_TYPES,
-  templates: {},
-  checkReviews: {},
-  regenerable: DEFAULT_REGENERABLE,
-  codeRoot: undefined,
-  shared: [],
-  instructions: ["CLAUDE.md"],
-  floorSkipPaths: [],
-  landBatchMax: 1,
 };
 
-/** Where `test_command` takes the test file's path (BR-2160). */
-export const FILE_PLACEHOLDER = "{file}";
+/** Every key with the Config field it fills. A field or key name two domains declare is a bug in canon and throws. */
+export const CONFIG_KEYS: readonly (readonly [string, ConfigKey<unknown>])[] = (() => {
+  const fields = new Set<string>();
+  const names = new Set<string>();
+  const out: (readonly [string, ConfigKey<unknown>])[] = [];
+  for (const set of DOMAINS as readonly KeySet[]) {
+    for (const [field, k] of Object.entries(set)) {
+      if (fields.has(field) || names.has(k.key)) throw new Error(`two domains declare the config field ${field} or key ${k.key}`);
+      fields.add(field);
+      names.add(k.key);
+      out.push([field, k]);
+    }
+  }
+  return out;
+})();
 
-const TOP_KEYS = new Set(["main", "floor", "tests", "test_command", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews", "regenerable", "code_root", "shared", "instructions", "floor_skip_paths", "land_batch_max"]);
-const TYPE_KEYS = new Set(["prefix", "dir", "statuses", "default", "fields", "sections"]);
-const MOVED: Record<string, string> = { after_land: "hooks.after_land" };
+const LISTED = [...CONFIG_KEYS].sort((a, b) => a[1].listed - b[1].listed).map(([, k]) => k.key);
+const CHECKED = [...CONFIG_KEYS].sort((a, b) => a[1].checked - b[1].checked);
+const MOVED: Record<string, string> = Object.assign({}, ...CONFIG_KEYS.map(([, k]) => k.replaces ?? {}));
 
 export function readConfig(root: string): Result<Config> {
   const path = join(root, "canon", "config.yaml");
@@ -124,212 +66,26 @@ export function readConfig(root: string): Result<Config> {
   }
   for (const key of Object.keys(c)) {
     if (MOVED[key]) return bad(`\`${key}\` moved to \`${MOVED[key]}\``);
-    if (!TOP_KEYS.has(key)) return bad(`unknown key \`${key}\` (known: ${[...TOP_KEYS].join(", ")})`);
+    if (!LISTED.includes(key)) return bad(`unknown key \`${key}\` (known: ${LISTED.join(", ")})`);
   }
 
-  const str = (key: string): Result<string | undefined> => {
-    const v = c[key];
-    if (v === undefined || v === null || v === "") return ok(undefined);
-    return typeof v === "string" ? ok(v) : bad(`\`${key}\` must be a string`);
-  };
-  const positive = (key: string, unit: number, fallback: number): Result<number> => {
-    const v = c[key];
-    if (v === undefined) return ok(fallback);
-    return typeof v === "number" && Number.isFinite(v) && v > 0 ? ok(v * unit) : bad(`\`${key}\` must be a number greater than 0`);
-  };
-
-  const main = str("main");
-  const floor = str("floor");
-  const setup = str("setup");
-  const review = str("review");
-  const worktrees = str("worktrees");
-  const testCommand = str("test_command");
-  for (const r of [main, floor, setup, review, worktrees, testCommand]) if (!r.ok) return r;
-  if (testCommand.ok && testCommand.value !== undefined && !testCommand.value.includes(FILE_PLACEHOLDER)) {
-    return bad(`\`test_command\` must contain ${FILE_PLACEHOLDER}, where the test file's path goes (e.g. "bun test ${FILE_PLACEHOLDER}")`);
+  const values: Record<string, unknown> = {};
+  const commands: string[] = [];
+  for (const [field, k] of CHECKED) {
+    const v = c[k.key];
+    const r = v === undefined ? ok(k.default) : k.read(v, { root, raw: c });
+    if (!r.ok) return bad(r.error.message);
+    values[field] = r.value;
+    commands.push(...(k.commands?.(r.value) ?? []));
   }
-  const tests = c["tests"];
-  if (tests !== undefined && (!Array.isArray(tests) || tests.some((t) => typeof t !== "string"))) return bad("`tests` must be a list of globs");
-  const regenerable = c["regenerable"];
-  if (regenerable !== undefined && (!Array.isArray(regenerable) || regenerable.some((t) => typeof t !== "string" || t.trim() === "" || t.includes("/")))) {
-    return bad("`regenerable` must be a list of file or directory names (globs allowed, no `/`)");
-  }
-  const instructions = c["instructions"];
-  if (instructions !== undefined && (!Array.isArray(instructions) || instructions.some((t) => typeof t !== "string" || !REL_DIR.test(t)))) {
-    return bad("`instructions` must be a list of file paths relative to the repository root, such as CLAUDE.md");
-  }
-  const skip = readFloorSkipPaths(c["floor_skip_paths"]);
-  if (!skip.ok) return bad(skip.error.message);
-  const layout = readLayout(c["code_root"], c["shared"]);
-  if (!layout.ok) return bad(layout.error.message);
-  const lease = positive("claim_lease_hours", HOUR, DEFAULT_CONFIG.claimLeaseMs);
-  const stale = positive("lander_stale_minutes", MINUTE, DEFAULT_CONFIG.landerStaleMs);
-  const timeout = positive("land_timeout_minutes", MINUTE, DEFAULT_CONFIG.landTimeoutMs);
-  for (const r of [lease, stale, timeout]) if (!r.ok) return r;
-  const batchMax = c["land_batch_max"];
-  if (batchMax !== undefined && (typeof batchMax !== "number" || !Number.isInteger(batchMax) || batchMax < 1)) return bad("`land_batch_max` must be a whole number of at least 1");
-
-  const hooks = readHooks(c["hooks"]);
-  if (!hooks.ok) return bad(hooks.error.message);
-  const types = readTypes(c["types"]);
-  if (!types.ok) return bad(types.error.message);
-
-  const reviews = readCheckReviews(c["check_reviews"]);
-  if (!reviews.ok) return bad(reviews.error.message);
-
-  const commands = [floor, setup, review, testCommand].map((r) => (r.ok ? r.value : undefined)).filter((x): x is string => x !== undefined);
-  for (const cmd of [...commands, ...Object.values(hooks.value).flat()]) {
+  for (const cmd of commands) {
     const missing = missingScript(root, cmd);
     if (missing) return bad(`command \`${cmd}\` runs ${missing}, which does not exist`);
   }
-
-  const templates: Record<string, string> = {};
-  const tdir = join(root, "canon", "templates");
-  if (existsSync(tdir)) {
-    for (const file of readdirSync(tdir).filter((f) => f.endsWith(".md"))) {
-      const name = file.slice(0, -3);
-      if (!types.value.some((t) => t.name === name)) return bad(`canon/templates/${file} is a template for \`${name}\`, which is not a document type`);
-      templates[name] = readFileSync(join(tdir, file), "utf8");
-    }
-  }
-  // The template a new document starts from, the project's or the built-in one, carries every required section (BR-2092).
-  for (const t of types.value) {
-    const lines = templateFor(t.name, templates, t.sections).split("\n").map((l) => l.trim());
-    const missing = t.sections.filter((s) => !lines.includes(`## ${s}`));
-    if (!missing.length) continue;
-    const where = t.name in templates ? `canon/templates/${t.name}.md` : `the built-in ${t.name} template (add canon/templates/${t.name}.md)`;
-    return bad(`${where} lacks required section(s) ${missing.map((s) => `\`## ${s}\``).join(", ")} of type \`${t.name}\``);
-  }
-
-  return ok({
-    main: (main.ok && main.value) || "main",
-    floor: floor.ok ? floor.value : undefined,
-    tests: tests as string[] | undefined,
-    testCommand: testCommand.ok ? testCommand.value : undefined,
-    setup: setup.ok ? setup.value : undefined,
-    review: review.ok ? review.value : undefined,
-    hooks: hooks.value,
-    claimLeaseMs: lease.ok ? lease.value : DEFAULT_CONFIG.claimLeaseMs,
-    landerStaleMs: stale.ok ? stale.value : DEFAULT_CONFIG.landerStaleMs,
-    landTimeoutMs: timeout.ok ? timeout.value : DEFAULT_CONFIG.landTimeoutMs,
-    worktrees: worktrees.ok ? worktrees.value : undefined,
-    types: types.value,
-    templates,
-    checkReviews: reviews.value,
-    regenerable: (regenerable as string[] | undefined) ?? DEFAULT_REGENERABLE,
-    codeRoot: layout.value.codeRoot,
-    shared: layout.value.shared,
-    instructions: (instructions as string[] | undefined) ?? DEFAULT_CONFIG.instructions,
-    floorSkipPaths: skip.value,
-    landBatchMax: (batchMax as number | undefined) ?? DEFAULT_CONFIG.landBatchMax,
-  });
-}
-
-/** A repo-relative directory: no absolute path, no `..` or `.` segment, no trailing slash. */
-/**
- * `floor_skip_paths` (BR-2165): relative paths; none may cover the files that decide how a landing runs (the
- * floor command in canon/config.yaml, the document templates), or a change to them would land untested.
- */
-function readFloorSkipPaths(v: unknown): Result<string[]> {
-  if (v === undefined || v === null) return ok([]);
-  if (!Array.isArray(v) || v.some((t) => typeof t !== "string" || !REL_DIR.test(t))) {
-    return err("invalid", "`floor_skip_paths` must be a list of directory or file paths relative to the repository root, such as canon/rules");
-  }
-  for (const p of v as string[]) {
-    if (p === "canon" || p === "canon/config.yaml" || p === "canon/templates" || p.startsWith("canon/templates/")) {
-      return err("invalid", `\`floor_skip_paths\` entry \`${p}\` covers canon/config.yaml or canon/templates, which decide how a landing runs; a change to them must run the floor`);
-    }
-  }
-  return ok(v as string[]);
-}
-
-const REL_DIR = /^(?!\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[^\s]+(?<!\/)$/;
-
-/** `code_root` and `shared` (BR-2116): shared only makes sense under a code root, and each entry lies inside it. */
-function readLayout(root: unknown, shared: unknown): Result<{ codeRoot: string | undefined; shared: string[] }> {
-  if (root !== undefined && root !== null && (typeof root !== "string" || !REL_DIR.test(root))) {
-    return err("invalid", "`code_root` must be a directory relative to the repository root, such as src");
-  }
-  const codeRoot = typeof root === "string" ? root : undefined;
-  if (shared === undefined || shared === null) return ok({ codeRoot, shared: [] });
-  if (codeRoot === undefined) return err("invalid", "`shared` needs `code_root`: it lists directories under the code root that are no domain's");
-  if (!Array.isArray(shared) || shared.some((s) => typeof s !== "string" || !REL_DIR.test(s) || !s.startsWith(`${codeRoot}/`))) {
-    return err("invalid", `\`shared\` must be a list of directories under ${codeRoot}, such as ${codeRoot}/kernel`);
-  }
-  return ok({ codeRoot, shared: shared as string[] });
-}
-
-function readCheckReviews(v: unknown): Result<Record<string, string>> {
-  if (v === undefined || v === null) return ok({});
-  if (typeof v !== "object" || Array.isArray(v)) return err("invalid", "`check_reviews` must be a mapping of check name → date (YYYY-MM-DD)");
-  const out: Record<string, string> = {};
-  for (const [name, date] of Object.entries(v as Record<string, unknown>)) {
-    if (!CHECKS.includes(name)) return err("invalid", `\`check_reviews.${name}\`: no such check (checks: ${CHECKS.join(", ")})`);
-    const text = date instanceof Date ? date.toISOString().slice(0, 10) : date;
-    // Date.parse accepts 2026-02-30 (it rolls over to March), so the date must survive a round trip.
-    const real = typeof text === "string" && /^\d{4}-\d{2}-\d{2}$/.test(text) && !Number.isNaN(Date.parse(text)) && new Date(`${text}T00:00:00Z`).toISOString().slice(0, 10) === text;
-    if (!real) return err("invalid", `\`check_reviews.${name}\` must be a real date like 2027-02-01`);
-    out[name] = text;
-  }
-  return ok(out);
-}
-
-function readHooks(v: unknown): Result<Record<HookEvent, readonly string[]>> {
-  const out: Record<HookEvent, string[]> = { after_start: [], before_land: [], after_land: [], after_stop: [] };
-  if (v === undefined || v === null) return ok(out);
-  if (typeof v !== "object" || Array.isArray(v)) return err("invalid", "`hooks` must be a mapping of event → command or list of commands");
-  for (const [event, cmds] of Object.entries(v as Record<string, unknown>)) {
-    if (!HOOK_EVENTS.includes(event as HookEvent)) return err("invalid", `unknown hook event \`${event}\` (known: ${HOOK_EVENTS.join(", ")})`);
-    const list = typeof cmds === "string" ? [cmds] : cmds;
-    if (!Array.isArray(list) || list.some((x) => typeof x !== "string" || x.trim() === "")) return err("invalid", `\`hooks.${event}\` must be a command or a list of commands`);
-    out[event as HookEvent] = list as string[];
-  }
-  return ok(out);
-}
-
-function readTypes(v: unknown): Result<DocType[]> {
-  const types: DocType[] = BUILTIN_TYPES.map((t) => ({ ...t }));
-  if (v === undefined || v === null) return ok(types);
-  if (typeof v !== "object" || Array.isArray(v)) return err("invalid", "`types` must be a mapping of type name → declaration");
-  for (const [name, declRaw] of Object.entries(v as Record<string, unknown>)) {
-    const at = `types.${name}`;
-    if (!/^[a-z][a-z0-9-]*$/.test(name)) return err("invalid", `\`${at}\`: a type name is lowercase letters, digits and dashes`);
-    if (typeof declRaw !== "object" || declRaw === null || Array.isArray(declRaw)) return err("invalid", `\`${at}\` must be a mapping`);
-    const decl = declRaw as Record<string, unknown>;
-    for (const key of Object.keys(decl)) if (!TYPE_KEYS.has(key)) return err("invalid", `unknown key \`${at}.${key}\` (known: ${[...TYPE_KEYS].join(", ")})`);
-    const fields = decl["fields"] ?? [];
-    if (!Array.isArray(fields) || fields.some((f) => typeof f !== "string" || !/^[a-z_][a-z0-9_]*$/.test(f))) return err("invalid", `\`${at}.fields\` must be a list of lowercase field names`);
-    const reserved = (fields as string[]).find((f) => RESERVED_FIELDS.has(f));
-    if (reserved) return err("invalid", `\`${at}.fields\`: \`${reserved}\` is a field canon owns`);
-
-    const sectionsRaw = decl["sections"];
-    if (sectionsRaw !== undefined && (!Array.isArray(sectionsRaw) || sectionsRaw.some((x) => typeof x !== "string" || x.trim() === "" || /[#\n]/.test(x)))) {
-      return err("invalid", `\`${at}.sections\` must be a list of section titles (without \`##\`)`);
-    }
-    const builtin = types.find((t) => t.builtin && t.name === name);
-    if (builtin) {
-      const reshaped = ["prefix", "dir", "statuses", "default"].find((k) => k in decl);
-      if (reshaped) return err("invalid", `\`${at}.${reshaped}\`: built-in type ${name} can only declare \`fields\` and \`sections\``);
-      if (name === "rule" && sectionsRaw !== undefined) return err("invalid", `\`${at}.sections\`: a rule's shape is fixed (\`## 规则\` and \`## 例子\`)`);
-      types[types.indexOf(builtin)] = { ...builtin, fields: fields as string[], ...(sectionsRaw !== undefined ? { sections: sectionsRaw as string[] } : {}) };
-      continue;
-    }
-    const prefix = decl["prefix"];
-    const dir = decl["dir"];
-    const statuses = decl["statuses"];
-    const dflt = decl["default"];
-    if (typeof prefix !== "string" || !/^[A-Z][A-Z0-9]*$/.test(prefix)) return err("invalid", `\`${at}.prefix\` must be uppercase letters and digits, e.g. SP`);
-    if (types.some((t) => t.prefix === prefix)) return err("invalid", `\`${at}.prefix\`: ${prefix} is already the prefix of another type`);
-    if (typeof dir !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(dir)) return err("invalid", `\`${at}.dir\` must be a directory name under canon/`);
-    if (RESERVED_DIRS.has(dir) || types.some((t) => t.dir === dir)) return err("invalid", `\`${at}.dir\`: canon/${dir} is already used`);
-    if (statuses !== undefined && (!Array.isArray(statuses) || statuses.length === 0 || statuses.some((s) => typeof s !== "string" || s === ""))) {
-      return err("invalid", `\`${at}.statuses\` must be a non-empty list of statuses`);
-    }
-    const list = statuses as string[] | undefined;
-    if (dflt !== undefined && (list === undefined || typeof dflt !== "string" || !list.includes(dflt))) return err("invalid", `\`${at}.default\` must be one of \`${at}.statuses\``);
-    types.push({ name, prefix, dir, statuses: list, defaultStatus: list ? ((dflt as string | undefined) ?? list[0]) : undefined, fields: fields as string[], sections: (sectionsRaw as string[] | undefined) ?? [], builtin: false });
-  }
-  return ok(types);
+  const config = values as Omit<Config, "templates">;
+  const templates = readTemplates(root, config.types);
+  if (!templates.ok) return bad(templates.error.message);
+  return ok({ ...config, templates: templates.value } as Config);
 }
 
 /**
@@ -341,10 +97,4 @@ function missingScript(root: string, command: string): string | undefined {
   if (!first.includes("/") || first.includes("$")) return undefined;
   const full = isAbsolute(first) ? first : resolve(root, first);
   return existsSync(full) ? undefined : first;
-}
-
-/** Where change worktrees live (BR-2047): configured (relative to the primary checkout) or `<primary>.worktrees`. */
-export function worktreesDirOf(config: Config, primary: string): string {
-  if (!config.worktrees) return `${primary.replace(/\/+$/, "")}.worktrees`;
-  return resolve(primary, config.worktrees).replace(/\/+$/, "");
 }

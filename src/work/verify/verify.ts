@@ -2,7 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { basename, join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
-import { FILE_PLACEHOLDER } from "../../config/config.ts";
+import { FILE_PLACEHOLDER } from "./config-keys.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { testTitles } from "../../knowledge/check/test-titles.ts";
 import { importedPaths } from "../../knowledge/query/query.ts";
