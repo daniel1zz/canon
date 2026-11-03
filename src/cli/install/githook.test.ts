@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, statSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { GUARD_HEADER } from "./githook.ts";
@@ -81,7 +81,7 @@ describe("installing the guard", () => {
     expect(existsSync(hookPath(other))).toBe(false);
   });
 
-  test("BR-2124: someone else's reference-transaction hook is never overwritten: install refuses with 5 before writing anything, even with --force; --check lists it", () => {
+  test("BR-2124 BR-2022: someone else's reference-transaction hook is never overwritten: install refuses with 5 before writing anything, even with --force; --check lists it", () => {
     const root = repo();
     mkdirSync(join(root, ".git/hooks"), { recursive: true });
     writeFileSync(hookPath(root), "#!/bin/sh\nexit 0\n");
@@ -92,6 +92,10 @@ describe("installing the guard", () => {
     }
     expect(readFileSync(hookPath(root), "utf8")).toBe("#!/bin/sh\nexit 0\n");
     expect(existsSync(join(root, ".claude/skills"))).toBe(false);
+    mkdirSync(join(root, ".claude/skills"), { recursive: true });
+    symlinkSync(tmpdir(), join(root, ".claude/skills/canon-a")); // BR-2083 would refuse with 2; the foreign hook is checked first
+    expect(canon(root, "install").code).toBe(5);
+    rmSync(join(root, ".claude"), { recursive: true });
     const init = canon(root, "init", "--floor", "true");
     expect(init.code).toBe(5);
     expect(existsSync(join(root, "canon"))).toBe(false);
