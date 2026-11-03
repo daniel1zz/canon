@@ -6,6 +6,7 @@ import type { FileProblem } from "../documents/read.ts";
 import { idsIn as idsOf } from "../documents/types.ts";
 import { BACKLOG_FILE, readBacklog } from "../documents/backlog.ts";
 import { testTitles } from "./test-titles.ts";
+import { pathFindings } from "./paths.ts";
 import { EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, RULE_SECTION, section } from "../documents/templates.ts";
 
 /**
@@ -34,6 +35,7 @@ export type CheckRule =
   | "decision-options" // a decision's options section shows no real choice (BR-2109)
   | "source-malformed" // a source line in a decision's options does not name a target and quote it (BR-2110)
   | "doc-missing-section" // a document lacks a section its type requires, or the section is empty (BR-2091)
+  | "path-missing" // a current document names, in backticks, a repository path that was moved or deleted
   | "template-unfilled"; // a rule, decision, change, declared-type document or domain README still holds a template placeholder line
 
 export interface CheckInput {
@@ -114,6 +116,7 @@ export function check(input: CheckInput): Finding[] {
   }
   findings.push(...structureFindings(input.corpus));
   if (codeRoot !== undefined) findings.push(...layoutFindings(input.root, input.corpus));
+  for (const f of pathFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "path-missing", message: f.message });
   return findings;
 }
 

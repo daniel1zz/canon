@@ -355,3 +355,60 @@ describe("code layout (D-15)", () => {
     expect(overlap(["src/lib/kernel"])).toEqual([]);
   });
 });
+
+describe("backticked repository paths", () => {
+  const sh = (cwd: string, ...args: string[]) => {
+    const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+    if (r.exitCode !== 0) throw new Error(r.stderr.toString());
+  };
+  /** A git repo whose history had src/old.ts, src/coord/db.ts and src/lib/state.ts, all since deleted; src/kernel/git.ts stays. */
+  function moved(files: Record<string, string>): string {
+    const root = repo({ "src/old.ts": "x\n", "src/coord/db.ts": "x\n", "src/lib/state.ts": "x\n", "src/kernel/git.ts": "x\n" });
+    for (const args of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"], ["add", "-A"], ["commit", "-qm", "old"]]) sh(root, ...args);
+    for (const p of ["src/old.ts", "src/coord", "src/lib"]) rmSync(join(root, p), { recursive: true });
+    for (const [p, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, p)), { recursive: true });
+      writeFileSync(join(root, p), text);
+    }
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "moved");
+    return root;
+  }
+  const missing = (root: string) =>
+    check({ root, ...readCorpus(root), testFiles: [] })
+      .filter((f) => f.rule === "path-missing")
+      .map((f) => `${f.path}: ${f.message.match(/`([^`]+)`/)![1]}`);
+  const rule = (body: string, status = "active") => `---\nid: ${br(1)}\ntitle: R\nstatus: ${status}\nuntested: fixture\n---\n${body}`;
+  const decision = (status: string, body: string) => `---\nid: ${d(1)}\ntitle: X\nstatus: ${status}\n---\n${body}`;
+  const change = (status: string) => `---\nid: ${["C", 1].join("-")}\ntitle: X\nstatus: ${status}\nrules: []\n---\n## 为什么\n\nSee \`src/old.ts\`.\n\n## 要改什么\n\nNew \`src/work/remote/\`.\n\n## 任务\n\n- [ ] x\n`;
+
+  test("BR-2171: a moved or deleted path in a root doc or a README is reported; a path that never existed, an existing one or a non-path is not", () => {
+    const root = moved({
+      "CLAUDE.md": "Code in `src/coord`, see `src/kernel/git.ts:12` and `state.ts`. Not paths: `src/<领域>/x.ts`, `src/**/*.test.ts`, `.ts`, `https://x.dev/src/old.ts`.\n\n```\n`src/old.ts`\n```\n\nPlain src/old.ts.\n",
+      "README.md": "Never existed: `src/billing`, `nothing.ts`.\n",
+      "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# Billing\n\nOld code in `src/old.ts`.\n\n## 术语\n\n- **退款**：钱退回\n",
+    });
+    expect(missing(root).sort()).toEqual(["CLAUDE.md: src/coord", "CLAUDE.md: state.ts", "canon/rules/billing/README.md: src/old.ts"]);
+  });
+
+  test("BR-2171: rule examples, decision background and options, closed changes and superseded decisions are history", () => {
+    const at = (files: Record<string, string>) => missing(moved({ "canon/rules/billing/README.md": domainReadme, ...files }));
+    expect(at({ [`canon/rules/billing/${br(1)}.md`]: rule("## 规则\n\nx\n\n## 例子\n\n- `src/old.ts` → y\n") })).toEqual([]);
+    expect(at({ [`canon/rules/billing/${br(1)}.md`]: rule("## 规则\n\nReads `src/old.ts`.\n\n## 例子\n\n- a → b\n") })).toEqual([`canon/rules/billing/${br(1)}.md: src/old.ts`]);
+    expect(at({ [`canon/rules/billing/${br(1)}.md`]: rule("## 规则\n\nReads `src/old.ts`.\n", "retired") })).toEqual([]);
+    const body = (where: string) => ["背景", "方案", "决定", "后果"].map((s) => `## ${s}\n\n${s === where ? "Moved `src/old.ts`." : "x"}\n`).join("\n");
+    expect(at({ [`canon/decisions/${d(1)}.md`]: decision("accepted", body("背景")) })).toEqual([]);
+    expect(at({ [`canon/decisions/${d(1)}.md`]: decision("accepted", body("方案")) })).toEqual([]);
+    expect(at({ [`canon/decisions/${d(1)}.md`]: decision("accepted", body("决定")) })).toEqual([`canon/decisions/${d(1)}.md: src/old.ts`]);
+    expect(at({ [`canon/decisions/${d(1)}.md`]: decision("superseded", body("决定")) })).toEqual([]);
+    expect(at({ "canon/changes/C-1.md": change("open") })).toEqual(["canon/changes/C-1.md: src/old.ts"]); // the planned src/work/remote is not reported
+    expect(at({ "canon/changes/C-1.md": change("done") })).toEqual([]);
+    expect(at({ "canon/notes/N-1.md": `---\nid: ${["N", 1].join("-")}\ntitle: X\n---\nWas \`src/old.ts\`.\n` })).toEqual([]);
+  });
+
+  test("BR-2171: a candidate path outside a git repository is reported as unreadable history", () => {
+    const root = repo({ "CLAUDE.md": "See `src/old.ts`.\n" });
+    const f = check({ root, ...readCorpus(root), testFiles: [] }).filter((x) => x.rule === "path-missing");
+    expect(f.map((x) => x.message)).toEqual([expect.stringContaining("cannot read git history")]);
+  });
+});
