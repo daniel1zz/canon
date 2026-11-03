@@ -100,7 +100,7 @@ export type UpdateOutcome =
   | { readonly kind: "current"; readonly version: string }
   | { readonly kind: "guard"; readonly version: string }
   | { readonly kind: "landed"; readonly version: string; readonly change: string; readonly sha: string }
-  | { readonly kind: "refused"; readonly change: string; readonly message: string };
+  | { readonly kind: "refused" | "timeout"; readonly change: string; readonly message: string };
 
 /**
  * `canon update` (BR-2086): the update is its own change, landed through the normal path (queue, floor,
@@ -148,5 +148,5 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
   if (out.kind === "landed") return ok({ kind: "landed", version: st.value.version, change: started.value.change, sha: out.sha });
   const findings = out.kind === "refused" && out.findings ? `\n${out.findings.map((x) => `  ${x.rule} ${x.path}: ${x.message}`).join("\n")}` : "";
   const message = out.kind === "timeout" ? `still ${out.ahead} landing(s) ahead; run \`canon work land --finish\` in ${wt}` : `${out.reason}: ${out.message}${findings}`;
-  return ok({ kind: "refused", change: started.value.change, message });
+  return ok({ kind: out.kind, change: started.value.change, message });
 }

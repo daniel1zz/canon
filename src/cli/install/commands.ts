@@ -63,21 +63,23 @@ const update = defineCommand({
     force: { type: "boolean", description: "Overwrite skill files that were edited in this project" },
   },
   async run({ args }) {
-    const ws = workspace();
-    const source = must(skillsSource());
     if (args.check) {
-      const st = must(assetsStatus(ws.root, source));
+      // reason: --check only reads, so it does not open (and so create) the coordination database (BR-2084)
+      const root = must(git(process.cwd(), "rev-parse", "--show-toplevel"));
+      const st = must(assetsStatus(root, must(skillsSource())));
       if (st.current) return say(`canon project files: up to date (version ${st.version})`);
       say(`canon project files are out of date (version ${st.version}):`);
       for (const o of st.outdated) say(`  ${o}${st.edited.some((e) => o === `skill ${e}`) ? "  (edited in this project)" : ""}`);
       process.exit(EXIT.refused);
     }
-    const out = must(await updateProject(ws, source, Boolean(args.force), ws.config.landTimeoutMs, say));
+    const ws = workspace();
+    const out = must(await updateProject(ws, must(skillsSource()), Boolean(args.force), ws.config.landTimeoutMs, say));
     if (out.kind === "current") return say(`canon project files: up to date (version ${out.version})`);
     if (out.kind === "guard") return say(`git hook installed: main moves only through canon work land; canon project files are now up to date (version ${out.version})`);
     if (out.kind === "landed") return say(`updated to ${out.version} in ${out.change}, landed ${out.sha.slice(0, 9)}`);
     console.error(`canon: the update ${out.change} did not land: ${out.message}`);
-    process.exit(EXIT.refused);
+    // reason: still queued is a timeout, not a refusal: the caller runs the landing again (BR-2022)
+    process.exit(out.kind === "timeout" ? EXIT.timeout : EXIT.refused);
   },
 });
 

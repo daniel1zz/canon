@@ -67,11 +67,12 @@ const RETIRED_PERMISSION = "Bash(export CANON_ACTOR='agent:*')";
 export type Retired = "pre-bash hook" | "actor permission";
 
 const isRetiredHook = (h: unknown) => isObject(h) && typeof h["command"] === "string" && h["command"].trim().startsWith(RETIRED_HOOK_PREFIX);
+const holdsRetired = (e: unknown) => isObject(e) && Array.isArray(e["hooks"]) && e["hooks"].some(isRetiredHook);
 
 function retiredIn(settings: Settings | undefined): Retired[] {
   const found: Retired[] = [];
   const pre = isObject(settings?.["hooks"]) ? (settings["hooks"] as Settings)["PreToolUse"] : undefined;
-  if (Array.isArray(pre) && pre.some((e) => isObject(e) && Array.isArray(e["hooks"]) && e["hooks"].some(isRetiredHook))) found.push("pre-bash hook");
+  if (Array.isArray(pre) && pre.some(holdsRetired)) found.push("pre-bash hook");
   const perms = settings?.["permissions"];
   if (isObject(perms) && Array.isArray(perms["allow"]) && perms["allow"].includes(RETIRED_PERMISSION)) found.push("actor permission");
   return found;
@@ -81,11 +82,13 @@ function retiredIn(settings: Settings | undefined): Retired[] {
 function withoutRetired(settings: Settings): Settings {
   const out = { ...settings };
   const hooks = out["hooks"];
-  if (isObject(hooks) && Array.isArray(hooks["PreToolUse"])) {
+  // reason: only a list that held a withdrawn hook is rebuilt, so one that was already empty stays (BR-2130, #50)
+  if (isObject(hooks) && Array.isArray(hooks["PreToolUse"]) && (hooks["PreToolUse"] as unknown[]).some(holdsRetired)) {
     const pre = (hooks["PreToolUse"] as unknown[]).flatMap((e) => {
-      if (!isObject(e) || !Array.isArray(e["hooks"]) || !e["hooks"].some(isRetiredHook)) return [e];
-      const kept = (e["hooks"] as unknown[]).filter((h) => !isRetiredHook(h));
-      return kept.length > 0 ? [{ ...e, hooks: kept }] : [];
+      if (!holdsRetired(e)) return [e];
+      const entry = e as Settings;
+      const kept = (entry["hooks"] as unknown[]).filter((h) => !isRetiredHook(h));
+      return kept.length > 0 ? [{ ...entry, hooks: kept }] : [];
     });
     const next: Settings = { ...hooks, PreToolUse: pre };
     if (pre.length === 0) delete next["PreToolUse"];

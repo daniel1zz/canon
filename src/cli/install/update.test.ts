@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { BRIEF_COMMAND } from "./hook.ts";
+import { CoordDb } from "../../work/db.ts";
+import { enqueue, tryTurn } from "../../work/land/queue.ts";
 
 // reason: every test here drives the canon CLI through spawned processes, which is what it tests; each spawn is a bun start
 // plus the command's own git calls, and at load 20 one test took 4.2 s of the 5 s default (C-111).
@@ -60,6 +62,13 @@ describe("finding and applying updates", () => {
     expect(readFileSync(join(root, ".claude/skills/canon-a/SKILL.md"), "utf8")).toBe("a v1\n"); // --check changes nothing
   });
 
+  test("BR-2084: --check only reads: it does not create the coordination database", () => {
+    const { root, env } = project();
+    expect(existsSync(join(root, ".git/canon/state.db"))).toBe(false);
+    expect(canon(root, env, "update", "--check").code).toBe(0);
+    expect(existsSync(join(root, ".git/canon"))).toBe(false);
+  });
+
   test("BR-2084 BR-2087: a project without the session hook is out of date", () => {
     const { root, env } = project();
     writeFileSync(join(root, ".claude/settings.json"), JSON.stringify({ permissions: { allow: [] } }));
@@ -88,6 +97,30 @@ describe("finding and applying updates", () => {
     expect(git(root, "log", "-1", "--format=%s", "main")).toMatch(/^canon: close C-\d+$/);
     expect(canon(root, env, "update", "--check").code).toBe(0);
     expect(canon(root, env, "update").out).toContain("up to date");
+  });
+
+  test("BR-2086 BR-2022: an update whose landing is refused exits 1 and keeps its change and worktree; one still queued at the timeout exits 75", () => {
+    const refused = project();
+    writeFileSync(join(refused.root, "canon/config.yaml"), 'floor: "false"\ntests: []\n');
+    git(refused.root, "add", "-A");
+    commitOnMain(refused.root, "a floor that fails");
+    writeFileSync(join(refused.src, "canon-a/SKILL.md"), "a v2\n");
+    const r = canon(refused.root, refused.env, "update");
+    expect([r.code, r.err]).toEqual([1, expect.stringMatching(/the update C-\d+ did not land: floor/)]);
+    const change = r.err.match(/C-\d+/)![0];
+    expect(git(refused.root, "branch", "--list", `change/${change}`)).toContain(`change/${change}`);
+    expect(existsSync(join(refused.root, "..", `${refused.root.split("/").pop()}.worktrees`, change))).toBe(true);
+
+    const queued = project();
+    writeFileSync(join(queued.root, "canon/config.yaml"), 'floor: "true"\ntests: []\nland_timeout_minutes: 0.001\n');
+    git(queued.root, "add", "-A");
+    commitOnMain(queued.root, "a short queue wait");
+    const db = CoordDb.open(join(queued.root, ".git/canon/state.db"), queued.root);
+    if (!db.ok) throw new Error(db.error.message);
+    expect(tryTurn(db.value, enqueue(db.value, "/elsewhere", "C-99", "agent:b")).mine).toBe(true); // someone else is landing
+    writeFileSync(join(queued.src, "canon-a/SKILL.md"), "a v2\n");
+    const t = canon(queued.root, queued.env, "update");
+    expect([t.code, t.err]).toEqual([75, expect.stringContaining("landing(s) ahead; run `canon work land --finish`")]);
   });
 
   test("BR-2086: an update that would overwrite a file edited here is refused before any change is opened", () => {
@@ -238,6 +271,14 @@ describe("finding and applying updates", () => {
     expect(canon(root, env, "install").code).toBe(0);
     expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual(before);
     expect(canon(root, env, "update", "--check").code).toBe(0);
+  });
+
+  test("BR-2130: removing a withdrawn allow rule leaves a PreToolUse list that was already empty", () => {
+    const { root, env } = project();
+    const start = [{ hooks: [{ type: "command", command: BRIEF_COMMAND }] }];
+    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify({ hooks: { SessionStart: start, PreToolUse: [] }, permissions: { allow: ["Bash(ls)", "Bash(export CANON_ACTOR='agent:*')"] } }));
+    expect(canon(root, env, "install").code).toBe(0);
+    expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual({ hooks: { SessionStart: start, PreToolUse: [] }, permissions: { allow: ["Bash(ls)"] } });
   });
 
   test("BR-2130: only canon's two withdrawn entries go; the user's hooks and allow rules, and containers that were already empty, stay", () => {
