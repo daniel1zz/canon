@@ -7,7 +7,7 @@ import { processOf } from "../claims/liveness.ts";
 import { clean, start, stop } from "./session.ts";
 import { writeSchemaFile } from "../../config/reference/reference.ts";
 import { land } from "../land/land.ts";
-import { addWorktree, git, listWorktreesLocked } from "../../kernel/git.ts";
+import { addWorktree, git, listWorktreesLocked, withWorktreeLock } from "../../kernel/git.ts";
 
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
@@ -551,6 +551,16 @@ describe("concurrent starts", () => {
     expect(added.ok ? "ok" : added.error.message).toBe("ok");
     expect(readFileSync(out, "utf8")).toBe("true");
     expect(Date.now() - t0).toBeLessThan(20_000);
+  }, 60_000);
+
+  test("BR-2223: a wait for the worktree lock that runs out fails as an environment error naming the lock file", async () => {
+    const root = project();
+    const h = holder(root, 3_000);
+    await inside(h);
+    const r = withWorktreeLock(root, "read", () => "read", 300);
+    expect(r.ok ? "ok" : [r.error.code, r.error.message.includes(join(".git", "canon", "worktree.lock")), r.error.message.startsWith("waited 300 ms")]).toEqual(["io", true, true]);
+    expect(await h.p.exited).toBe(0);
+    expect(withWorktreeLock(root, "read", () => "read", 300)).toEqual({ ok: true, value: "read" });
   }, 60_000);
 
   test("BR-2223: a process that died while creating a worktree does not hold up the next start", async () => {

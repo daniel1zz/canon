@@ -95,7 +95,9 @@ export function withWorktreeLock<T>(cwd: string, mode: "change" | "read", fn: ()
     }
   } catch (e) {
     db?.close();
-    return err("io", `cannot take the worktree lock ${path.value} (another canon process has been adding or removing a worktree for over ${waitMs} ms, or the file is unusable): ${(e as Error).message}`);
+    const message = (e as Error).message;
+    if (/database is locked|SQLITE_BUSY/i.test(message)) return err("io", `waited ${waitMs} ms for the worktree lock ${path.value}: another canon process is still adding or removing a worktree`);
+    return err("io", `cannot take the worktree lock ${path.value}: ${message}`);
   }
   try {
     return ok(fn());

@@ -36,16 +36,17 @@ export function currentActor(env: Record<string, string | undefined> = process.e
 export function openWorkspace(cwd: string): Result<Workspace> {
   const root = toplevel(cwd);
   if (!root.ok) return root;
-  const wts = listWorktreesLocked(root.value);
-  if (!wts.ok) return wts;
-  const primary = wts.value[0]?.path;
-  if (!primary) return err("io", "git reports no worktrees");
   const config = readConfig(root.value);
   if (!config.ok) return config;
   const dbPath = CoordDb.pathFor(root.value);
   if (!dbPath.ok) return dbPath;
   const db = CoordDb.open(dbPath.value, root.value);
   if (!db.ok) return db;
+  // reason: after the coordination DB, so an unusable .git/canon is reported as the DB's (BR-2209); the lock file lives there too
+  const wts = listWorktreesLocked(root.value);
+  if (!wts.ok) return wts;
+  const primary = wts.value[0]?.path;
+  if (!primary) return err("io", "git reports no worktrees");
   const actor = currentActor();
   if (!actor.ok) return actor;
   return ok({ root: root.value, primary, db: db.value, config: config.value, actor: actor.value });
