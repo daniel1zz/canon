@@ -167,7 +167,10 @@ function corpusOf(ws: Workspace, ref: string): Result<Corpus> {
   try {
     const hasCorpus = git(ws.primary, "cat-file", "-e", `${main}:canon`).ok;
     if (hasCorpus) {
-      const tar = Bun.spawnSync(["sh", "-c", `git archive ${JSON.stringify(main)} canon | tar -x -C ${JSON.stringify(dir)}`], { cwd: ws.primary, stderr: "pipe" });
+      // reason: the ref can be a change branch, whose name may hold shell syntax; no shell sees it (BR-2107).
+      const archive = Bun.spawnSync(["git", "archive", "--format=tar", main, "canon"], { cwd: ws.primary, stdout: "pipe", stderr: "pipe" });
+      if (archive.exitCode !== 0) return err("io", `cannot read canon/ from ${main}: ${archive.stderr.toString().trim()}`);
+      const tar = Bun.spawnSync(["tar", "-x", "-C", dir], { stdin: archive.stdout, stderr: "pipe" });
       if (tar.exitCode !== 0) return err("io", `cannot read canon/ from ${main}: ${tar.stderr.toString().trim()}`);
     }
     return ok(readCorpus(dir, ws.config.types).corpus);

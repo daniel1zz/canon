@@ -124,6 +124,19 @@ describe("work start", () => {
     expect(!r.ok && r.error.code).toBe("not_found");
   });
 
+  test("BR-2107: a change branch whose name holds shell syntax is read without running it", () => {
+    const root = project();
+    const s = startNew(root, "Odd name");
+    stop(ws(s.worktree), "x", undefined, true);
+    sh(root, "worktree", "remove", s.worktree);
+    const marker = join(root, "..", `${root.split("/").pop()}-ran`);
+    const odd = `change/${s.change}-$(touch${"${IFS}"}${marker})`;
+    sh(root, "branch", "-m", s.branch, odd);
+    const r = start(ws(root, "agent:b"), { change: s.change }, quiet);
+    expect(r.ok && r.value.branch).toBe(odd);
+    expect(existsSync(marker)).toBe(false);
+  });
+
   test("BR-2107: two branches for one change are refused as invalid, listing both", () => {
     const root = project();
     sh(root, "branch", "change/C-1-a");
