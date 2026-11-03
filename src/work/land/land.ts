@@ -144,7 +144,7 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
   for (;;) {
     const turn = tryTurn(ws.db, entry, ws.config.landerStaleMs);
     // A later lander skipped this entry while it was silent; it may already have moved main (BR-2144, issue #29).
-    if (turn.lost !== undefined) return abandoned(ws, subject, wt, turn.lost);
+    if (turn.lost !== undefined) return lostTurn(ws, subject, wt, turn.lost, "queue");
     if (turn.mine) {
       // How long this lander waited in the queue, separate from how long its floor takes (BR-2122).
       ws.db.event(ws.actor, "land.turn", subject, { entry, waited_ms: Date.now() - queued });
@@ -172,11 +172,12 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
 
 /**
  * The refusal of an entry that another lander marked abandoned: nothing moves, and the entry keeps the state
- * that lander gave it (BR-2144).
+ * that lander gave it (BR-2144). `stage` says whether it was found while waiting or just before main would move.
  */
-function abandoned(ws: Workspace, subject: string | null, wt: string, state: string): LandOutcome {
+function lostTurn(ws: Workspace, subject: string | null, wt: string, state: string, stage: "queue" | "before-main"): LandOutcome {
   const message = `this landing's queue entry is no longer active (${state}): another lander skipped it after it stopped heart-beating, so ${ws.config.main} was not moved; land again`;
-  ws.db.event(ws.actor, "land.refuse", subject, { reason: "lost-turn", message, diff: ownDiffId(wt, ws.config.main) });
+  // reason: the lander was interrupted, not judged by a check, so it is its own event kind and no check in `canon stats` (BR-2144, like land.killed in BR-2099).
+  ws.db.event(ws.actor, "land.lost", subject, { stage, state, diff: ownDiffId(wt, ws.config.main) });
   return { kind: "refused", reason: "lost-turn", message };
 }
 
@@ -314,7 +315,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   // A lander that was silent past the stale time during its turn may have been skipped meanwhile; it no longer
   // holds the turn and must not move main next to the one that took it over (BR-2144).
   const turn = holdsTurn(ws.db, entry);
-  if (!turn.held) return abandoned(ws, subject, wt, turn.state);
+  if (!turn.held) return lostTurn(ws, subject, wt, turn.state, "before-main");
   const fingerprint = ownDiffId(wt, main); // before main moves: afterwards the merge base is HEAD itself
   const moved = moveMain(ws, base.value, head.value);
   if (moved !== "moved") return refuse(moved.reason, moved.message);

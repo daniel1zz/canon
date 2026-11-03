@@ -564,7 +564,9 @@ describe("boundaries record and clean up", () => {
     expect(sh(root, "rev-parse", "main")).toBe(before);
     expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(head);
     expect(other.db.db.query<{ state: string }, [number]>("SELECT state FROM queue WHERE id = ?").get(mine!)?.state).toBe("abandoned");
-    expect(events(root, "land.refuse").map((e) => JSON.parse(e.detail).reason)).toEqual(["lost-turn"]);
+    expect(events(root, "land.lost").map((e) => JSON.parse(e.detail).stage)).toEqual(["queue"]);
+    expect(events(root, "land.refuse")).toEqual([]);
+    expect(events(root, "land.turn")).toEqual([]);
   });
 
   test("BR-2144: a lander marked abandoned during its turn does not move main", async () => {
@@ -578,11 +580,14 @@ describe("boundaries record and clean up", () => {
     const other = ws(root, "agent:b");
     const before = sh(root, "rev-parse", "main");
     const landing = land(ws(s.worktree), FAST, quiet);
-    await Bun.sleep(700); // inside before_land
+    const landingNow = () => other.db.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM queue WHERE worktree = ? AND state = 'landing'").get(s.worktree)?.n === 1;
+    for (let i = 0; i < 100 && !landingNow(); i++) await Bun.sleep(50);
+    await Bun.sleep(300); // inside before_land
     other.db.db.query("UPDATE queue SET state = 'abandoned', result = 'no heartbeat' WHERE worktree = ?").run(s.worktree);
     const out = await landing;
     expect(out.kind === "refused" && out.reason).toBe("lost-turn");
     expect(sh(root, "rev-parse", "main")).toBe(before);
+    expect(events(root, "land.lost").map((e) => JSON.parse(e.detail).stage)).toEqual(["before-main"]);
   });
 
   test("BR-2031: landing from main is refused", async () => {
