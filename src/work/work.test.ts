@@ -25,6 +25,7 @@ describe("work start", () => {
     writeFileSync(join(root, "app.txt"), "diverged\n");
     sh(root, "rm", "-rq", "canon/changes");
     sh(root, "commit", "-qam", "elsewhere: no changes dir");
+    stop(ws(s.worktree), "hand over", undefined, true); // agent:a releases, so agent:b may take it (BR-2011)
     sh(root, "worktree", "remove", s.worktree);
     const again = start(ws(root, "agent:b"), { change: s.change }, quiet);
     expect(again.ok).toBe(true);
@@ -40,6 +41,25 @@ describe("work start", () => {
       expect(other.error.code).toBe("conflict");
       expect(other.error.message).toContain(s.worktree); // names the holder
     }
+  });
+
+  test("BR-2011: through the CLI a second actor starting a change another actor holds is refused with exit 5; the holder re-enters it", () => {
+    const root = project();
+    mkdirSync(join(root, "canon/changes"), { recursive: true });
+    writeFileSync(join(root, "canon/changes/C-1.md"), "---\nid: C-1\ntitle: Held\nstatus: open\n---\n## 为什么\n\nHeld.\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "planned change");
+    const started = start(ws(root, "agent:a"), { change: "C-1" }, quiet);
+    if (!started.ok) throw new Error(started.error.message);
+    const s = started.value;
+    const cli = (actor: string) => Bun.spawnSync(["bun", join(import.meta.dir, "../cli/main.ts"), "work", "start", s.change], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: actor } });
+    const other = cli("agent:b");
+    expect(other.exitCode).toBe(5);
+    expect(other.stderr.toString()).toContain("claimed by agent:a");
+    expect(claims(ws(root).db).map((c) => [c.subject, c.actor])).toEqual([[s.change, "agent:a"]]);
+    const same = cli("agent:a");
+    expect(same.exitCode).toBe(0);
+    expect(same.stdout.toString()).toContain(`cd ${s.worktree}`);
   });
 
   test("BR-2011: work commands in the holding worktree renew the lease, so a long session is never taken over", async () => {

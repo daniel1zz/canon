@@ -20,15 +20,19 @@ export interface Claim {
 }
 
 /**
- * Takes or refreshes the claim on a change. The holder is the worktree: one change, one worktree.
- * Refused while another worktree holds a live lease; an expired lease can be taken over.
+ * Takes or refreshes the claim on a change. The holder is the worktree: one change, one worktree, one actor.
+ * Refused while another worktree or another actor holds a live lease (BR-2011): every session starting a change
+ * gets the same worktree path, so the path alone never tells two sessions apart. An expired lease can be taken over.
  */
 export function takeClaim(db: CoordDb, subject: string, holder: string, actor: string, leaseMs = CLAIM_LEASE_MS): Result<Claim> {
   const tx = db.db.transaction((): Result<Claim> => {
     const cur = db.db.query<{ holder: string; expires_at: string; worktree: string | null }, [string]>("SELECT holder, expires_at, worktree FROM claims WHERE subject = ?").get(subject);
-    if (cur && cur.worktree !== holder && new Date(cur.expires_at) > now()) {
-      db.event(actor, "claim.refuse", subject, { reason: "held", by: cur.worktree, until: cur.expires_at });
-      return err("conflict", `${subject} is claimed by ${cur.holder} in ${cur.worktree} until ${cur.expires_at}`);
+    if (cur && (cur.worktree !== holder || cur.holder !== actor) && new Date(cur.expires_at) > now()) {
+      db.event(actor, "claim.refuse", subject, { reason: "held", by: cur.worktree, actor: cur.holder, until: cur.expires_at });
+      return err(
+        "conflict",
+        `${subject} is claimed by ${cur.holder} in ${cur.worktree} until ${cur.expires_at}; it frees when that session runs \`canon work stop --release\` there or the lease expires`,
+      );
     }
     const expires = iso(new Date(now().getTime() + leaseMs));
     db.db
