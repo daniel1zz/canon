@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { entry, json, list, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
 import { answer, answeredBy, ask, questions } from "./questions.ts";
 
@@ -37,11 +37,9 @@ const human = defineCommand({
       },
       run({ args }) {
         const relayed = typeof args.relayed === "string" ? args.relayed : undefined;
-        if (relayed === undefined && !process.stdin.isTTY) {
-          fail({ code: "invalid", message: 'answer at a terminal, or as an agent relay the human\'s words with --relayed "<what they said>"' });
-        }
         const ws = workspace();
-        must(answer(ws.db, Number(args.id), String(args.text), ws.actor, relayed));
+        // reason: the terminal check runs inside answer(), so its refusal is recorded too (BR-2026, issue #57)
+        must(answer(ws.db, Number(args.id), String(args.text), ws.actor, relayed, process.stdin.isTTY === true));
         say(`#${args.id} answered${relayed ? ` (relayed by ${ws.actor})` : ""}`);
       },
     }),

@@ -38,30 +38,42 @@ export function questions(db: CoordDb, which: "pending" | "all"): Question[] {
 }
 
 /**
- * Records the answer to a question reserved for a human (BR-2021, D-6). A `human:` actor answers directly.
- * An agent may record an answer only as a relay of what the human said in its session, with the human's own
- * words: canon cannot tell a relay from an invention (an agent can also fake its identity through the
+ * Records the answer to a question reserved for a human (BR-2021, D-6). A `human:` actor answers directly, at a
+ * terminal. An agent may record an answer only as a relay of what the human said in its session, with the human's
+ * own words: canon cannot tell a relay from an invention (an agent can also fake its identity through the
  * environment), so it does not pretend to prevent one; it records which kind of answer this is, so the record
  * never says "the human answered" when an agent wrote it.
  *
+ * Every refusal is decided here and written as a `human.answer.refuse` event with its own reason (BR-2026): the
+ * command passes whether stdin is a terminal instead of refusing before this runs (issue #57). `relayed` is
+ * undefined only when `--relayed` was not given: an empty `--relayed ""` from a human is still a relay flag, not a
+ * direct answer (issue #56).
+ *
  * The write is atomic: two answers racing for one question cannot both succeed (BR-2040).
  */
-export function answer(db: CoordDb, id: number, text: string, by: string, relayed?: string): Result<void> {
+export function answer(db: CoordDb, id: number, text: string, by: string, relayed: string | undefined, tty: boolean): Result<void> {
   const quote = relayed?.trim();
-  if (!by.startsWith("human:") && !quote) {
-    db.event(by, "human.answer.refuse", String(id), { reason: "not-human-no-relay" });
-    return err("invalid", `${by} is not a human; an agent records a human's answer only with --relayed "<the human's own words>" (BR-2021)`);
+  const refuse = (reason: string, code: "invalid" | "not_found" | "conflict", message: string): Result<void> => {
+    db.event(by, "human.answer.refuse", String(id), { reason });
+    return err(code, message);
+  };
+  if (by.startsWith("human:")) {
+    if (relayed !== undefined) return refuse("human-relayed", "invalid", "--relayed is for an agent passing on a human's answer; a human answers directly, at a terminal");
+    if (!tty) return refuse("no-tty", "invalid", 'answer at a terminal, or as an agent relay the human\'s words with --relayed "<what they said>"');
+  } else if (!quote) {
+    return refuse("not-human-no-relay", "invalid", `${by} is not a human; an agent records a human's answer only with --relayed "<the human's own words>" (BR-2021)`);
   }
-  if (by.startsWith("human:") && quote) return err("invalid", "--relayed is for an agent passing on a human's answer; a human answers directly");
   const tx = db.db.transaction((): Result<void> => {
     const q = db.db.query<{ answer: string | null }, [number]>("SELECT answer FROM questions WHERE id = ?").get(id);
     if (!q) return err("not_found", `no question #${id}`);
-    const r = db.db.query("UPDATE questions SET answer = ?, answered_by = ?, relayed = ?, answered_at = ? WHERE id = ? AND answer IS NULL").run(text, by, quote ?? null, iso(now()), id);
+    const r = db.db.query("UPDATE questions SET answer = ?, answered_by = ?, relayed = ?, answered_at = ? WHERE id = ? AND answer IS NULL").run(text, by, quote || null, iso(now()), id);
     if (r.changes === 0) return err("conflict", `question #${id} is already answered`);
     db.event(by, "human.answer", String(id), { answer: text, ...(quote ? { relayed: quote } : {}) });
     return ok(undefined);
   });
-  return tx.immediate();
+  const done = tx.immediate();
+  if (!done.ok) return refuse(done.error.code === "not_found" ? "not-found" : "answered", done.error.code === "not_found" ? "not_found" : "conflict", done.error.message);
+  return done;
 }
 
 /** Who answered, in words: the human, or an agent relaying the human's own words. */
