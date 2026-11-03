@@ -196,8 +196,9 @@ const RESOLVE_EXTS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cj
  * Repo paths of the relative imports in a file, read at run time so nothing has to be declared or kept up to
  * date (D-15). A specifier resolves the way bundlers do: as written, with a source extension, or as a
  * directory's index; one that resolves to nothing is kept as written, since matching is by directory anyway.
+ * `exists` says which repo paths count as files; `canon work test` also counts the files the change deleted (BR-2157).
  */
-export function importedPaths(root: string, file: string): string[] {
+export function importedPaths(root: string, file: string, exists: (path: string) => boolean = (p) => isFile(join(root, p))): string[] {
   const text = readFileSync(join(root, file), "utf8");
   const out = new Set<string>();
   for (const re of SPECIFIERS) {
@@ -208,7 +209,7 @@ export function importedPaths(root: string, file: string): string[] {
       if (base.startsWith("../") || base === "..") continue;
       const stem = base.replace(/\.[cm]?jsx?$/, "");
       const candidates = [base, ...RESOLVE_EXTS.map((e) => `${stem}${e}`), ...RESOLVE_EXTS.map((e) => `${base}/index${e}`)];
-      out.add(candidates.find((c) => isFile(join(root, c))) ?? base);
+      out.add(candidates.find(exists) ?? base);
     }
   }
   out.delete(file);

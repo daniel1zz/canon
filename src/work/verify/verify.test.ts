@@ -63,6 +63,20 @@ describe("canon work test selection", () => {
     expect(reasons(wt)).toEqual({ "src/b.test.ts": "imports src/a.ts", "src/c.test.ts": "imports src/a.ts (through src/b.ts)" });
   });
 
+  test("BR-2157: a deleted file still selects the tests whose import names it without an extension or as .js", () => {
+    const { wt } = fixture();
+    write(wt, { "src/g.test.ts": 'import "./a";\n', "src/h.test.ts": 'import { a } from "./a.js";\n' });
+    sh(wt, "add", "-A");
+    sh(wt, "commit", "-qm", "tests importing a without its extension");
+    sh(wt, "rm", "-q", "src/a.ts");
+    expect(reasons(wt)).toEqual({
+      "src/b.test.ts": "imports src/a.ts",
+      "src/c.test.ts": "imports src/a.ts (through src/b.ts)",
+      "src/g.test.ts": "changed; imports src/a.ts",
+      "src/h.test.ts": "changed; imports src/a.ts",
+    });
+  });
+
   test("BR-2157: a changed test file is selected as changed, an untracked one too", () => {
     const { wt } = fixture();
     write(wt, { "src/d.test.ts": "export const d = 1;\n" });
@@ -130,6 +144,29 @@ describe("canon work test runs", () => {
     expect(JSON.parse(ev.at(-1)!.detail)).toMatchObject({ all: false, files: 2, failed: 1 });
   });
 
+  test("BR-2158: a failing file shows only the last 40 lines of its output, and the summary counts files, passes, failures and time", () => {
+    const { wt } = fixture("sh lines.sh {file}");
+    write(wt, { "lines.sh": 'case "$1" in *c.test.ts) seq 1 50; exit 3;; esac\n', "src/a.ts": "export const a = 2;\n" });
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/FAIL\s+\d+\.\ds\s+src\/c\.test\.ts \(exit 3\)/);
+    const shown = r.out.split("\n").filter((l) => /^ {4}\d+$/.test(l)).map((l) => Number(l.trim()));
+    expect(shown).toEqual(Array.from({ length: 40 }, (_, i) => i + 11));
+    expect(r.out).toMatch(/\n2 file\(s\): 1 passed, 1 failed, \d+\.\ds\nfailed: src\/c\.test\.ts\n/);
+  });
+
+  test("BR-2158: a run that selects nothing runs no command and still records one work.test event", () => {
+    const { wt } = fixture();
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("nothing to run");
+    expect(runs(wt)).toEqual([]);
+    const ev = ws(wt).db.db.query<{ subject: string | null; detail: string }, []>("SELECT subject, detail FROM events WHERE kind = 'work.test' ORDER BY id").all();
+    expect(ev.length).toBe(1);
+    expect(JSON.parse(ev[0]!.detail)).toMatchObject({ all: false, files: 0, failed: 0 });
+    expect(ev[0]!.subject).toBe("C-1");
+  });
+
   test("BR-2158: the path is quoted for the shell", () => {
     expect(commandFor("bun test {file}", "src/it's.test.ts")).toBe(`bun test 'src/it'\\''s.test.ts'`);
   });
@@ -140,6 +177,30 @@ describe("canon work test runs", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("every test file, 5");
     expect(runs(wt)).toEqual(["src/b.test.ts", "src/c.test.ts", "src/d.test.ts", "src/e.test.ts", "src/f.test.ts"]);
+  });
+
+  test("BR-2159: of 3 test files, a change to a file one of them imports runs 1 without --all and 3 with it", () => {
+    const root = project();
+    write(root, {
+      "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\n',
+      "run.sh": 'echo "$1" >> runs.log\n',
+      ".gitignore": "runs.log\n",
+      "src/a.ts": "export const a = 1;\n",
+      "src/one.test.ts": 'import { a } from "./a.ts";\n',
+      "src/two.test.ts": "export {};\n",
+      "src/three.test.ts": "export {};\n",
+    });
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "three tests");
+    const wt = startNew(root, "three").worktree;
+    write(wt, { "src/a.ts": "export const a = 2;\n" });
+    expect(canon(wt, "work", "test").code).toBe(0);
+    expect(runs(wt)).toEqual(["src/one.test.ts"]);
+    writeFileSync(join(wt, "runs.log"), "");
+    const all = canon(wt, "work", "test", "--all");
+    expect(all.code).toBe(0);
+    expect(all.out.split("\n")[0]).toContain("every test file, 3");
+    expect(runs(wt).sort()).toEqual(["src/one.test.ts", "src/three.test.ts", "src/two.test.ts"]);
   });
 
   test("BR-2160: without test_command canon work test exits 2 and says what to write", () => {

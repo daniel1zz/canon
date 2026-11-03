@@ -84,11 +84,14 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
 
   const changedSet = new Set(changed);
   const ruleSet = new Set(rules);
+  // reason: an import written `./a` or `./a.js` must still reach the deleted `a.ts`, so a deleted file resolves as if it were there (BR-2157, issue #53)
+  const deleted = new Set(changed.filter((p) => !existsSync(join(ws.root, p))));
+  const exists = (p: string) => deleted.has(p) || isFile(join(ws.root, p));
   const importsOf = new Map<string, string[]>();
   const importsFrom = (file: string): string[] => {
     let v = importsOf.get(file);
     if (!v) {
-      v = JS_TS.test(file) && isFile(join(ws.root, file)) ? importedPaths(ws.root, file) : [];
+      v = JS_TS.test(file) && isFile(join(ws.root, file)) ? importedPaths(ws.root, file, exists) : [];
       importsOf.set(file, v);
     }
     return v;
@@ -179,8 +182,11 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
     for (const s of selected) say(`  ${s.file.padEnd(width)}  ${s.reasons.join("; ")}`);
     say("Not selected: tests that only read changed files at run time; canon work test --all runs every test file.");
   }
+  const subject = claimOfWorktree(ws.db, ws.root)?.subject ?? null;
   if (selected.length === 0) {
     say("nothing to run");
+    // reason: a run that selected nothing is still a run before landing, which D-23 compares with floor refusals (BR-2158)
+    ws.db.event(ws.actor, "work.test", subject, { all, files: 0, failed: 0, ms: 0 });
     return ok({ files: 0, failed: 0 });
   }
   const t0 = performance.now();
@@ -192,6 +198,6 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   const ms = Math.round(performance.now() - t0);
   say(`${runs.length} file(s): ${runs.length - failed.length} passed, ${failed.length} failed, ${secs(ms)}`);
   if (failed.length) say(`failed: ${failed.map((r) => r.file).join(", ")}`);
-  ws.db.event(ws.actor, "work.test", claimOfWorktree(ws.db, ws.root)?.subject ?? null, { all, files: runs.length, failed: failed.length, ms });
+  ws.db.event(ws.actor, "work.test", subject, { all, files: runs.length, failed: failed.length, ms });
   return ok({ files: runs.length, failed: failed.length });
 }
