@@ -65,44 +65,24 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   const clean = isClean(wt);
   if (!clean.ok || !clean.value) return early("dirty", "the worktree has uncommitted changes; commit them first");
 
-  // The close commit lands with the work, so the tree that is tested is the tree that becomes main (BR-2106);
-  // a landing that does not reach main takes it back out, so the change never says done without landing (BR-2018).
   let close: CloseCommit | undefined;
-  if (opts.finish) {
-    if (!subject) return early("no-claim", "--finish needs a claimed change; this worktree holds none");
-    const corpus = readCorpus(wt, ws.config.types, ws.config).corpus;
-    const doc = findDoc(corpus, subject);
-    if (doc?.kind === "change" && doc.status === "open") {
-      // reason: lessons are known when the work ends, so closing is where they are required; old closed changes stay valid (BR-2161, D-24)
-      if (!hasLessons(doc.body)) return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
-      const s = setMeta(wt, doc, { status: "done" });
-      if (!s.ok) return early("check", s.error.message);
-      git(wt, "add", doc.path);
-      const c = git(wt, "commit", "-q", "-m", closeSubject(subject));
-      if (!c.ok) return early("check", c.error.message);
-      close = { subject, path: doc.path };
-    }
-  }
-
-  // Same-file overlap with other changes in flight: a notice only, never a refusal (BR-2062).
-  noticeOverlaps(ws, wt, subject, "land", say);
+  let entry: number | undefined;
+  let bound: ReturnType<typeof bindToLander> | undefined;
   const lander = selfProcess();
-  const entered = enter(ws.db, wt, subject, ws.actor, lander);
-  const entry = entered.id;
-  if (entered.kept) say(`back in the landing queue at the place it kept after its conflict (queue entry ${entry}, resolved in ${Math.round(entered.kept.resolveMs / 1000)}s)`);
-  // The claim names this lander until the landing ends, so the session exiting meanwhile frees it to no one (BR-2142, issue #17).
-  const bound = lander ? bindToLander(ws.db, wt, ws.actor, lander) : undefined;
   const running: Running = {};
   // A lander killed by a signal (a tool timeout, Ctrl-C) gives its turn up at once and leaves no rebase half done (BR-2099).
+  // reason: registered before the close commit, so a signal while it is made or before the landing queues still takes it back (BR-2018).
   const onSignal = (signal: NodeJS.Signals) => {
     running.floor?.kill();
     // reason: process.exit skips the batch's finally, so its temporary worktree is removed here (BR-2099, BR-2172).
-    if (existsSync(batchDir(ws, entry))) git(ws.primary, "worktree", "remove", "--force", batchDir(ws, entry));
+    if (entry !== undefined && existsSync(batchDir(ws, entry))) git(ws.primary, "worktree", "remove", "--force", batchDir(ws, entry));
     const aborted = rebaseInProgress(wt) && git(wt, "rebase", "--abort").ok;
     // A signal after main moved leaves the landed entry as it is: the landing happened.
     // reason: an interruption, not a check's verdict, so it is its own event kind and no check in `canon stats` (BR-2067).
     // reason: only while this lander still owns the entry; a later landing may have taken it back as its kept place (BR-2177, issue #45).
-    if (failIfActive(ws.db, entry, "killed", lander ?? null)) {
+    if (entry === undefined) {
+      if (close) reopen(wt, close, say);
+    } else if (failIfActive(ws.db, entry, "killed", lander ?? null)) {
       ws.db.event(ws.actor, "land.killed", subject, { signal, rebaseAborted: aborted });
       if (close) reopen(wt, close, say);
     }
@@ -113,6 +93,31 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   process.on("SIGINT", onSignal);
   let out: LandOutcome | undefined;
   try {
+    // The close commit lands with the work, so the tree that is tested is the tree that becomes main (BR-2106);
+    // a landing that does not reach main takes it back out, so the change never says done without landing (BR-2018).
+    if (opts.finish) {
+      if (!subject) return early("no-claim", "--finish needs a claimed change; this worktree holds none");
+      const corpus = readCorpus(wt, ws.config.types, ws.config).corpus;
+      const doc = findDoc(corpus, subject);
+      if (doc?.kind === "change" && doc.status === "open") {
+        // reason: lessons are known when the work ends, so closing is where they are required; old closed changes stay valid (BR-2161, D-24)
+        if (!hasLessons(doc.body)) return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
+        const s = setMeta(wt, doc, { status: "done" });
+        if (!s.ok) return early("check", s.error.message);
+        git(wt, "add", doc.path);
+        const c = git(wt, "commit", "-q", "-m", closeSubject(subject));
+        if (!c.ok) return early("check", c.error.message);
+        close = { subject, path: doc.path };
+      }
+    }
+
+    // Same-file overlap with other changes in flight: a notice only, never a refusal (BR-2062).
+    noticeOverlaps(ws, wt, subject, "land", say);
+    const entered = enter(ws.db, wt, subject, ws.actor, lander);
+    entry = entered.id;
+    if (entered.kept) say(`back in the landing queue at the place it kept after its conflict (queue entry ${entry}, resolved in ${Math.round(entered.kept.resolveMs / 1000)}s)`);
+    // The claim names this lander until the landing ends, so the session exiting meanwhile frees it to no one (BR-2142, issue #17).
+    bound = lander ? bindToLander(ws.db, wt, ws.actor, lander) : undefined;
     out = await queueAndLand(ws, opts, say, { entry, subject, branch: branch.value, running });
     return out;
   } finally {
@@ -162,7 +167,7 @@ export function reopen(wt: string, close: CloseCommit, say: Say, top = git(wt, "
   return true;
 }
 
-/** What a signal handler must stop: the floor while it runs. */
+/** What a signal handler must stop: the floor, or the batch worktree's setup, while it runs. */
 interface Running {
   floor?: { kill(): void } | undefined;
 }
@@ -199,18 +204,26 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
   const wt = ws.root;
   const main = ws.config.main;
   const { entry, subject } = t;
-  const deadline = Date.now() + opts.timeoutMs;
+  let deadline = Date.now() + opts.timeoutMs;
   const queued = Date.now();
   let lastAhead = -1;
   let lastMain = "";
+  // When this entry started being tested in another lander's batch; that time does not count toward the timeout (BR-2048).
+  let batchedSince: number | undefined;
   for (;;) {
     const turn = tryTurn(ws.db, entry, ws.config.landerStaleMs);
+    if (!turn.batched && batchedSince !== undefined) {
+      // reason: the deadline moves later by the time spent in the batch, so a member that comes back keeps the wait it had left (BR-2048, issue #75).
+      deadline += Date.now() - batchedSince;
+      batchedSince = undefined;
+    }
     // A later lander skipped this entry while it was silent; it may already have moved main (BR-2144, issue #29).
     if (turn.lost !== undefined) return lostTurn(ws, subject, wt, turn.lost, "queue");
     // The lander ahead tested this change in its batch and landed it (BR-2172).
     if (turn.landedBy) return landedInBatch(ws, opts, say, { entry, subject }, turn.landedBy);
     // While another lander tests this change in its batch, it neither refuses nor times out: the batch settles it (BR-2172).
     if (turn.batched) {
+      batchedSince ??= Date.now();
       if (lastAhead !== -2) say(`being tested in the batch of queue entry ${turn.batched.leader}; keep this worktree as it is`);
       lastAhead = -2;
       await Bun.sleep(POLL_MS);
@@ -493,8 +506,12 @@ async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry:
     };
 
     if (ws.config.setup) {
-      const setup = Bun.spawnSync(["sh", "-c", ws.config.setup], { cwd: dir, stdout: "pipe", stderr: "pipe" });
-      if (setup.exitCode !== 0) return fallBack(`setup exited ${setup.exitCode} in the batch worktree`);
+      // reason: run without blocking, so the heartbeat timer and the signal handler keep running through a slow setup (BR-2049, BR-2099, issue #60).
+      const setup = Bun.spawn(["sh", "-c", ws.config.setup], { cwd: dir, stdout: "ignore", stderr: "ignore" });
+      t.running.floor = setup;
+      const code = await setup.exited;
+      t.running.floor = undefined;
+      if (code !== 0) return fallBack(`setup exited ${code} in the batch worktree`);
     }
     const notes: Record<number, Awaited<ReturnType<typeof verifyChange>>> = {};
     for (const l of links) {

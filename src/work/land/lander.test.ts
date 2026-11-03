@@ -178,6 +178,23 @@ describe("a lander killed by a signal", () => {
     expect(change?.kind === "change" && change.status).toBe("open");
   });
 
+  test("BR-2018 BR-2099: a SIGTERM while --finish makes its close commit, before the landing queues, still takes the close commit back", async () => {
+    const root = project();
+    const s = startNew(root, "Killed while closing");
+    const head = sh(s.worktree, "rev-parse", "HEAD");
+    const hooks = join(sh(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "hooks");
+    mkdirSync(hooks, { recursive: true });
+    const marker = join(root, "..", `${root.split("/").pop()}-closing`);
+    writeFileSync(join(hooks, "post-commit"), `#!/bin/sh\ntouch ${marker}\nsleep 2\n`, { mode: 0o755 });
+    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    await until(() => existsSync(marker)); // the close commit is being made
+    p.kill("SIGTERM"); // canon only: git finishes the commit
+    expect(await p.exited).toBe(143);
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(head);
+    const change = readCorpus(s.worktree).corpus.docs.find((d) => d.id === s.change);
+    expect(change?.kind === "change" && change.status).toBe("open");
+  }, TIMED);
+
   test("BR-2099: a process group killed in the middle of the rebase leaves the worktree on its own commits, not mid-rebase", async () => {
     const root = project();
     const s = startNew(root, "Killed mid-rebase");

@@ -120,6 +120,19 @@ describe("batched landings", () => {
     expect(single.floorRuns()).toBe(2);
   }, TIMED);
 
+  test("BR-2049 BR-2172: a slow setup in the batch worktree keeps the leader's heartbeat, so the batch lands (issue #60)", async () => {
+    // reason: setup runs only in the batch worktree (its path has /batch/), so starting the changes stays fast.
+    const { root, floorRuns } = batchProject(`land_batch_max: 2\nlander_stale_minutes: 0.1\nsetup: "case $PWD in */batch/*) sleep 8;; esac"\n`);
+    const a = startNew(root, "A");
+    commitFile(a.worktree, "a.txt", "a\n");
+    const b = startNew(root, "B");
+    commitFile(b.worktree, "b.txt", "b\n");
+    const { out } = await landTogether(root, [a.worktree, b.worktree]);
+    expect(out.map((o) => o.kind)).toEqual(["landed", "landed"]);
+    expect(floorRuns()).toBe(1);
+    expect(landOks(root)[1]!["batched_by"]).toBeNumber();
+  }, TIMED);
+
   test("BR-2018 BR-2099: a locked member whose lander is gone gets its close commit taken back when main does not move; a live one keeps it", () => {
     const { root } = batchProject();
     const b = startNew(root, "Closed");

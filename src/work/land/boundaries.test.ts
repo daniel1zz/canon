@@ -65,6 +65,33 @@ describe("boundaries record and clean up", () => {
     expect(events(root, "land.refuse").map((e) => JSON.parse(e.detail).reason)).toEqual(["timeout"]);
   });
 
+  test("BR-2048 BR-2172: time spent in another lander's batch moves the deadline later, so a member that comes back keeps its wait (issue #75)", async () => {
+    const root = project();
+    const s = startNew(root, "Batched");
+    writeFileSync(join(s.worktree, "b.txt"), "b\n");
+    sh(s.worktree, "add", "b.txt");
+    sh(s.worktree, "commit", "-qm", "b");
+    const other = ws(root, "agent:b");
+    const ahead = enqueue(other.db, "/elsewhere", "C-98", "agent:b");
+    expect(tryTurn(other.db, ahead).mine).toBe(true); // someone else is landing the whole time
+    const leader = enqueue(other.db, "/leader", "C-99", "agent:b");
+    other.db.db.query("UPDATE queue SET state = 'landing' WHERE id = ?").run(leader);
+    const landing = land(ws(s.worktree), { finish: false, timeoutMs: 3000 }, quiet);
+    let mine: number | undefined;
+    for (let i = 0; i < 50 && mine === undefined; i++) {
+      mine = other.db.db.query<{ id: number }, [string]>("SELECT id FROM queue WHERE worktree = ?").get(s.worktree)?.id;
+      if (mine === undefined) await Bun.sleep(20);
+    }
+    other.db.db.query("UPDATE queue SET batch = ?, head = ? WHERE id = ?").run(leader, sh(s.worktree, "rev-parse", "HEAD"), mine!);
+    await Bun.sleep(4500); // in the batch past the 3 s timeout
+    finishEntry(other.db, leader, "failed", "floor"); // the batch fell through; the member waits again
+    await Bun.sleep(2500); // past the old deadline, within the moved one
+    expect(other.db.db.query<{ state: string }, [number]>("SELECT state FROM queue WHERE id = ?").get(mine!)?.state).toBe("waiting");
+    expect(events(root, "land.refuse")).toEqual([]);
+    finishEntry(other.db, ahead, "landed", "x");
+    expect((await landing).kind).toBe("landed");
+  }, TIMED);
+
   test("BR-2049: the heartbeat runs through the whole landing, so a slow step is not mistaken for a dead lander", async () => {
     const root = project();
     writeFileSync(join(root, "canon/config.yaml"), "floor: \"true\"\ntests: []\nlander_stale_minutes: 0.02\nhooks:\n  before_land: sleep 3\n");
