@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import type { Workspace } from "../workspace.ts";
-import { git, listWorktrees } from "../../kernel/git.ts";
+import { git, listWorktreesLocked } from "../../kernel/git.ts";
 import { ok, type Result } from "../../kernel/result.ts";
 import { worktreesDirOf } from "./config-keys.ts";
 
@@ -31,7 +31,7 @@ function changedFiles(ws: Workspace, branch: string): Result<Set<string>> {
 /** Every other change worktree whose branch changed a file this worktree's branch changed too. */
 export function overlapsOf(ws: Workspace, worktree: string): Overlaps {
   const unreadable: string[] = [];
-  const wts = listWorktrees(ws.primary);
+  const wts = listWorktreesLocked(ws.primary);
   if (!wts.ok) return { found: [], unreadable: [`cannot list worktrees: ${wts.error.message}`] };
   const dir = `${worktreesDirOf(ws.config, ws.primary)}/`;
   const mine = wts.value.find((w) => w.path === worktree);

@@ -2,7 +2,7 @@ import { userInfo } from "node:os";
 import { CoordDb } from "./db.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { readConfig, type Config } from "../config/config.ts";
-import { listWorktrees, toplevel } from "../kernel/git.ts";
+import { listWorktreesLocked, toplevel } from "../kernel/git.ts";
 
 /**
  * Everything a command needs: which worktree it runs in, where the primary checkout is, the shared
@@ -36,7 +36,7 @@ export function currentActor(env: Record<string, string | undefined> = process.e
 export function openWorkspace(cwd: string): Result<Workspace> {
   const root = toplevel(cwd);
   if (!root.ok) return root;
-  const wts = listWorktrees(root.value);
+  const wts = listWorktreesLocked(root.value);
   if (!wts.ok) return wts;
   const primary = wts.value[0]?.path;
   if (!primary) return err("io", "git reports no worktrees");

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claims, holdClaim, takeClaim } from "../claims/claims.ts";
@@ -7,7 +7,7 @@ import { processOf } from "../claims/liveness.ts";
 import { clean, start, stop } from "./session.ts";
 import { writeSchemaFile } from "../../config/reference/reference.ts";
 import { land } from "../land/land.ts";
-import { git } from "../../kernel/git.ts";
+import { addWorktree, git, listWorktreesLocked } from "../../kernel/git.ts";
 
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
@@ -471,6 +471,99 @@ describe("concurrent starts", () => {
     expect(new Set(claims(ws(root).db).map((c) => c.subject)).size).toBe(8);
     const upstream = git(root, "config", "--get-regexp", "^branch\\.change/");
     expect(upstream.ok ? upstream.value : "").toBe("");
+  }, 60_000);
+
+  // Another canon process inside the worktree lock, leaving .git/worktrees/half as git does midway through an add:
+  // gitdir written, commondir created but still empty. A plain `git worktree add` meanwhile dies on it (issue #32).
+  const HOLDER = `
+    import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+    import { join } from "node:path";
+    import { withWorktreeLock } from ${JSON.stringify(join(import.meta.dir, "../../kernel/git.ts"))};
+    const root = process.env.ROOT, half = join(root, ".git/worktrees/half");
+    const r = withWorktreeLock(root, "change", () => {
+      mkdirSync(half, { recursive: true });
+      writeFileSync(join(half, "gitdir"), root + ".wt/half/.git\\n");
+      writeFileSync(join(half, "commondir"), "");
+      writeFileSync(process.env.MARK, "in");
+      Bun.sleepSync(Number(process.env.HOLD_MS));
+      rmSync(half, { recursive: true, force: true });
+      writeFileSync(process.env.MARK, "out " + Date.now());
+    });
+    process.exit(r.ok ? 0 : 9);
+  `;
+  const holder = (root: string, holdMs: number) => {
+    const mark = join(mkdtempSync(join(tmpdir(), "canon-next-mark-")), "mark");
+    const p = Bun.spawn(["bun", "-e", HOLDER], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, ROOT: root, MARK: mark, HOLD_MS: String(holdMs) } });
+    return { p, mark };
+  };
+  const inside = async (h: { p: Bun.Subprocess<"ignore", "pipe", "pipe">; mark: string }) => {
+    for (let i = 0; i < 500 && !(existsSync(h.mark) && readFileSync(h.mark, "utf8") !== ""); i++) await Bun.sleep(20);
+    if (!existsSync(h.mark)) throw new Error(`holder never got the lock: ${await new Response(h.p.stderr).text()}`);
+    expect(readFileSync(h.mark, "utf8")).toBe("in");
+  };
+  const cliStart = (root: string, title: string) =>
+    Bun.spawn(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "start", "--title", title], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:w" } });
+
+  test("BR-2223: a start while another canon process is midway through creating a worktree waits for it and succeeds", async () => {
+    const root = project();
+    mkdirSync(join(root, ".git/worktrees"), { recursive: true });
+    const h = holder(root, 2_000);
+    await inside(h);
+    expect(Bun.spawnSync(["git", "worktree", "add", "-q", "-b", "plain", `${root}.wt/plain`, "main"], { cwd: root, stderr: "pipe" }).stderr.toString()).toContain("failed to read");
+    const s = cliStart(root, "Waits");
+    const code = await s.exited;
+    const done = Date.now();
+    expect({ code, err: await new Response(s.stderr).text() }).toEqual({ code: 0, err: expect.any(String) });
+    expect(await h.p.exited).toBe(0);
+    const released = Number(readFileSync(h.mark, "utf8").replace(/^out /, ""));
+    expect(released).toBeLessThanOrEqual(done); // it ran its git worktree add only after the other process let go
+    expect(existsSync(join(root, ".git/worktrees/half"))).toBe(false);
+    expect(claims(ws(root).db).map((c) => c.subject)).toEqual(["C-1"]);
+  }, 60_000);
+
+  test("BR-2223: git worktree add and list through canon wait out another process's unfinished add, where plain git dies on it", async () => {
+    const root = project();
+    const h = holder(root, 1_500);
+    await inside(h);
+    const plain = Bun.spawnSync(["git", "worktree", "list", "--porcelain"], { cwd: root, stderr: "pipe" });
+    expect(plain.stderr.toString()).toContain("failed to read .git/worktrees/half/commondir");
+    const added = addWorktree(root, "-q", "-b", "after", `${root}.wt/after`, "main");
+    const done = Date.now();
+    expect(added.ok).toBe(true);
+    expect(Number(readFileSync(h.mark, "utf8").replace(/^out /, ""))).toBeLessThanOrEqual(done);
+    expect(await h.p.exited).toBe(0);
+    const h2 = holder(root, 1_500);
+    await inside(h2);
+    const listed = listWorktreesLocked(root);
+    expect(listed.ok ? listed.value.map((w) => w.branch) : listed.error.message).toEqual(["main", "after"]);
+    expect(await h2.p.exited).toBe(0);
+  }, 60_000);
+
+  test("BR-2223: a canon run from a git hook of a locked worktree add does not wait on its own parent", () => {
+    const root = project();
+    const hooks = mkdtempSync(join(tmpdir(), "canon-next-hooks-"));
+    const out = join(hooks, "out");
+    const script = `import { listWorktreesLocked } from ${JSON.stringify(join(import.meta.dir, "../../kernel/git.ts"))}; const r = listWorktreesLocked(process.cwd()); require("node:fs").writeFileSync(${JSON.stringify(out)}, String(r.ok));`;
+    writeFileSync(join(hooks, "post-checkout"), `#!/bin/sh\nexec bun -e ${JSON.stringify(script).replace(/\$/g, "\\$")}\n`, { mode: 0o755 });
+    sh(root, "config", "core.hooksPath", hooks);
+    const t0 = Date.now();
+    const added = addWorktree(root, "-q", "-b", "hooked", `${root}.wt/hooked`, "main");
+    expect(added.ok ? "ok" : added.error.message).toBe("ok");
+    expect(readFileSync(out, "utf8")).toBe("true");
+    expect(Date.now() - t0).toBeLessThan(20_000);
+  }, 60_000);
+
+  test("BR-2223: a process that died while creating a worktree does not hold up the next start", async () => {
+    const root = project();
+    const h = holder(root, 120_000);
+    await inside(h);
+    h.p.kill("SIGKILL");
+    await h.p.exited;
+    rmSync(join(root, ".git/worktrees/half"), { recursive: true, force: true });
+    const t0 = Date.now();
+    const s = cliStart(root, "After crash");
+    expect(await s.exited).toBe(0);
+    expect(Date.now() - t0).toBeLessThan(30_000);
   }, 60_000);
 });
 

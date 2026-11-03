@@ -1,3 +1,6 @@
+import { Database } from "bun:sqlite";
+import { mkdirSync } from "node:fs";
+import { dirname, isAbsolute, join } from "node:path";
 import { err, ok, type Result } from "./result.ts";
 
 /** Thin git wrapper. Every call is explicit about its cwd; output is trimmed stdout, failures carry stderr. */
@@ -54,4 +57,75 @@ export function ignoredPaths(cwd: string): Result<string[]> {
 export function unregenerable(paths: readonly string[], regenerable: readonly string[]): string[] {
   const globs = regenerable.map((p) => new Bun.Glob(p));
   return paths.filter((p) => !p.replace(/\/+$/, "").split("/").some((seg) => globs.some((g) => g.match(seg))));
+}
+
+/** How long canon waits for another canon process to finish adding or removing a worktree before failing loud. */
+export const WORKTREE_LOCK_WAIT_MS = 300_000;
+
+/** Set in the environment of a git command run under the worktree lock, so a canon run from its hooks does not wait on its own parent. */
+export const WORKTREE_LOCK_ENV = "CANON_WORKTREE_LOCK_HELD";
+
+/** `<git common dir>/canon/worktree.lock`: one lock for every worktree of the repository containing `cwd`. */
+export function worktreeLockPath(cwd: string): Result<string> {
+  const r = git(cwd, "rev-parse", "--git-common-dir");
+  if (!r.ok) return r;
+  return ok(join(isAbsolute(r.value) ? r.value : join(cwd, r.value), "canon", "worktree.lock"));
+}
+
+/**
+ * Runs `fn` holding the repository's worktree lock (BR-2223, D-33). "change" is exclusive: no other canon process
+ * changes or reads `.git/worktrees` meanwhile. "read" is shared: readers run together, but never while a change is
+ * under way. The lock is a SQLite transaction on its own empty file: the others wait for it (SQLite's busy timeout),
+ * and the OS drops it when the holder dies, so a crash never leaves it stuck.
+ */
+export function withWorktreeLock<T>(cwd: string, mode: "change" | "read", fn: () => T, waitMs: number = WORKTREE_LOCK_WAIT_MS): Result<T> {
+  // reason: a canon run from a git hook of the locked command itself; its parent holds the lock, so waiting would deadlock (D-33)
+  if (process.env[WORKTREE_LOCK_ENV] === "1") return ok(fn());
+  const path = worktreeLockPath(cwd);
+  if (!path.ok) return path;
+  let db: Database | undefined;
+  try {
+    mkdirSync(dirname(path.value), { recursive: true });
+    db = new Database(path.value, { create: true });
+    db.exec(`PRAGMA busy_timeout = ${Math.max(0, Math.floor(waitMs))};`);
+    if (mode === "change") db.exec("BEGIN EXCLUSIVE;");
+    else {
+      db.exec("BEGIN;");
+      db.query("SELECT count(*) FROM sqlite_master").get(); // takes the shared lock
+    }
+  } catch (e) {
+    db?.close();
+    return err("io", `cannot take the worktree lock ${path.value} (another canon process has been adding or removing a worktree for over ${waitMs} ms, or the file is unusable): ${(e as Error).message}`);
+  }
+  try {
+    return ok(fn());
+  } finally {
+    db.exec("ROLLBACK;");
+    db.close();
+  }
+}
+
+function lockedWorktreeChange(cwd: string, args: readonly string[]): Result<string> {
+  const r = withWorktreeLock(cwd, "change", () => gitEnv(cwd, { [WORKTREE_LOCK_ENV]: "1" }, "worktree", ...args));
+  return r.ok ? r.value : r;
+}
+
+/**
+ * `git worktree add <args>` under the exclusive worktree lock. git reads every `.git/worktrees/<id>` while adding or
+ * listing and dies on one another add has made but not finished (`failed to read .git/worktrees/<id>/commondir`,
+ * issue #32), so canon never runs one while another canon process is adding (BR-2223, D-33).
+ */
+export function addWorktree(cwd: string, ...args: string[]): Result<string> {
+  return lockedWorktreeChange(cwd, ["add", ...args]);
+}
+
+/** `git worktree remove <args>` under the exclusive worktree lock: removing deletes a registration file by file (BR-2223, D-33). */
+export function removeWorktree(cwd: string, ...args: string[]): Result<string> {
+  return lockedWorktreeChange(cwd, ["remove", ...args]);
+}
+
+/** listWorktrees under the shared worktree lock, so it never reads a registration another canon process is adding (BR-2223, D-33). */
+export function listWorktreesLocked(cwd: string): Result<WorktreeInfo[]> {
+  const r = withWorktreeLock(cwd, "read", () => listWorktrees(cwd));
+  return r.ok ? r.value : r;
 }

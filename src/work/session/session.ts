@@ -13,7 +13,7 @@ import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { createDoc, highestNumber } from "../../knowledge/documents/write.ts";
 import { worktreesDirOf } from "./config-keys.ts";
-import { git, ignoredPaths, isClean, listWorktrees, unregenerable, type WorktreeInfo } from "../../kernel/git.ts";
+import { addWorktree, git, ignoredPaths, isClean, listWorktreesLocked, removeWorktree, unregenerable, type WorktreeInfo } from "../../kernel/git.ts";
 import { GENERATED_DIR } from "../../config/reference/reference.ts";
 import { processesIn, type Occupant } from "../../kernel/process.ts";
 
@@ -97,7 +97,8 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   if (!existsSync(path)) {
     hasBranch = git(ws.primary, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`).ok;
     // reason: BR-2132 — branch from the local main, never a remote-tracking ref: that writes upstream config and concurrent starts fail to lock .git/config.
-    const add = hasBranch ? git(ws.primary, "worktree", "add", path, branch) : git(ws.primary, "worktree", "add", "-b", branch, path, main);
+    // reason: BR-2223 — addWorktree, not plain git: concurrent adds read each other's half-made .git/worktrees/<id> (issue #32).
+    const add = hasBranch ? addWorktree(ws.primary, path, branch) : addWorktree(ws.primary, "-b", branch, path, main);
     if (!add.ok) {
       releaseClaim(ws.db, changeId, ws.actor);
       ws.db.event(ws.actor, "start.refuse", changeId, { reason: "worktree", error: add.error.message });
@@ -141,7 +142,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
 
 /** Undoes a start whose worktree was created a moment ago and holds nothing but the checkout, so a retry starts clean (BR-2029). */
 function undoStart(ws: Workspace, changeId: string, path: string, branch: string, newBranch: boolean): void {
-  git(ws.primary, "worktree", "remove", "--force", path);
+  removeWorktree(ws.primary, "--force", path);
   if (newBranch) git(ws.primary, "branch", "-q", "-D", branch);
   releaseClaim(ws.db, changeId, ws.actor);
 }
@@ -170,7 +171,7 @@ function changeOffMain(ws: Workspace, id: string): Result<{ doc: Change; branch:
   if (!corpus.ok) return corpus;
   const doc = findDoc(corpus.value, id);
   if (!doc || doc.kind !== "change") return ok(undefined);
-  const wts = listWorktrees(ws.primary);
+  const wts = listWorktreesLocked(ws.primary);
   if (!wts.ok) return wts;
   return ok({ doc, branch, worktree: wts.value.find((w) => w.branch === branch)?.path });
 }
@@ -178,7 +179,7 @@ function changeOffMain(ws: Workspace, id: string): Result<{ doc: Change; branch:
 /** The corpus as committed on a branch, or as it stands in the worktree that has the branch checked out. */
 function corpusOf(ws: Workspace, ref: string): Result<Corpus> {
   const main = ref;
-  const wts = listWorktrees(ws.primary);
+  const wts = listWorktreesLocked(ws.primary);
   if (!wts.ok) return wts;
   const holder = wts.value.find((w) => w.branch === main);
   if (holder) return ok(readCorpus(holder.path, ws.config.types, ws.config).corpus);
@@ -234,7 +235,7 @@ export function stop(ws: Workspace, next: string, note: string | undefined, rele
  * (BR-2152): every name must be a change, or nothing is removed; a named change without a worktree is kept, saying so.
  */
 export function clean(ws: Workspace, say: Say, only?: readonly string[]): Result<{ removed: string[]; kept: string[] }> {
-  const wts = listWorktrees(ws.primary);
+  const wts = listWorktreesLocked(ws.primary);
   if (!wts.ok) return wts;
   const removed: string[] = [];
   const kept: string[] = [];
@@ -294,7 +295,7 @@ export function clean(ws: Workspace, say: Say, only?: readonly string[]): Result
     }
     try {
       // reason: without --force, so git itself still refuses if the worktree changed since the checks above.
-      const rm = git(ws.primary, "worktree", "remove", w.path);
+      const rm = removeWorktree(ws.primary, w.path);
       if (!rm.ok) {
         kept.push(`${w.path}: ${rm.error.message}`);
         continue;
