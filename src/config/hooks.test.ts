@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -8,6 +8,10 @@ import { start, stop } from "../work/session/session.ts";
 import { land } from "../work/land/land.ts";
 import { backgroundNotice, logFile, runHooksInBackground, settleBackgroundHooks } from "./hooks.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../work/testkit.ts";
+
+// reason: these tests run hook commands as real shells and wait for background ones to finish, which is what they test;
+// under load that took up to 2.8 s of the 5 s default (C-111).
+setDefaultTimeout(30_000);
 
 function configured(hooks: string) {
   const root = project();
@@ -139,7 +143,8 @@ describe("background hook exit codes", () => {
   const logOf = (root: string) => hookRuns(root).find((r) => r.background)! as unknown as { log: string };
   async function finished(log: string, n: number) {
     const count = () => (existsSync(log) ? (readFileSync(log, "utf8").match(/^\[hook \d+\/\d+ exited \d+\]$/gm) ?? []).length : 0);
-    for (let i = 0; i < 100 && count() < n; i++) await Bun.sleep(50);
+    // reason: the background shell gets as long as the test does; 5 s here was the whole default test timeout (C-111).
+    for (let i = 0; i < 500 && count() < n; i++) await Bun.sleep(50);
     expect(count()).toBe(n);
   }
 

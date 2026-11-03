@@ -12,6 +12,10 @@ import { processOf, type Proc } from "../claims/liveness.ts";
 
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
+// reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
+// under load that alone came within 0.4 s of the 5 s default (C-111), so they get room, not the rest of the file.
+const TIMED = 30_000;
+
 describe("rule review at land", () => {
   function reviewedProject(verdict: "ok" | "block") {
     const root = project();
@@ -390,7 +394,7 @@ describe("work land", () => {
     expect(out.kind === "refused" && out.findings?.map((f) => f.rule)).toEqual(["ref-dangling"]);
   });
 
-  test("BR-2111: a new decision needs a source; each source new to main is verified against its file or page", async () => {
+  describe("BR-2111: a new decision needs a source; each source new to main is verified against its file or page", () => {
     const decision = (options: string) =>
       `---\nid: D-1\ntitle: Pick\nstatus: accepted\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n${options}\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
     const pages: Record<string, string> = { "https://ok.example/a": "<html><body><p>refunds are&nbsp;allowed\n  within 30 days</p></body></html>" };
@@ -409,16 +413,22 @@ describe("work land", () => {
       const out = await land(ws(s.worktree), { ...FAST, fetcher }, quiet);
       return out.kind === "refused" ? `${out.reason}: ${out.message.split("\n").slice(1).join(" ").trim()}` : out.kind;
     };
-    expect(await attempt("", "No source")).toBe("source: - D-1 is new and cites no source under ## 方案 (来源：<URL or repository path> “<quote>”)");
-    expect(await attempt("   - 来源：refund.txt “export function refund(order)”", "File ok")).toBe("landed");
-    expect(await attempt("   - 来源：refund.txt “export function refund(item)”", "File wrong")).toBe("source: - D-1: refund.txt does not contain “export function refund(item)”");
-    expect(await attempt("   - 来源：missing.txt “export function refund(order)”", "File missing")).toBe("source: - D-1: missing.txt is not a file in the repository");
-    expect(await attempt("   - 来源：https://ok.example/a “refunds are allowed within 30 days”", "Page ok")).toBe("landed");
-    expect(await attempt("   - 来源：https://ok.example/a “refunds are allowed within 60 days”", "Page wrong")).toBe("source: - D-1: https://ok.example/a does not contain “refunds are allowed within 60 days”");
-    expect(await attempt("   - 来源：https://ok.example/gone “refunds are allowed within 30 days”", "Page 404")).toBe("source: - D-1: https://ok.example/gone answered HTTP 404");
-    expect(await attempt("   - 来源：https://down.example/ “refunds are allowed within 30 days”", "Offline")).toBe(
-      "source: - D-1: https://down.example/ could not be fetched (getaddrinfo ENOTFOUND down.example)",
-    );
+    // reason: one landing per test, not eight in one, so each case has the whole timeout to itself under load (C-111).
+    const cases: [string, string, string][] = [
+      ["No source", "", "source: - D-1 is new and cites no source under ## 方案 (来源：<URL or repository path> “<quote>”)"],
+      ["File ok", "   - 来源：refund.txt “export function refund(order)”", "landed"],
+      ["File wrong", "   - 来源：refund.txt “export function refund(item)”", "source: - D-1: refund.txt does not contain “export function refund(item)”"],
+      ["File missing", "   - 来源：missing.txt “export function refund(order)”", "source: - D-1: missing.txt is not a file in the repository"],
+      ["Page ok", "   - 来源：https://ok.example/a “refunds are allowed within 30 days”", "landed"],
+      ["Page wrong", "   - 来源：https://ok.example/a “refunds are allowed within 60 days”", "source: - D-1: https://ok.example/a does not contain “refunds are allowed within 60 days”"],
+      ["Page 404", "   - 来源：https://ok.example/gone “refunds are allowed within 30 days”", "source: - D-1: https://ok.example/gone answered HTTP 404"],
+      ["Offline", "   - 来源：https://down.example/ “refunds are allowed within 30 days”", "source: - D-1: https://down.example/ could not be fetched (getaddrinfo ENOTFOUND down.example)"],
+    ];
+    for (const [title, options, expected] of cases) {
+      test(`BR-2111: ${title}`, async () => {
+        expect(await attempt(options, title)).toBe(expected);
+      });
+    }
   });
 
   test("BR-2111: a source already on main is not fetched again, and editing an old decision needs no new source", async () => {
@@ -536,7 +546,7 @@ describe("boundaries record and clean up", () => {
     expect(tryTurn(other.db, b, 1200).mine).toBe(false);
     expect((await landing).kind).toBe("landed");
     expect(tryTurn(other.db, b, 1200).mine).toBe(true);
-  });
+  }, TIMED);
 
   test("BR-2144: a lander whose waiting entry was marked abandoned is refused when it wakes, and nothing moves", async () => {
     const root = project();
@@ -642,7 +652,7 @@ describe("the claim during a landing", () => {
     expect(takeClaim(other.db, s.change, s.worktree, "agent:b", 1000).ok).toBe(false);
     finishEntry(other.db, ahead, "landed", "x");
     expect((await landing).kind).toBe("landed");
-  });
+  }, TIMED);
 
   test("BR-2018: --finish leaves alone a claim and handoff that another session took over during the landing", async () => {
     const root = project();
@@ -751,7 +761,7 @@ describe("the claim names the lander while it lands", () => {
     } finally {
       session.kill();
     }
-  });
+  }, TIMED);
 
   test("BR-2142: after a lander is killed with SIGKILL, a work command of the live session names the session again", async () => {
     const root = project();
@@ -776,7 +786,7 @@ describe("the claim names the lander while it lands", () => {
     } finally {
       session.kill();
     }
-  });
+  }, TIMED);
 
   test("BR-2142: a lease-only claim names no process during or after the landing", async () => {
     await landingAsSession(null, async (root, s, landing) => {
@@ -811,7 +821,7 @@ describe("a lander killed by a signal", () => {
     const other = ws(root, "agent:b");
     const b = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
     expect(tryTurn(other.db, b).mine).toBe(true);
-  });
+  }, TIMED);
 
   test("BR-2099: a process group killed in the middle of the rebase leaves the worktree on its own commits, not mid-rebase", async () => {
     const root = project();
@@ -836,7 +846,7 @@ describe("a lander killed by a signal", () => {
     expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(before);
     expect(sh(s.worktree, "status", "--porcelain")).toBe("");
     expect(entryOf(root)).toMatchObject({ state: "failed", result: "killed" });
-  });
+  }, TIMED);
 });
 
 describe("queue wait", () => {
