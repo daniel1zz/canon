@@ -161,6 +161,15 @@ describe("process liveness", () => {
     expect(takeClaim(d, "C-1", "/wt/C-1", "agent:b").ok).toBe(false);
   });
 
+  test("BR-2100: a session in another time zone reads the same start time, so a running holder stays running", () => {
+    const here = selfProcess()!;
+    const probe = `import { processStart } from ${JSON.stringify(join(import.meta.dir, "liveness.ts"))}; console.log(processStart(${here.pid}))`;
+    for (const tz of ["Pacific/Kiritimati", "America/Adak"]) {
+      const r = Bun.spawnSync(["bun", "-e", probe], { stdout: "pipe", env: { ...process.env, TZ: tz } });
+      expect(r.stdout.toString().trim()).toBe(here.start);
+    }
+  });
+
   test("BR-2100: CLAUDE_PID is believed only inside Claude Code and only when it is an ancestor of this process", () => {
     const parent = process.ppid;
     expect(sessionProcess({ CLAUDECODE: "1", CLAUDE_PID: String(parent) })?.pid).toBe(parent);

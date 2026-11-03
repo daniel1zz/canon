@@ -5,13 +5,14 @@
  */
 export interface Proc {
   readonly pid: number;
-  /** `ps -o lstart` of the process, in the C locale. */
+  /** `ps -o lstart` of the process, in the C locale and UTC. */
   readonly start: string;
 }
 
 function ps(args: readonly string[]): { code: number; out: string } | undefined {
   try {
-    const r = Bun.spawnSync(["ps", ...args], { stdout: "pipe", stderr: "pipe", env: { ...process.env, LC_ALL: "C" } });
+    // reason: lstart is printed in the caller's time zone; fixing locale and zone makes two sessions read one string (BR-2100).
+    const r = Bun.spawnSync(["ps", ...args], { stdout: "pipe", stderr: "pipe", env: { ...process.env, LC_ALL: "C", TZ: "UTC" } });
     return { code: r.exitCode ?? -1, out: r.stdout.toString() };
   } catch {
     return undefined;
