@@ -250,6 +250,28 @@ describe("session continuity", () => {
     expect(canon(root, "work", "status").out).toContain("C-1"); // claim kept without --release
   });
 
+  test("BR-2024: in a claimed worktree brief shows only its own change; other handoffs and the question count only where nothing is claimed", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    committed(root);
+    const wt = (title: string) => canon(root, "work", "start", "--title", title).out.match(/cd (.+)/)![1]!.trim();
+    const a = wt("A");
+    const b = wt("B");
+    expect(canon(b, "work", "stop", "--next", "finish B").code).toBe(0);
+    expect(canon(a, "work", "stop", "--next", "finish A").code).toBe(0);
+    expect(canon(root, "human", "ask", "which way?").code).toBe(0);
+    const inA = canon(a, "brief").out;
+    expect(inA).toContain("You are in C-1");
+    expect(inA).toContain("next — finish A");
+    expect(inA).not.toContain("C-2");
+    expect(inA).not.toContain("Unfinished changes with handoffs");
+    expect(inA).not.toContain("wait for a human");
+    const inMain = canon(root, "brief").out;
+    expect(inMain).toContain("Unfinished changes with handoffs: C-1, C-2");
+    expect(inMain).toContain("1 question(s) wait for a human");
+    expect(inMain).not.toContain("You are in");
+  });
+
   test("BR-2024 BR-2090: with nothing in flight brief prints only the workflow guide, and the guide comes first otherwise", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");

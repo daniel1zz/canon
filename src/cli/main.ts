@@ -490,7 +490,7 @@ function noticeUpdates(ws: Workspace, out: (line: string) => void) {
 }
 
 const brief = defineCommand({
-  meta: { description: "Session start: how to work in a canon project, this worktree's change and handoff, and what else is in flight (printed by the session-start hook)" },
+  meta: { description: "Session start: how to work in a canon project, in a change's worktree that change and its handoff, elsewhere what is in flight (printed by the session-start hook)" },
   run() {
     // reason: the guide comes before anything that can fail, and failures are also said on stdout, which is what a
     // session-start hook shows the model; without it a session would know nothing about canon (BR-2090, lore KN-402)
@@ -511,20 +511,22 @@ const brief = defineCommand({
   },
 });
 
-/** What `canon brief` says after the guide: this worktree's change, handoffs, questions, the update notice. */
+/** What `canon brief` says after the guide: in a claimed worktree only its own change; elsewhere the handoffs and questions; then the update notice. */
 function briefState(ws: Workspace) {
   const mine = claimOfWorktree(ws.db, ws.root);
   const hs = handoffs(ws.db);
-  const pending = questions(ws.db, "pending").length;
   if (mine) {
     say(`You are in ${mine.subject} (${ws.root}). Read it: canon show ${mine.subject}; context: canon context ${mine.subject}`);
     const h = hs.find((x) => x.subject === mine.subject);
     if (h) say(`Handoff from ${h.actor} at ${h.updated_at}: next — ${h.next}${h.note ? `\n${h.note}` : ""}`);
     for (const o of overlapsOf(ws, ws.root)) say(`Overlap: ${o.change} also changes ${o.files.join(", ")}`);
+  } else {
+    // reason: other sessions' handoffs and the question queue are shown only where no change is claimed; injected
+    // into a change's session they draw it into work that is not its own (BR-2024, lore SPEC-166)
+    if (hs.length) say(`Unfinished changes with handoffs: ${hs.map((h) => h.subject).join(", ")} (canon work status)`);
+    const pending = questions(ws.db, "pending").length;
+    if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
   }
-  const others = hs.filter((h) => h.subject !== mine?.subject);
-  if (others.length) say(`Unfinished changes with handoffs: ${others.map((h) => h.subject).join(", ")} (canon work status)`);
-  if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
   noticeUpdates(ws, say);
 }
 
