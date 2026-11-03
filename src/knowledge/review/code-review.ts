@@ -141,14 +141,16 @@ export interface ReviewReport {
 }
 
 export function codeReview(e: Env): Result<ReviewReport> {
-  const files = changedFiles(e);
-  if (!files.ok) return files;
-  if (files.value.length === 0) {
+  const diff = git(e.cwd, "diff", e.base, e.head, "--", ".", ":(exclude)canon");
+  if (!diff.ok) return diff;
+  // reason: a landing that only deletes code, or only changes binary or oversized files, gives no full text
+  // but is still a code change; only an empty diff outside canon/ means there is nothing to review (BR-2070, #71)
+  if (diff.value.trim() === "") {
     e.say("no code changed; nothing to review");
     return ok({ created: [], commented: [] });
   }
-  const diff = git(e.cwd, "diff", e.base, e.head, "--", ".", ":(exclude)canon");
-  if (!diff.ok) return diff;
+  const files = changedFiles(e);
+  if (!files.ok) return files;
   const open = openIssues(e);
   if (!open.ok) return open;
   const answer = run(e.ai, [], e.cwd, reviewPrompt(diff.value, files.value, open.value));
