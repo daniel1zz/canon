@@ -75,10 +75,17 @@ export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs
       return err("conflict", `${cur.subject} in ${worktree} is claimed by ${cur.holder} until ${cur.expires_at}; only that session can renew, stop, release or land it`);
     }
     const expires = iso(new Date(now().getTime() + leaseMs));
+    // reason: while a landing of this worktree is in the queue, the claim names that lander, and the holder's own
+    // work commands (a `canon work stop` while it waits) leave it so, or the session exiting would free it (BR-2142, issue #30).
+    const landing =
+      cur.holder === actor &&
+      cur.pid !== null &&
+      db.db.query("SELECT 1 FROM queue WHERE worktree = ? AND state IN ('waiting','landing') AND pid = ? AND pid_start = ?").get(worktree, cur.pid, cur.pid_start) !== null;
     // The holder's own session may run under a new process now (a resumed session): follow it, so the claim is not freed under it.
-    db.db
-      .query("UPDATE claims SET holder = ?, expires_at = ?, pid = ?, pid_start = ?, version = version + 1 WHERE subject = ?")
-      .run(actor, expires, owner?.pid ?? (cur.holder === actor ? cur.pid : null), owner?.start ?? (cur.holder === actor ? cur.pid_start : null), cur.subject);
+    const own = cur.holder === actor;
+    const pid = landing ? cur.pid : (owner?.pid ?? (own ? cur.pid : null));
+    const pidStart = landing ? cur.pid_start : (owner?.start ?? (own ? cur.pid_start : null));
+    db.db.query("UPDATE claims SET holder = ?, expires_at = ?, pid = ?, pid_start = ?, version = version + 1 WHERE subject = ?").run(actor, expires, pid, pidStart, cur.subject);
     db.event(actor, cur.holder === actor ? "claim.renew" : "claim.take", cur.subject, { worktree, ...(cur.holder === actor ? {} : { from: cur.holder }) });
     return ok({ subject: cur.subject, holder: worktree, actor, expires_at: expires });
   });

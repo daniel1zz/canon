@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { claims, takeClaim } from "../claims/claims.ts";
+import { claims, renewClaim, takeClaim } from "../claims/claims.ts";
 import { enqueue, finishEntry, tryTurn } from "./queue.ts";
 import { handoffs, writeHandoff } from "../session/handoffs.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
@@ -565,6 +565,20 @@ describe("the claim names the lander while it lands", () => {
       expect(takeClaim(ws(root, "agent:b").db, s.change, s.worktree, "agent:b").ok).toBe(false);
       expect(((await landing) as { kind: string }).kind).toBe("landed");
       expect(takeClaim(ws(root, "agent:b").db, s.change, s.worktree, "agent:b").ok).toBe(true); // the session is gone
+    });
+  });
+
+  test("BR-2142: a work command of the session while its landing waits leaves the claim naming the lander", async () => {
+    const session = Bun.spawn(["sleep", "30"]);
+    const p = processOf(session.pid)!;
+    await landingAsSession(p, async (root, s, landing) => {
+      expect(renewClaim(ws(root).db, s.worktree, "agent:a", 12 * 3600_000, p).ok).toBe(true); // e.g. `canon work stop` from the session
+      expect(pidOf(root, s.change)).toBe(process.pid);
+      session.kill();
+      await session.exited;
+      expect(takeClaim(ws(root, "agent:b").db, s.change, s.worktree, "agent:b").ok).toBe(false);
+      expect(((await landing) as { kind: string }).kind).toBe("landed");
+      expect(takeClaim(ws(root, "agent:b").db, s.change, s.worktree, "agent:b").ok).toBe(true);
     });
   });
 
