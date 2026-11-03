@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { addColumns, CoordDb } from "./db.ts";
 import { processOf, selfProcess, sessionProcess, type Proc } from "./liveness.ts";
-import { answer, ask, claims, enqueue, finishEntry, questions, QUEUE_STALE_MS, renewClaim, takeClaim, tryTurn } from "./state.ts";
+import { answer, ask, claims, enqueue, finishEntry, holdClaim, questions, QUEUE_STALE_MS, renewClaim, takeClaim, tryTurn, unholdClaim } from "./state.ts";
 
 /** A real process that is gone by the time this returns: a pid and start time the probe will find missing. */
 async function deadProcess(): Promise<Proc> {
@@ -171,5 +171,29 @@ describe("process liveness", () => {
     } finally {
       child.kill();
     }
+  });
+});
+
+describe("holds while a worktree is removed", () => {
+  test("BR-2019: a hold refuses a start of the same change even by the same actor at the same path, and unhold removes only the hold", () => {
+    const d = db();
+    expect(holdClaim(d, "C-1", "/wt/C-1", "human:x", true).ok).toBe(true);
+    const same = takeClaim(d, "C-1", "/wt/C-1", "human:x");
+    expect(!same.ok && same.error.code).toBe("conflict");
+    unholdClaim(d, "C-1", "/wt/C-1", "human:x", null);
+    expect(claims(d)).toEqual([]);
+    expect(takeClaim(d, "C-1", "/wt/C-1", "human:x").ok).toBe(true);
+    unholdClaim(d, "C-1", "/wt/C-1", "human:x", null); // a real claim is never taken for a hold
+    expect(claims(d).map((c) => c.holder)).toEqual(["/wt/C-1"]);
+  });
+
+  test("BR-2100: a hold left by a clean or drop that was killed frees as soon as its process is gone", async () => {
+    const d = db();
+    expect(holdClaim(d, "C-1", "/wt/C-1", "agent:a", false).ok).toBe(true);
+    expect(d.db.query<{ pid: number }, []>("SELECT pid FROM claims").get()?.pid).toBe(process.pid);
+    const dead = await deadProcess();
+    d.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = 'C-1'").run(dead.pid, dead.start);
+    expect(takeClaim(d, "C-1", "/wt/C-1", "agent:b").ok).toBe(true);
+    expect(claims(d).map((c) => c.actor)).toEqual(["agent:b"]);
   });
 });

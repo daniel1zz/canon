@@ -1,6 +1,6 @@
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { CoordDb } from "./db.ts";
-import { isGone, type Proc } from "./liveness.ts";
+import { isGone, selfProcess, type Proc } from "./liveness.ts";
 
 /**
  * Live coordination operations (design §2). Each is one transaction on the shared DB, so two sessions
@@ -105,24 +105,34 @@ export function holdClaim(db: CoordDb, subject: string, worktree: string, actor:
   // only proceeds when the row is still the one probed.
   const seen = read();
   const binds = seen !== null && seen.holder !== actor && bindsStill(seen);
+  const self = selfProcess();
   const tx = db.db.transaction((): Result<{ prior: ClaimRow | null }> => {
     const cur = read();
     const same = JSON.stringify(cur) === JSON.stringify(seen);
     if (cur && (onlyIfUnclaimed || !same || binds)) {
       return err("conflict", `${subject} is claimed by ${cur.holder} in ${cur.worktree} until ${cur.expires_at}; nothing was deleted`);
     }
+    // The hold names this process, so it frees as soon as a killed clean or drop is gone (BR-2100, issue #16).
     db.db
-      .query("INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start) VALUES (?, ?, ?, ?, NULL, NULL) ON CONFLICT(subject) DO UPDATE SET holder = excluded.holder, worktree = excluded.worktree, expires_at = excluded.expires_at, pid = NULL, pid_start = NULL, version = version + 1")
-      .run(subject, actor, worktree, iso(new Date(now().getTime() + leaseMs)));
+      .query("INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(subject) DO UPDATE SET holder = excluded.holder, worktree = excluded.worktree, expires_at = excluded.expires_at, pid = excluded.pid, pid_start = excluded.pid_start, version = version + 1")
+      .run(subject, actor, holdMark(worktree), iso(new Date(now().getTime() + leaseMs)), self?.pid ?? null, self?.start ?? null);
     return ok({ prior: cur });
   });
   return tx.immediate();
 }
 
+/**
+ * The worktree a hold records: never a real worktree path, so `takeClaim` from the same actor and the same
+ * path sees someone else's claim instead of its own to renew, and unholdClaim never deletes a real claim (issue #15).
+ */
+function holdMark(worktree: string): string {
+  return `hold:${worktree}`;
+}
+
 /** Ends a hold made by holdClaim, and only that one, putting back the row it replaced. */
 export function unholdClaim(db: CoordDb, subject: string, worktree: string, actor: string, prior: ClaimRow | null): void {
   const tx = db.db.transaction(() => {
-    const gone = db.db.query("DELETE FROM claims WHERE subject = ? AND worktree = ? AND holder = ?").run(subject, worktree, actor).changes > 0;
+    const gone = db.db.query("DELETE FROM claims WHERE subject = ? AND worktree = ? AND holder = ?").run(subject, holdMark(worktree), actor).changes > 0;
     if (gone && prior) {
       db.db.query("INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start) VALUES (?, ?, ?, ?, ?, ?)").run(prior.subject, prior.holder, prior.worktree, prior.expires_at, prior.pid, prior.pid_start);
     }

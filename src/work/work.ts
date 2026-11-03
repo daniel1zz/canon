@@ -443,7 +443,7 @@ export function clean(ws: Workspace, say: Say): Result<{ removed: string[]; kept
     // reason: the claims were read before the checks and lsof; a start may have claimed it since (issue #12).
     // Holding the claim row atomically until the removal is done closes that window (BR-2019).
     const subject = basename(w.path);
-    if (!holdClaim(ws.db, subject, w.path, ws.actor, true).ok) {
+    if (!holdClaim(ws.db, subject, w.path, ws.actor, true, ws.config.claimLeaseMs).ok) {
       kept.push(`${w.path}: claimed`);
       continue;
     }
