@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { CANON_DIR } from "./read.ts";
 import type { Change } from "./model.ts";
+import { LIST_MARKER } from "./templates.ts";
 import { BUILTIN_TYPES, type DocType } from "./types.ts";
 
 /**
@@ -25,7 +26,7 @@ export function readBacklog(root: string, types: readonly DocType[] = BUILTIN_TY
 /** The change ids a backlog text lists, one per list item (a leading checkbox or backticks allowed), first mention only. */
 export function parseBacklog(text: string, types: readonly DocType[] = BUILTIN_TYPES): BacklogEntry[] {
   const prefix = types.find((t) => t.name === "change")!.prefix; // reason: change is a built-in type, never removed
-  const item = new RegExp(`^\\s*(?:[-*+]|\\d+[.)])\\s+(?:\\[[ xX]\\]\\s+)?\`?(${prefix}-\\d+)(?![0-9])`);
+  const item = new RegExp(`^\\s*${LIST_MARKER.source.slice(1)}(?:\\[[ xX]\\]\\s+)?\`?(${prefix}-\\d+)(?![0-9])`);
   const seen = new Set<string>();
   const out: BacklogEntry[] = [];
   text.split("\n").forEach((line, i) => {

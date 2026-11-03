@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
-import { isPlaceholderLine, section } from "../documents/templates.ts";
+import { isPlaceholderLine, LIST_MARKER, section } from "../documents/templates.ts";
 
 /**
  * A decision's options and the sources behind them (D-14). The options section must show a real choice
@@ -10,6 +10,9 @@ import { isPlaceholderLine, section } from "../documents/templates.ts";
 export const OPTIONS_SECTION = "## 方案";
 const TAKEN = "采用";
 const REJECTED = "否决";
+/** 采用 not negated: 不采用, 未采用, 没采用, 没有采用 and 不再采用 say the option was rejected (BR-2109). */
+const TAKEN_MARK = /(?<!不|未|没|没有|不再)采用/;
+const NEGATED_TAKEN = /(?:不|未|没|没有|不再)采用/;
 const SOURCE_MARK = "来源：";
 /** Shortest quote, after whitespace is collapsed: a few characters match almost any page. */
 export const MIN_QUOTE = 8;
@@ -30,7 +33,7 @@ export function options(body: string): string[] {
   if (text === undefined) return [];
   const items: string[] = [];
   for (const line of text.split("\n")) {
-    if (/^(?:\d+\.|[-*])\s+/.test(line)) items.push(line);
+    if (LIST_MARKER.test(line)) items.push(line);
     else if (items.length > 0 && line.trim() !== "" && /^\s/.test(line)) items[items.length - 1] += `\n${line}`;
   }
   return items.filter((i) => !isPlaceholderLine(i.split("\n")[0]!));
@@ -38,19 +41,38 @@ export function options(body: string): string[] {
 
 /** BR-2109: at least two options, each saying whether it was taken or rejected, at least one of each. */
 export function optionProblems(body: string): OptionProblem[] {
-  if (section(body, OPTIONS_SECTION) === undefined) return [];
+  const text = section(body, OPTIONS_SECTION);
+  if (text === undefined) return [];
+  const lines = text.split("\n").filter((l) => l.trim() !== "");
+  // reason: a section of template placeholders only is the unfilled template, which template-unfilled and
+  // doc-missing-section already report; a third finding for the same cause adds nothing (BR-2109)
+  if (lines.length > 0 && lines.every(isPlaceholderLine)) return [];
   const items = options(body);
+  const taken = (i: string) => TAKEN_MARK.test(verdictText(i));
+  const rejected = (i: string) => verdictText(i).includes(REJECTED) || NEGATED_TAKEN.test(verdictText(i));
   const out: OptionProblem[] = [];
   if (items.length < 2) out.push({ message: `has ${items.length} option(s) under ${OPTIONS_SECTION}; a choice needs at least two` });
-  const unmarked = items.filter((i) => !i.includes(TAKEN) && !i.includes(REJECTED));
-  for (const i of unmarked) out.push({ message: `option "${firstWords(i)}" says neither ${TAKEN} nor ${REJECTED}` });
-  if (items.length >= 2 && !items.some((i) => i.includes(TAKEN))) out.push({ message: `no option under ${OPTIONS_SECTION} is ${TAKEN}` });
-  if (items.length >= 2 && !items.some((i) => i.includes(REJECTED))) out.push({ message: `no option under ${OPTIONS_SECTION} is ${REJECTED}` });
+  for (const i of items.filter((i) => !taken(i) && !rejected(i))) out.push({ message: `option "${firstWords(i)}" says neither ${TAKEN} nor ${REJECTED}` });
+  if (items.length >= 2 && !items.some(taken)) out.push({ message: `no option under ${OPTIONS_SECTION} is ${TAKEN}` });
+  if (items.length >= 2 && !items.some(rejected)) out.push({ message: `no option under ${OPTIONS_SECTION} is ${REJECTED}` });
   return out;
 }
 
+/**
+ * The part of an option that states the author's verdict: its source lines and anything in quotes (“…”, `…`)
+ * are other people's words, so a 采用 or 否决 there marks nothing (BR-2109).
+ */
+function verdictText(item: string): string {
+  return item
+    .split("\n")
+    .filter((l, n) => n === 0 || !l.includes(SOURCE_MARK))
+    .join("\n")
+    .replace(/“[^”]*”/g, " ")
+    .replace(/`[^`\n]*`/g, " ");
+}
+
 function firstWords(item: string): string {
-  const head = item.split("\n")[0]!.replace(/^(?:\d+\.|[-*])\s+/, "");
+  const head = item.split("\n")[0]!.replace(LIST_MARKER, "");
   return head.length > 30 ? `${head.slice(0, 30)}…` : head;
 }
 

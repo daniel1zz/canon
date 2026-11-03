@@ -20,13 +20,20 @@ export function hasLessons(body: string): boolean {
 }
 
 /**
- * A line that is still a template placeholder (BR-2035): once the list marker (`-`, `1.`, `- [ ]`), bold
+ * A Markdown list item's marker: `-`, `*`, `+`, `1.` or `1)`, then whitespace. The one definition the placeholder
+ * check, a decision's options (BR-2109) and the backlog (BR-2148) all read list items by.
+ */
+export const LIST_MARKER = /^(?:[-*+]|\d+[.)])\s+/;
+
+/**
+ * A line that is still a template placeholder (BR-2035): once the list marker (`-`, `+`, `1.`, `1)`, `- [ ]`), bold
  * markers and separators (`→`, `：`, `:`) are removed, nothing is left but `<...>` fragments. A line with any
  * other text (`金额 <100 元时免运费`) or a fragment in backticks is prose or code, not a placeholder.
  */
 export function isPlaceholderLine(line: string): boolean {
-  const rest = line
-    .replace(/^\s*(?:(?:[-*]|\d+\.)\s+(?:\[[ xX]\]\s+)?)?/, "")
+  const start = line.trimStart();
+  const item = start.replace(LIST_MARKER, "");
+  const rest = (item === start ? item : item.replace(/^\[[ xX]\]\s+/, ""))
     .replace(/\*\*/g, "")
     .replace(/[→：:]/g, " ")
     .trim();
