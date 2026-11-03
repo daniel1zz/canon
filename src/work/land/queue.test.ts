@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
-import { batchCandidates, enqueue, finishEntry, joinBatch, leaveBatch, QUEUE_STALE_MS, tryTurn } from "./queue.ts";
+import { batchCandidates, enqueue, failIfActive, finishEntry, joinBatch, landBatched, leaveBatch, lockBatch, QUEUE_STALE_MS, tryTurn, unlockBatch } from "./queue.ts";
 import { selfProcess } from "../claims/liveness.ts";
 
 function db(): CoordDb {
@@ -92,4 +92,47 @@ describe("batches", () => {
     finishEntry(d, lead, "failed", "killed");
     expect(tryTurn(d, m)).toEqual({ mine: true, ahead: 0 });
   });
+
+  test("BR-2173: a member does not wait behind a leader whose process is gone or that stopped beating (issue #41)", () => {
+    const d = db();
+    const me = selfProcess();
+    const gone = enqueue(d, "/wt/a", "C-1", "x", { pid: 2 ** 22 + 12345, start: "never" });
+    const m = enqueue(d, "/wt/b", "C-2", "x", me);
+    d.db.query("UPDATE queue SET state = 'landing' WHERE id = ?").run(gone); // killed with SIGKILL mid-batch
+    expect(joinBatch(d, gone, m, "h1")).toBe(true);
+    expect(tryTurn(d, m)).toEqual({ mine: true, ahead: 0 });
+
+    const silent = enqueue(d, "/wt/c", "C-3", "x", me);
+    const n = enqueue(d, "/wt/d", "C-4", "x", me);
+    finishEntry(d, m, "landed", "sha");
+    expect(tryTurn(d, silent).mine).toBe(true);
+    expect(joinBatch(d, silent, n, "h2")).toBe(true);
+    expect(tryTurn(d, n).batched).toEqual({ leader: silent, head: "h2" });
+    d.db.query("UPDATE queue SET heartbeat = '2000-01-01T00:00:00.000Z' WHERE id = ?").run(silent);
+    expect(tryTurn(d, n).batched).toBeUndefined();
+  });
+
+  test("BR-2172: members are locked in all or none before main moves; a locked member's signal no longer gives it up (issue #42)", () => {
+    const d = db();
+    const me = selfProcess();
+    const lead = enqueue(d, "/wt/a", "C-1", "x", me);
+    const b = enqueue(d, "/wt/b", "C-2", "x", me);
+    const c = enqueue(d, "/wt/c", "C-3", "x", me);
+    expect(tryTurn(d, lead).mine).toBe(true);
+    expect(joinBatch(d, lead, b, "hb") && joinBatch(d, lead, c, "hc")).toBe(true);
+    expect(failIfActive(d, c, "killed")).toBe(true); // c stopped before the lock
+    expect(lockBatch(d, lead, [b, c])).toBe(false);
+    expect(tryTurn(d, b).batched).toEqual({ leader: lead, head: "hb" }); // nothing was locked
+    expect(lockBatch(d, lead, [b])).toBe(true);
+    expect(tryTurn(d, b).batched).toEqual({ leader: lead, head: "hb" });
+    expect(failIfActive(d, b, "killed")).toBe(false);
+    expect(landBatched(d, b, "sb")).toBe(true);
+    expect(tryTurn(d, b).landedBy).toEqual({ leader: lead, sha: "sb", head: "hb" });
+
+    const e = enqueue(d, "/wt/e", "C-5", "x", me);
+    expect(joinBatch(d, lead, e, "he") && lockBatch(d, lead, [e])).toBe(true);
+    unlockBatch(d, lead, [e]); // main did not move after all
+    expect(failIfActive(d, e, "killed")).toBe(true);
+  });
 });
+

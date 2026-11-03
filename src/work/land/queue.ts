@@ -61,14 +61,18 @@ export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS):
     const own = db.db.query<{ state: string; result: string | null; batch: number | null; head: string | null }, [number]>("SELECT state, result, batch, head FROM queue WHERE id = ?").get(entryId);
     if (own?.state === "landed" && own.batch !== null && own.result && own.head) return { mine: false, ahead: 0, landedBy: { leader: own.batch, sha: own.result, head: own.head } };
     // reason: a batched entry stays 'waiting' with `batch` set, since the state column's CHECK constraint predates batches (D-26).
-    if (own?.state === "waiting" && own.batch !== null && own.head) {
-      // reason: a leader that is no longer landing (it died, or ended without settling its batch) frees its members to wait again (BR-2172, D-26).
-      const leader = db.db.query<{ state: string }, [number]>("SELECT state FROM queue WHERE id = ?").get(own.batch);
-      if (leader?.state === "landing") {
+    // A member the leader has locked in just before moving main is 'landing' with `batch` set (BR-2172, issue #42).
+    if ((own?.state === "waiting" || own?.state === "landing") && own.batch !== null && own.head) {
+      // reason: a leader that is no longer landing, whose process is gone, or that stopped beating (a SIGKILL skips
+      // its signal handler) frees its members to wait again; nothing else would, so they would wait forever (BR-2173, issue #41).
+      const leader = db.db.query<{ state: string; heartbeat: string }, [number]>("SELECT state, heartbeat FROM queue WHERE id = ?").get(own.batch);
+      const fresh = iso(new Date(now().getTime() - staleMs));
+      if (leader?.state === "landing" && leader.heartbeat >= fresh && !dead.includes(own.batch)) {
         db.db.query("UPDATE queue SET heartbeat = ? WHERE id = ?").run(iso(now()), entryId);
         return { mine: false, ahead: 0, batched: { leader: own.batch, head: own.head } };
       }
-      db.db.query("UPDATE queue SET batch = NULL, head = NULL WHERE id = ? AND state = 'waiting'").run(entryId);
+      db.db.query("UPDATE queue SET state = 'waiting', batch = NULL, head = NULL WHERE id = ? AND state IN ('waiting','landing')").run(entryId);
+      own.state = "waiting";
     }
     if (!own || own.state !== "waiting") return { mine: false, ahead: 0, lost: own ? `${own.state}${own.result ? `: ${own.result}` : ""}` : "no such queue entry" };
     for (const id of dead) db.db.query("UPDATE queue SET state = 'abandoned', result = 'lander process gone' WHERE id = ? AND state IN ('waiting','landing')").run(id);
@@ -99,7 +103,8 @@ export function finishEntry(db: CoordDb, entryId: number, state: "landed" | "fai
 
 /** Marks an entry failed only while it is still waiting or landing; false when it had already finished. */
 export function failIfActive(db: CoordDb, entryId: number, result: string): boolean {
-  return db.db.query("UPDATE queue SET state = 'failed', result = ?, heartbeat = ? WHERE id = ? AND state IN ('waiting','landing')").run(result, iso(now()), entryId).changes > 0;
+  // reason: a member its leader locked in is about to be on main; giving it up now would reopen a change that lands (BR-2172, issue #42).
+  return db.db.query("UPDATE queue SET state = 'failed', result = ?, heartbeat = ? WHERE id = ? AND state IN ('waiting','landing') AND NOT (state = 'landing' AND batch IS NOT NULL)").run(result, iso(now()), entryId).changes > 0;
 }
 
 export function activeQueue(db: CoordDb): QueueEntry[] {
@@ -152,9 +157,27 @@ export function inBatch(db: CoordDb, entryId: number, leader: number): boolean {
   return r?.state === "waiting" && r.batch === leader;
 }
 
-/** Records a batched entry as landed at `sha`, its own commit on main; false when it had left the batch. */
+/**
+ * Locks the members in just before the leader moves main, all or none, in one transaction: each must still be
+ * waiting in this batch. A locked member's own signal handler no longer gives its entry up (BR-2172, issue #42).
+ */
+export function lockBatch(db: CoordDb, leader: number, members: readonly number[]): boolean {
+  const tx = db.db.transaction((): boolean => {
+    for (const id of members) if (!inBatch(db, id, leader)) return false;
+    for (const id of members) db.db.query("UPDATE queue SET state = 'landing' WHERE id = ? AND state = 'waiting' AND batch = ?").run(id, leader);
+    return true;
+  });
+  return tx.immediate();
+}
+
+/** Sends locked members back to waiting when main did not move after all (BR-2172). */
+export function unlockBatch(db: CoordDb, leader: number, members: readonly number[]): void {
+  for (const id of members) db.db.query("UPDATE queue SET state = 'waiting', batch = NULL, head = NULL WHERE id = ? AND state = 'landing' AND batch = ?").run(id, leader);
+}
+
+/** Records a locked member as landed at `sha`, its own commit on main; false when it had left the batch. */
 export function landBatched(db: CoordDb, entryId: number, sha: string): boolean {
-  return db.db.query("UPDATE queue SET state = 'landed', result = ?, heartbeat = ? WHERE id = ? AND state = 'waiting' AND batch IS NOT NULL").run(sha, iso(now()), entryId).changes > 0;
+  return db.db.query("UPDATE queue SET state = 'landed', result = ?, heartbeat = ? WHERE id = ? AND state = 'landing' AND batch IS NOT NULL").run(sha, iso(now()), entryId).changes > 0;
 }
 
 /** Whether this entry was marked to land on its own after a failed batch (BR-2173). */

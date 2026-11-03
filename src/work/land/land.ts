@@ -7,7 +7,7 @@ import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../..
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { bindToLander, keepClaim, releaseOwnClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
 import { dropHandoff } from "../session/handoffs.ts";
-import { batchCandidates, enqueue, failIfActive, finishEntry, heartbeat, holdsTurn, inBatch, isSolo, joinBatch, landBatched, leaveBatch, tryTurn } from "./queue.ts";
+import { batchCandidates, enqueue, failIfActive, finishEntry, heartbeat, holdsTurn, isSolo, joinBatch, landBatched, leaveBatch, lockBatch, tryTurn, unlockBatch } from "./queue.ts";
 import { selfProcess, sessionProcess } from "../claims/liveness.ts";
 import { logFile, runHooks, runHooksInBackground } from "../../config/hooks.ts";
 import { noticeOverlaps } from "../session/overlap.ts";
@@ -508,17 +508,19 @@ async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry:
       const now = git(l.worktree, "rev-parse", "HEAD");
       const clean = isClean(l.worktree);
       if (!now.ok || now.value !== l.joined || !clean.ok || !clean.value) return fallBack(`the worktree of ${l.subject ?? `entry ${l.entry}`} changed during the batch`);
-      if (l.entry !== t.entry && !inBatch(ws.db, l.entry, t.entry)) return fallBack(`${l.subject ?? `entry ${l.entry}`} left the batch (its lander stopped)`);
     }
+    const memberIds = links.slice(1).map((l) => l.entry);
     const turn = holdsTurn(ws.db, t.entry);
     if (!turn.held) {
       leave(0, false);
       return { kind: "lost", outcome: lostTurn(ws, t.subject, ws.root, turn.state, "before-main") };
     }
     const fingerprints = new Map(links.map((l) => [l.entry, ownDiffId(l.worktree, main)]));
+    // reason: all members are locked in at once, after the last check, so none can give its entry up while main moves (issue #42).
+    if (!lockBatch(ws.db, t.entry, memberIds)) return fallBack("a member left the batch (its lander stopped)");
     const moved = moveMain(ws, t.base, tip);
     if (moved !== "moved") {
-      leave(0, false);
+      unlockBatch(ws.db, t.entry, memberIds);
       return { kind: "refused", reason: moved.reason, message: moved.message };
     }
     // reason: members are recorded landed before the leader, so a member never sees its leader done while it is still batched (BR-2172).
