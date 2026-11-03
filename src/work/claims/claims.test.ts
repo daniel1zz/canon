@@ -4,8 +4,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
 import { isGone, processOf, selfProcess, sessionProcess, type Proc } from "./liveness.ts";
-import { claims, holdClaim, renewClaim, takeClaim, unholdClaim } from "./claims.ts";
-import { enqueue, tryTurn } from "../land/queue.ts";
+import { claims, holdClaim, keepClaim, renewClaim, takeClaim, unholdClaim } from "./claims.ts";
+import { enqueue, finishEntry, tryTurn } from "../land/queue.ts";
+import { land } from "../land/land.ts";
+import { stop } from "../session/session.ts";
+import { computeStats } from "../stats/stats.ts";
+import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { writeFileSync } from "node:fs";
 
 /** A real process that is gone by the time this returns: a pid and start time the probe will find missing. */
 async function deadProcess(): Promise<Proc> {
@@ -146,3 +151,154 @@ describe("holds while a worktree is removed", () => {
     expect(claims(d).map((c) => c.actor)).toEqual(["agent:b"]);
   });
 });
+
+const HOUR = 3600_000;
+const expiresOf = (d: CoordDb, subject: string) => d.db.query<{ expires_at: string }, [string]>("SELECT expires_at FROM claims WHERE subject = ?").get(subject)?.expires_at;
+/** Moves a claim's lease by `ms`, standing in for time passing since it was taken or renewed. */
+const shift = (d: CoordDb, subject: string, ms: number) =>
+  d.db.query("UPDATE claims SET expires_at = ? WHERE subject = ?").run(new Date(new Date(expiresOf(d, subject)!).getTime() + ms).toISOString(), subject);
+
+describe("the lease", () => {
+  test("BR-2011: a refused start does not renew the lease, the holder's own start included", () => {
+    const d = db();
+    expect(takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * HOUR).ok).toBe(true);
+    shift(d, "C-1", -HOUR);
+    const before = expiresOf(d, "C-1");
+    expect(takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * HOUR).ok).toBe(false);
+    expect(takeClaim(d, "C-1", "/wt/C-2", "agent:b", 12 * HOUR).ok).toBe(false);
+    expect(expiresOf(d, "C-1")).toBe(before);
+  });
+
+  test("BR-2011: a lease that expired is taken over; one renewed by a stop 3 hours ago still has 9 hours and refuses", () => {
+    const d = db();
+    takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * HOUR);
+    shift(d, "C-1", -13 * HOUR); // taken 13 hours ago, never renewed
+    expect(takeClaim(d, "C-1", "/wt/C-1", "agent:b", 12 * HOUR).ok).toBe(true);
+    takeClaim(d, "C-2", "/wt/C-2", "agent:a", 12 * HOUR);
+    shift(d, "C-2", -10 * HOUR); // taken 13 hours ago ...
+    expect(renewClaim(d, "/wt/C-2", "agent:a", 12 * HOUR).ok).toBe(true); // ... and a `canon work stop` renews it from now
+    shift(d, "C-2", -3 * HOUR); // that stop was 3 hours ago
+    const left = new Date(expiresOf(d, "C-2")!).getTime() - Date.now();
+    expect(Math.abs(left - 9 * HOUR)).toBeLessThan(60_000);
+    expect(takeClaim(d, "C-2", "/wt/C-2", "agent:b", 12 * HOUR).ok).toBe(false);
+  });
+
+  test("BR-2011: with claim_lease_hours: 1 a claim taken two hours ago and not renewed is taken over", () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\nclaim_lease_hours: 1\n");
+    sh(root, "commit", "-qam", "short lease");
+    const s = startNew(root, "Short lease");
+    const d = ws(root).db;
+    expect(Math.abs(new Date(expiresOf(d, s.change)!).getTime() - Date.now() - HOUR)).toBeLessThan(60_000);
+    shift(d, s.change, -2 * HOUR);
+    const b = ws(root, "agent:b");
+    expect(takeClaim(b.db, s.change, s.worktree, "agent:b", b.config.claimLeaseMs).ok).toBe(true);
+    expect(claims(d).map((c) => c.actor)).toEqual(["agent:b"]);
+  });
+
+  test("BR-2100: the holder renewing outside Claude Code keeps the process the claim names; another actor taking it over records none", () => {
+    const d = db();
+    const me = selfProcess()!;
+    takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * HOUR, me);
+    const pid = () => d.db.query<{ pid: number | null }, []>("SELECT pid FROM claims WHERE subject = 'C-1'").get()?.pid;
+    expect(renewClaim(d, "/wt/C-1", "agent:a", 12 * HOUR, undefined).ok).toBe(true);
+    expect(pid()).toBe(me.pid);
+    shift(d, "C-1", -13 * HOUR);
+    expect(renewClaim(d, "/wt/C-1", "agent:b", 12 * HOUR, undefined).ok).toBe(true);
+    expect(pid()).toBeNull();
+  });
+});
+
+describe("only the holder works in its worktree", () => {
+  test("BR-2104: another actor's stop and land in the holder's worktree write claim.refuse, counted by canon stats as the claim check, not as a landing refusal", async () => {
+    const root = project();
+    const s = startNew(root, "Held");
+    const b = ws(s.worktree, "agent:b");
+    expect(stop(b, "x", undefined, false).ok).toBe(false);
+    expect((await land(ws(s.worktree, "agent:b"), FAST, quiet)).kind).toBe("refused");
+    const d = ws(root).db;
+    const kinds = d.db.query<{ kind: string }, []>("SELECT kind FROM events WHERE kind IN ('claim.refuse','land.refuse') ORDER BY id").all().map((e) => e.kind);
+    expect(kinds).toEqual(["claim.refuse", "claim.refuse"]);
+    const claim = computeStats(d, {}, "2026-01-01").find((c) => c.check === "claim");
+    expect(claim?.refused).toBe(2);
+  });
+
+  test("BR-2108: once agent:b has taken the claim over, the lander's renewal leaves agent:b's claim as it is", () => {
+    const d = db();
+    takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * HOUR);
+    shift(d, "C-1", -13 * HOUR);
+    expect(takeClaim(d, "C-1", "/wt/C-1", "agent:b", 12 * HOUR).ok).toBe(true);
+    const row = () => d.db.query("SELECT holder, worktree, expires_at, pid, pid_start, version FROM claims").all();
+    const before = row();
+    keepClaim(d, "/wt/C-1", "agent:a", 12 * HOUR);
+    expect(row()).toEqual(before);
+  });
+});
+
+describe("the claim names the session again when a landing ends", () => {
+  const pidOf = (root: string, change: string) => ws(root).db.db.query<{ pid: number | null }, [string]>("SELECT pid FROM claims WHERE subject = ?").get(change)?.pid;
+  const CLI = join(import.meta.dir, "../../cli/main.ts");
+
+  /** A change whose claim names a live stand-in session process, outside Claude Code (so land keeps that process, BR-2100). */
+  async function withSession(body: (root: string, s: { change: string; worktree: string }, session: number) => Promise<void>, config?: string) {
+    const saved = process.env["CLAUDECODE"];
+    delete process.env["CLAUDECODE"];
+    const session = Bun.spawn(["sleep", "60"]);
+    try {
+      const root = project();
+      if (config) {
+        writeFileSync(join(root, "canon/config.yaml"), config);
+        sh(root, "commit", "-qam", "config");
+      }
+      const s = startNew(root, "Session");
+      const p = processOf(session.pid)!;
+      ws(root).db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(p.pid, p.start, s.change);
+      await body(root, s, session.pid);
+    } finally {
+      session.kill();
+      if (saved === undefined) delete process.env["CLAUDECODE"];
+      else process.env["CLAUDECODE"] = saved;
+    }
+  }
+
+  test("BR-2142: a refused landing names the session process again", async () => {
+    await withSession(async (root, s, session) => {
+      writeFileSync(join(s.worktree, "FAIL"), "x\n");
+      sh(s.worktree, "add", "FAIL");
+      sh(s.worktree, "commit", "-qm", "fail the floor");
+      expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("refused");
+      expect(pidOf(root, s.change)).toBe(session);
+    });
+  });
+
+  test("BR-2142: a landing that times out in the queue names the session process again", async () => {
+    await withSession(async (root, s, session) => {
+      const other = ws(root, "agent:b");
+      const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b", selfProcess());
+      expect(tryTurn(other.db, ahead).mine).toBe(true);
+      const r = await land(ws(s.worktree), { ...FAST, timeoutMs: 800 }, quiet);
+      expect(r.kind).toBe("timeout");
+      expect(pidOf(root, s.change)).toBe(session);
+      finishEntry(other.db, ahead, "landed", "x");
+    });
+  });
+
+  for (const [signal, code] of [["SIGTERM", 143], ["SIGINT", 130]] as const) {
+    test(`BR-2142: a landing interrupted by ${signal} names the session process again`, async () => {
+      await withSession(
+        async (root, s, session) => {
+          const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: "agent:a" };
+          delete env["CLAUDECODE"];
+          const lander = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env });
+          for (let i = 0; i < 300 && pidOf(root, s.change) !== lander.pid; i++) await Bun.sleep(50);
+          expect(pidOf(root, s.change)).toBe(lander.pid);
+          lander.kill(signal);
+          expect(await lander.exited).toBe(code);
+          expect(pidOf(root, s.change)).toBe(session);
+        },
+        'floor: "sleep 30"\ntests: []\n',
+      );
+    }, 30_000);
+  }
+});
+
