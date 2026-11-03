@@ -534,7 +534,11 @@ async function run(): Promise<void> {
   if (raw.includes("--help") || raw.includes("-h")) {
     // reason: printed with console.log, not citty's runMain: consola is silent under a test runner, so help could not be tested.
     // Its backticks are markup consola would have turned into colour.
-    console.log(`${(await renderUsage(at.cmd, at.before.at(-1)?.cmd)).replaceAll("`", "")}\n`);
+    // reason: citty names a command without meta.name after process.argv[1], which is "/$bunfs/root/canon" in the compiled
+    // binary and the script path under bun; give it the words that named the command instead (BR-2101).
+    const leaf = { ...at.cmd, meta: { ...((at.cmd.meta ?? {}) as object), name: at.path.at(-1) ?? "canon" } };
+    const parent = at.path.length > 0 ? { meta: { name: ["canon", ...at.path.slice(0, -1)].join(" ") } } : undefined;
+    console.log(`${(await renderUsage(leaf, parent)).replaceAll("`", "")}\n`);
     return;
   }
   // Before anything runs: an argument the command does not declare is a usage error, never ignored (BR-2097).

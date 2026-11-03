@@ -154,6 +154,19 @@ describe("undeclared arguments", () => {
   });
 });
 
+describe("help", () => {
+  test("BR-2101: help names the command by canon and the words that named it, never by the executable's path", () => {
+    const root = repo();
+    const sub = canon(root, "rule", "--help");
+    expect(sub.code).toBe(0);
+    expect(sub.out).toContain("USAGE canon rule new|list|retire|domain|domains");
+    expect(sub.out).toContain("Use canon rule <command> --help");
+    expect(sub.out).not.toContain("main.ts");
+    expect(canon(root, "rule", "new", "--help").out).toContain("USAGE canon rule new [OPTIONS]");
+    expect(canon(root, "--help").out).toContain("USAGE canon init|");
+  });
+});
+
 describe("project and documents", () => {
   test("BR-2032 BR-2076: init lays out canon/ with the floor, never overwrites, and warns without a floor", () => {
     const root = repo();
