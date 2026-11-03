@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { CoordDb } from "../../work/db.ts";
 import { readCorpus } from "../documents/read.ts";
-import { check } from "./check.ts";
+import { check, findTestFiles } from "./check.ts";
 import { verify } from "./sources.ts";
 
 // Fixture ids are assembled at runtime. Since only test titles name rules (BR-2005), ids in fixture strings would not count anyway.
@@ -404,6 +404,24 @@ describe("backticked repository paths", () => {
     expect(at({ "canon/changes/C-1.md": change("open") })).toEqual(["canon/changes/C-1.md: src/old.ts"]); // the planned src/work/remote is not reported
     expect(at({ "canon/changes/C-1.md": change("done") })).toEqual([]);
     expect(at({ "canon/notes/N-1.md": `---\nid: ${["N", 1].join("-")}\ntitle: X\n---\nWas \`src/old.ts\`.\n` })).toEqual([]);
+  });
+
+  test("BR-2186: symbolic links are not followed, so dangling links and loops do not crash check", () => {
+    const root = moved({
+      "CLAUDE.md": "See `src/dangling` and `link.ts`.\n",
+      "canon/rules/billing/README.md": domainReadme,
+      [`canon/rules/billing/${br(1)}.md`]: ruleFile(1),
+      "src/r.test.ts": `test("${br(1)}", () => {});`,
+    });
+    symlinkSync("nowhere", join(root, "src/dangling"));
+    symlinkSync("nowhere", join(root, "dangling-top"));
+    symlinkSync(".", join(root, "src/loop"));
+    symlinkSync("r.test.ts", join(root, "src/l.test.ts"));
+    symlinkSync("src/r.test.ts", join(root, "link.ts"));
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "links");
+    expect(findTestFiles(root)).toEqual(["src/r.test.ts"]);
+    expect(check({ root, ...readCorpus(root) }).map((f) => `${f.rule} ${f.path}`)).toEqual([]);
   });
 
   test("BR-2171: a candidate path outside a git repository is reported as unreadable history", () => {

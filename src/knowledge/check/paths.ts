@@ -1,4 +1,4 @@
-import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import type { Corpus } from "../documents/model.ts";
 import { git } from "../../kernel/git.ts";
@@ -63,22 +63,35 @@ export function asRepoPath(span: string, topDirs: ReadonlySet<string>): string |
   return EXT.test(p) ? p : undefined;
 }
 
+// reason: symbolic links are never followed: a link counts as a file under its own name, so a dangling link or a
+// loop cannot crash check (BR-2186)
 function topDirs(root: string): Set<string> {
-  return new Set(readdirSync(root).filter((n) => !SKIP_DIRS.has(n) && statSync(join(root, n)).isDirectory()));
+  return new Set(readdirSync(root, { withFileTypes: true }).filter((e) => !SKIP_DIRS.has(e.name) && e.isDirectory()).map((e) => e.name));
 }
 
 function fileNames(root: string): Set<string> {
   const out = new Set<string>();
   const walk = (dir: string) => {
-    for (const name of readdirSync(dir)) {
-      if (SKIP_DIRS.has(name)) continue;
-      const full = join(dir, name);
-      if (statSync(full).isDirectory()) walk(full);
-      else out.add(name);
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      if (entry.isDirectory()) walk(join(dir, entry.name));
+      else out.add(entry.name);
     }
   };
   walk(root);
   return out;
+}
+
+/** The path itself is there, even when it is a symbolic link whose target is not (BR-2186). */
+function present(full: string): boolean {
+  try {
+    lstatSync(full);
+    return true;
+  } catch (e) {
+    const code = (e as NodeJS.ErrnoException).code;
+    if (code === "ENOENT" || code === "ENOTDIR" || code === "ELOOP") return false;
+    throw e;
+  }
 }
 
 export function pathFindings(root: string, corpus: Corpus): PathFinding[] {
@@ -90,7 +103,7 @@ export function pathFindings(root: string, corpus: Corpus): PathFinding[] {
     for (const m of prose.matchAll(/`([^`\n]+)`/g)) {
       const p = asRepoPath(m[1]!, tops);
       if (p === undefined) continue;
-      const gone = p.includes("/") ? !existsSync(join(root, p)) : !(names ??= fileNames(root)).has(p);
+      const gone = p.includes("/") ? !present(join(root, p)) : !(names ??= fileNames(root)).has(p);
       if (gone && !missing.some((x) => x.doc === path && x.path === p)) missing.push({ doc: path, path: p });
     }
   }

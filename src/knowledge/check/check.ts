@@ -231,11 +231,12 @@ const SKIP_DIRS = new Set(["node_modules", ".git", "canon", "dist", ".cache"]);
 export function findTestFiles(root: string): string[] {
   const out: string[] = [];
   const walk = (dir: string) => {
-    for (const name of readdirSync(dir)) {
-      if (SKIP_DIRS.has(name)) continue;
-      const full = join(dir, name);
-      if (statSync(full).isDirectory()) walk(full);
-      else if (/\.(test|spec)\.[cm]?[jt]sx?$/.test(name)) out.push(relative(root, full));
+    // reason: a symbolic link is never followed or read, so a dangling link or a loop cannot crash check (BR-2186)
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      if (SKIP_DIRS.has(entry.name)) continue;
+      const full = join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (entry.isFile() && /\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.name)) out.push(relative(root, full));
     }
   };
   walk(root);
