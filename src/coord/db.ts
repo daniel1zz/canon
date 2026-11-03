@@ -60,7 +60,14 @@ CREATE TABLE IF NOT EXISTS events (
 `;
 
 /** Columns added after the first schema, as `table`, `column definition`. */
-const ADDED_COLUMNS: readonly (readonly [string, string])[] = [["questions", "relayed TEXT"]];
+const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
+  ["questions", "relayed TEXT"],
+  // The process behind a claim (its Claude Code session) and behind a queue entry (the lander), by pid and start time (D-11).
+  ["claims", "pid INTEGER"],
+  ["claims", "pid_start TEXT"],
+  ["queue", "pid INTEGER"],
+  ["queue", "pid_start TEXT"],
+];
 
 /**
  * Brings an older DB up to the current schema (BR-2078). SQLite has no ADD COLUMN IF NOT EXISTS, and checking

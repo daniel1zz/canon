@@ -4,7 +4,8 @@ import { dirname, join } from "node:path";
 import type { Workspace } from "../app/workspace.ts";
 import { check, type Finding } from "../check/check.ts";
 import { testFilesFor } from "../check/tests.ts";
-import { claimOfWorktree, dropHandoff, enqueue, finishEntry, heartbeat, releaseClaim, renewClaim, takeClaim, tryTurn, writeHandoff } from "../coord/state.ts";
+import { claimOfWorktree, dropHandoff, enqueue, failIfActive, finishEntry, heartbeat, releaseClaim, renewClaim, takeClaim, tryTurn, writeHandoff } from "../coord/state.ts";
+import { selfProcess, sessionProcess } from "../coord/liveness.ts";
 import { logFile, runHooks, runHooksInBackground, runHooksSync } from "../hooks/hooks.ts";
 import { noticeOverlaps } from "./overlap.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -70,7 +71,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   const branch = (slug ? `change/${changeId}-${slug}` : `change/${changeId}`).slice(0, 80);
   const path = join(worktreesDir(ws), changeId);
 
-  const claim = takeClaim(ws.db, changeId, path, ws.actor, ws.config.claimLeaseMs);
+  const claim = takeClaim(ws.db, changeId, path, ws.actor, ws.config.claimLeaseMs, sessionProcess());
   if (!claim.ok) return claim;
 
   let created = false;
@@ -162,7 +163,7 @@ export type LandOutcome =
 export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<LandOutcome> {
   const wt = ws.root;
   const main = ws.config.main;
-  const claim = renewClaim(ws.db, wt, ws.actor, ws.config.claimLeaseMs);
+  const claim = renewClaim(ws.db, wt, ws.actor, ws.config.claimLeaseMs, sessionProcess());
   const subject = claim?.subject ?? null;
   // Every refusal, early or late, is recorded with its reason so a check's precision can be measured (P6, BR-2026).
   const early = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], message: string): LandOutcome => {
@@ -192,7 +193,42 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
 
   // Same-file overlap with other changes in flight: a notice only, never a refusal (BR-2062).
   noticeOverlaps(ws, wt, subject, "land", say);
-  const entry = enqueue(ws.db, wt, subject, ws.actor);
+  const entry = enqueue(ws.db, wt, subject, ws.actor, selfProcess());
+  const running: Running = {};
+  // A lander killed by a signal (a tool timeout, Ctrl-C) gives its turn up at once and leaves no rebase half done (BR-2099).
+  const onSignal = (signal: NodeJS.Signals) => {
+    running.floor?.kill();
+    const aborted = rebaseInProgress(wt) && git(wt, "rebase", "--abort").ok;
+    // A signal after main moved leaves the landed entry as it is: the landing happened.
+    if (failIfActive(ws.db, entry, "killed")) ws.db.event(ws.actor, "land.refuse", subject, { reason: "killed", signal, rebaseAborted: aborted });
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.on("SIGTERM", onSignal);
+  process.on("SIGINT", onSignal);
+  try {
+    return await queueAndLand(ws, opts, say, { entry, subject, branch: branch.value, running });
+  } finally {
+    process.off("SIGTERM", onSignal);
+    process.off("SIGINT", onSignal);
+  }
+}
+
+/** What a signal handler must stop: the floor while it runs. */
+interface Running {
+  floor?: { kill(): void } | undefined;
+}
+
+function rebaseInProgress(wt: string): boolean {
+  return ["rebase-merge", "rebase-apply"].some((d) => {
+    const p = git(wt, "rev-parse", "--path-format=absolute", "--git-path", d);
+    return p.ok && existsSync(p.value);
+  });
+}
+
+async function queueAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running }): Promise<LandOutcome> {
+  const wt = ws.root;
+  const main = ws.config.main;
+  const { entry, subject } = t;
   const deadline = Date.now() + opts.timeoutMs;
   let lastAhead = -1;
   for (;;) {
@@ -212,7 +248,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   // the review and before_land, so a slow step never makes a later lander think this one died (BR-2049).
   const beat = setInterval(() => heartbeat(ws.db, entry), Math.min(30_000, Math.max(50, ws.config.landerStaleMs / 3)));
   try {
-    return await landTurn(ws, opts, say, { entry, subject, branch: branch.value });
+    return await landTurn(ws, opts, say, t);
   } finally {
     clearInterval(beat);
   }
@@ -225,7 +261,7 @@ export function findingDetail(findings: readonly Finding[]): { findings: Record<
   return { findings: kinds, paths: [...new Set(findings.map((f) => f.path))].sort().slice(0, 50) };
 }
 
-async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string }): Promise<LandOutcome> {
+async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running }): Promise<LandOutcome> {
   const wt = ws.root;
   const main = ws.config.main;
   const { entry, subject } = t;
@@ -240,6 +276,8 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   say(`rebase onto ${main} ${base.value.slice(0, 9)}`);
   const reb = git(wt, "rebase", "-q", base.value);
   if (!reb.ok) {
+    // reason: a signal that killed the rebase is handled on the next tick (BR-2099); let it run before calling this a conflict.
+    await Bun.sleep(0);
     const files = git(wt, "diff", "--name-only", "--diff-filter=U");
     git(wt, "rebase", "--abort");
     return refuse("conflict", `rebase onto ${main} conflicts in: ${files.ok ? files.value.split("\n").join(", ") : "?"}\nResolve with \`git rebase ${main}\` in ${wt}, then land again.`);
@@ -250,7 +288,9 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   mkdirSync(dirname(logPath), { recursive: true });
   const fd = openSync(logPath, "w");
   const proc = Bun.spawn(["sh", "-c", ws.config.floor!], { cwd: wt, stdout: fd, stderr: fd });
+  t.running.floor = proc;
   const code = await proc.exited;
+  t.running.floor = undefined;
   closeSync(fd);
   if (code !== 0) {
     const tail = readFileSync(logPath, "utf8").split("\n").slice(-40).join("\n");
@@ -354,7 +394,7 @@ function moveMain(ws: Workspace, expected: string, next: string): "moved" | { re
 
 /** Records where the change stands so the next session can continue without a human re-briefing (P3). */
 export function stop(ws: Workspace, next: string, note: string | undefined, release: boolean, say: Say = () => {}): Result<string> {
-  const claim = release ? claimOfWorktree(ws.db, ws.root) : renewClaim(ws.db, ws.root, ws.actor, ws.config.claimLeaseMs);
+  const claim = release ? claimOfWorktree(ws.db, ws.root) : renewClaim(ws.db, ws.root, ws.actor, ws.config.claimLeaseMs, sessionProcess());
   if (!claim) return err("not_found", "this worktree holds no change; nothing to hand off");
   writeHandoff(ws.db, { subject: claim.subject, worktree: ws.root, actor: ws.actor, next, note: note ?? null });
   if (release) releaseClaim(ws.db, claim.subject, ws.actor);

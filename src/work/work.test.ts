@@ -521,6 +521,58 @@ describe("boundaries record and clean up", () => {
   });
 });
 
+describe("a lander killed by a signal", () => {
+  const CLI = join(import.meta.dir, "../cli/main.ts");
+  const entryOf = (root: string) => ws(root).db.db.query<{ id: number; state: string; result: string | null }, []>("SELECT id, state, result FROM queue ORDER BY id DESC LIMIT 1").get();
+  const until = async (what: () => boolean) => {
+    for (let i = 0; i < 200 && !what(); i++) await Bun.sleep(50);
+    expect(what()).toBe(true);
+  };
+
+  test("BR-2099: SIGTERM while the floor runs fails the entry as killed, records it, exits 143, and the next lander goes at once", async () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), "floor: \"sleep 30\"\ntests: []\n");
+    sh(root, "commit", "-qam", "slow floor");
+    const s = startNew(root, "Killed");
+    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const logs = join(sh(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "canon/logs");
+    await until(() => entryOf(root)?.state === "landing" && existsSync(join(logs, `land-${entryOf(root)!.id}.log`))); // the floor runs
+    p.kill("SIGTERM");
+    expect(await p.exited).toBe(143);
+    expect(entryOf(root)).toMatchObject({ state: "failed", result: "killed" });
+    const refused = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'land.refuse'").all().map((e) => JSON.parse(e.detail).reason);
+    expect(refused).toEqual(["killed"]);
+    const other = ws(root, "agent:b");
+    const b = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
+    expect(tryTurn(other.db, b).mine).toBe(true);
+  });
+
+  test("BR-2099: a process group killed in the middle of the rebase leaves the worktree on its own commits, not mid-rebase", async () => {
+    const root = project();
+    const s = startNew(root, "Killed mid-rebase");
+    writeFileSync(join(s.worktree, "mine.txt"), "mine\n");
+    sh(s.worktree, "add", "mine.txt");
+    sh(s.worktree, "commit", "-qm", "mine");
+    const before = sh(s.worktree, "rev-parse", "HEAD");
+    writeFileSync(join(root, "theirs.txt"), "theirs\n");
+    sh(root, "add", "theirs.txt");
+    sh(root, "commit", "-qm", "main moved"); // so the rebase has work to do
+    const hooks = join(sh(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "hooks");
+    mkdirSync(hooks, { recursive: true });
+    const marker = join(root, "..", `${root.split("/").pop()}-in-rebase`);
+    writeFileSync(join(hooks, "post-checkout"), `#!/bin/sh\ntouch ${marker}\nsleep 30\n`, { mode: 0o755 });
+    // reason: a new process group, so the signal reaches git and the hook too, as a tool timeout's would.
+    const p = Bun.spawn(["perl", "-e", "setpgrp(0,0); exec @ARGV", "bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    await until(() => existsSync(marker));
+    process.kill(-p.pid, "SIGTERM");
+    expect(await p.exited).toBe(143);
+    expect(existsSync(join(sh(s.worktree, "rev-parse", "--path-format=absolute", "--git-path", "rebase-merge")))).toBe(false);
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(before);
+    expect(sh(s.worktree, "status", "--porcelain")).toBe("");
+    expect(entryOf(root)).toMatchObject({ state: "failed", result: "killed" });
+  });
+});
+
 describe("same-file overlap", () => {
   const commitFile = (wt: string, file: string, text: string) => {
     writeFileSync(join(wt, file), text);

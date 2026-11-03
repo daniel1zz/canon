@@ -4,7 +4,18 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { addColumns, CoordDb } from "./db.ts";
-import { answer, ask, enqueue, finishEntry, questions, QUEUE_STALE_MS, tryTurn } from "./state.ts";
+import { processOf, selfProcess, sessionProcess, type Proc } from "./liveness.ts";
+import { answer, ask, claims, enqueue, finishEntry, questions, QUEUE_STALE_MS, renewClaim, takeClaim, tryTurn } from "./state.ts";
+
+/** A real process that is gone by the time this returns: a pid and start time the probe will find missing. */
+async function deadProcess(): Promise<Proc> {
+  const p = Bun.spawn(["sleep", "30"]);
+  const proc = processOf(p.pid);
+  if (!proc) throw new Error("no start time for a live child");
+  p.kill("SIGKILL");
+  await p.exited;
+  return proc;
+}
 
 function db(): CoordDb {
   const r = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-next-state-")), "state.db"));
@@ -97,5 +108,68 @@ describe("schema upgrades", () => {
     expect(cols.filter((c) => c === "relayed")).toEqual(["relayed"]);
     expect(questions(b.value, "all").map((q) => q.question)).toEqual(["Old question?"]);
     expect(() => addColumns(a.value.db)).not.toThrow();
+  });
+});
+
+describe("process liveness", () => {
+  test("BR-2098: an entry ahead whose lander process is gone is abandoned at once, though its heartbeat is fresh", async () => {
+    const d = db();
+    const a = enqueue(d, "/wt/a", "C-1", "x", await deadProcess());
+    const b = enqueue(d, "/wt/b", "C-2", "x", selfProcess());
+    expect(tryTurn(d, b)).toEqual({ mine: true, ahead: 0 });
+    expect(d.db.query<{ state: string }, [number]>("SELECT state FROM queue WHERE id = ?").get(a)?.state).toBe("abandoned");
+  });
+
+  test("BR-2098: a lander whose process runs is waited for; a reused pid with another start time is not", async () => {
+    const d = db();
+    const live = enqueue(d, "/wt/a", "C-1", "x", selfProcess());
+    const b = enqueue(d, "/wt/b", "C-2", "x", selfProcess());
+    expect(tryTurn(d, live).mine).toBe(true);
+    expect(tryTurn(d, b)).toEqual({ mine: false, ahead: 1 });
+    d.db.query("UPDATE queue SET pid_start = ? WHERE id = ?").run("Thu Jan  1 00:00:00 1970", live);
+    expect(tryTurn(d, b)).toEqual({ mine: true, ahead: 0 });
+  });
+
+  test("BR-2098: an entry without a recorded process is judged by its heartbeat alone", () => {
+    const d = db();
+    const a = enqueue(d, "/wt/a", "C-1", "x");
+    const b = enqueue(d, "/wt/b", "C-2", "x");
+    expect(tryTurn(d, a).mine).toBe(true);
+    expect(tryTurn(d, b)).toEqual({ mine: false, ahead: 1 });
+  });
+
+  test("BR-2100: a live claim whose session process is gone is taken over by another actor at once", async () => {
+    const d = db();
+    expect(takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * 3600_000, await deadProcess()).ok).toBe(true);
+    const b = takeClaim(d, "C-1", "/wt/C-1", "agent:b", 12 * 3600_000, selfProcess());
+    expect(b.ok).toBe(true);
+    expect(claims(d).map((c) => c.actor)).toEqual(["agent:b"]);
+  });
+
+  test("BR-2100: a claim whose session process runs, or that recorded none, holds for its lease", () => {
+    const d = db();
+    takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * 3600_000, selfProcess());
+    takeClaim(d, "C-2", "/wt/C-2", "agent:a");
+    expect(takeClaim(d, "C-1", "/wt/C-1", "agent:b").ok).toBe(false);
+    expect(takeClaim(d, "C-2", "/wt/C-2", "agent:b").ok).toBe(false);
+  });
+
+  test("BR-2100: the holder's later work commands move the claim to its current session process", async () => {
+    const d = db();
+    takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * 3600_000, await deadProcess());
+    renewClaim(d, "/wt/C-1", "agent:a", 12 * 3600_000, selfProcess()); // the session was resumed under a new process
+    expect(takeClaim(d, "C-1", "/wt/C-1", "agent:b").ok).toBe(false);
+  });
+
+  test("BR-2100: CLAUDE_PID is believed only inside Claude Code and only when it is an ancestor of this process", () => {
+    const parent = process.ppid;
+    expect(sessionProcess({ CLAUDECODE: "1", CLAUDE_PID: String(parent) })?.pid).toBe(parent);
+    expect(sessionProcess({ CLAUDE_PID: String(parent) })).toBeUndefined();
+    const child = Bun.spawn(["sleep", "5"]);
+    try {
+      expect(sessionProcess({ CLAUDECODE: "1", CLAUDE_PID: String(child.pid) })).toBeUndefined(); // alive, but not an ancestor
+    } finally {
+      child.kill();
+    }
   });
 });

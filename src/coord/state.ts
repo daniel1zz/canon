@@ -1,5 +1,6 @@
 import { err, ok, type Result } from "../kernel/result.ts";
 import type { CoordDb } from "./db.ts";
+import { isGone, type Proc } from "./liveness.ts";
 
 /**
  * Live coordination operations (design §2). Each is one transaction on the shared DB, so two sessions
@@ -24,10 +25,15 @@ export interface Claim {
  * Refused while another worktree or another actor holds a live lease (BR-2011): every session starting a change
  * gets the same worktree path, so the path alone never tells two sessions apart. An expired lease can be taken over.
  */
-export function takeClaim(db: CoordDb, subject: string, holder: string, actor: string, leaseMs = CLAIM_LEASE_MS): Result<Claim> {
+export function takeClaim(db: CoordDb, subject: string, holder: string, actor: string, leaseMs = CLAIM_LEASE_MS, owner?: Proc): Result<Claim> {
   const tx = db.db.transaction((): Result<Claim> => {
-    const cur = db.db.query<{ holder: string; expires_at: string; worktree: string | null }, [string]>("SELECT holder, expires_at, worktree FROM claims WHERE subject = ?").get(subject);
-    if (cur && (cur.worktree !== holder || cur.holder !== actor) && new Date(cur.expires_at) > now()) {
+    const cur = db.db
+      .query<{ holder: string; expires_at: string; worktree: string | null; pid: number | null; pid_start: string | null }, [string]>("SELECT holder, expires_at, worktree, pid, pid_start FROM claims WHERE subject = ?")
+      .get(subject);
+    const other = cur !== null && (cur.worktree !== holder || cur.holder !== actor);
+    // A live lease whose session process is provably gone frees at once (D-11); an unreadable process table keeps the lease.
+    const gone = other && cur.pid !== null && cur.pid_start !== null && isGone({ pid: cur.pid, start: cur.pid_start }) === true;
+    if (other && !gone && new Date(cur.expires_at) > now()) {
       db.event(actor, "claim.refuse", subject, { reason: "held", by: cur.worktree, actor: cur.holder, until: cur.expires_at });
       return err(
         "conflict",
@@ -36,9 +42,11 @@ export function takeClaim(db: CoordDb, subject: string, holder: string, actor: s
     }
     const expires = iso(new Date(now().getTime() + leaseMs));
     db.db
-      .query("INSERT INTO claims(subject, holder, worktree, expires_at) VALUES (?, ?, ?, ?) ON CONFLICT(subject) DO UPDATE SET holder = excluded.holder, worktree = excluded.worktree, expires_at = excluded.expires_at, version = version + 1")
-      .run(subject, actor, holder, expires);
-    db.event(actor, cur ? "claim.renew" : "claim.take", subject, { worktree: holder });
+      .query(
+        "INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(subject) DO UPDATE SET holder = excluded.holder, worktree = excluded.worktree, expires_at = excluded.expires_at, pid = excluded.pid, pid_start = excluded.pid_start, version = version + 1",
+      )
+      .run(subject, actor, holder, expires, owner?.pid ?? null, owner?.start ?? null);
+    db.event(actor, cur && !other ? "claim.renew" : "claim.take", subject, { worktree: holder, ...(gone ? { from: cur.holder, reason: "holder-process-gone" } : {}) });
     return ok({ subject, holder, actor, expires_at: expires });
   });
   return tx.immediate();
@@ -49,12 +57,14 @@ export function takeClaim(db: CoordDb, subject: string, holder: string, actor: s
  * so a session working longer than one lease is never taken over. Returns the claim, or undefined when the
  * worktree holds none (it may have been taken over after expiring).
  */
-export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs = CLAIM_LEASE_MS): Claim | undefined {
+export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs = CLAIM_LEASE_MS, owner?: Proc): Claim | undefined {
   const tx = db.db.transaction((): Claim | undefined => {
     const cur = claimOfWorktree(db, worktree);
     if (!cur) return undefined;
     const expires = iso(new Date(now().getTime() + leaseMs));
     db.db.query("UPDATE claims SET expires_at = ?, version = version + 1 WHERE subject = ? AND worktree = ?").run(expires, cur.subject, worktree);
+    // The holder's own session may run under a new process now (a resumed session): follow it, so the claim is not freed under it.
+    if (owner && cur.actor === actor) db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(owner.pid, owner.start, cur.subject);
     return { ...cur, expires_at: expires };
   });
   return tx.immediate();
@@ -87,16 +97,27 @@ export interface QueueEntry {
   readonly heartbeat: string;
 }
 
-export function enqueue(db: CoordDb, worktree: string, subject: string | null, actor: string): number {
+/** `lander` is the landing process itself, so a waiter can see at once that it died (D-11). */
+export function enqueue(db: CoordDb, worktree: string, subject: string | null, actor: string, lander?: Proc): number {
   const t = iso(now());
-  const r = db.db.query("INSERT INTO queue(worktree, subject, state, enqueued_at, heartbeat) VALUES (?, ?, 'waiting', ?, ?)").run(worktree, subject, t, t);
+  const r = db.db
+    .query("INSERT INTO queue(worktree, subject, state, enqueued_at, heartbeat, pid, pid_start) VALUES (?, ?, 'waiting', ?, ?, ?, ?)")
+    .run(worktree, subject, t, t, lander?.pid ?? null, lander?.start ?? null);
   db.event(actor, "queue.enter", subject, { worktree });
   return Number(r.lastInsertRowid);
 }
 
-/** Becomes the lander if every earlier entry is finished or stale. Returns the entries still ahead otherwise. */
+/**
+ * Becomes the lander if every earlier entry is finished, stale, or held by a process that is gone. Returns the
+ * entries still ahead otherwise. The process probe runs before the transaction so it never holds the write lock.
+ */
 export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS): { readonly mine: boolean; readonly ahead: number } {
+  const ahead = db.db
+    .query<{ id: number; pid: number; pid_start: string }, [number]>("SELECT id, pid, pid_start FROM queue WHERE id < ? AND state IN ('waiting','landing') AND pid IS NOT NULL AND pid_start IS NOT NULL")
+    .all(entryId);
+  const dead = ahead.filter((e) => isGone({ pid: e.pid, start: e.pid_start }) === true).map((e) => e.id);
   const tx = db.db.transaction(() => {
+    for (const id of dead) db.db.query("UPDATE queue SET state = 'abandoned', result = 'lander process gone' WHERE id = ? AND state IN ('waiting','landing')").run(id);
     const stale = iso(new Date(now().getTime() - staleMs));
     db.db.query("UPDATE queue SET state = 'abandoned' WHERE state IN ('waiting','landing') AND heartbeat < ? AND id != ?").run(stale, entryId);
     db.db.query("UPDATE queue SET heartbeat = ? WHERE id = ?").run(iso(now()), entryId);
@@ -113,6 +134,11 @@ export function heartbeat(db: CoordDb, entryId: number): void {
 
 export function finishEntry(db: CoordDb, entryId: number, state: "landed" | "failed", result: string): void {
   db.db.query("UPDATE queue SET state = ?, result = ?, heartbeat = ? WHERE id = ?").run(state, result, iso(now()), entryId);
+}
+
+/** Marks an entry failed only while it is still waiting or landing; false when it had already finished. */
+export function failIfActive(db: CoordDb, entryId: number, result: string): boolean {
+  return db.db.query("UPDATE queue SET state = 'failed', result = ?, heartbeat = ? WHERE id = ? AND state IN ('waiting','landing')").run(result, iso(now()), entryId).changes > 0;
 }
 
 export function activeQueue(db: CoordDb): QueueEntry[] {
