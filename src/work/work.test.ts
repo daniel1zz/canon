@@ -682,7 +682,7 @@ describe("the claim during a landing", () => {
     expect((await landing).kind).toBe("landed");
   });
 
-  test("BR-2108: --finish leaves alone a claim and handoff that another session took over during the landing", async () => {
+  test("BR-2018: --finish leaves alone a claim and handoff that another session took over during the landing", async () => {
     const root = project();
     const s = startNew(root, "Taken over");
     const other = ws(root, "agent:b");
