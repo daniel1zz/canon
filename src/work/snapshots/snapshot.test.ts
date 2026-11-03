@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git } from "../../kernel/git.ts";
 import { project, sh } from "../testkit.ts";
-import { KEEP, MAX_FILE_BYTES, snapshotKey, snapshots, takeSnapshot } from "./snapshot.ts";
+import { MAX_FILE_BYTES, snapshotKey, snapshots, takeSnapshot } from "./snapshot.ts";
 
 // reason: these tests spawn the canon CLI and run real git commands, which is what they test.
 setDefaultTimeout(30_000);
@@ -111,16 +111,29 @@ describe("taking a snapshot", () => {
 });
 
 describe("keeping snapshots", () => {
-  test("BR-2183: a worktree keeps its newest snapshots only", () => {
+  test("BR-2183: every snapshot of the last 24 hours stays, however many there are", () => {
     const root = project();
-    const start = Date.now();
-    for (let i = 0; i <= KEEP; i++) {
+    const start = Date.now() - 3_600_000;
+    for (let i = 0; i < 25; i++) {
       writeFileSync(join(root, "app.txt"), `version ${i}\n`);
-      taken(root, new Date(start + i * 1000));
+      taken(root, new Date(start + i * 60_000));
     }
-    const all = snapshots(root, snapshotKey(root));
-    expect(all).toHaveLength(KEEP);
-    expect(show(root, `${all.at(-1)!.ref}:app.txt`)).toEqual({ ok: true, value: "version 1" });
+    expect(snapshots(root, snapshotKey(root))).toHaveLength(25);
+  });
+
+  test("BR-2183: past 24 hours only the newest snapshot of each hour stays", () => {
+    const root = project();
+    const now = Date.now();
+    const hourStart = Math.floor((now - 2 * DAY) / 3_600_000) * 3_600_000;
+    const at = [hourStart + 60_000, hourStart + 120_000, hourStart + 180_000, hourStart + 3_600_000 + 60_000];
+    at.forEach((t, i) => {
+      writeFileSync(join(root, "app.txt"), `old ${i}\n`);
+      taken(root, new Date(t));
+    });
+    writeFileSync(join(root, "app.txt"), "now\n");
+    taken(root, new Date(now));
+    const kept = snapshots(root, snapshotKey(root)).map((s) => show(root, `${s.ref}:app.txt`));
+    expect(kept).toEqual([{ ok: true, value: "now" }, { ok: true, value: "old 3" }, { ok: true, value: "old 2" }]);
   });
 
   test("BR-2183: snapshots older than 14 days go, in any worktree; younger ones and those of cleaned-up worktrees stay", () => {

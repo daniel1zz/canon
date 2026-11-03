@@ -11,12 +11,13 @@ import { err, ok, type Result } from "../../kernel/result.ts";
  */
 
 export const SNAPSHOT_REFS = "refs/canon/snapshots";
-/** Snapshots kept per worktree; older ones are deleted when a new one is taken (BR-2183). */
-export const KEEP = 20;
 /**
- * Snapshots older than this are deleted when any snapshot is taken (BR-2183). Age, not the worktree's removal, ends a
- * snapshot: work lost unnoticed and then landed and cleaned up must still be recoverable for a while.
+ * How long snapshots are kept (BR-2183). Work is snapshotted before nearly every Bash call, so a count limit would
+ * cover only minutes; age decides instead. Every snapshot of the last day stays, so any state of that day can be
+ * recovered; from then on the newest of each hour per worktree stays; after MAX_AGE_DAYS none. Age, not the worktree's
+ * removal, ends a snapshot: work lost unnoticed and then landed and cleaned up stays recoverable for a while.
  */
+export const KEEP_ALL_HOURS = 24;
 export const MAX_AGE_DAYS = 14;
 /** A changed or untracked file larger than this is left out of a snapshot and named in it (BR-2182). */
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -90,7 +91,8 @@ export function takeSnapshot(cwd: string, now: Date = new Date()): Result<TakeOu
     const ref = `${SNAPSHOT_REFS}/${key}/${now.toISOString().replace(/[-:.]/g, "")}-${process.pid}`;
     const made = git(root, "update-ref", ref, commit.value, ""); // "" = create only, never overwrite a snapshot
     if (!made.ok) return made;
-    prune(root, key, now);
+    const pruned = prune(root, now);
+    if (!pruned.ok) return pruned;
     return ok({ kind: "taken", ref, skipped });
   } finally {
     rmSync(scratch, { recursive: true, force: true });
@@ -116,11 +118,24 @@ export function snapshots(root: string, key: string): Snapshot[] {
 
 const latest = (root: string, key: string) => snapshots(root, key)[0];
 
-/** Keeps the newest KEEP snapshots of a worktree and deletes every snapshot older than MAX_AGE_DAYS (BR-2183). */
-function prune(root: string, key: string, now: Date) {
-  for (const s of snapshots(root, key).slice(KEEP)) git(root, "update-ref", "-d", s.ref);
-  const cutoff = now.getTime() - MAX_AGE_DAYS * 86_400_000;
-  for (const s of snapshots(root, "")) if (Date.parse(s.at) < cutoff) git(root, "update-ref", "-d", s.ref);
+/** Applies the keeping policy to every worktree's snapshots, deleting in one ref transaction (BR-2183). */
+function prune(root: string, now: Date): Result<void> {
+  const hour = 3_600_000;
+  const recent = now.getTime() - KEEP_ALL_HOURS * hour;
+  const cutoff = now.getTime() - MAX_AGE_DAYS * 24 * hour;
+  const seen = new Set<string>();
+  const doomed: string[] = [];
+  // Newest first, so the first one met in an hour is the one that stays.
+  for (const s of snapshots(root, "")) {
+    const t = Date.parse(s.at);
+    if (t >= recent) continue;
+    const bucket = `${s.ref.slice(SNAPSHOT_REFS.length + 1, s.ref.lastIndexOf("/"))} ${Math.floor(t / hour)}`;
+    if (t < cutoff || seen.has(bucket)) doomed.push(s.ref);
+    else seen.add(bucket);
+  }
+  if (doomed.length === 0) return ok(undefined);
+  const r = Bun.spawnSync(["git", "update-ref", "--stdin"], { cwd: root, stdin: new TextEncoder().encode(doomed.map((d) => `delete ${d}\n`).join("")), stdout: "pipe", stderr: "pipe" });
+  return r.exitCode === 0 ? ok(undefined) : err("io", `cannot delete ${doomed.length} old snapshot(s): ${r.stderr.toString().trim()}`);
 }
 
 /** The files a snapshot holds that differ from the commit it was taken on. */
