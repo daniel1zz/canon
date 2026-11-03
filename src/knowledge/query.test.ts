@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { check } from "../check/check.ts";
-import { contextFor, search } from "./query.ts";
+import { contextFor, search, renderContext } from "./query.ts";
 import { readCorpus } from "./read.ts";
 
 const id = (p: string, n: number) => [p, n].join("-");
@@ -38,6 +38,20 @@ describe("context", () => {
     expect(ctx.rules.map((r) => r.id)).toEqual([id("BR", 1)]); // retired rule left out, auth not included
     expect(ctx.decisions.map((d) => d.id)).toEqual([id("D", 1)]); // proposed decision left out
     expect(ctx.changes.map((c) => c.id)).toEqual([id("C", 1)]);
+  });
+
+  test("BR-2112: by default rules are listed by id and title only; with full every rule's text is printed", () => {
+    const { corpus } = corpusOf(files);
+    const ctx = contextFor(corpus, "billing");
+    const brief = renderContext("", ctx, { full: false, target: "billing" });
+    expect(brief).toContain(`- ${id("BR", 1)} Refund window`);
+    expect(brief).not.toContain("Refunds within 30 days.");
+    expect(brief).toContain("canon context billing --full");
+    expect(brief).toContain(`${id("D", 1)} Why 30 days`);
+    const full = renderContext("", ctx, { full: true });
+    expect(full).toContain(`## ${id("BR", 1)} Refund window`);
+    expect(full).toContain("Refunds within 30 days.");
+    expect(full).not.toContain("--full");
   });
 
   test("BR-2007: a change id yields the domains of the rules it touches", () => {

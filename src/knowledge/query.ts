@@ -107,12 +107,19 @@ function isUnder(path: string, dir: string): boolean {
   return path === d || path.startsWith(`${d}/`);
 }
 
-export function renderContext(root: string, ctx: Context): string {
+/**
+ * `full: false` (the CLI default, BR-2112) lists each rule by id and title so an agent reads the domain's
+ * shape first and opens only the rules it touches; `full: true` gives every rule's text (`--full`, and the
+ * rule review, which needs the whole domain to find contradictions).
+ */
+export function renderContext(root: string, ctx: Context, opts: { readonly full: boolean; readonly target?: string }): string {
   const out: string[] = [];
   if (ctx.target) out.push(`# ${ctx.target.id} ${ctx.target.title}\n\n${ctx.target.body.trim()}\n`);
   for (const d of ctx.domains) {
     out.push(`# Domain: ${d.name}  (code: ${d.code.join(", ")})\n\n${d.body.trim()}\n`);
-    for (const r of ctx.rules.filter((x) => x.domain === d.name)) out.push(`## ${r.id} ${r.title}\n\n${r.body.trim()}\n`);
+    const rules = ctx.rules.filter((x) => x.domain === d.name);
+    if (opts.full) for (const r of rules) out.push(`## ${r.id} ${r.title}\n\n${r.body.trim()}\n`);
+    else if (rules.length) out.push(`## Rules (${rules.length})\n\n${rules.map((r) => `- ${r.id} ${r.title}`).join("\n")}\n`);
   }
   if (ctx.decisions.length) out.push(`# Decisions\n\n${ctx.decisions.map((d) => `- ${d.id} ${d.title} (${d.path})`).join("\n")}\n`);
   if (ctx.changes.length) out.push(`# Open changes\n\n${ctx.changes.map((c) => `- ${c.id} ${c.title} (${c.path})`).join("\n")}\n`);
@@ -121,6 +128,7 @@ export function renderContext(root: string, ctx: Context): string {
     out.push(`# ${type}\n\n${of.map((e) => `- ${e.id} ${e.title}${e.status ? ` [${e.status}]` : ""} (${e.path})`).join("\n")}\n`);
   }
   if (out.length === 0) out.push(`No domain, rule or document matches. Domains: canon rule domains\n`);
+  else if (!opts.full && ctx.rules.length) out.push(`Rules are listed by title. Read the ones you touch: canon show <id>; every rule's text: canon context ${opts.target ?? "<target>"} --full\n`);
   return out.join("\n");
 }
 

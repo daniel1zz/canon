@@ -47,13 +47,13 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
   const seen = new Set<string>();
   for (const name of extras.readmes ?? []) {
     seen.add(name);
-    parts.push(`# Current context for ${name}\n\n${renderContext(root, contextFor(corpus, name))}`);
+    parts.push(`# Current context for ${name}\n\n${renderContext(root, contextFor(corpus, name), { full: true })}`);
   }
   for (const d of changed) {
     const target = d.kind === "rule" ? d.domain : d.id;
     if (seen.has(target)) continue;
     seen.add(target);
-    parts.push(`# Current context for ${target}\n\n${renderContext(root, contextFor(corpus, target))}`);
+    parts.push(`# Current context for ${target}\n\n${renderContext(root, contextFor(corpus, target), { full: true })}`);
   }
   const index = corpus.docs.filter((d) => d.kind === "rule" && d.status === "active");
   parts.push(`# Rule index (every active rule, all domains)\n\n${index.map((r) => `- ${r.id} [${r.kind === "rule" ? r.domain : ""}] ${r.title}`).join("\n")}`);

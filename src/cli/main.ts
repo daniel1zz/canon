@@ -246,11 +246,14 @@ const searchCmd = defineCommand({
 });
 
 const context = defineCommand({
-  meta: { description: "Whole current context for a path, domain or document: domain READMEs, every active rule, related decisions and open changes" },
-  args: { target: { type: "positional", required: true, description: "Repo path, domain name, or id (C-12, BR-3, D-4)" } },
+  meta: { description: "Current context for a path, domain or document: domain READMEs, every active rule (by title; --full for the text), related decisions and open changes" },
+  args: {
+    target: { type: "positional", required: true, description: "Repo path, domain name, or id (C-12, BR-3, D-4)" },
+    full: { type: "boolean", description: "Print every rule's full text instead of its title" },
+  },
   run({ args }) {
     const ws = workspace();
-    say(renderContext(ws.root, contextFor(corpusOf(ws).corpus, args.target)));
+    say(renderContext(ws.root, contextFor(corpusOf(ws).corpus, args.target), { full: Boolean(args.full), target: args.target }));
   },
 });
 
