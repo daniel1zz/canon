@@ -3,13 +3,14 @@ import { tmpdir } from "node:os";
 import { basename, dirname, join } from "node:path";
 import type { Workspace } from "../app/workspace.ts";
 import { check, type Finding } from "../check/check.ts";
+import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../check/sources.ts";
 import { testFilesFor } from "../check/tests.ts";
 import { claimOfWorktree, dropHandoff, holdClaim, unholdClaim, enqueue, failIfActive, finishEntry, heartbeat, keepClaim, releaseClaim, releaseOwnClaim, renewClaim, takeClaim, tryTurn, writeHandoff } from "../coord/state.ts";
 import { selfProcess, sessionProcess } from "../coord/liveness.ts";
 import { logFile, runHooks, runHooksInBackground, runHooksSync } from "../hooks/hooks.ts";
 import { noticeOverlaps } from "./overlap.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { slugify, type Change, type Corpus } from "../knowledge/model.ts";
+import { slugify, type Change, type Corpus, type Doc } from "../knowledge/model.ts";
 import { findDoc } from "../knowledge/query.ts";
 import { readCorpus } from "../knowledge/read.ts";
 import { createDoc, setMeta } from "../knowledge/write.ts";
@@ -190,11 +191,13 @@ export interface LandOptions {
   readonly finish: boolean;
   /** Give up waiting for the queue after this long. */
   readonly timeoutMs: number;
+  /** How decision sources given as URLs are fetched (BR-2111); the network unless a test supplies one. */
+  readonly fetcher?: Fetcher;
 }
 
 export type LandOutcome =
   | { readonly kind: "landed"; readonly sha: string; readonly change: string | null; readonly finished: boolean }
-  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "check" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "no-floor" | "no-claim" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
+  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "no-floor" | "no-claim" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
   | { readonly kind: "timeout"; readonly ahead: number };
 
 /**
@@ -388,6 +391,9 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
       const id = e.path.split("/").pop()!.match(/^[A-Z][A-Z0-9]*-\d+/)?.[0] ?? e.path;
       return { id, path: e.path, text: old.ok ? old.value : "" };
     });
+  // Sources new to main are checked once, here, on the tree that becomes main (BR-2111).
+  const sourceFailures = await checkSources(wt, base.value, entries, read.corpus.docs, opts.fetcher ?? httpFetch);
+  if (sourceFailures.length > 0) return refuse("source", `decision sources do not hold:\n${sourceFailures.map((f) => `  - ${f}`).join("\n")}`);
   const readmes = read.corpus.domains.filter((dom) => live.has(dom.path)).map((dom) => dom.name);
   const deletedReadmes = entries.filter((e) => e.status === "D" && e.path.endsWith("/README.md")).map((e) => e.path);
   const reviewed = [...changedDocs.map((d) => d.id), ...deleted.map((d) => `${d.id} (deleted)`), ...readmes.map((n) => `${n} README`), ...deletedReadmes.map((p) => `${p} (deleted)`)];
@@ -563,3 +569,26 @@ export function describeOccupants(list: readonly Occupant[]): string {
 }
 
 export type { Change };
+
+/**
+ * BR-2111: a decision added by this landing cites at least one source under its options, and every source
+ * line not already on main (in that decision) is verified against what it names. A source that cannot be
+ * fetched fails too: an unverified quote never reaches main.
+ */
+async function checkSources(wt: string, base: string, entries: readonly { status: string; path: string }[], docs: readonly Doc[], fetcher: Fetcher): Promise<string[]> {
+  const failures: string[] = [];
+  const touched = new Map(entries.filter((e) => e.status !== "D" && e.path.startsWith("canon/decisions/")).map((e) => [e.path, e.status]));
+  for (const d of docs) {
+    if (d.kind !== "decision" || !touched.has(d.path)) continue;
+    const now = sources(d.body).sources;
+    if (touched.get(d.path) === "A" && now.length === 0) {
+      failures.push(`${d.id} is new and cites no source under ${OPTIONS_SECTION} (来源：<URL or repository path> “<quote>”)`);
+      continue;
+    }
+    const old = git(wt, "show", `${base}:${d.path}`);
+    const before = new Set(old.ok ? sources(old.value).sources.map((s) => `${s.target} ${s.quote}`) : []);
+    for (const f of await verify(wt, now.filter((s) => !before.has(`${s.target} ${s.quote}`)), fetcher)) failures.push(`${d.id}: ${f}`);
+  }
+  return failures;
+}
+

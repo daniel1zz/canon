@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { CoordDb } from "../coord/db.ts";
 import { readCorpus } from "../knowledge/read.ts";
 import { check } from "./check.ts";
+import { verify } from "./sources.ts";
 
 // Fixture ids are assembled at runtime. Since only test titles name rules (BR-2005), ids in fixture strings would not count anyway.
 const br = (n: number) => ["BR", n].join("-");
@@ -29,7 +30,7 @@ describe("canon check", () => {
     const root = repo({
       "canon/rules/billing/README.md": domainReadme,
       [`canon/rules/billing/${br(1)}.md`]: ruleFile(1),
-      [`canon/decisions/${d(1)}-x.md`]: `---\nid: ${d(1)}\ntitle: X\nstatus: accepted\n---\n## 背景\n\nBecause ${br(1)}. Example only: \`${br(77)}\`.\n\n\`\`\`\n${br(78)}\n\`\`\`\n\n## 方案\n\nA.\n\n## 决定\n\nA.\n\n## 后果\n\nB.\n`,
+      [`canon/decisions/${d(1)}-x.md`]: `---\nid: ${d(1)}\ntitle: X\nstatus: accepted\n---\n## 背景\n\nBecause ${br(1)}. Example only: \`${br(77)}\`.\n\n\`\`\`\n${br(78)}\n\`\`\`\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nB.\n`,
       "src/billing/refund.test.ts": `it("${br(1)}: refuses day 31", () => {});`,
     });
     const r = readCorpus(root);
@@ -191,7 +192,7 @@ describe("required sections", () => {
       ...change(1, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n"),
       ...change(2, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] <任务>\n"),
       ...change(3, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n\n## 陷阱和假设\n\nY.\n\n## 任务\n\n- [x] X\n"),
-      [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: X\nstatus: superseded\n---\n## 背景\n\nB.\n\n## 方案\n\nA.\n\n## 决定\n\nA.\n`,
+      [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: X\nstatus: superseded\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\nA.\n`,
       "canon/notes/N-1.md": "---\nid: N-1\ntitle: Free\n---\nAnything.\n",
     });
     const got = check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "doc-missing-section").map((f) => `${f.path.split("/").pop()} ${f.message}`);
@@ -203,6 +204,76 @@ describe("required sections", () => {
         "README.md domain auth README lacks or leaves empty: ## 术语",
       ].sort(),
     );
+  });
+});
+
+describe("decision options and sources", () => {
+  const decision = (n: number, options: string) =>
+    ({ [`canon/decisions/${d(n)}.md`]: `---\nid: ${d(n)}\ntitle: X\nstatus: accepted\n---\n## 背景\n\nB.\n\n## 方案\n\n${options}\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n` });
+  const run = (files: Record<string, string>, rule: string) =>
+    check({ root: repo(files), ...readCorpus(repo(files)), testFiles: [] }).filter((f) => f.rule === rule).map((f) => f.message).sort();
+
+  test("BR-2109: options must be a real choice: two or more, each taken or rejected, at least one of each", () => {
+    const got = run(
+      {
+        ...decision(1, "1. A：采用。"),
+        ...decision(2, "1. A：采用。\n2. B：采用。"),
+        ...decision(3, "1. A：采用。\n2. B：否决。\n3. C。负责人这次没有选，不做。"),
+        ...decision(4, "1. A：采用。\n2. B，先试过，\n   后否决：太慢。"),
+      },
+      "decision-options",
+    );
+    expect(got).toEqual(
+      [
+        `${d(1)} has 1 option(s) under ## 方案; a choice needs at least two`,
+        `${d(2)} no option under ## 方案 is 否决`,
+        `${d(3)} option "C。负责人这次没有选，不做。" says neither 采用 nor 否决`,
+      ].sort(),
+    );
+  });
+
+  test("BR-2110: a source line names a URL or relative path and quotes at least eight characters; a placeholder line is not one", () => {
+    const got = run(
+      {
+        ...decision(
+          1,
+          [
+            "1. A：采用。",
+            "   - 来源：https://arxiv.org/abs/2310.01798 “struggle to self-correct”",
+            "   - 来源：src/check/check.ts:10 “export function check(”",
+            "   - <来源：网址或仓库里的文件路径 “原文摘录”>",
+            "2. B：否决。",
+            "   - 来源：arXiv 上那篇论文",
+            "   - 来源：/Users/a/x.ts “some long quote here”",
+            "   - 来源：../x.ts “some long quote here”",
+            "   - 来源：https://example.com “太短”",
+          ].join("\n"),
+        ),
+      },
+      "source-malformed",
+    );
+    expect(got.map((m) => m.split(": ")[1]!.split(" (want")[0])).toEqual(
+      ["- 来源：arXiv 上那篇论文", "- 来源：/Users/a/x.ts “some long quote here”", "- 来源：../x.ts “some long quote here”", "- 来源：https://example.com “太短”"].sort(),
+    );
+  });
+});
+
+describe("source verification", () => {
+  test("BR-2111: a real HTTP page is fetched and its visible text, not its markup or scripts, must hold the quote", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: (req) =>
+        new URL(req.url).pathname === "/p"
+          ? new Response("<html><script>var q = 'hidden quote text';</script><p>LLMs struggle to <b>self-correct</b>\n their responses &amp; more</p></html>", { headers: { "content-type": "text/html" } })
+          : new Response("gone", { status: 404 }),
+    });
+    try {
+      const at = (path: string, quote: string) => ({ target: `http://localhost:${server.port}${path}`, quote, line: "" });
+      const got = await verify(repo({}), [at("/p", "struggle to self-correct their responses & more"), at("/p", "hidden quote text"), at("/x", "struggle to self-correct")]);
+      expect(got.map((m) => m.replace(/localhost:\d+/, "host"))).toEqual(["http://host/p does not contain “hidden quote text”", "http://host/x answered HTTP 404"]);
+    } finally {
+      server.stop(true);
+    }
   });
 });
 

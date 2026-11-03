@@ -1,3 +1,4 @@
+import { MIN_QUOTE, optionProblems, sources } from "./sources.ts";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { stripCode, type Corpus, type Rule } from "../knowledge/model.ts";
@@ -26,6 +27,8 @@ export type CheckRule =
   | "rule-no-statement" // an active rule has no non-empty "## 规则" section
   | "rule-no-example" // an active rule with tests has no example in "## 例子"
   | "domain-code-missing" // a domain README lists a code path that does not exist (BR-2079)
+  | "decision-options" // a decision's options section shows no real choice (BR-2109)
+  | "source-malformed" // a source line in a decision's options does not name a target and quote it (BR-2110)
   | "doc-missing-section" // a document lacks a section its type requires, or the section is empty (BR-2091)
   | "template-unfilled"; // a rule, decision, change, declared-type document or domain README still holds a template placeholder line
 
@@ -109,6 +112,10 @@ function structureFindings(corpus: Corpus): Finding[] {
     }
     if (d.kind !== "note" && unfilled(d.body)) {
       out.push({ path: d.path, rule: "template-unfilled", message: `${d.id} still contains a template placeholder line` });
+    }
+    if (d.kind === "decision") {
+      for (const p of optionProblems(d.body)) out.push({ path: d.path, rule: "decision-options", message: `${d.id} ${p.message}` });
+      for (const line of sources(d.body).malformed) out.push({ path: d.path, rule: "source-malformed", message: `${d.id}: ${line} (want 来源：<URL or repository path> “<quote of at least ${MIN_QUOTE} characters>”)` });
     }
     if (d.kind !== "rule" || d.status !== "active") continue;
     const statement = section(d.body, RULE_SECTION);

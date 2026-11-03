@@ -442,6 +442,57 @@ describe("work land", () => {
     expect(out.kind === "refused" && out.findings?.map((f) => f.rule)).toEqual(["ref-dangling"]);
   });
 
+  test("BR-2111: a new decision needs a source; each source new to main is verified against its file or page", async () => {
+    const decision = (options: string) =>
+      `---\nid: D-1\ntitle: Pick\nstatus: accepted\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n${options}\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
+    const pages: Record<string, string> = { "https://ok.example/a": "<html><body><p>refunds are&nbsp;allowed\n  within 30 days</p></body></html>" };
+    const fetcher = async (url: string) => {
+      if (url === "https://down.example/") throw new Error("getaddrinfo ENOTFOUND down.example");
+      return url in pages ? { status: 200, text: pages[url]! } : { status: 404, text: "not found" };
+    };
+    const attempt = async (options: string, title: string) => {
+      const root = project();
+      const s = startNew(root, title);
+      writeFileSync(join(s.worktree, "refund.txt"), "export function refund(order) {}\n");
+      mkdirSync(join(s.worktree, "canon/decisions"), { recursive: true });
+      writeFileSync(join(s.worktree, "canon/decisions/D-1.md"), decision(options));
+      sh(s.worktree, "add", "-A");
+      sh(s.worktree, "commit", "-qm", "decision");
+      const out = await land(ws(s.worktree), { ...FAST, fetcher }, quiet);
+      return out.kind === "refused" ? `${out.reason}: ${out.message.split("\n").slice(1).join(" ").trim()}` : out.kind;
+    };
+    expect(await attempt("", "No source")).toBe("source: - D-1 is new and cites no source under ## 方案 (来源：<URL or repository path> “<quote>”)");
+    expect(await attempt("   - 来源：refund.txt “export function refund(order)”", "File ok")).toBe("landed");
+    expect(await attempt("   - 来源：refund.txt “export function refund(item)”", "File wrong")).toBe("source: - D-1: refund.txt does not contain “export function refund(item)”");
+    expect(await attempt("   - 来源：missing.txt “export function refund(order)”", "File missing")).toBe("source: - D-1: missing.txt is not a file in the repository");
+    expect(await attempt("   - 来源：https://ok.example/a “refunds are allowed within 30 days”", "Page ok")).toBe("landed");
+    expect(await attempt("   - 来源：https://ok.example/a “refunds are allowed within 60 days”", "Page wrong")).toBe("source: - D-1: https://ok.example/a does not contain “refunds are allowed within 60 days”");
+    expect(await attempt("   - 来源：https://ok.example/gone “refunds are allowed within 30 days”", "Page 404")).toBe("source: - D-1: https://ok.example/gone answered HTTP 404");
+    expect(await attempt("   - 来源：https://down.example/ “refunds are allowed within 30 days”", "Offline")).toBe(
+      "source: - D-1: https://down.example/ could not be fetched (getaddrinfo ENOTFOUND down.example)",
+    );
+  });
+
+  test("BR-2111: a source already on main is not fetched again, and editing an old decision needs no new source", async () => {
+    const root = project();
+    const s = startNew(root, "First");
+    mkdirSync(join(s.worktree, "canon/decisions"), { recursive: true });
+    const body = (extra: string) =>
+      `---\nid: D-1\ntitle: Pick\nstatus: accepted\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：https://ok.example/a “refunds are allowed within 30 days”\n2. B：否决${extra}。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
+    writeFileSync(join(s.worktree, "canon/decisions/D-1.md"), body(""));
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "decision");
+    const fetched: string[] = [];
+    const fetcher = async (url: string) => (fetched.push(url), { status: 200, text: "refunds are allowed within 30 days" });
+    expect((await land(ws(s.worktree), { ...FAST, fetcher }, quiet)).kind).toBe("landed");
+    const t = startNew(root, "Second");
+    writeFileSync(join(t.worktree, "canon/decisions/D-1.md"), body("，太慢"));
+    sh(t.worktree, "commit", "-qam", "reword");
+    const offline = async (url: string) => (fetched.push(url), Promise.reject(new Error("offline")));
+    expect((await land(ws(t.worktree), { ...FAST, fetcher: offline }, quiet)).kind).toBe("landed");
+    expect(fetched).toEqual(["https://ok.example/a"]);
+  });
+
   test("BR-2018 BR-2019: --finish closes the change, releases the claim, and clean removes only fully landed worktrees", async () => {
     const root = project();
     const done = startNew(root, "Done one");
