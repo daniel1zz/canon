@@ -80,6 +80,15 @@ describe("exit codes", () => {
     expect(r.err).toContain("--timeout");
   });
 
+  test("BR-2075: a question asked in a change worktree is seen from every worktree and hangs on that change", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    committed(root);
+    const wt = canon(root, "work", "start", "--title", "Asking").out.match(/cd (.+)/)![1]!.trim();
+    expect(canon(wt, "human", "ask", "Ship it?").code).toBe(0);
+    expect(canon(root, "human", "pending").out).toContain("#1 [C-1] Ship it?");
+  });
+
   test("BR-2021: an agent session without a terminal cannot answer a human question", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
@@ -96,7 +105,7 @@ function committed(root: string) {
 }
 
 describe("project and documents", () => {
-  test("BR-2032: init lays out canon/ with the floor, never overwrites, and warns without a floor", () => {
+  test("BR-2032 BR-2076: init lays out canon/ with the floor, never overwrites, and warns without a floor", () => {
     const root = repo();
     const first = canon(root, "init");
     expect(first.code).toBe(0);

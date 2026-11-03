@@ -125,6 +125,7 @@ describe("rule review at land", () => {
     expect(prompt).toContain("# Domain: billing");
     expect(prompt).toContain(`- ${id} [billing] Refunds`);
     expect(prompt).toContain("language the documents are written in");
+    expect(prompt).toContain("One rule is one trigger"); // the split criterion of D-5
     expect(sh(root, "rev-parse", "main")).toBe(before);
   });
 
@@ -145,7 +146,7 @@ describe("rule review at land", () => {
     expect(out.kind === "refused" && out.message).toContain("could not run");
   });
 
-  test("BR-2010: changed rule text without a configured reviewer lands with a notice and a review.skip event", async () => {
+  test("BR-2074: changed rule text without a configured reviewer lands with a notice and a review.skip event", async () => {
     const root = project();
     mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
     writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n");

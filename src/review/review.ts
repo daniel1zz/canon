@@ -30,7 +30,8 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
   const parts: string[] = [
     "You review changes to a project's rules and decisions. Rules are the current truth of what the product must do; decisions record why.",
     "Block only for: a rule that contradicts another active rule (in any domain: see the rule index) or an accepted decision; a rule a test cannot decide (vague, no boundary, examples that do not pin the boundary); a decision without the options it rejected.",
-    "Do not block for wording, style or formatting. When one rule bundles several behaviours that could be tested independently, say so in a finding but do not block for it.",
+    "Do not block for wording, style or formatting.",
+    "One rule is one trigger (one command, event or kind of input) and one outcome (D-5). The error cases, exit codes and boundaries of the same trigger belong in that rule as examples, and a definition table (such as a list of exit codes) is one rule: do not suggest splitting those. Suggest a split only when a rule covers two different triggers, or two outcomes that could change independently; never block for it.",
     "Write the findings in the language the documents are written in.",
     'Answer with JSON only: {"verdict":"ok"|"block","findings":["<one sentence each, naming the id>"]}',
     "",

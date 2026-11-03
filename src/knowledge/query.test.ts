@@ -62,12 +62,12 @@ describe("search", () => {
     expect(search(corpus, id("BR", 12)).map((h) => h.doc.id)).toEqual([id("N", 1)]);
   });
 
-  test("BR-2008: a Chinese word finds the Chinese documents that contain it", () => {
+  test("BR-2073: a Chinese word finds the Chinese documents that contain it", () => {
     const { corpus } = corpusOf({ ...files, [`canon/notes/${id("N", 1)}-a.md`]: `---\nid: ${id("N", 1)}\ntitle: 复盘\n---\n合入排队太久。\n` });
     expect(search(corpus, "合入").map((h) => h.doc.id)).toEqual([id("N", 1)]);
   });
 
-  test("BR-2008: several words must all appear", () => {
+  test("BR-2073: several words must all appear", () => {
     const { corpus } = corpusOf(files);
     expect(search(corpus, "sessions hours").map((h) => h.doc.id)).toEqual([id("BR", 3)]);
     expect(search(corpus, "sessions refunds")).toEqual([]);

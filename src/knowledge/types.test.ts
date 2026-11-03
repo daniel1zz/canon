@@ -52,7 +52,7 @@ describe("declared document types", () => {
     expect(ids).toEqual([id("SP", 1), id("SP", 2), id("SP", 10)]);
   });
 
-  test("BR-2051: a status outside the declared ones is invalid; doc status only accepts declared statuses", () => {
+  test("BR-2051 BR-2077: a status outside the declared ones is invalid; doc status only accepts declared statuses", () => {
     const root = repo(SPEC, { [`canon/specs/${id("SP", 1)}.md`]: doc("SP", 1, "status: done\n", "One.") });
     expect(canon(root, "check").out).toContain(`file-invalid       canon/specs/${id("SP", 1)}.md: status must be one of draft, approved`);
     writeFileSync(join(root, `canon/specs/${id("SP", 1)}.md`), doc("SP", 1, "status: draft\n", "One."));
@@ -60,6 +60,8 @@ describe("declared document types", () => {
     expect(readFileSync(join(root, `canon/specs/${id("SP", 1)}.md`), "utf8")).toContain("status: draft");
     expect(canon(root, "doc", "status", id("SP", 1), "approved").code).toBe(0);
     expect(readFileSync(join(root, `canon/specs/${id("SP", 1)}.md`), "utf8")).toContain("status: approved");
+    expect(canon(root, "check").out).not.toContain("file-invalid");
+    expect(canon(root, "doc", "status", "C-1", "done").code).toBe(3);
   });
 
   test("BR-2052: declared ids are checked like built-in ones: dangling and duplicate ids are reported; undeclared prefixes are not ids", () => {
