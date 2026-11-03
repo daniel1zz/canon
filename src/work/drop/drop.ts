@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Workspace } from "../workspace.ts";
@@ -218,8 +218,15 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
     if (!rm.ok) {
       // reason: all or nothing (BR-2064): the branch deleted just above comes back at the same tip, create-only (issue #58).
       const back = t.branch ? git(ws.primary, "update-ref", `refs/heads/${t.branch}`, tip.value, "") : ok("");
-      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "remove", message: rm.error.message.slice(0, 2000), losses: lost.value.lines, archive: archived?.ref ?? null, branch_restored: back.ok });
-      const branchNote = back.ok ? "nothing was deleted" : `the branch ${t.branch} was deleted and could not be put back (${back.error.message}); restore it with \`git branch ${t.branch} ${tip.value}\``;
+      // reason: git deletes the files before its admin dir and drops the admin dir even when the files fail, so a
+      // failure can leave the worktree partly deleted and unregistered (issue #78); say so instead of "nothing was deleted".
+      const intact = registered(ws, t.worktree);
+      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "remove", message: rm.error.message.slice(0, 2000), losses: lost.value.lines, archive: archived?.ref ?? null, branch_restored: back.ok, worktree_intact: intact });
+      const branchNote = back.ok ? (intact ? "nothing was deleted" : t.branch ? `the branch ${t.branch} is back` : "no branch was touched") : `the branch ${t.branch} was deleted and could not be put back (${back.error.message}); restore it with \`git branch ${t.branch} ${tip.value}\``;
+      const partial = intact
+        ? ""
+        : `; ${t.worktree} was partly deleted and is no longer a git worktree${archived ? `: what it held when it was archived is in ${archived.ref}; once what is left is moved aside, restore with:\n${restore.map((c) => `  ${c}`).join("\n")}` : " (it held nothing that is not on the branch)"}`;
+      if (!intact) return giveUp(err("io", `removing ${t.worktree} failed partway, so ${branchNote}${partial}\n${rm.error.message}`));
       return giveUp(err("io", `removing ${t.worktree} failed, so ${branchNote}${kept}: ${rm.error.message}`));
     }
   }
@@ -234,3 +241,19 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
   }
   return ok({ worktree: t.worktree, branch: t.branch, archive: archived?.ref ?? null, losses: lost.value.lines, restore });
 }
+
+/** Whether `path` is still one of the repository's registered worktrees (paths compared after resolving symlinks). */
+function registered(ws: Workspace, path: string): boolean {
+  const real = (p: string) => {
+    try {
+      return realpathSync(p);
+    } catch {
+      return p;
+    }
+  };
+  const list = git(ws.primary, "worktree", "list", "--porcelain");
+  if (!list.ok) return false; // reason: an unreadable list proves nothing intact; the message then points to the archive
+  const want = real(path);
+  return list.value.split("\n").some((l) => l.startsWith("worktree ") && real(l.slice("worktree ".length)) === want) && existsSync(join(path, ".git"));
+}
+

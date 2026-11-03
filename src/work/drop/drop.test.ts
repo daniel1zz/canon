@@ -382,4 +382,28 @@ describe("dropping a change", () => {
     expect(existsSync(s.worktree)).toBe(false);
     expect(events(root, "drop.refuse").map((e) => e.reason)).toEqual(["claimed"]);
   });
+
+  test("BR-2064: a worktree removal that fails partway is reported as partly deleted, not as nothing deleted: the branch is back and the restore commands are printed", () => {
+    const root = project();
+    const s = released(withCommit(root, "Partial"));
+    const tip = sh(s.worktree, "rev-parse", "HEAD");
+    // A directory whose entries cannot be unlinked: git deletes the rest, then its admin dir, and fails (issue #78).
+    mkdirSync(join(s.worktree, "sub"));
+    writeFileSync(join(s.worktree, "sub/f.txt"), "f\n");
+    Bun.spawnSync(["chmod", "555", join(s.worktree, "sub")]);
+    try {
+      const r = drop(ws(root), s.change, quiet);
+      expect(!r.ok && r.error.code).toBe("io");
+      const message = !r.ok ? r.error.message : "";
+      expect(message).not.toContain("nothing was deleted");
+      expect(message).toContain("partly deleted");
+      expect(message).toContain(`git branch ${s.branch} ${tip}`);
+      expect(sh(root, "rev-parse", `refs/heads/${s.branch}`)).toBe(tip);
+      expect(events(root, "drop.refuse")).toMatchObject([{ reason: "remove", branch_restored: true, worktree_intact: false }]);
+      expect(sh(root, "show", `${archives(root)}:sub/f.txt`)).toBe("f");
+    } finally {
+      Bun.spawnSync(["chmod", "755", join(s.worktree, "sub")]);
+    }
+  });
 });
+
