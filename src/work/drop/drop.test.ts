@@ -8,6 +8,7 @@ import { drop } from "./drop.ts";
 import { writeSchemaFile } from "../../config/reference/reference.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 import { stop } from "../session/session.ts";
+import { handoffs } from "../session/handoffs.ts";
 
 /** The holder frees its claim first: a live claim refuses every drop, the same actor included (BR-2064). */
 function released<T extends { worktree: string }>(s: T): T {
@@ -16,6 +17,16 @@ function released<T extends { worktree: string }>(s: T): T {
   return s;
 }
 import { land } from "../land/land.ts";
+
+const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+
+/** The canon CLI as `actor`, outside Claude Code. */
+function canon(cwd: string, actor: string, ...args: string[]) {
+  const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: actor };
+  delete env["CLAUDECODE"]; // reason: inside Claude Code a human: CANON_ACTOR is refused (BR-2023)
+  const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env });
+  return { code: r.exitCode, out: r.stdout.toString() + r.stderr.toString() };
+}
 
 const events = (root: string, kind: string) =>
   ws(root).db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = ? ORDER BY id").all(kind).map((e) => JSON.parse(e.detail));
@@ -46,6 +57,7 @@ describe("dropping a change", () => {
     expect(existsSync(s.worktree)).toBe(false);
     expect(branches(root)).toBe("");
     expect(archives(root)).toBe("");
+    expect(handoffs(ws(root).db).filter((h) => h.subject === s.change)).toEqual([]);
     expect(claims(ws(root).db)).toEqual([]);
     expect(events(root, "drop.done").length).toBe(1);
   });
@@ -163,7 +175,7 @@ describe("dropping a change", () => {
     expect(existsSync(s.worktree)).toBe(false);
   });
 
-  test.skipIf(process.platform === "linux")("BR-2064: when processes cannot be listed nothing is deleted and the error is an environment failure", async () => {
+  test.skipIf(process.platform === "linux")("BR-2064 BR-2026: when processes cannot be listed nothing is deleted, the error is an environment failure, and a drop.refuse is written", async () => {
     const root = project();
     const s = released(startNew(root, "No lsof"));
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
@@ -174,10 +186,13 @@ describe("dropping a change", () => {
     try {
       const r = drop(ws(root), s.change, quiet);
       expect(!r.ok && r.error.code).toBe("io");
+      expect(!r.ok && r.error.message).toContain("nothing was deleted");
       expect(existsSync(s.worktree)).toBe(true);
     } finally {
       process.env["PATH"] = path;
     }
+    expect(branches(root)).toContain(s.branch);
+    expect(events(root, "drop.refuse").map((e) => e.reason)).toEqual(["no-process-list"]);
   });
 
   test("BR-2102: an unlanded commit is archived at the branch tip, then deleted without asking; the printed commands restore the branch", () => {
@@ -198,7 +213,7 @@ describe("dropping a change", () => {
     expect(readFileSync(join(s.worktree, "wip.txt"), "utf8")).toBe("wip\n");
   });
 
-  test("BR-2102: modified, untracked and ignored files are archived with their current content; node_modules is not; the restore brings them back", () => {
+  test("BR-2102: modified, untracked and ignored files are archived with their current content and listed in drop.done; node_modules is not; the restore brings them back", () => {
     const root = project();
     ignoring(root);
     const s = released(startNew(root, "Dirty"));
@@ -214,6 +229,7 @@ describe("dropping a change", () => {
     const files = sh(root, "ls-tree", "-r", "--name-only", r.value.archive).split("\n");
     expect(files).toEqual(expect.arrayContaining(["app.txt", "notes.txt", ".env"]));
     expect(files.some((f) => f.startsWith("node_modules"))).toBe(false);
+    expect(events(root, "drop.done")[0]).toMatchObject({ archive: r.value.archive, losses: r.value.losses });
     expect(existsSync(s.worktree)).toBe(false);
     for (const c of r.value.restore) expect(Bun.spawnSync(["sh", "-c", c], { cwd: root }).exitCode).toBe(0);
     expect(readFileSync(join(s.worktree, "app.txt"), "utf8")).toBe("changed\n");
@@ -249,5 +265,121 @@ describe("dropping a change", () => {
     expect(claims(ws(root).db)).toEqual([]); // the hold is gone; nothing was claimed before the drop
     expect(events(root, "drop.refuse").map((e) => e.reason)).toEqual(["archive"]);
     expect(events(root, "drop.done")).toEqual([]);
+  });
+
+  test("BR-2064: the holder's own live claim stops its drop too: exit 5 with the stop --release hint, the claim stays as it was", () => {
+    const root = project();
+    const s = withCommit(root, "Mine", "agent:a");
+    const before = claims(ws(root).db);
+    const r = drop(ws(root, "agent:a"), s.change, quiet);
+    expect(!r.ok && r.error.code).toBe("conflict");
+    expect(!r.ok && r.error.message).toContain("canon work stop --release");
+    expect(claims(ws(root).db)).toEqual(before);
+    expect(existsSync(join(s.worktree, "wip.txt"))).toBe(true);
+    expect(archives(root)).toBe("");
+  });
+
+  test("BR-2064: a drop that fails after taking over a claim whose process is gone puts that claim back as it was", async () => {
+    const root = project();
+    const s = withCommit(root, "Theirs, gone, busy", "agent:b");
+    const sleeper = Bun.spawn(["sleep", "30"]);
+    const dead = processOf(sleeper.pid)!;
+    sleeper.kill("SIGKILL");
+    await sleeper.exited;
+    ws(root).db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(dead.pid, dead.start, s.change);
+    const row = () => ws(root).db.db.query("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims").all();
+    const before = row();
+    const busy = Bun.spawn(["sleep", "30"], { cwd: s.worktree });
+    try {
+      const r = drop(ws(root, "agent:a"), s.change, quiet);
+      expect(!r.ok && r.error.code).toBe("conflict");
+    } finally {
+      busy.kill();
+      await busy.exited;
+    }
+    expect(row()).toEqual(before);
+  });
+
+  test("BR-2064 BR-2102: a worktree git cannot remove (locked) leaves everything in place: branch put back, exit 4, the archive ref named, a drop.refuse", () => {
+    const root = project();
+    const s = released(withCommit(root, "Locked"));
+    writeFileSync(join(s.worktree, "app.txt"), "changed\n");
+    sh(s.worktree, "add", "app.txt");
+    writeFileSync(join(s.worktree, "notes.txt"), "n\n");
+    const tip = sh(s.worktree, "rev-parse", "HEAD");
+    const index = sh(s.worktree, "ls-files", "-s");
+    sh(root, "worktree", "lock", s.worktree);
+    const r = drop(ws(root), s.change, quiet);
+    expect(!r.ok && r.error.code).toBe("io");
+    const ref = archives(root);
+    expect(ref).toMatch(new RegExp(`^refs/canon/archive/${s.change}/`));
+    expect(!r.ok && r.error.message).toContain("nothing was deleted");
+    expect(!r.ok && r.error.message).toContain(ref);
+    // All or nothing (issue #58): the branch is back at its tip and the worktree still has it checked out.
+    expect(sh(root, "rev-parse", `refs/heads/${s.branch}`)).toBe(tip);
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(tip);
+    // The worktree's own index and files were not touched (BR-2102).
+    expect(sh(s.worktree, "ls-files", "-s")).toBe(index);
+    expect(sh(s.worktree, "status", "--porcelain")).toBe("M  app.txt\n?? notes.txt");
+    expect(readFileSync(join(s.worktree, "notes.txt"), "utf8")).toBe("n\n");
+    expect(events(root, "drop.refuse")).toMatchObject([{ reason: "remove", archive: ref, branch_restored: true }]);
+    expect(events(root, "drop.done")).toEqual([]);
+    expect(claims(ws(root).db)).toEqual([]);
+  });
+
+  test("BR-2103 BR-2026: a branch that cannot be deleted as read (it moved) deletes nothing: exit 4, a drop.refuse with reason archive", () => {
+    const root = project();
+    const s = released(withCommit(root, "Moved"));
+    // Aborting the deletion's ref transaction is what git does when the branch no longer has the tip drop read.
+    const hook = join(root, ".git", "hooks", "reference-transaction");
+    mkdirSync(join(hook, ".."), { recursive: true });
+    writeFileSync(hook, `#!/bin/sh\n[ "$1" = prepared ] && grep -q "refs/heads/${s.branch}" && exit 1\nexit 0\n`, { mode: 0o755 });
+    const r = drop(ws(root), s.change, quiet);
+    expect(!r.ok && r.error.code).toBe("io");
+    expect(!r.ok && r.error.message).toContain("nothing was deleted");
+    expect(branches(root)).toContain(s.branch);
+    expect(existsSync(join(s.worktree, "wip.txt"))).toBe(true);
+    expect(events(root, "drop.refuse").map((e) => e.reason)).toEqual(["archive"]);
+    expect(events(root, "drop.done")).toEqual([]);
+  });
+
+  test("BR-2064: through the CLI a lower-case id is dropped as its upper-case change, and a change still open on main gets the canon change drop hint", async () => {
+    const root = project();
+    const s = released(startNew(root, "Open on main"));
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed"); // without --finish: still open on main
+    const r = canon(root, "agent:a", "work", "drop", s.change.toLowerCase());
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`dropped ${s.change}`);
+    expect(r.out).toContain(`${s.change} is still open on main; mark it with \`canon change drop ${s.change}\``);
+    expect(existsSync(s.worktree)).toBe(false);
+  });
+
+  test("BR-2064: a change worktree that has main checked out is refused with exit 2; main is never deleted", () => {
+    const root = project();
+    const dir = `${root}.worktrees`;
+    mkdirSync(dir, { recursive: true });
+    sh(root, "worktree", "add", "-q", "-f", join(dir, "C-7"), "main");
+    const r = canon(root, "agent:a", "work", "drop", "C-7");
+    expect(r.code).toBe(2);
+    expect(r.out).toContain("refusing to delete main");
+    expect(sh(root, "rev-parse", "--verify", "refs/heads/main")).not.toBe("");
+    expect(existsSync(join(dir, "C-7"))).toBe(true);
+  });
+
+  test("BR-2064: through the CLI a drop arriving while the same human's clean removes the change is refused with exit 5", async () => {
+    const root = project();
+    const s = released(startNew(root, "Cleaned"));
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    // clean deletes the branch while it still holds the change: the moment another terminal runs drop.
+    const out = join(mkdtempSync(join(tmpdir(), "canon-cleandrop-")), "drop-exit");
+    const hook = join(root, ".git", "hooks", "reference-transaction");
+    mkdirSync(join(hook, ".."), { recursive: true });
+    const env = `CANON_ACTOR=human:x CLAUDECODE=`;
+    writeFileSync(hook, `#!/bin/sh\n[ "$1" = prepared ] && [ ! -e ${JSON.stringify(out)} ] && grep -q "refs/heads/${s.branch}" && { cd ${JSON.stringify(root)} && ${env} bun ${JSON.stringify(MAIN)} work drop ${s.change} >/dev/null 2>&1; echo $? > ${JSON.stringify(out)}; }\nexit 0\n`, { mode: 0o755 });
+    const c = canon(root, "human:x", "work", "clean", s.change);
+    expect(c.code).toBe(0);
+    expect(readFileSync(out, "utf8").trim()).toBe("5");
+    expect(existsSync(s.worktree)).toBe(false);
+    expect(events(root, "drop.refuse").map((e) => e.reason)).toEqual(["claimed"]);
   });
 });

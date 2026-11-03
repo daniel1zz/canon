@@ -165,7 +165,10 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
   };
   if (t.worktree) {
     const occupied = processesIn([t.worktree]);
-    if (!occupied.ok) return giveUp(occupied);
+    if (!occupied.ok) {
+      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "no-process-list", message: occupied.error.message.slice(0, 2000) });
+      return giveUp(err("io", `cannot tell whether a process is inside ${t.worktree}, so nothing was deleted: ${occupied.error.message}`));
+    }
     const inside = occupied.value.get(t.worktree) ?? [];
     if (inside.length > 0) {
       ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "in-use", pids: inside.map((o) => o.pid) });
@@ -198,15 +201,27 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
     }
   }
 
+  const kept = archived ? `; the work is also archived at ${archived.ref}` : "";
   if (t.branch) {
-    // reason: compare-and-delete: a commit made since the tip was read (and so not archived) makes this fail (issue #13).
+    // reason: compare-and-delete: a commit made since the tip was read (and so not archived) makes this fail (issue #13);
+    // that is an archive failure, so it is recorded like one (BR-2103, issue #59).
     const del = git(ws.primary, "update-ref", "-d", `refs/heads/${t.branch}`, tip.value);
-    if (!del.ok) return giveUp(err("io", `${t.branch} moved while ${t.change} was being dropped, so nothing was deleted: ${del.error.message}`));
+    if (!del.ok) {
+      const message = `${t.branch} moved while ${t.change} was being dropped: ${del.error.message}`;
+      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "archive", message: message.slice(0, 2000), losses: lost.value.lines, archive: archived?.ref ?? null });
+      return giveUp(err("io", `${message}; nothing was deleted${kept}`));
+    }
   }
   if (t.worktree) {
     // reason: --force is safe here: everything it would destroy is in the archive verified above (BR-2102).
     const rm = git(ws.primary, "worktree", "remove", "--force", t.worktree);
-    if (!rm.ok) return giveUp(rm);
+    if (!rm.ok) {
+      // reason: all or nothing (BR-2064): the branch deleted just above comes back at the same tip, create-only (issue #58).
+      const back = t.branch ? git(ws.primary, "update-ref", `refs/heads/${t.branch}`, tip.value, "") : ok("");
+      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "remove", message: rm.error.message.slice(0, 2000), losses: lost.value.lines, archive: archived?.ref ?? null, branch_restored: back.ok });
+      const branchNote = back.ok ? "nothing was deleted" : `the branch ${t.branch} was deleted and could not be put back (${back.error.message}); restore it with \`git branch ${t.branch} ${tip.value}\``;
+      return giveUp(err("io", `removing ${t.worktree} failed, so ${branchNote}${kept}: ${rm.error.message}`));
+    }
   }
   // reason: only this drop's own hold goes; a claim anyone took since is not this drop's to delete (issue #18).
   unholdClaim(ws.db, { ...hold.value, prior: null });
