@@ -113,7 +113,7 @@ describe("finding and applying updates", () => {
     const text = git(root, "show", `main:${file}`);
     expect(text).toContain(`title: 更新 canon 装进项目的文件到版本 ${version}`);
     expect(text).toContain("## 为什么\n\n项目里 canon 装的文件（skill、会话开始时的 hook）落后于当前的 canon，按负责人的要求更新。");
-    expect(text).toContain("## 要改什么\n\n- skill canon-a/SKILL.md\n- hook: canon brief at session start (.claude/settings.json)\n\n## 教训\n\n无。\n\n## 任务\n\n- [x] 由 `canon update` 安装并合入");
+    expect(text).toContain("## 要改什么\n\n- skill canon-a/SKILL.md\n- hook: canon brief at session start (.claude/settings.json)\n- hook: canon snapshot take before each Bash call (.claude/settings.json)\n\n## 教训\n\n无。\n\n## 任务\n\n- [x] 由 `canon update` 安装并合入");
   });
 
   test("BR-2086: update lands as its own change through the normal landing, and is a no-op when current", () => {
