@@ -62,13 +62,14 @@ export function computeStats(db: CoordDb, reviews: Readonly<Record<string, strin
   const refusalsOf = (check: string) => rows.filter((r) => r.kind === "land.refuse" && r.detail["reason"] === check);
 
   const outcomeOf = (r: Row): Outcome => {
-    if (!r.subject) return "unknown";
+    // reason: without its own fingerprint a refusal cannot be compared with anything after it (BR-2068, issue #68)
+    const before = r.detail["diff"];
+    if (!r.subject || typeof before !== "string") return "unknown";
     const later = rows.filter((x) => x.id > r.id && x.subject === r.subject);
     const ok = later.find((x) => x.kind === "land.ok");
     if (ok) {
-      const before = r.detail["diff"];
       const after = ok.detail["diff"];
-      if (typeof before !== "string" || typeof after !== "string") return "unknown";
+      if (typeof after !== "string") return "unknown";
       return before === after ? "same" : "changed";
     }
     if (later.some((x) => x.kind === "drop.done" || (x.kind === "change.status" && x.detail["status"] === "dropped"))) return "abandoned";
@@ -147,7 +148,8 @@ export function renderStats(stats: readonly CheckStats[]): string {
     lines.push("", "Due for review:");
     for (const s of due) {
       const o = s.outcomes;
-      lines.push(`  ${s.check} (since ${s.review}): ${s.runs} runs, ${s.refused} refused${o ? `, ${o.changed} caught a change, ${o.same} landed unchanged (possibly false)` : ""}`);
+      const outcomes = o ? `; changed ${o.changed}, same ${o.same}, abandoned ${o.abandoned}, pending ${o.pending}, unknown ${o.unknown}` : "";
+      lines.push(`  ${s.check} (since ${s.review}): ${s.runs} runs, ${s.refused} refused${outcomes}`);
     }
   }
   const undated = stats.filter((s) => s.review === null);

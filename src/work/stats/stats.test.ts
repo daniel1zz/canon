@@ -84,6 +84,22 @@ describe("canon stats", () => {
     expect(of(computeStats(d, {}, "2026-11-03"), "floor").outcomes).toEqual({ changed: 0, same: 0, abandoned: 0, pending: 3, unknown: 1 });
   });
 
+  test("BR-2068: a refusal without a diff fingerprint is unknown whatever came after it (issue #68)", () => {
+    const opened = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
+    if (!opened.ok) throw new Error(opened.error.message);
+    const d = opened.value;
+    d.event("a", "land.refuse", "C-6", { reason: "floor" }); // no diff recorded at all
+    d.event("a", "land.refuse", "C-6", { reason: "floor", diff: null }); // ownDiffId could not compute one
+    d.event("a", "change.status", "C-6", { status: "dropped" });
+    d.event("a", "land.refuse", "C-7", { reason: "floor", diff: null }); // nothing after it
+    d.event("a", "land.refuse", "C-8", { reason: "floor", diff: "x" });
+    d.event("a", "land.ok", "C-8", {}); // the landing has no fingerprint: still unknown
+    expect(of(computeStats(d, {}, "2026-11-03"), "floor").outcomes).toEqual({ changed: 0, same: 0, abandoned: 0, pending: 0, unknown: 4 });
+    d.event("a", "land.refuse", "C-9", { reason: "floor", diff: "y" });
+    d.event("a", "change.status", "C-9", { status: "dropped" }); // with a fingerprint, the status still decides
+    expect(of(computeStats(d, {}, "2026-11-03"), "floor").outcomes).toMatchObject({ abandoned: 1, unknown: 4 });
+  });
+
   test("BR-2068: a refusal is changed when the change later lands with other code, same when it lands unchanged", async () => {
     const root = project();
     const fixed = startNew(root, "Fixed");
@@ -176,6 +192,22 @@ describe("canon stats", () => {
     expect(text).toMatch(/ref-dangling +2 +3 +1 +0 +0 +1 +0/);
   });
 
+  test("BR-2069: a due check's line carries its runs, refusals and every refusal outcome (issue #69)", () => {
+    const opened = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
+    if (!opened.ok) throw new Error(opened.error.message);
+    const d = opened.value;
+    d.event("a", "land.refuse", "C-1", { reason: "floor", diff: "a" });
+    d.event("a", "land.ok", "C-1", { diff: "b" }); // changed
+    d.event("a", "land.refuse", "C-2", { reason: "floor", diff: "c" });
+    d.event("a", "change.status", "C-2", { status: "dropped" }); // abandoned
+    d.event("a", "land.refuse", "C-3", { reason: "floor", diff: "d" }); // pending
+    d.event("a", "land.refuse", null, { reason: "floor", diff: "e" }); // unknown
+    d.event("a", "claim.refuse", "C-1", { reason: "held" });
+    const text = renderStats(computeStats(d, { floor: "2026-01-01", claim: "2026-01-01" }, "2026-11-03"));
+    expect(text).toContain("  floor (since 2026-01-01): 5 runs, 4 refused; changed 1, same 0, abandoned 1, pending 1, unknown 1");
+    expect(text).toContain("  claim (since 2026-01-01): 1 runs, 1 refused\n"); // claim has no outcomes (BR-2068)
+  });
+
   test("BR-2069: checks whose review date has come are listed as due, undated ones are named, and an unknown check is a config error", () => {
     const root = project();
     const s = computeStats(ws(root).db, { floor: "2026-01-01", check: "2027-02-03", review: "2026-11-03" }, "2026-11-03");
@@ -184,6 +216,7 @@ describe("canon stats", () => {
     expect(text).toContain("Due for review:\n  floor (since 2026-01-01)");
     expect(text).not.toContain("  check (since");
     expect(text).toMatch(/No review date .*setup/);
+    expect(text).toContain("  review (since 2026-11-03): 0 runs, 0 refused; changed 0, same 0, abandoned 0, pending 0, unknown 0");
     writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ncheck_reviews:\n  flor: "2027-01-01"\n');
     const bad = readConfig(root);
     expect(!bad.ok && bad.error.message).toContain("no such check");

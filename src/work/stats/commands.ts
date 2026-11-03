@@ -26,10 +26,11 @@ const stats = defineCommand({
     if (args.json) return json(window ? { since, checks: s, window } : s);
     if (window) say(`${renderWindow(window)}\n`);
     say(renderStats(s));
-    const share = sharedShare(ws.root, ws.config);
-    if (share) say(`\n${renderSharedShare(share)}`);
     const searches = searchStats(ws.db, since ?? 0, until);
     if (searches.searches > 0) say(`\n${renderSearchStats(searches)}`);
+    // reason: the shared code line is the last one (BR-2121, issue #70)
+    const share = sharedShare(ws.root, ws.config);
+    if (share) say(`\n${renderSharedShare(share)}`);
   },
 });
 
