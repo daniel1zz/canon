@@ -38,9 +38,6 @@ describe("config validation", () => {
     ["an unknown hook event", "hooks:\n  before_start: x\n", "unknown hook event"],
     ["invalid YAML", "floor: [\n", "not valid YAML"],
     ["a regenerable entry with a slash", "regenerable: [build/out]\n", "regenerable"],
-    ["instructions that are not a list", "instructions: CLAUDE.md\n", "`instructions` must be a list"],
-    ["an absolute instructions path", "instructions: [/etc/CLAUDE.md]\n", "`instructions` must be a list"],
-    ["an instructions path with ..", "instructions: [../CLAUDE.md]\n", "`instructions` must be a list"],
   ];
   for (const [what, yaml, message] of cases) {
     test(`BR-2045: ${what} makes every command fail with exit 2`, () => {
@@ -50,6 +47,16 @@ describe("config validation", () => {
       expect(r.err).toContain(message);
     });
   }
+
+  test("BR-2151: instructions default to CLAUDE.md, accept relative file paths and refuse anything else", () => {
+    expect(readConfig(repo()).ok && (readConfig(repo()) as { value: { instructions: readonly string[] } }).value.instructions).toEqual(["CLAUDE.md"]);
+    const good = readConfig(repo({ "canon/config.yaml": "instructions: [CLAUDE.md, src/cli/guide.ts]\n" }));
+    expect(good.ok && good.value.instructions).toEqual(["CLAUDE.md", "src/cli/guide.ts"]);
+    for (const yaml of ["instructions: CLAUDE.md\n", "instructions: [/etc/CLAUDE.md]\n", "instructions: [../CLAUDE.md]\n", "instructions: [docs/]\n"]) {
+      const r = readConfig(repo({ "canon/config.yaml": yaml }));
+      expect(!r.ok && r.error.message).toContain("`instructions` must be a list");
+    }
+  });
 
   test("BR-2045: a template for a type that is not declared is a config error", () => {
     const root = repo({ "canon/config.yaml": "main: main\n", "canon/templates/spec.md": "## x\n" });

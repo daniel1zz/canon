@@ -243,6 +243,18 @@ describe("duplicate review of standing instructions at land", () => {
     expect(lines.join("\n")).toContain("review: not configured — CLAUDE.md");
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'review.skip'").get()?.n).toBe(1);
   });
+
+  test("BR-2143: a duplicate reviewer that fails to run refuses the landing", async () => {
+    const { root } = standingProject("ok");
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: "exit 3"\n`);
+    sh(root, "commit", "-qam", "failing reviewer");
+    const s = startNew(root, "Edit CLAUDE.md");
+    writeFileSync(join(s.worktree, "CLAUDE.md"), "# Project\n\nnew\n");
+    sh(s.worktree, "commit", "-qam", "edit");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(out.kind === "refused" && out.message).toContain("duplicate review could not run");
+  });
 });
 
 describe("work land", () => {

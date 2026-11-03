@@ -8,6 +8,10 @@ shared:
 # 扫描规则编号的测试文件
 tests:
   - "src/**/*.test.ts"
+# 每个会话开始时都会读到的文件：改了它们，合入时评审同一条要求是否写在多处（BR-2143）；工作说明的源码也算
+instructions:
+  - CLAUDE.md
+  - src/cli/guide.ts
 # 新 worktree 里执行一次
 setup: "bun install"
 # 规则和决策文字的评审：从 stdin 读提示，在 stdout 输出 JSON 结论
