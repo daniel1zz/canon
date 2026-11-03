@@ -1,7 +1,6 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
 import type { CoordDb } from "../db.ts";
 import { isGone, selfProcess, type Proc } from "./liveness.ts";
-import { parentActor } from "../workspace.ts";
 
 /**
  * Live coordination operations (design §2). Each is one transaction on the shared DB, so two sessions
@@ -31,13 +30,15 @@ export function takeClaim(db: CoordDb, subject: string, holder: string, actor: s
       .query<{ holder: string; expires_at: string; worktree: string | null; pid: number | null; pid_start: string | null }, [string]>("SELECT holder, expires_at, worktree, pid, pid_start FROM claims WHERE subject = ?")
       .get(subject);
     // reason: a live claim refuses every start, the same actor included: Claude Code gives a session's
-    // subagents one session id and one process, so the actor cannot tell two of them apart (BR-2011, D-11).
+    // subagents one session id and one process, so the actor cannot tell two of them apart; the worktree is
+    // what keeps them apart, so the same actor is not invited in either (BR-2011, D-18).
     const binds = cur !== null && bindsStill(cur);
     // A lease that has not expired but whose session process is gone frees at once (BR-2100).
     const gone = cur !== null && !binds && new Date(cur.expires_at) > now();
     if (binds) {
       db.event(actor, "claim.refuse", subject, { reason: "held", by: cur.worktree, actor: cur.holder, until: cur.expires_at });
-      const own = cur.holder === actor ? `; if this is your own work, continue in it: cd ${cur.worktree}` : subagentHint(cur.holder, actor);
+      const own =
+        cur.holder === actor ? `; it is in progress in that worktree: if you did not start it in this conversation, pick another change (whoever started it continues there)` : "";
       return err(
         "conflict",
         `${subject} is claimed by ${cur.holder} in ${cur.worktree} until ${cur.expires_at}${own}; it frees when the holder runs \`canon work stop --release\` there or the lease expires`,
@@ -71,7 +72,7 @@ export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs
     if (!cur) return ok(undefined);
     if (cur.holder !== actor && bindsStill(cur)) {
       db.event(actor, "claim.refuse", cur.subject, { reason: "held", by: worktree, actor: cur.holder, until: cur.expires_at });
-      return err("conflict", `${cur.subject} in ${worktree} is claimed by ${cur.holder} until ${cur.expires_at}; only that actor can renew, stop, release or land it${subagentHint(cur.holder, actor)}`);
+      return err("conflict", `${cur.subject} in ${worktree} is claimed by ${cur.holder} until ${cur.expires_at}; only that session can renew, stop, release or land it`);
     }
     const expires = iso(new Date(now().getTime() + leaseMs));
     // The holder's own session may run under a new process now (a resumed session): follow it, so the claim is not freed under it.
@@ -80,32 +81,6 @@ export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs
       .run(actor, expires, owner?.pid ?? (cur.holder === actor ? cur.pid : null), owner?.start ?? (cur.holder === actor ? cur.pid_start : null), cur.subject);
     db.event(actor, cur.holder === actor ? "claim.renew" : "claim.take", cur.subject, { worktree, ...(cur.holder === actor ? {} : { from: cur.holder }) });
     return ok({ subject: cur.subject, holder: worktree, actor, expires_at: expires });
-  });
-  return tx.immediate();
-}
-
-/** Told to the main thread when one of its own subagents holds the claim: the only way it frees before the lease ends (BR-2129). */
-function subagentHint(holder: string, actor: string): string {
-  return parentActor(holder) === actor ? `; ${holder} is a subagent of this session: once it has finished or stopped, release its claim in that worktree with \`canon work stop --release --takeover --next "<next step>"\`` : "";
-}
-
-/**
- * `canon work stop --release --takeover` (BR-2129): the main thread `agent:<s>` releases a claim held in this worktree
- * by one of its own subagents `agent:<s>:<id>`. The subagent runs in the session's own process, so the process probe
- * (BR-2100) never frees it while the session lives. Returns the released claim; undefined when the ordinary stop
- * applies (no claim, the actor's own, or one that no longer binds); a conflict for anyone else's live claim.
- */
-export function releaseSubagentClaim(db: CoordDb, worktree: string, actor: string): Result<Claim | undefined> {
-  const tx = db.db.transaction((): Result<Claim | undefined> => {
-    const cur = db.db.query<ClaimRow, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims WHERE worktree = ?").get(worktree);
-    if (!cur || cur.holder === actor || !bindsStill(cur)) return ok(undefined);
-    if (parentActor(cur.holder) !== actor) {
-      db.event(actor, "claim.refuse", cur.subject, { reason: "held", by: worktree, actor: cur.holder, until: cur.expires_at });
-      return err("conflict", `${cur.subject} in ${worktree} is claimed by ${cur.holder} until ${cur.expires_at}; --takeover releases only a claim of this session's own subagents (agent:<session>:<id> under ${actor})`);
-    }
-    db.db.query("DELETE FROM claims WHERE subject = ? AND worktree = ? AND holder = ?").run(cur.subject, worktree, cur.holder);
-    db.event(actor, "claim.release", cur.subject, { from: cur.holder, reason: "takeover" });
-    return ok({ subject: cur.subject, holder: worktree, actor: cur.holder, expires_at: cur.expires_at });
   });
   return tx.immediate();
 }

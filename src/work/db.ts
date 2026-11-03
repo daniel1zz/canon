@@ -67,6 +67,8 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ["claims", "pid_start TEXT"],
   ["queue", "pid INTEGER"],
   ["queue", "pid_start TEXT"],
+  // The worktree each event was run from: with session-level actors, it is what tells a session's agents apart (BR-2131, D-18).
+  ["events", "worktree TEXT"],
 ];
 
 /**
@@ -85,16 +87,20 @@ export function addColumns(db: Database): void {
 }
 
 export class CoordDb {
-  private constructor(readonly db: Database) {}
+  /** `worktree`: the toplevel of the worktree the command runs in, recorded on every event (BR-2131). */
+  private constructor(
+    readonly db: Database,
+    private readonly worktree: string | null,
+  ) {}
 
-  static open(path: string): Result<CoordDb> {
+  static open(path: string, worktree?: string): Result<CoordDb> {
     try {
       mkdirSync(dirname(path), { recursive: true });
       const db = new Database(path, { create: true, strict: true });
       db.exec("PRAGMA journal_mode = WAL; PRAGMA busy_timeout = 5000;");
       db.exec(SCHEMA);
       addColumns(db);
-      return ok(new CoordDb(db));
+      return ok(new CoordDb(db, worktree ?? null));
     } catch (e) {
       return err("io", `cannot open coordination DB at ${path}: ${(e as Error).message}`);
     }
@@ -126,8 +132,8 @@ export class CoordDb {
 
   event(actor: string, kind: string, subject: string | null, detail: Record<string, unknown>): void {
     this.db
-      .query("INSERT INTO events(ts, actor, kind, subject, detail) VALUES (?, ?, ?, ?, ?)")
-      .run(new Date().toISOString(), actor, kind, subject, JSON.stringify(detail));
+      .query("INSERT INTO events(ts, actor, kind, subject, detail, worktree) VALUES (?, ?, ?, ?, ?, ?)")
+      .run(new Date().toISOString(), actor, kind, subject, JSON.stringify(detail), this.worktree);
   }
 
   close(): void {

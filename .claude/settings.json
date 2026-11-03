@@ -9,26 +9,10 @@
           }
         ]
       }
-    ],
-    "PreToolUse": [
-      {
-        "matcher": "Bash",
-        "hooks": [
-          {
-            "type": "command",
-            "command": "canon hook pre-bash 2>/dev/null || true"
-          }
-        ]
-      }
     ]
   },
   "enabledPlugins": {
     "superpowers@claude-plugins-official": false
   },
-  "disableClaudeAiConnectors": true,
-  "permissions": {
-    "allow": [
-      "Bash(export CANON_ACTOR='agent:*')"
-    ]
-  }
+  "disableClaudeAiConnectors": true
 }

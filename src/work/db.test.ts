@@ -22,4 +22,19 @@ describe("schema upgrades", () => {
     expect(questions(b.value, "all").map((q) => q.question)).toEqual(["Old question?"]);
     expect(() => addColumns(a.value.db)).not.toThrow();
   });
+
+  test("BR-2131 BR-2078: an old events table gains the worktree column; old events keep an empty one, new ones record the opener's worktree", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "canon-old-db-")), "state.db");
+    const old = new Database(path, { create: true });
+    old.exec("CREATE TABLE events (id INTEGER PRIMARY KEY AUTOINCREMENT, ts TEXT NOT NULL, actor TEXT NOT NULL, kind TEXT NOT NULL, subject TEXT, detail TEXT NOT NULL DEFAULT '{}')");
+    old.exec("INSERT INTO events(ts, actor, kind) VALUES ('2026-01-01', 'agent:a', 'claim.take')");
+    old.close();
+    const db = CoordDb.open(path, "/r.worktrees/C-1");
+    if (!db.ok) throw new Error(db.error.message);
+    db.value.event("agent:a", "claim.renew", "C-1", {});
+    expect(db.value.db.query<{ kind: string; worktree: string | null }, []>("SELECT kind, worktree FROM events ORDER BY id").all()).toEqual([
+      { kind: "claim.take", worktree: null },
+      { kind: "claim.renew", worktree: "/r.worktrees/C-1" },
+    ]);
+  });
 });

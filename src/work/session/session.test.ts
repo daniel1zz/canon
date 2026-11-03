@@ -8,9 +8,6 @@ import { land } from "../land/land.ts";
 
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
-/** This test process's own session prefix: in-process workspaces read the real environment, where a subagent actor of another session is refused (BR-2023). */
-const S = (process.env["CLAUDECODE"] === "1" && process.env["CLAUDE_CODE_SESSION_ID"]?.trim().slice(0, 8)) || "3d606482";
-
 describe("work start", () => {
   test("BR-2012: a new change gets its own worktree, branch, committed change file and claim", () => {
     const root = project();
@@ -61,10 +58,11 @@ describe("work start", () => {
     expect(other.exitCode).toBe(5);
     expect(other.stderr.toString()).toContain("claimed by agent:a");
     expect(claims(ws(root).db).map((c) => [c.subject, c.actor])).toEqual([[s.change, "agent:a"]]);
-    // Subagents of one Claude Code session share the actor, so the same actor is refused too, and told where its work is.
+    // Subagents of one Claude Code session share the actor, so the same actor is refused too, and told to pick another change, not to go in.
     const same = cli("agent:a");
     expect(same.exitCode).toBe(5);
-    expect(same.stderr.toString()).toContain(`if this is your own work, continue in it: cd ${s.worktree}`);
+    expect(same.stderr.toString()).toContain("it is in progress in that worktree: if you did not start it in this conversation, pick another change");
+    expect(same.stderr.toString()).not.toContain("cd ");
     expect(claims(ws(root).db).map((c) => [c.subject, c.actor])).toEqual([[s.change, "agent:a"]]);
   });
 
@@ -86,53 +84,35 @@ describe("work start", () => {
     expect(claims(ws(root).db)).toEqual([]);
   });
 
-  test("BR-2104: a sibling subagent sent into the holder's worktree cannot land, stop or release its claim", () => {
+  test("BR-2104: another agent of the holder's session acts as the holder in its worktree; canon does not tell them apart", () => {
     const root = project();
-    const s = startNew(root, "Sibling", `agent:${S}:aaa`);
-    const before = sh(root, "rev-parse", "main");
-    const cli = (actor: string, ...args: string[]) =>
-      Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", ...args], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: `${S}-8b99`, CANON_ACTOR: actor } });
-    for (const args of [["land", "--finish"], ["stop", "--release", "--next", "x"], ["stop", "--next", "x"]]) {
-      const r = cli(`agent:${S}:bbb`, ...args);
-      expect(r.exitCode).toBe(5);
-      expect(r.stderr.toString()).toContain(`claimed by agent:${S}:aaa`);
-    }
-    expect(sh(root, "rev-parse", "main")).toBe(before);
-    expect(claims(ws(root).db).map((c) => [c.subject, c.actor])).toEqual([[s.change, `agent:${S}:aaa`]]);
-    const status = Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "status"], { cwd: root, stdout: "pipe", env: { ...process.env, CANON_ACTOR: "agent:x" } });
-    expect(status.stdout.toString()).toContain(` agent:${S}:aaa  ${s.worktree}`); // the full actor (BR-2023)
-  });
-
-  test("BR-2129: the main thread releases its own subagent's live claim only with --release --takeover; nobody else can", () => {
-    const root = project();
-    const s = startNew(root, "Subagent work", `agent:${S}:aaa`);
-    const cli = (actor: string, ...args: string[]) =>
-      Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", ...args], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: `${S}-8b99`, CANON_ACTOR: actor } });
-    const held = () => claims(ws(root).db).map((c) => c.actor);
-    const plain = cli(`agent:${S}`, "stop", "--release", "--next", "x");
-    expect(plain.exitCode).toBe(5);
-    expect(plain.stderr.toString()).toContain("--takeover");
-    expect(cli(`agent:${S}`, "land", "--finish").exitCode).toBe(5);
-    expect(cli(`agent:${S}`, "stop", "--takeover", "--next", "x").exitCode).toBe(2);
-    expect(cli(`agent:${S}:bbb`, "stop", "--release", "--takeover", "--next", "x").exitCode).toBe(5);
-    const other = Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "stop", "--release", "--takeover", "--next", "x"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:ffffffff" } });
-    expect(other.exitCode).toBe(5);
-    expect(held()).toEqual([`agent:${S}:aaa`]);
+    const s = startNew(root, "Same session");
     const db = ws(root).db;
-    expect(db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM handoffs").get()?.n).toBe(0);
-    const taken = cli(`agent:${S}`, "stop", "--release", "--takeover", "--next", "carry on");
-    expect(taken.exitCode).toBe(0);
-    expect(held()).toEqual([]);
-    expect(db.db.query<{ actor: string; next: string }, []>("SELECT actor, next FROM handoffs").all()).toEqual([{ actor: `agent:${S}`, next: "carry on" }]);
-    const ev = db.db.query<{ actor: string; detail: string }, []>("SELECT actor, detail FROM events WHERE kind = 'claim.release'").all();
-    expect(ev.map((e) => [e.actor, JSON.parse(e.detail)])).toEqual([[`agent:${S}`, { from: `agent:${S}:aaa`, reason: "takeover" }]]);
+    const before = claims(db)[0]!.expires_at;
+    // A second subagent of the same session has the same actor (BR-2023): in the holder's worktree it is the holder.
+    const r = Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "stop", "--next", "x"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    expect(r.exitCode).toBe(0);
+    expect(claims(db).map((c) => [c.subject, c.actor])).toEqual([[s.change, "agent:a"]]);
+    expect(claims(db)[0]!.expires_at >= before).toBe(true);
+    expect(db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'claim.refuse'").get()?.n).toBe(0);
   });
 
-  test("BR-2129: --takeover on the actor's own claim is an ordinary stop --release", () => {
+  test("BR-2131: every event records the worktree it was run from, so one session's agents in different worktrees are told apart", () => {
     const root = project();
-    const s = startNew(root, "Own work", `agent:${S}`);
-    expect(stop(ws(s.worktree, `agent:${S}`), "done here", undefined, true, quiet, true).ok).toBe(true);
-    expect(claims(ws(root).db)).toEqual([]);
+    const a = startNew(root, "First");
+    const b = startNew(root, "Second");
+    expect(stop(ws(a.worktree), "next a", undefined, false).ok).toBe(true);
+    expect(stop(ws(b.worktree), "next b", undefined, false).ok).toBe(true);
+    const db = ws(root).db;
+    const rows = db.db.query<{ actor: string; kind: string; subject: string | null; worktree: string | null }, []>("SELECT actor, kind, subject, worktree FROM events ORDER BY id").all();
+    const main = ws(root).root;
+    expect(rows.filter((e) => e.kind === "id.allocate").map((e) => e.worktree)).toEqual([main, main]);
+    const renews = rows.filter((e) => e.kind === "claim.renew");
+    expect(renews.map((e) => [e.actor, e.subject, e.worktree])).toEqual([
+      ["agent:a", a.change, ws(a.worktree).root],
+      ["agent:a", b.change, ws(b.worktree).root],
+    ]);
+    expect(rows.every((e) => e.worktree !== null)).toBe(true);
   });
 
   test("BR-2104: once the holder's lease has expired, another actor's stop in that worktree takes the claim over", () => {

@@ -21,31 +21,16 @@ export interface Workspace {
 /**
  * Who is acting (BR-2023): CANON_ACTOR when set; inside a Claude Code session (CLAUDECODE=1) the agent
  * named by its session id; otherwise the OS user as a human. An agent is never recorded as a human.
- *
- * A subagent's Bash calls carry `CANON_ACTOR=agent:<session>:<agent id>`, exported by `canon hook pre-bash`
- * (D-17). Such a value naming another session was inherited or copied, so it is refused instead of acting as
- * that session's subagent.
  */
 export function currentActor(env: Record<string, string | undefined> = process.env): Result<string> {
   const inAgent = env["CLAUDECODE"] === "1";
   const explicit = env["CANON_ACTOR"]?.trim();
-  const session = env["CLAUDE_CODE_SESSION_ID"]?.trim().slice(0, 8) ?? "";
   if (explicit) {
     if (inAgent && !explicit.startsWith("agent:")) return err("invalid", `CANON_ACTOR=${explicit} inside a Claude Code session: an agent session can only act as agent:<name>`);
-    const sub = /^agent:([^:]*):/.exec(explicit);
-    if (inAgent && session !== "" && sub && sub[1] !== session) {
-      return err("invalid", `CANON_ACTOR=${explicit} names session ${sub[1]}, but this is Claude Code session ${session}: the value was inherited or copied from another session; unset it`);
-    }
     return ok(explicit);
   }
-  if (inAgent) return ok(`agent:${session || "unknown"}`);
+  if (inAgent) return ok(`agent:${env["CLAUDE_CODE_SESSION_ID"]?.trim().slice(0, 8) || "unknown"}`);
   return ok(`human:${userInfo().username}`);
-}
-
-/** The session part of a subagent actor `agent:<session>:<agent id>`, or undefined for any other actor (D-17). */
-export function parentActor(actor: string): string | undefined {
-  const m = /^(agent:[^:]+):[^:]+$/.exec(actor);
-  return m?.[1];
 }
 
 export function openWorkspace(cwd: string): Result<Workspace> {
@@ -59,7 +44,7 @@ export function openWorkspace(cwd: string): Result<Workspace> {
   if (!config.ok) return config;
   const dbPath = CoordDb.pathFor(root.value);
   if (!dbPath.ok) return dbPath;
-  const db = CoordDb.open(dbPath.value);
+  const db = CoordDb.open(dbPath.value, root.value);
   if (!db.ok) return db;
   const actor = currentActor();
   if (!actor.ok) return actor;

@@ -4,12 +4,11 @@ import { symlinkOnPath } from "./install.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 
 /**
- * The entries canon merges into a project's `.claude/settings.json` (D-10). canon owns only these entries and
- * never touches anything else in that file. None of them blocks anything (D-1: no hook checks how an agent works).
- *
- *   SessionStart  `canon brief || echo ...`: a new session learns what it is working on (BR-2087)
- *   PreToolUse    `canon hook pre-bash`: a subagent's Bash calls carry its own actor (BR-2127, D-17)
- *   allow rule    the one export line that hook adds runs without a permission prompt (BR-2128)
+ * The one hook canon puts into a project (BR-2087, D-10): at session start Claude Code runs `canon brief`,
+ * so a new session learns what it is working on and whether canon's project assets are out of date.
+ * It is a *merged* asset: canon owns only its own entry in `.claude/settings.json` and never touches
+ * anything else in that file. It reports; it never blocks (D-1: no hook checks how an agent works). The entries
+ * canon withdrew (C-91's PreToolUse hook and allow rule, D-18) are removed by the same write.
  */
 /**
  * `|| echo` keeps the session informed when brief fails or canon is not on PATH: a failing hook's stdout is not
@@ -19,15 +18,6 @@ export const BRIEF_COMMAND =
   "canon brief || echo 'canon brief failed (see above), or canon is not on PATH. This project keeps its rules, decisions and work in canon/, and every change lands through canon work land: do not edit the main branch directly. Fix the error or install canon (ask the user if needed), then run canon brief.'";
 /** The form canon installed before BR-2087 required the fallback; found once and replaced in place. */
 const OLD_BRIEF_COMMAND = "canon brief";
-/**
- * reason: a PreToolUse hook that exits 2 blocks the tool call; without canon on PATH, or on any failure, this line
- * must exit 0 with nothing on stdout, so the Bash call runs unchanged (BR-2128).
- */
-export const PRE_BASH_COMMAND = "canon hook pre-bash 2>/dev/null || true";
-/** Any other command starting with this is an older form of canon's own entry, rewritten in place. */
-const PRE_BASH_PREFIX = "canon hook pre-bash";
-/** Matches only the line `canon hook pre-bash` puts in front of a subagent's command (BR-2128). */
-export const ACTOR_PERMISSION = "Bash(export CANON_ACTOR='agent:*')";
 const SETTINGS = join(".claude", "settings.json");
 
 interface HookEntry {
@@ -35,106 +25,116 @@ interface HookEntry {
   hooks?: { type?: string; command?: string }[];
 }
 
-type Settings = Record<string, unknown>;
-
-function read(root: string): Result<Settings | undefined> {
+function read(root: string): Result<Record<string, unknown> | undefined> {
   const path = join(root, SETTINGS);
   // reason: checked before existsSync, which follows links: a dangling link would look absent and be written through (BR-2087, #10)
   const link = symlinkOnPath(root, path);
   if (link) return err("invalid", `${relative(root, link)} is a symbolic link; canon edits ${SETTINGS} only as a plain file inside the project`);
   if (!existsSync(path)) return ok(undefined);
-  let v: unknown;
   try {
-    v = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    const v = JSON.parse(readFileSync(path, "utf8")) as unknown;
+    if (typeof v !== "object" || v === null || Array.isArray(v)) return err("invalid", `${SETTINGS} must be a JSON object`);
+    return ok(v as Record<string, unknown>);
   } catch (e) {
     return err("invalid", `${SETTINGS} is not valid JSON (${(e as Error).message}); fix it and run again`);
   }
-  if (!isObject(v)) return err("invalid", `${SETTINGS} must be a JSON object`);
-  const perms = v["permissions"];
-  if (perms !== undefined && (!isObject(perms) || (perms["allow"] !== undefined && !Array.isArray(perms["allow"])))) {
-    return err("invalid", `${SETTINGS}: permissions must be an object whose allow is a list; fix it and run again`);
-  }
-  return ok(v);
 }
+
+type HookState = "present" | "old" | "missing";
+
+type Settings = Record<string, unknown>;
 
 const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
 
-export type HookState = "present" | "old" | "missing";
-
-const entries = (settings: Settings | undefined, event: string): HookEntry[] => {
-  const list = (settings?.["hooks"] as Record<string, unknown> | undefined)?.[event];
-  return Array.isArray(list) ? (list as HookEntry[]) : [];
+const sessionStart = (settings: Settings | undefined): HookEntry[] => {
+  const start = (settings?.["hooks"] as Record<string, unknown> | undefined)?.["SessionStart"];
+  return Array.isArray(start) ? (start as HookEntry[]) : [];
 };
 
-const commandsOf = (list: HookEntry[]) => list.flatMap((e) => (Array.isArray(e.hooks) ? e.hooks : []).map((h) => h.command?.trim()));
-
-const bashEntries = (settings: Settings | undefined) => entries(settings, "PreToolUse").filter((e) => e.matcher === "Bash");
-
 function briefState(settings: Settings | undefined): HookState {
-  const commands = commandsOf(entries(settings, "SessionStart"));
+  const commands = sessionStart(settings).flatMap((e) => (Array.isArray(e.hooks) ? e.hooks : []).map((h) => h.command?.trim()));
   if (commands.includes(BRIEF_COMMAND)) return "present";
   return commands.includes(OLD_BRIEF_COMMAND) ? "old" : "missing";
 }
 
-function preBashState(settings: Settings | undefined): HookState {
-  const commands = commandsOf(bashEntries(settings));
-  if (commands.includes(PRE_BASH_COMMAND)) return "present";
-  return commands.some((c) => c?.startsWith(PRE_BASH_PREFIX)) ? "old" : "missing";
+/**
+ * Entries canon installed for a few hours (C-91) and withdrew with D-18: a PreToolUse hook that exported a per-subagent
+ * actor, and the allow rule for that export line (issue #26). They are canon's own, so install and update remove them;
+ * anything else in the file stays as it was (BR-2087).
+ */
+const RETIRED_HOOK_PREFIX = "canon hook pre-bash";
+const RETIRED_PERMISSION = "Bash(export CANON_ACTOR='agent:*')";
+export type Retired = "pre-bash hook" | "actor permission";
+
+const isRetiredHook = (h: unknown) => isObject(h) && typeof h["command"] === "string" && h["command"].trim().startsWith(RETIRED_HOOK_PREFIX);
+
+function retiredIn(settings: Settings | undefined): Retired[] {
+  const found: Retired[] = [];
+  const pre = isObject(settings?.["hooks"]) ? (settings["hooks"] as Settings)["PreToolUse"] : undefined;
+  if (Array.isArray(pre) && pre.some((e) => isObject(e) && Array.isArray(e["hooks"]) && e["hooks"].some(isRetiredHook))) found.push("pre-bash hook");
+  const perms = settings?.["permissions"];
+  if (isObject(perms) && Array.isArray(perms["allow"]) && perms["allow"].includes(RETIRED_PERMISSION)) found.push("actor permission");
+  return found;
 }
 
-const allowList = (settings: Settings | undefined): unknown[] => ((settings?.["permissions"] as Record<string, unknown> | undefined)?.["allow"] as unknown[] | undefined) ?? [];
+/** The settings without the retired entries; a list or object left empty only because of that removal goes too. */
+function withoutRetired(settings: Settings): Settings {
+  const out = { ...settings };
+  const hooks = out["hooks"];
+  if (isObject(hooks) && Array.isArray(hooks["PreToolUse"])) {
+    const pre = (hooks["PreToolUse"] as unknown[]).flatMap((e) => {
+      if (!isObject(e) || !Array.isArray(e["hooks"]) || !e["hooks"].some(isRetiredHook)) return [e];
+      const kept = (e["hooks"] as unknown[]).filter((h) => !isRetiredHook(h));
+      return kept.length > 0 ? [{ ...e, hooks: kept }] : [];
+    });
+    const next: Settings = { ...hooks, PreToolUse: pre };
+    if (pre.length === 0) delete next["PreToolUse"];
+    out["hooks"] = next;
+  }
+  const perms = out["permissions"];
+  if (isObject(perms) && Array.isArray(perms["allow"]) && perms["allow"].includes(RETIRED_PERMISSION)) {
+    const allow = (perms["allow"] as unknown[]).filter((a) => a !== RETIRED_PERMISSION);
+    const next: Settings = { ...perms, allow };
+    if (allow.length === 0) delete next["allow"];
+    if (Object.keys(next).length === 0) delete out["permissions"];
+    else out["permissions"] = next;
+  }
+  return out;
+}
 
 export interface SettingsState {
   /** The SessionStart `canon brief` entry (BR-2087). */
   readonly brief: HookState;
-  /** The PreToolUse `canon hook pre-bash` entry (BR-2128). */
-  readonly preBash: HookState;
-  /** Whether the allow rule for the export line is there (BR-2128). */
-  readonly permission: boolean;
+  /** Withdrawn canon entries still in the file; each is out of date until removed (BR-2087, D-18). */
+  readonly retired: readonly Retired[];
 }
 
-function stateOf(settings: Settings | undefined): SettingsState {
-  return { brief: briefState(settings), preBash: preBashState(settings), permission: allowList(settings).includes(ACTOR_PERMISSION) };
-}
-
-/** Which of canon's settings entries the project has, in the current form, an older one, or not at all. Reads only. */
+/** Which of canon's entries the project's settings have: `canon brief` in the current form, an older one or none, and any withdrawn ones. Reads only. */
 export function hookStatus(root: string): Result<SettingsState> {
   const s = read(root);
   if (!s.ok) return s;
-  return ok(stateOf(s.value));
+  return ok({ brief: briefState(s.value), retired: retiredIn(s.value) });
 }
 
-/** Rewrites an older form of canon's command in place, so a project never ends up with two entries. */
-const rewrite = (list: HookEntry[], isOld: (c: string) => boolean, command: string): HookEntry[] =>
-  list.map((e) => (Array.isArray(e.hooks) ? { ...e, hooks: e.hooks.map((h) => (h.command !== undefined && isOld(h.command.trim()) ? { ...h, command } : h)) } : e));
-
 /**
- * Adds each of canon's entries that is missing, or rewrites an older form in place; everything else in the file
- * is kept as it was. Returns whether the file changed.
+ * Adds the SessionStart entry when it is missing, or rewrites the old form's command in place, so a project
+ * never ends up with two, and removes canon's withdrawn entries; everything else in the file is kept as it was.
  */
 export function ensureHook(root: string): Result<boolean> {
   const s = read(root);
   if (!s.ok) return s;
-  const state = stateOf(s.value);
-  if (state.brief === "present" && state.preBash === "present" && state.permission) return ok(false);
-  const settings = { ...(s.value ?? {}) };
-  const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
-
-  let start = entries(s.value, "SessionStart");
-  if (state.brief === "old") start = rewrite(start, (c) => c === OLD_BRIEF_COMMAND, BRIEF_COMMAND);
-  else if (state.brief === "missing") start = [...start, { hooks: [{ type: "command", command: BRIEF_COMMAND }] }];
-  hooks["SessionStart"] = start;
-
-  let pre = entries(s.value, "PreToolUse");
-  if (state.preBash === "old") pre = pre.map((e) => (e.matcher === "Bash" ? rewrite([e], (c) => c.startsWith(PRE_BASH_PREFIX), PRE_BASH_COMMAND)[0]! : e));
-  else if (state.preBash === "missing") pre = [...pre, { matcher: "Bash", hooks: [{ type: "command", command: PRE_BASH_COMMAND }] }];
-  hooks["PreToolUse"] = pre;
-  settings["hooks"] = hooks;
-
-  if (!state.permission) {
-    const perms = { ...((settings["permissions"] as Record<string, unknown> | undefined) ?? {}) };
-    perms["allow"] = [...allowList(s.value), ACTOR_PERMISSION];
-    settings["permissions"] = perms;
+  const state = briefState(s.value);
+  const retired = retiredIn(s.value);
+  if (state === "present" && retired.length === 0) return ok(false);
+  const settings = retired.length > 0 ? withoutRetired(s.value ?? {}) : { ...(s.value ?? {}) };
+  if (state !== "present") {
+    const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
+    let start = sessionStart(settings);
+    if (state === "old") {
+      start = start.map((e) => (Array.isArray(e.hooks) ? { ...e, hooks: e.hooks.map((h) => (h.command?.trim() === OLD_BRIEF_COMMAND ? { ...h, command: BRIEF_COMMAND } : h)) } : e));
+    } else start = [...start, { hooks: [{ type: "command", command: BRIEF_COMMAND }] }];
+    hooks["SessionStart"] = start;
+    settings["hooks"] = hooks;
   }
   mkdirSync(join(root, ".claude"), { recursive: true });
   writeFileSync(join(root, SETTINGS), `${JSON.stringify(settings, null, 2)}\n`);

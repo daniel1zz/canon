@@ -14,7 +14,7 @@
 ## 术语
 
 - **认领（claim）**：一个变更的租约，由一个 worktree 和一个执行者持有。
-- **执行者（actor）**：做这件事的会话或人，`CANON_ACTOR`；Claude Code 里是会话 id。
+- **执行者（actor）**：做这件事的会话或人，`CANON_ACTOR`；Claude Code 里是会话 id，同一个会话的子 agent 共用它，靠 worktree 分开（D-18）。
 - **floor**：项目配置的命令，必须在即将成为 main 的代码树上执行成功（`canon/config.yaml`）。
 - **合入（land）**：rebase 到 main、跑 floor、跑检查、规则评审、移动 main。
 - **handoff**：会话停下时记下的下一步。

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { ACTOR_PERMISSION, BRIEF_COMMAND, PRE_BASH_COMMAND } from "./hook.ts";
+import { BRIEF_COMMAND } from "./hook.ts";
 
 const MAIN = join(import.meta.dir, "..", "main.ts");
 
@@ -106,7 +106,7 @@ describe("finding and applying updates", () => {
     writeFileSync(join(root, ".claude/settings.json"), JSON.stringify({ permissions: { allow: ["Bash(ls)"] }, hooks: { SessionStart: [{ hooks: [{ type: "command", command: "echo hi" }] }] } }));
     expect(canon(root, { CANON_SKILLS_SOURCE: src }, "init", "--floor", "true").code).toBe(0);
     const s = JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"));
-    expect(s.permissions).toEqual({ allow: ["Bash(ls)", ACTOR_PERMISSION] });
+    expect(s.permissions).toEqual({ allow: ["Bash(ls)"] });
     expect(s.hooks.SessionStart.map((e: { hooks: { command: string }[] }) => e.hooks[0]!.command)).toEqual(["echo hi", BRIEF_COMMAND]);
     expect(BRIEF_COMMAND.startsWith("canon brief || echo ")).toBe(true);
     canon(root, { CANON_SKILLS_SOURCE: src }, "install");
@@ -124,10 +124,7 @@ describe("finding and applying updates", () => {
     expect(r.out).toContain("hook: canon brief at session start, older form");
     expect(canon(root, env, "install").code).toBe(0);
     const s = JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"));
-    expect(s).toEqual({
-      permissions: { allow: [ACTOR_PERMISSION] },
-      hooks: { SessionStart: [{ matcher: "startup", hooks: [{ type: "command", command: BRIEF_COMMAND }] }, old.hooks.SessionStart[1]], PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: PRE_BASH_COMMAND }] }] },
-    });
+    expect(s).toEqual({ ...old, hooks: { SessionStart: [{ matcher: "startup", hooks: [{ type: "command", command: BRIEF_COMMAND }] }, old.hooks.SessionStart[1]] } });
     canon(root, env, "install");
     expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual(s);
     expect(canon(root, env, "update", "--check").code).toBe(0);
@@ -164,51 +161,48 @@ describe("finding and applying updates", () => {
     expect(existsSync(join(outside, "settings.json"))).toBe(false);
   });
 
-  test("BR-2128: init merges the pre-bash hook and its allow rule into existing settings, once, keeping everything else", () => {
-    const src = dir({ "canon-a/SKILL.md": "a\n" });
-    const root = mkdtempSync(join(tmpdir(), "canon-update-repo-"));
-    git(root, "init", "-q");
-    mkdirSync(join(root, ".claude"), { recursive: true });
-    const mine = { matcher: "Bash", hooks: [{ type: "command", command: "echo pre" }] };
-    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify({ permissions: { allow: ["Bash(ls)"], deny: ["Bash(rm *)"] }, hooks: { PreToolUse: [mine] }, model: "x" }));
-    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "init", "--floor", "true").code).toBe(0);
-    const s = JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"));
-    expect(s.permissions).toEqual({ allow: ["Bash(ls)", "Bash(export CANON_ACTOR='agent:*')"], deny: ["Bash(rm *)"] });
-    expect(s.hooks.PreToolUse).toEqual([mine, { matcher: "Bash", hooks: [{ type: "command", command: "canon hook pre-bash 2>/dev/null || true" }] }]);
-    expect(s.model).toBe("x");
-    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "install").code).toBe(0);
-    expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual(s); // added once
-    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify({ permissions: "all" }));
-    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "install").code).toBe(2);
-    expect(readFileSync(join(root, ".claude/settings.json"), "utf8")).toBe(JSON.stringify({ permissions: "all" }));
-  });
-
-  test("BR-2128 BR-2084: a missing pre-bash hook or allow rule is out of date; an older form is rewritten in place", () => {
+  test("BR-2130 BR-2084: the withdrawn pre-bash hook and actor allow rule are out of date and removed by install, leaving the file as it was before them", () => {
     const { root, env } = project();
-    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify({ hooks: { SessionStart: [{ hooks: [{ type: "command", command: BRIEF_COMMAND }] }] } }));
-    const missing = canon(root, env, "update", "--check");
-    expect(missing.code).toBe(1);
-    expect(missing.out).toContain("hook: canon hook pre-bash before each Bash call");
-    expect(missing.out).toContain("permission: the CANON_ACTOR export line");
-    expect(missing.out).not.toContain("canon brief at session start");
-    const old = { permissions: { allow: [ACTOR_PERMISSION] }, hooks: { SessionStart: [{ hooks: [{ type: "command", command: BRIEF_COMMAND }] }], PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "canon hook pre-bash" }] }] } };
-    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify(old));
+    const before = { hooks: { SessionStart: [{ hooks: [{ type: "command", command: BRIEF_COMMAND }] }] }, model: "x" };
+    const withdrawn = {
+      ...before,
+      hooks: { ...before.hooks, PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "canon hook pre-bash 2>/dev/null || true" }] }] },
+      permissions: { allow: ["Bash(export CANON_ACTOR='agent:*')"] },
+    };
+    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify(withdrawn));
     const r = canon(root, env, "update", "--check");
     expect(r.code).toBe(1);
-    expect(r.out).toContain("hook: canon hook pre-bash before each Bash call, so a subagent acts as itself (.claude/settings.json), older form");
+    expect(r.out).toContain("hook: canon hook pre-bash before each Bash call, withdrawn by canon");
+    expect(r.out).toContain("permission: Bash(export CANON_ACTOR='agent:*'), withdrawn by canon");
+    expect(r.out).not.toContain("canon brief at session start");
     expect(canon(root, env, "install").code).toBe(0);
-    const s = JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"));
-    expect(s.hooks.PreToolUse).toEqual([{ matcher: "Bash", hooks: [{ type: "command", command: PRE_BASH_COMMAND }] }]);
-    expect(s.permissions).toEqual(old.permissions);
+    expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual(before);
     expect(canon(root, env, "update", "--check").code).toBe(0);
   });
 
-  test("BR-2128: without canon on PATH the pre-bash hook command exits 0 with nothing on stdout", () => {
-    const empty = mkdtempSync(join(tmpdir(), "canon-no-path-"));
-    const input = JSON.stringify({ session_id: "3d606482-8b99", agent_id: "abc", tool_name: "Bash", tool_input: { command: "ls" } });
-    const r = Bun.spawnSync(["/bin/sh", "-c", PRE_BASH_COMMAND], { cwd: empty, stdin: new TextEncoder().encode(input), stdout: "pipe", stderr: "pipe", env: { PATH: empty } });
-    expect(r.exitCode).toBe(0);
-    expect(r.stdout.toString()).toBe("");
+  test("BR-2130: only canon's two withdrawn entries go; the user's hooks and allow rules, and containers that were already empty, stay", () => {
+    const { root, env } = project();
+    const mine = { type: "command", command: "echo pre" };
+    const settings = {
+      hooks: {
+        SessionStart: [{ hooks: [{ type: "command", command: BRIEF_COMMAND }] }],
+        PreToolUse: [{ matcher: "Bash", hooks: [mine, { type: "command", command: "canon hook pre-bash" }] }, { matcher: "Read", hooks: [mine] }],
+      },
+      permissions: { allow: ["Bash(ls)", "Bash(export CANON_ACTOR='agent:*')", "Bash(export CANON_ACTOR='agent:x')"], deny: [] },
+    };
+    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify(settings));
+    expect(canon(root, env, "install").code).toBe(0);
+    expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual({
+      hooks: { SessionStart: settings.hooks.SessionStart, PreToolUse: [{ matcher: "Bash", hooks: [mine] }, { matcher: "Read", hooks: [mine] }] },
+      permissions: { allow: ["Bash(ls)", "Bash(export CANON_ACTOR='agent:x')"], deny: [] },
+    });
+    const empty = { hooks: { SessionStart: settings.hooks.SessionStart }, permissions: { allow: [] } };
+    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify(empty));
+    expect(canon(root, env, "update", "--check").code).toBe(0);
+    expect(canon(root, env, "install").code).toBe(0);
+    expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual(empty);
+    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify({ hooks: { SessionStart: settings.hooks.SessionStart }, permissions: "all" }));
+    expect(canon(root, env, "update", "--check").code).toBe(0);
   });
 
   test("BR-2089: a skill edited here while canon kept its version is not out of date, is kept by install and update, and is overwritten only with --force", () => {

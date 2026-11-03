@@ -18,7 +18,6 @@ import { git } from "../kernel/git.ts";
 import { overlapsOf } from "../work/session/overlap.ts";
 import { skillsSource, type InstallReport } from "./install/install.ts";
 import { WORKFLOW_GUIDE } from "./guide.ts";
-import { preBash } from "./install/prebash.ts";
 import { resolve, unknownArgument } from "./strict.ts";
 import { assetsStatus, installAssets, updateNotice, updateProject } from "./install/update.ts";
 import { computeStats, renderSharedShare, renderStats, sharedShare } from "../work/stats/stats.ts";
@@ -321,16 +320,10 @@ const work = defineCommand({
     }),
     stop: defineCommand({
       meta: { description: "Hand off: record the next step for whoever continues this change" },
-      args: {
-        next: { type: "string", required: true },
-        note: { type: "string" },
-        release: { type: "boolean", description: "Release the claim too" },
-        takeover: { type: "boolean", description: "With --release: release a claim one of this session's own subagents holds here (BR-2129)" },
-      },
+      args: { next: { type: "string", required: true }, note: { type: "string" }, release: { type: "boolean", description: "Release the claim too" } },
       run({ args }) {
-        if (args.takeover && !args.release) fail({ code: "invalid", message: "--takeover only releases a subagent's claim; use it with --release" });
         const ws = workspace();
-        const subject = must(stop(ws, String(args.next), typeof args.note === "string" ? args.note : undefined, Boolean(args.release), say, Boolean(args.takeover)));
+        const subject = must(stop(ws, String(args.next), typeof args.note === "string" ? args.note : undefined, Boolean(args.release), say));
         say(`${subject}: handoff recorded${args.release ? ", claim released" : ""}`);
       },
     }),
@@ -448,7 +441,7 @@ function reportInstall(r: InstallReport & { hook: boolean; guard: boolean }) {
   for (const f of r.written) say(`skill ${f}`);
   for (const f of r.removed) say(`removed skill file ${f}`);
   for (const f of r.kept) say(`kept skill ${f} (edited in this project; canon has no newer version)`);
-  if (r.hook) say("hooks: canon brief at session start, canon hook pre-bash before each Bash call (.claude/settings.json)");
+  if (r.hook) say("hooks: .claude/settings.json brought up to date (canon brief at session start; entries canon withdrew removed)");
   if (r.guard) say("git hook: main moves only through canon work land (reference-transaction; not tracked, nothing to commit)");
   const tracked = r.written.length + r.removed.length > 0 || r.hook;
   say(tracked ? "canon project files installed; commit them with the project" : r.guard ? "canon project files installed" : "canon project files: up to date");
@@ -554,28 +547,9 @@ const stats = defineCommand({
   },
 });
 
-/** Commands Claude Code runs from the hooks canon merges into .claude/settings.json (BR-2127); not for agents to run. */
-const hook = defineCommand({
-  meta: { description: "Run by Claude Code's hooks (installed by canon install); not part of the workflow" },
-  subCommands: {
-    "pre-bash": defineCommand({
-      meta: { description: "PreToolUse hook for Bash: reads the hook input on stdin; in a subagent prints updatedInput that exports CANON_ACTOR=agent:<session>:<agent_id>, otherwise nothing" },
-      async run() {
-        // reason: a hook must never block or decide a tool call: any failure prints nothing on stdout and exits 0 (BR-2127).
-        try {
-          const out = preBash(await Bun.stdin.text());
-          if (out !== undefined) process.stdout.write(`${out}\n`);
-        } catch (e) {
-          console.error(`canon hook pre-bash: ${e instanceof Error ? e.message : String(e)}`);
-        }
-      },
-    }),
-  },
-});
-
 const main = defineCommand({
   meta: { name: "canon", description: "Shared memory and coordination for a project built by many concurrent AI sessions" },
-  subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, doc, work, human, stats, install, update, hook },
+  subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, doc, work, human, stats, install, update },
 });
 
 /**
