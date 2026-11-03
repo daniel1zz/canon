@@ -643,7 +643,7 @@ describe("boundaries record and clean up", () => {
     await Bun.sleep(2500); // at least one more look at main while waiting
     finishEntry(other.db, ahead, "landed", "x");
     expect((await landing).kind).toBe("landed");
-  });
+  }, 20_000); // reason: waits through more than one 2 s queue poll on purpose
 
   test("BR-2153: a prediction that cannot run is reported, not a refusal", () => {
     const root = project();
