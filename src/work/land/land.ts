@@ -115,7 +115,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
 }
 
 /** The `canon: close C-n` commit `--finish` made before queuing, so a landing that fails can take it back. */
-interface CloseCommit {
+export interface CloseCommit {
   readonly subject: string;
   readonly path: string;
 }
@@ -123,18 +123,34 @@ interface CloseCommit {
 const closeSubject = (change: string) => `canon: close ${change}`;
 
 /**
- * Takes the close commit back out after a landing that did not reach main: only while it is still the top
- * commit and changes nothing but the change file, with `git reset --keep`, which never drops local edits (BR-2018).
+ * Takes the close commit back out after a landing that did not reach main: only while HEAD is still `top`, the
+ * close commit that was checked, and it changes nothing but the change file. The branch moves by a compare-and-swap
+ * on HEAD, so a commit made in the worktree meanwhile is never dropped; `git read-tree -m -u` then updates the
+ * change file and refuses over local edits to it, in which case the branch is swapped back (BR-2018, issue #34).
  */
-function reopen(wt: string, close: CloseCommit, say: Say): void {
-  const top = git(wt, "log", "-1", "--format=%s", "HEAD");
-  const files = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "HEAD~1", "HEAD");
-  if (!top.ok || top.value !== closeSubject(close.subject) || !files.ok || files.value !== close.path) {
-    say(`${close.subject} still has its close commit somewhere below HEAD; it says done although it did not land`);
-    return;
+export function reopen(wt: string, close: CloseCommit, say: Say, top = git(wt, "rev-parse", "HEAD")): boolean {
+  const notReopened = (why: string) => {
+    say(`${close.subject} was not reopened (${why}); it says done although it did not land`);
+    return false;
+  };
+  if (!top.ok) return notReopened(top.error.message);
+  const sha = top.value;
+  const parent = git(wt, "rev-parse", `${sha}~1`);
+  const subject = git(wt, "log", "-1", "--format=%s", sha);
+  const files = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", `${sha}~1`, sha);
+  if (!parent.ok || !subject.ok || subject.value !== closeSubject(close.subject) || !files.ok || files.value !== close.path) {
+    return notReopened("its close commit is no longer the top commit");
   }
-  const r = git(wt, "reset", "-q", "--keep", "HEAD~1");
-  say(r.ok ? `${close.subject} reopened: the landing did not reach main, so its close commit was taken back` : `${close.subject} could not be reopened (${r.error.message}); it says done although it did not land`);
+  // reason: compare-and-swap, so a commit made after the check above stays on the branch (issue #34).
+  const cas = git(wt, "update-ref", "-m", `canon: reopen ${close.subject}`, "HEAD", parent.value, sha);
+  if (!cas.ok) return notReopened("HEAD moved after the check");
+  const sync = git(wt, "read-tree", "-m", "-u", sha, parent.value);
+  if (!sync.ok) {
+    git(wt, "update-ref", "-m", `canon: keep ${close.subject} closed`, "HEAD", sha, parent.value);
+    return notReopened(sync.error.message.split("\n")[0] ?? "read-tree failed");
+  }
+  say(`${close.subject} reopened: the landing did not reach main, so its close commit was taken back`);
+  return true;
 }
 
 /** What a signal handler must stop: the floor while it runs. */

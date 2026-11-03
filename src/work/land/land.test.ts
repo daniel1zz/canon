@@ -6,7 +6,7 @@ import { enqueue, finishEntry, tryTurn } from "./queue.ts";
 import { handoffs, writeHandoff } from "../session/handoffs.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { clean, start, stop } from "../session/session.ts";
-import { land, LAND_MARKER, predictedConflicts } from "./land.ts";
+import { land, LAND_MARKER, predictedConflicts, reopen } from "./land.ts";
 import { ensureGuard } from "../../cli/install/githook.ts";
 import { processOf, type Proc } from "../claims/liveness.ts";
 
@@ -737,6 +737,33 @@ describe("the claim during a landing", () => {
     expect(change?.kind === "change" && change.status).toBe("open");
     expect(lines.join("\n")).toContain(`${s.change} reopened`);
     expect(claims(ws(root).db).map((c) => c.subject)).toEqual([s.change]);
+  });
+
+  test("BR-2018: taking the close commit back never drops a commit made after the check, nor local edits to the change file", () => {
+    const root = project();
+    const s = startNew(root, "Reopen race");
+    const path = sh(s.worktree, "diff", "--name-only", "main", "HEAD");
+    const closeIt = () => {
+      writeFileSync(join(s.worktree, path), readFileSync(join(s.worktree, path), "utf8").replace("status: open", "status: done"));
+      sh(s.worktree, "commit", "-qam", `canon: close ${s.change}`);
+    };
+    closeIt();
+    const checked = { ok: true as const, value: sh(s.worktree, "rev-parse", "HEAD") };
+    writeFileSync(join(s.worktree, "fix.txt"), "fix\n"); // the session commits a fix meanwhile
+    sh(s.worktree, "add", "fix.txt");
+    sh(s.worktree, "commit", "-qm", "fix");
+    const fix = sh(s.worktree, "rev-parse", "HEAD");
+    const lines: string[] = [];
+    expect(reopen(s.worktree, { subject: s.change, path }, (l) => lines.push(l), checked)).toBe(false);
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(fix);
+    expect(readFileSync(join(s.worktree, "fix.txt"), "utf8")).toBe("fix\n");
+    expect(lines.join("\n")).toContain("was not reopened");
+
+    sh(s.worktree, "reset", "-q", "--hard", checked.value);
+    writeFileSync(join(s.worktree, path), readFileSync(join(s.worktree, path), "utf8") + "\nlocal note\n");
+    expect(reopen(s.worktree, { subject: s.change, path }, quiet)).toBe(false);
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(checked.value);
+    expect(readFileSync(join(s.worktree, path), "utf8")).toContain("local note");
   });
 
   test("BR-2018: a --finish landing that times out in the queue takes its close commit back too", async () => {
