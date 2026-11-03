@@ -671,8 +671,11 @@ async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: { wt:
   const sourceFailures = await checkSources(wt, base.value, entries, read.corpus.docs, opts.fetcher ?? httpFetch);
   if (sourceFailures.length > 0) return refuse("source", `decision sources do not hold:\n${sourceFailures.map((f) => `  - ${f}`).join("\n")}`);
   const readmes = read.corpus.domains.filter((dom) => live.has(dom.path)).map((dom) => dom.name);
-  const deletedReadmes = entries.filter((e) => e.status === "D" && e.path.endsWith("/README.md")).map((e) => e.path);
-  const reviewed = [...changedDocs.map((d) => d.id), ...deleted.map((d) => `${d.id} (deleted)`), ...readmes.map((n) => `${n} README`), ...deletedReadmes.map((p) => `${p} (deleted)`)];
+  const deletedReadmes = entries.filter((e) => e.status === "D" && e.path.endsWith("/README.md")).map((e) => {
+    const old = git(wt, "show", `${base.value}:${e.path}`);
+    return { path: e.path, text: old.ok ? old.value : "" }; // the text on main, like a deleted rule's (BR-2009)
+  });
+  const reviewed = [...changedDocs.map((d) => d.id), ...deleted.map((d) => `${d.id} (deleted)`), ...readmes.map((n) => `${n} README`), ...deletedReadmes.map((r) => `${r.path} (deleted)`)];
   let reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined;
   if (reviewed.length > 0) {
     if (!ws.config.review) {

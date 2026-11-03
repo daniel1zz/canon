@@ -1,7 +1,8 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
-import type { Corpus, Doc } from "../documents/model.ts";
+import { stripCode, type Corpus, type Doc, type Rule } from "../documents/model.ts";
+import { idsIn } from "../documents/types.ts";
 import { contextFor, renderContext } from "../query/query.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { LESSONS_SECTION, section } from "../documents/templates.ts";
@@ -27,7 +28,8 @@ export interface ReviewExtras {
   readonly deleted?: readonly DeletedDoc[];
   /** Domains whose README the landing changes; the review sees each whole domain. */
   readonly readmes?: readonly string[];
-  readonly deletedReadmes?: readonly string[];
+  /** Domain READMEs the landing deletes, with the text they had on main. */
+  readonly deletedReadmes?: readonly { readonly path: string; readonly text: string }[];
   /** The change this landing belongs to; the review reads its lessons (BR-2162). */
   readonly change?: Doc | undefined;
 }
@@ -59,7 +61,7 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
   if (extras.deleted?.length || extras.deletedReadmes?.length) {
     parts.push("# Deleted documents (text on main before this landing; deleting a rule removes a behaviour the product promised, retiring it keeps the record)");
     for (const d of extras.deleted ?? []) parts.push(`## ${d.id} — deleted ${d.path}\n\n${d.text.trim()}\n`);
-    for (const p of extras.deletedReadmes ?? []) parts.push(`## deleted domain README ${p}\n`);
+    for (const r of extras.deletedReadmes ?? []) parts.push(`## deleted domain README ${r.path}\n\n${r.text.trim()}\n`);
   }
   if (extras.readmes?.length) parts.push(`# Domain READMEs changed: ${extras.readmes.join(", ")} (their new text is in the current context below)`);
   const seen = new Set<string>();
@@ -74,11 +76,34 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
     seen.add(target);
     parts.push(`# Current context for ${target}\n\n${renderContext(root, contextFor(corpus, target), { full: true })}`);
   }
+  // reason: a deletion affects the domain it leaves, so the review sees what remains there (BR-2009, #74):
+  // a deleted rule's top-level domain, and the top-level domains of the rules a deleted decision named on main
+  for (const top of deletedDomains(corpus, extras.deleted ?? [])) {
+    if (seen.has(top)) continue;
+    seen.add(top);
+    parts.push(`# Current context for ${top}\n\n${renderContext(root, contextFor(corpus, top), { full: true })}`);
+  }
   const index = corpus.docs.filter((d) => d.kind === "rule" && d.status === "active");
   parts.push(`# Rule index (every active rule, all domains)\n\n${index.map((r) => `- ${r.id} [${r.kind === "rule" ? r.domain : ""}] ${r.title}`).join("\n")}`);
   const accepted = corpus.docs.filter((d) => d.kind === "decision" && d.status === "accepted");
   if (accepted.length) parts.push(`# Accepted decisions\n\n${accepted.map((d) => `- ${d.id} ${d.title}`).join("\n")}`);
   return parts.join("\n");
+}
+
+/** Top-level domains, still in the corpus, that the deleted documents belonged to or named. */
+function deletedDomains(corpus: Corpus, deleted: readonly DeletedDoc[]): string[] {
+  const out = new Set<string>();
+  const exists = (name: string) => corpus.domains.some((d) => d.name === name);
+  for (const d of deleted) {
+    const m = d.path.match(/^canon\/rules\/(.+)\/[^/]+$/);
+    if (m) {
+      if (exists(m[1]!.split("/")[0]!)) out.add(m[1]!.split("/")[0]!);
+      continue;
+    }
+    const named = idsIn(corpus.types, stripCode(d.text));
+    for (const r of corpus.docs.filter((x): x is Rule => x.kind === "rule" && named.has(x.id))) if (exists(r.domain.split("/")[0]!)) out.add(r.domain.split("/")[0]!);
+  }
+  return [...out];
 }
 
 export async function runReview(command: string, cwd: string, prompt: string): Promise<Result<ReviewVerdict>> {
