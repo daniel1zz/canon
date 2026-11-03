@@ -1,5 +1,5 @@
 #!/usr/bin/env bun
-import { defineCommand, runMain } from "citty";
+import { defineCommand, runCommand, runMain } from "citty";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openWorkspace, type Workspace } from "../app/workspace.ts";
@@ -18,15 +18,18 @@ import { drop } from "../work/drop.ts";
 import { clean, land, mainCorpus, start, stop } from "../work/work.ts";
 
 /**
- * Exit codes — one meaning each, so an agent can branch on them:
- *   0 ok · 1 refused by an outcome check (floor, canon check, conflict on land) · 2 usage / invalid input
- *   3 not found · 5 conflict: claimed by another worktree, already answered, already exists · 75 queue timeout (retry later)
+ * Exit codes — one meaning each, so an agent can branch on them (BR-2022, D-4):
+ *   0 ok · 1 refused by an outcome check · 2 usage / invalid input / bad config · 3 not found
+ *   4 the environment failed (git, filesystem, coordination DB) · 5 conflict: claimed, already answered, already exists
+ *   70 a bug in canon · 75 queue timeout (retry later)
  */
-const EXIT = { ok: 0, refused: 1, usage: 2, notFound: 3, conflict: 5, timeout: 75 } as const;
+const EXIT = { ok: 0, refused: 1, usage: 2, notFound: 3, env: 4, conflict: 5, internal: 70, timeout: 75 } as const;
+
+const EXIT_OF: Record<CanonError["code"], number> = { invalid: EXIT.usage, not_found: EXIT.notFound, conflict: EXIT.conflict, refused: EXIT.refused, io: EXIT.env };
 
 function fail(e: CanonError): never {
   console.error(`canon: ${e.message}`);
-  process.exit(e.code === "invalid" ? EXIT.usage : e.code === "not_found" ? EXIT.notFound : e.code === "conflict" ? EXIT.conflict : EXIT.refused);
+  process.exit(EXIT_OF[e.code]);
 }
 
 function must<T>(r: Result<T>): T {
@@ -453,4 +456,23 @@ const main = defineCommand({
   subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, doc, work, human, stats },
 });
 
-runMain(main);
+/**
+ * citty's runMain exits 1 on every error; canon keeps 1 for check refusals, so usage errors exit 2 and
+ * unexpected exceptions (bugs) exit 70 (D-4). Help still goes through runMain, which prints usage and exits 0.
+ */
+async function run(): Promise<void> {
+  const raw = process.argv.slice(2);
+  if (raw.includes("--help") || raw.includes("-h")) return runMain(main);
+  try {
+    await runCommand(main, { rawArgs: raw });
+  } catch (e) {
+    if (e instanceof Error && e.name === "CLIError") {
+      console.error(`canon: ${e.message} (see \`canon ${raw.filter((a) => !a.startsWith("-")).slice(0, 2).join(" ")} --help\`)`.replace("canon  --help", "canon --help"));
+      process.exit(EXIT.usage);
+    }
+    console.error(`canon: internal error (a bug in canon): ${e instanceof Error ? (e.stack ?? e.message) : String(e)}`);
+    process.exit(EXIT.internal);
+  }
+}
+
+await run();

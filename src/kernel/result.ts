@@ -6,7 +6,8 @@ export type ErrorCode =
   | "not_found"
   | "invalid" // input or file content violates the model
   | "conflict" // CAS version mismatch or a lease held by someone else
-  | "io"; // filesystem, git, sqlite
+  | "refused" // an outcome check said no (e.g. a failed setup): exit 1
+  | "io"; // the environment failed: filesystem, git, sqlite (exit 4, D-4)
 
 export interface CanonError {
   readonly code: ErrorCode;

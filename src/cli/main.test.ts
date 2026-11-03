@@ -30,6 +30,19 @@ describe("exit codes", () => {
     expect(canon(root, "work", "start").code).toBe(2);
   });
 
+  test("BR-2022: usage errors from the command parser exit 2 and environment failures exit 4, never 1", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    expect(canon(root, "show").code).toBe(2); // missing positional
+    expect(canon(root, "bogus").code).toBe(2); // unknown command
+    expect(canon(root).code).toBe(2); // no command
+    expect(canon(root, "--help").code).toBe(0);
+    const outside = mkdtempSync(join(tmpdir(), "canon-not-a-repo-"));
+    const r = canon(outside, "show", ["BR", 1].join("-"));
+    expect(r.code).toBe(4);
+    expect(r.err).toContain("not a git repository");
+  });
+
   test("BR-2001 BR-2012 BR-2037: a Chinese title gives a file and branch named by the id alone", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");

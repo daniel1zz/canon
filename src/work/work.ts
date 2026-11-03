@@ -91,7 +91,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
         if (!hasBranch) git(ws.primary, "branch", "-q", "-D", branch);
         releaseClaim(ws.db, changeId, ws.actor);
         ws.db.event(ws.actor, "start.refuse", changeId, { reason: "setup", exit: r.exitCode });
-        return err("io", `setup command exited ${r.exitCode}; the new worktree was removed and ${changeId} released, so a retry starts clean`);
+        return err("refused", `setup command exited ${r.exitCode}; the new worktree was removed and ${changeId} released, so a retry starts clean`);
       }
     }
   }
