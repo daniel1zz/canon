@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { processOf } from "../coord/liveness.ts";
 import { claims } from "../coord/state.ts";
 import { drop } from "./drop.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "./testkit.ts";
@@ -79,6 +80,19 @@ describe("dropping a change", () => {
     expect(existsSync(s.worktree)).toBe(true);
     expect(archives(root)).toBe("");
     expect(events(root, "drop.refuse").map((e) => e.reason)).toEqual(["claimed"]);
+  });
+
+  test("BR-2064 BR-2100: another operator's claim whose session process is gone does not stop the drop", async () => {
+    const root = project();
+    const s = withCommit(root, "Theirs, gone", "agent:b");
+    const sleeper = Bun.spawn(["sleep", "30"]);
+    const dead = processOf(sleeper.pid)!;
+    sleeper.kill("SIGKILL");
+    await sleeper.exited;
+    ws(root).db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(dead.pid, dead.start, s.change);
+    const r = drop(ws(root, "agent:a"), s.change, quiet);
+    expect(r.ok).toBe(true);
+    expect(existsSync(s.worktree)).toBe(false);
   });
 
   test("BR-2064: a worktree another process is in is not dropped or archived, landed or not: exit 5 naming the pid", async () => {

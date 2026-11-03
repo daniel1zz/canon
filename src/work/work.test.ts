@@ -540,8 +540,8 @@ describe("a lander killed by a signal", () => {
     p.kill("SIGTERM");
     expect(await p.exited).toBe(143);
     expect(entryOf(root)).toMatchObject({ state: "failed", result: "killed" });
-    const refused = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'land.refuse'").all().map((e) => JSON.parse(e.detail).reason);
-    expect(refused).toEqual(["killed"]);
+    const kinds = ws(root).db.db.query<{ kind: string }, []>("SELECT kind FROM events WHERE kind LIKE 'land.%'").all().map((e) => e.kind);
+    expect(kinds).toEqual(["land.killed"]); // an interruption, not a check's refusal (BR-2067)
     const other = ws(root, "agent:b");
     const b = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
     expect(tryTurn(other.db, b).mine).toBe(true);

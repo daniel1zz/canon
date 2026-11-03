@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Workspace } from "../app/workspace.ts";
-import { claims, dropHandoff, releaseClaim } from "../coord/state.ts";
+import { dropHandoff, liveClaim, releaseClaim } from "../coord/state.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { git, gitEnv, ignoredPaths, unregenerable } from "../repo/git.ts";
 import { processesIn } from "../repo/process.ts";
@@ -148,8 +148,8 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
   const t = located.value;
   if (t.worktree && ws.root === t.worktree) return err("invalid", `you are in ${t.worktree}; run \`canon work drop ${t.change}\` from another checkout`);
   // Someone else still at work there is not something an archive can save: refuse before looking at losses.
-  const held = claims(ws.db).find((c) => c.subject === t.change);
-  if (held && new Date(held.expires_at) > new Date() && held.actor !== ws.actor) {
+  const held = liveClaim(ws.db, t.change); // a claim whose session process is gone binds no one (BR-2100)
+  if (held && held.actor !== ws.actor) {
     ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "claimed", actor: held.actor });
     return err("conflict", `${t.change} is claimed by ${held.actor} in ${held.holder} until ${held.expires_at}; nothing was deleted`);
   }

@@ -200,7 +200,8 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     running.floor?.kill();
     const aborted = rebaseInProgress(wt) && git(wt, "rebase", "--abort").ok;
     // A signal after main moved leaves the landed entry as it is: the landing happened.
-    if (failIfActive(ws.db, entry, "killed")) ws.db.event(ws.actor, "land.refuse", subject, { reason: "killed", signal, rebaseAborted: aborted });
+    // reason: an interruption, not a check's verdict, so it is its own event kind and no check in `canon stats` (BR-2067).
+    if (failIfActive(ws.db, entry, "killed")) ws.db.event(ws.actor, "land.killed", subject, { signal, rebaseAborted: aborted });
     process.exit(signal === "SIGINT" ? 130 : 143);
   };
   process.on("SIGTERM", onSignal);

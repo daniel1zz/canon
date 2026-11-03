@@ -31,9 +31,10 @@ export function takeClaim(db: CoordDb, subject: string, holder: string, actor: s
       .query<{ holder: string; expires_at: string; worktree: string | null; pid: number | null; pid_start: string | null }, [string]>("SELECT holder, expires_at, worktree, pid, pid_start FROM claims WHERE subject = ?")
       .get(subject);
     const other = cur !== null && (cur.worktree !== holder || cur.holder !== actor);
-    // A live lease whose session process is provably gone frees at once (D-11); an unreadable process table keeps the lease.
-    const gone = other && cur.pid !== null && cur.pid_start !== null && isGone({ pid: cur.pid, start: cur.pid_start }) === true;
-    if (other && !gone && new Date(cur.expires_at) > now()) {
+    const binds = other && bindsStill(cur);
+    // A lease that has not expired but whose session process is gone frees at once (BR-2100).
+    const gone = other && !binds && new Date(cur.expires_at) > now();
+    if (binds) {
       db.event(actor, "claim.refuse", subject, { reason: "held", by: cur.worktree, actor: cur.holder, until: cur.expires_at });
       return err(
         "conflict",
@@ -80,6 +81,24 @@ export function claims(db: CoordDb): Claim[] {
     .query<{ subject: string; holder: string; worktree: string; expires_at: string }, []>("SELECT subject, holder, worktree, expires_at FROM claims ORDER BY subject")
     .all()
     .map((r) => ({ subject: r.subject, holder: r.worktree, actor: r.holder, expires_at: r.expires_at }));
+}
+
+/**
+ * The claim on a change while it still binds: its lease has not expired and its session process is not provably
+ * gone (BR-2011, BR-2100). Undefined when there is no claim or it no longer binds anyone.
+ */
+export function liveClaim(db: CoordDb, subject: string): Claim | undefined {
+  const r = db.db
+    .query<{ subject: string; holder: string; worktree: string; expires_at: string; pid: number | null; pid_start: string | null }, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims WHERE subject = ?")
+    .get(subject);
+  if (!r || !bindsStill(r)) return undefined;
+  return { subject: r.subject, holder: r.worktree, actor: r.holder, expires_at: r.expires_at };
+}
+
+function bindsStill(r: { expires_at: string; pid: number | null; pid_start: string | null }): boolean {
+  if (new Date(r.expires_at) <= now()) return false;
+  // An unreadable process table keeps the lease (D-11).
+  return !(r.pid !== null && r.pid_start !== null && isGone({ pid: r.pid, start: r.pid_start }) === true);
 }
 
 export function claimOfWorktree(db: CoordDb, worktree: string): Claim | undefined {

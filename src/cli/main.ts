@@ -25,7 +25,7 @@ import { clean, land, mainCorpus, start, stop } from "../work/work.ts";
  * Exit codes — one meaning each, so an agent can branch on them (BR-2022, D-4):
  *   0 ok · 1 refused by an outcome check · 2 usage / invalid input / bad config · 3 not found
  *   4 the environment failed (git, filesystem, coordination DB) · 5 conflict: claimed, already answered, already exists
- *   70 a bug in canon · 75 queue timeout (retry later)
+ *   70 a bug in canon · 75 queue timeout (retry later) · 143 / 130 a lander stopped by SIGTERM / SIGINT (128 + signal, BR-2099)
  */
 const EXIT = { ok: 0, refused: 1, usage: 2, notFound: 3, env: 4, conflict: 5, internal: 70, timeout: 75 } as const;
 
