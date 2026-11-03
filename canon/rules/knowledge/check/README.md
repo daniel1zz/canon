@@ -1,11 +1,6 @@
----
-code:
-  - src/check
----
-
 # 检查（knowledge/check）
 
-`canon check` 检查整个 `canon/` 是否自洽：文件格式、编号唯一、引用存在、领域 README 的代码路径存在、规则有测试在标题里点名、必填段落非空、没有残留的模板占位行。合入时也会跑它（`work/land`）。代码在 `src/check`。
+`canon check` 检查整个 `canon/` 是否自洽：文件格式、编号唯一、引用存在、领域的代码位置（README 的 `code:` 或 `code_root` 下的目录）和代码目录对得上、规则有测试在标题里点名、必填段落非空、没有残留的模板占位行。合入时也会跑它（`work/land`）。
 
 ## 术语
 

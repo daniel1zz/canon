@@ -54,7 +54,7 @@ export function createDoc(root: string, corpus: Corpus, db: CoordDb, actor: stri
   if (type.name === "rule") {
     if (!input.domain) return err("invalid", "a rule needs a domain");
     if (!corpus.domains.some((d) => d.name === input.domain)) {
-      return err("not_found", `domain ${input.domain} does not exist; create it with \`canon rule domain ${input.domain} --code <dir>\``);
+      return err("not_found", `domain ${input.domain} does not exist; create it with \`canon rule domain ${input.domain}\``);
     }
     const id = db.allocate(prefix, highestNumber(corpus, prefix), actor);
     path = join(CANON_DIR, type.dir, input.domain, `${id}.md`);
@@ -78,10 +78,17 @@ export function createDoc(root: string, corpus: Corpus, db: CoordDb, actor: stri
   return ok(path);
 }
 
-export function createDomain(root: string, name: string, code: readonly string[], description: string): Result<string> {
+/**
+ * BR-2115: only a top-level domain of a project without `code_root` names its code (`--code`); a subdomain,
+ * or any domain under a code root, is business only and its code is found by convention or through the
+ * enclosing domain (D-15).
+ */
+export function createDomain(root: string, name: string, code: readonly string[], description: string, codeRoot: string | undefined): Result<string> {
   const segments = name.split("/");
   if (!segments.every((s) => /^[a-z0-9][a-z0-9-]*$/.test(s))) return err("invalid", "a domain name is lowercase letters, digits and dashes; a subdomain is <domain>/<name> (BR-2113)");
-  if (code.length === 0) return err("invalid", "a domain must name at least one code directory (--code)");
+  if (code.length > 0 && segments.length > 1) return err("invalid", `a subdomain names no code (no --code): its code is found through ${segments[0]}`);
+  if (code.length > 0 && codeRoot !== undefined) return err("invalid", `no --code with code_root: the domain's code is ${codeRoot}/${name}`);
+  if (code.length === 0 && segments.length === 1 && codeRoot === undefined) return err("invalid", "a top-level domain must name at least one code directory (--code), unless canon/config.yaml sets code_root");
   const path = join(CANON_DIR, "rules", ...segments, "README.md");
   const full = join(root, path);
   if (existsSync(full)) return err("conflict", `domain ${name} already exists`);
@@ -90,8 +97,9 @@ export function createDomain(root: string, name: string, code: readonly string[]
     return err("not_found", `domain ${parent.join("/")} does not exist; create it before its subdomain ${name}`);
   }
   mkdirSync(dirname(full), { recursive: true });
-  writeFileSync(full, renderDocFile({ code: [...code] }, domainReadme(name, description)));
-  return ok(path);
+  const body = domainReadme(name, description);
+  writeFileSync(full, code.length > 0 ? renderDocFile({ code: [...code] }, body) : body);
+  return ok(codeRoot !== undefined ? `${path}\ncode: ${codeRoot}/${name} (create it; canon check reports a domain without its directory)` : path);
 }
 
 /** Sets front-matter fields of an existing document, leaving the body untouched. */

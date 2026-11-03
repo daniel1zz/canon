@@ -112,7 +112,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   }
 
   if (fresh && "title" in target) {
-    const corpus = readCorpus(path, ws.config.types).corpus;
+    const corpus = readCorpus(path, ws.config.types, ws.config).corpus;
     const made = createDoc(path, corpus, ws.db, ws.actor, { kind: "change", title: target.title, rules: target.rules ?? [], id: changeId }, ws.config.templates);
     if (!made.ok) return made;
     const c = git(path, "add", made.value);
@@ -163,7 +163,7 @@ function corpusOf(ws: Workspace, ref: string): Result<Corpus> {
   const wts = listWorktrees(ws.primary);
   if (!wts.ok) return wts;
   const holder = wts.value.find((w) => w.branch === main);
-  if (holder) return ok(readCorpus(holder.path, ws.config.types).corpus);
+  if (holder) return ok(readCorpus(holder.path, ws.config.types, ws.config).corpus);
   const dir = mkdtempSync(join(tmpdir(), "canon-main-"));
   try {
     const hasCorpus = git(ws.primary, "cat-file", "-e", `${main}:canon`).ok;
@@ -174,7 +174,7 @@ function corpusOf(ws: Workspace, ref: string): Result<Corpus> {
       const tar = Bun.spawnSync(["tar", "-x", "-C", dir], { stdin: archive.stdout, stderr: "pipe" });
       if (tar.exitCode !== 0) return err("io", `cannot read canon/ from ${main}: ${tar.stderr.toString().trim()}`);
     }
-    return ok(readCorpus(dir, ws.config.types).corpus);
+    return ok(readCorpus(dir, ws.config.types, ws.config).corpus);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -227,7 +227,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
 
   if (opts.finish) {
     if (!subject) return early("no-claim", "--finish needs a claimed change; this worktree holds none");
-    const corpus = readCorpus(wt, ws.config.types).corpus;
+    const corpus = readCorpus(wt, ws.config.types, ws.config).corpus;
     const doc = findDoc(corpus, subject);
     if (doc?.kind === "change" && doc.status === "open") {
       const s = setMeta(wt, doc, { status: "done" });
@@ -370,7 +370,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
     return refuse("floor", `floor exited ${code} (full log: ${logPath})\n${tail}`);
   }
 
-  const read = readCorpus(wt, ws.config.types);
+  const read = readCorpus(wt, ws.config.types, ws.config);
   const tests = testFilesFor(wt, ws.config);
   const findings = check({ root: wt, ...read, testFiles: tests });
   if (findings.length > 0) return refuse("check", `canon check: ${findings.length} finding(s)`, findings);
@@ -380,8 +380,18 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   // Every added, edited or deleted file under canon/rules or canon/decisions is reviewed (BR-2009): rule and
   // decision documents by their new text, deleted ones by the text they had on main, domain READMEs whole.
   // core.quotePath=false: git otherwise prints non-ASCII paths quoted and octal-escaped, which match no document.
-  const knowledge = git(wt, "-c", "core.quotePath=false", "diff", "--name-status", "--no-renames", base.value, head.value, "--", "canon/rules", "canon/decisions");
-  const entries = knowledge.ok && knowledge.value !== "" ? knowledge.value.split("\n").map((l) => ({ status: l[0]!, path: l.slice(l.indexOf("\t") + 1) })) : [];
+  // A file only moved, with identical content, is neither changed nor deleted: moving 74 rules into
+  // subdomains must not re-review all of them (BR-2009). git pairs exact renames; the blobs are compared too.
+  const knowledge = git(wt, "-c", "core.quotePath=false", "diff", "--name-status", "--find-renames=100%", base.value, head.value, "--", "canon/rules", "canon/decisions");
+  const entries: { status: string; path: string }[] = [];
+  const renamed: string[] = [];
+  for (const l of knowledge.ok && knowledge.value !== "" ? knowledge.value.split("\n") : []) {
+    const [status, from, to] = l.split("\t") as [string, string, string | undefined];
+    if (status[0] !== "R" || to === undefined) entries.push({ status: status[0]!, path: from });
+    else if (sameBlob(wt, `${base.value}:${from}`, `${head.value}:${to}`)) renamed.push(`${from} → ${to}`);
+    else entries.push({ status: "D", path: from }, { status: "A", path: to });
+  }
+  if (renamed.length > 0) say(`review: ${renamed.length} file(s) only moved, not reviewed`);
   const live = new Set(entries.filter((e) => e.status !== "D").map((e) => e.path));
   const changedDocs = read.corpus.docs.filter((d) => live.has(d.path));
   const deleted: DeletedDoc[] = entries
@@ -575,6 +585,13 @@ export type { Change };
  * line not already on main (in that decision) is verified against what it names. A source that cannot be
  * fetched fails too: an unverified quote never reaches main.
  */
+/** Whether two `<rev>:<path>` objects are the same blob, i.e. the same bytes. */
+function sameBlob(wt: string, a: string, b: string): boolean {
+  const x = git(wt, "rev-parse", a);
+  const y = git(wt, "rev-parse", b);
+  return x.ok && y.ok && x.value === y.value;
+}
+
 async function checkSources(wt: string, base: string, entries: readonly { status: string; path: string }[], docs: readonly Doc[], fetcher: Fetcher): Promise<string[]> {
   const failures: string[] = [];
   const touched = new Map(entries.filter((e) => e.status !== "D" && e.path.startsWith("canon/decisions/")).map((e) => [e.path, e.status]));

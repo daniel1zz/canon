@@ -65,6 +65,38 @@ describe("config validation", () => {
   });
 });
 
+describe("code layout config", () => {
+  const cases: [string, string, string][] = [
+    ["shared without code_root", "shared: [src/kernel]\n", "`shared` needs `code_root`"],
+    ["a shared entry outside code_root", "code_root: src\nshared: [lib/x]\n", "under src"],
+    ["an absolute code_root", "code_root: /abs/src\n", "`code_root`"],
+    ["a code_root with ..", "code_root: ../src\n", "`code_root`"],
+    ["a code_root that is not a string", "code_root: [src]\n", "`code_root`"],
+    ["shared that is not a list", "code_root: src\nshared: src/kernel\n", "`shared`"],
+  ];
+  for (const [what, yaml, message] of cases) {
+    test(`BR-2116: ${what} makes every command fail with exit 2`, () => {
+      const r = canon(repo({ "canon/config.yaml": yaml }), "show", ["C", 1].join("-"));
+      expect(r.code).toBe(2);
+      expect(r.err).toContain(message);
+    });
+  }
+
+  test("BR-2116: code_root puts each domain's code at <code_root>/<domain path>; without it the top-level README decides", () => {
+    const files = {
+      "canon/rules/work/README.md": "---\ncode: [lib/work]\n---\n# work\n\n## 术语\n\n- **x**：y\n",
+      "canon/rules/work/land/README.md": "# work/land\n\n## 术语\n\n- **x**：y\n",
+    };
+    const layered = repo({ ...files, "canon/config.yaml": "code_root: src\nshared: [src/kernel]\n" });
+    const cfg = readConfig(layered);
+    if (!cfg.ok) throw new Error(cfg.error.message);
+    expect([cfg.value.codeRoot, cfg.value.shared]).toEqual(["src", ["src/kernel"]]);
+    expect(readCorpus(layered, cfg.value.types, cfg.value).corpus.domains.map((d) => [d.name, d.code])).toEqual([["work", ["src/work"]], ["work/land", ["src/work/land"]]]);
+    const plain = repo(files);
+    expect(readCorpus(plain).corpus.domains.map((d) => [d.name, d.code])).toEqual([["work", ["lib/work"]], ["work/land", []]]);
+  });
+});
+
 describe("test discovery", () => {
   const rule = (n: number) => `---\nid: ${br(n)}\ntitle: R\n---\n## 规则\n\nS.\n\n## 例子\n\n- a → b\n`;
   const base = {

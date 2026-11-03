@@ -1,13 +1,6 @@
----
-code:
-  - src/work/work.ts
-  - src/coord/state.ts
-  - src/coord/liveness.ts
----
-
 # 合入（work/land）
 
-`canon work land` 怎样把一个变更安全地变成 main：先排队，一次只有一个合入者；轮到后 rebase 到 main，在这棵树上跑 floor、`canon check`、规则评审和 `before_land`；全部通过、worktree 期间没变，才用比较并交换移动 main；之后在后台跑 `after_land`。合入者进程不在了或被信号终止，它的轮次立刻让出。代码在 `src/work/work.ts` 的 `land`，队列在 `src/coord/state.ts`。
+`canon work land` 怎样把一个变更安全地变成 main：先排队，一次只有一个合入者；轮到后 rebase 到 main，在这棵树上跑 floor、`canon check`、规则评审和 `before_land`；全部通过、worktree 期间没变，才用比较并交换移动 main；之后在后台跑 `after_land`。合入者进程不在了或被信号终止，它的轮次立刻让出。
 
 不管：评审怎么判断（`knowledge/review`）、检查查什么（`knowledge/check`）。
 

@@ -27,6 +27,8 @@ export type CheckRule =
   | "rule-no-statement" // an active rule has no non-empty "## 规则" section
   | "rule-no-example" // an active rule with tests has no example in "## 例子"
   | "domain-code-missing" // a domain README lists a code path that does not exist (BR-2079)
+  | "domain-code-declared" // a README lists `code:` where the layout gives the location (BR-2117)
+  | "code-layout" // with code_root: a domain without its directory, or a directory no domain or shared entry owns (BR-2118)
   | "decision-options" // a decision's options section shows no real choice (BR-2109)
   | "source-malformed" // a source line in a decision's options does not name a target and quote it (BR-2110)
   | "doc-missing-section" // a document lacks a section its type requires, or the section is empty (BR-2091)
@@ -55,10 +57,17 @@ export function check(input: CheckInput): Finding[] {
       if (ref !== d.id && !byId.has(ref)) findings.push({ path: d.path, rule: "ref-dangling", message: `names ${ref}, which does not exist` });
     }
   }
+  const { codeRoot } = input.corpus.layout;
   for (const dom of input.corpus.domains) {
+    if (dom.declared.length > 0 && (codeRoot !== undefined || dom.parent)) {
+      const why = codeRoot !== undefined ? `its code is ${codeRoot}/${dom.name} by convention (code_root)` : "a subdomain is business only; its code is found through the top-level domain";
+      findings.push({ path: dom.path, rule: "domain-code-declared", message: `remove \`code:\` from the README: ${why}` });
+    }
     // A path that does not exist silently drops the domain from `canon context <path>` (BR-2079).
-    for (const c of dom.code) {
-      if (!existsSync(join(input.root, c))) findings.push({ path: dom.path, rule: "domain-code-missing", message: `code path ${c} does not exist; fix it or remove it from the README` });
+    if (codeRoot === undefined) {
+      for (const c of dom.code) {
+        if (!existsSync(join(input.root, c))) findings.push({ path: dom.path, rule: "domain-code-missing", message: `code path ${c} does not exist; fix it or remove it from the README` });
+      }
     }
     for (const ref of idsIn(stripCode(dom.body))) {
       if (!byId.has(ref)) findings.push({ path: dom.path, rule: "ref-dangling", message: `names ${ref}, which does not exist` });
@@ -91,7 +100,57 @@ export function check(input: CheckInput): Finding[] {
     }
   }
   findings.push(...structureFindings(input.corpus));
+  if (codeRoot !== undefined) findings.push(...layoutFindings(input.root, input.corpus));
   return findings;
+}
+
+/**
+ * BR-2118: with a code root, every domain has its directory and every directory is a domain's, a shared
+ * entry or an ancestor of one; a file directly under the code root is reported too. Inside a domain without subdomains the layout is the domain's own business,
+ * so only the levels where domains branch are checked. A directory holding only tests or fixtures gets no
+ * exemption: tests sit next to their code, and an exemption would let any stray directory pass.
+ */
+function layoutFindings(root: string, corpus: Corpus): Finding[] {
+  const { codeRoot, shared } = corpus.layout;
+  if (codeRoot === undefined) return [];
+  const out: Finding[] = [];
+  for (const dom of corpus.domains) {
+    const dir = `${codeRoot}/${dom.name}`;
+    if (!isDir(join(root, dir))) out.push({ path: dom.path, rule: "code-layout", message: `domain ${dom.name} has no code directory ${dir}` });
+  }
+  for (const s of shared) {
+    if (!existsSync(join(root, s))) out.push({ path: "canon/config.yaml", rule: "code-layout", message: `shared path ${s} does not exist` });
+  }
+  const names = new Set(corpus.domains.map((d) => d.name));
+  const branches = (name: string) => corpus.domains.some((d) => d.parent === name);
+  const walk = (rel: string, domain: string | undefined): void => {
+    const full = join(root, codeRoot, rel);
+    if (!isDir(full)) return;
+    for (const child of readdirSync(full).sort()) {
+      if (child.startsWith(".")) continue;
+      const name = rel === "" ? child : `${rel}/${child}`;
+      const path = `${codeRoot}/${name}`;
+      if (shared.some((s) => path === s || path.startsWith(`${s}/`))) continue;
+      // reason: a file inside a domain's directory is that domain's; one directly under the code root is nobody's (BR-2118)
+      if (!isDir(join(full, child))) {
+        if (rel === "") out.push({ path, rule: "code-layout", message: `${path} belongs to no domain; move it into a domain's directory or list it under shared` });
+        continue;
+      }
+      if (names.has(name)) {
+        if (branches(name)) walk(name, name);
+      } else if (shared.some((s) => s.startsWith(`${path}/`))) walk(name, domain);
+      else {
+        const where = domain ? `domain ${domain} has no subdomain ${name}` : `no domain ${name}`;
+        out.push({ path, rule: "code-layout", message: `${path} belongs to no domain (${where}); create the domain, move the code, or list the directory under shared` });
+      }
+    }
+  };
+  walk("", undefined);
+  return out;
+}
+
+function isDir(full: string): boolean {
+  return existsSync(full) && statSync(full).isDirectory();
 }
 
 const TERMS_SECTION = "术语";

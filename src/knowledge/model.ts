@@ -75,16 +75,31 @@ export interface Domain {
   /** The enclosing domain of a subdomain; undefined for a top-level domain. */
   readonly parent?: string;
   readonly path: string;
-  /** Code directories this domain's rules govern; `canon context <path>` resolves through them. */
+  /**
+   * Code directories this domain's rules govern; `canon context <path>` resolves through them. With a code
+   * root it is `<codeRoot>/<name>` by convention; without one, a top-level domain's README `code:` and
+   * nothing for a subdomain (D-15).
+   */
   readonly code: readonly string[];
+  /** What the README's front matter `code:` lists, whether or not the layout allows it (BR-2117). */
+  readonly declared: readonly string[];
   readonly body: string;
 }
+
+/** Where code lives relative to the domains (D-15): the config's `code_root` and `shared`. */
+export interface Layout {
+  readonly codeRoot: string | undefined;
+  readonly shared: readonly string[];
+}
+
+export const NO_LAYOUT: Layout = { codeRoot: undefined, shared: [] };
 
 export interface Corpus {
   readonly docs: readonly Doc[];
   readonly domains: readonly Domain[];
   /** The types the corpus was read with; ids, check and search all follow them. */
   readonly types: readonly DocType[];
+  readonly layout: Layout;
 }
 
 /**

@@ -102,27 +102,71 @@ describe("check: duplicates", () => {
 });
 
 describe("subdomains", () => {
+  // Without code_root: the top-level README names the code, subdomains are business only (D-15).
   const sub = {
     "canon/rules/work/README.md": "---\ncode: [src/work, src/coord]\n---\n# work\n\nOverview of work.\n",
-    "canon/rules/work/drop/README.md": "---\ncode: [src/work/drop.ts]\n---\n# work/drop\n\nDropping.\n",
-    "canon/rules/work/land/README.md": "---\ncode: [src/work/work.ts]\n---\n# work/land\n\nLanding.\n",
+    "canon/rules/work/drop/README.md": "# work/drop\n\nDropping.\n",
+    "canon/rules/work/land/README.md": "# work/land\n\nLanding.\n",
     [`canon/rules/work/${id("BR", 1)}.md`]: rule(1, "Every write names its actor", "Actor."),
     [`canon/rules/work/drop/${id("BR", 2)}.md`]: rule(2, "Drop archives first", "Archive."),
     [`canon/rules/work/land/${id("BR", 3)}.md`]: rule(3, "Land in order", "Queue."),
   };
+  const layered = (extra: Record<string, string> = {}) => {
+    const { root } = corpusOf({ ...sub, "canon/rules/work/README.md": "# work\n\nOverview of work.\n", ...extra });
+    return { root, corpus: readCorpus(root, undefined, { codeRoot: "src", shared: ["src/kernel"] }).corpus };
+  };
   const names = (target: string) => contextFor(corpusOf(sub).corpus, target).domains.map((d) => d.name);
+  const layeredNames = (target: string) => contextFor(layered().corpus, target).domains.map((d) => d.name);
 
-  test("BR-2113: a path resolves to the deepest subdomain covering it plus the domains enclosing it", () => {
-    expect(names("src/work/drop.ts")).toEqual(["work", "work/drop"]);
-    expect(names("src/coord/db.ts")).toEqual(["work"]);
-    const ctx = contextFor(corpusOf(sub).corpus, "src/work/drop.ts");
+  test("BR-2113: with code_root a path resolves to the subdomain whose directory covers it plus the domains enclosing it", () => {
+    expect(layeredNames("src/work/drop/drop.ts")).toEqual(["work", "work/drop"]);
+    expect(layeredNames("src/work/db.ts")).toEqual(["work"]);
+    expect(layeredNames("src/work")).toEqual(["work", "work/drop", "work/land"]);
+    const ctx = contextFor(layered().corpus, "src/work/drop/drop.ts");
     expect(ctx.rules.map((r) => r.id).sort()).toEqual([id("BR", 1), id("BR", 2)]); // the enclosing domain's own rules come too, not work/land's
+  });
+
+  test("BR-2113: without code_root a path resolves through the top-level code only; subdomains have none", () => {
+    expect(names("src/work/drop.ts")).toEqual(["work"]);
+    expect(names("src/coord/db.ts")).toEqual(["work"]);
   });
 
   test("BR-2113: a domain name brings every subdomain under it; a rule id brings its subdomain and the enclosing domain", () => {
     expect(names("work")).toEqual(["work", "work/drop", "work/land"]);
     expect(names("work/land")).toEqual(["work", "work/land"]);
     expect(names(id("BR", 2))).toEqual(["work", "work/drop"]);
+  });
+
+  test("BR-2120: subdomains of a returned top-level domain that were not returned are listed by name only", () => {
+    const { root, corpus } = layered();
+    const ctx = contextFor(corpus, "src/work/drop/drop.ts", root);
+    expect(ctx.others).toEqual(["work/land"]);
+    const out = renderContext(root, ctx, { full: false });
+    expect(out).toContain("Other subdomains, not included: work/land (canon context <name>)");
+    expect(out).not.toContain("Queue.");
+    expect(contextFor(corpus, "work").others).toEqual([]);
+    expect(renderContext(root, contextFor(corpus, "work"), { full: false })).not.toContain("Other subdomains");
+  });
+
+  test("BR-2119: a file target brings the domains of the code it imports, labelled, without their READMEs", () => {
+    const { root, corpus } = layered({
+      "canon/rules/billing/README.md": "# billing\n\nMoney.\n",
+      [`canon/rules/billing/${id("BR", 4)}.md`]: rule(4, "Refund window", "Refunds within 30 days."),
+      "src/work/drop/drop.ts": 'import { land } from "../land/land.js";\nimport type { Db } from "../db";\nexport { x } from "../../kernel/git.ts";\nimport { parse } from "yaml";\nconst b = require("../../billing");\n',
+      "src/work/land/land.ts": "",
+      "src/work/db.ts": "",
+      "src/kernel/git.ts": "",
+      "src/billing/index.ts": "",
+    });
+    const ctx = contextFor(corpus, "src/work/drop/drop.ts", root);
+    expect(ctx.imports.map((i) => [i.domain.name, i.via])).toEqual([["billing", ["src/billing/index.ts"]], ["work/land", ["src/work/land/land.ts"]]]);
+    expect(ctx.others).toEqual([]); // work/land came in as an import
+    const out = renderContext(root, ctx, { full: false });
+    expect(out).toContain("# Imported domain: work/land  (the target imports src/work/land/land.ts");
+    expect(out).toContain(`- ${id("BR", 3)} Land in order`);
+    expect(out).not.toContain("Landing."); // an imported domain's README is not printed
+    expect(out).not.toContain("Money.");
+    expect(contextFor(corpus, "src/work/drop", root).imports).toEqual([]); // a directory: imports are not read
   });
 
   test("BR-2006: a subdomain directory without a README is reported", () => {

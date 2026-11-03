@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../coord/db.ts";
@@ -7,7 +7,7 @@ import { readConfig } from "../repo/config.ts";
 import { drop } from "../work/drop.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../work/testkit.ts";
 import { findingDetail, land } from "../work/work.ts";
-import { computeStats, renderStats } from "./stats.ts";
+import { computeStats, renderSharedShare, renderStats, sharedShare } from "./stats.ts";
 
 const of = (stats: ReturnType<typeof computeStats>, check: string) => stats.find((s) => s.check === check)!;
 
@@ -181,5 +181,29 @@ describe("canon stats", () => {
     expect(readConfig(root).ok).toBe(false); // well formed, but there is no 30 February
     writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ncheck_reviews:\n  floor: "2028-02-29"\n');
     expect(readConfig(root).ok).toBe(true);
+  });
+});
+
+describe("shared code share", () => {
+  const lines = (n: number) => "x\n".repeat(n);
+  function layout(kernel: number, other: number) {
+    const root = project();
+    mkdirSync(join(root, "src/kernel"), { recursive: true });
+    mkdirSync(join(root, "src/work"), { recursive: true });
+    writeFileSync(join(root, "src/kernel/git.ts"), lines(kernel));
+    writeFileSync(join(root, "src/work/db.ts"), lines(other));
+    writeFileSync(join(root, "src/work/untracked.ts"), lines(500)); // not tracked: not counted
+    sh(root, "add", "src/kernel", "src/work/db.ts");
+    sh(root, "commit", "-qm", "code");
+    return root;
+  }
+
+  test("BR-2121: canon stats reports shared lines against the code root's tracked lines, with a hint only above 20%", () => {
+    const at = (kernel: number) => renderSharedShare(sharedShare(layout(kernel, 1000 - kernel), { codeRoot: "src", shared: ["src/kernel"] })!);
+    expect(at(150)).toBe("shared code: 150 of 1000 lines under src (15.0%)");
+    expect(at(200)).toBe("shared code: 200 of 1000 lines under src (20.0%)");
+    expect(at(250)).toBe("shared code: 250 of 1000 lines under src (25.0%): above 20%; move code that serves one domain into that domain's directory");
+    expect(sharedShare(layout(1, 1), { codeRoot: "src", shared: [] })).toBeUndefined();
+    expect(sharedShare(layout(1, 1), { codeRoot: undefined, shared: [] })).toBeUndefined();
   });
 });

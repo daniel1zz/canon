@@ -1,4 +1,8 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { CoordDb } from "../coord/db.ts";
+import type { Layout } from "../knowledge/model.ts";
+import { git } from "../repo/git.ts";
 import { CHECKS, LAND_CHECKS, LAND_STAGES } from "./checks.ts";
 
 /**
@@ -143,4 +147,41 @@ export function renderStats(stats: readonly CheckStats[]): string {
   const undated = stats.filter((s) => s.review === null);
   if (undated.length > 0) lines.push("", `No review date (set check_reviews in canon/config.yaml): ${undated.map((s) => s.check).join(", ")}`);
   return lines.join("\n");
+}
+
+/** Above this share of the code root's lines, shared code is reported as too large (BR-2121). */
+export const SHARED_LIMIT_PERCENT = 20;
+
+export interface SharedShare {
+  readonly codeRoot: string;
+  readonly sharedLines: number;
+  readonly totalLines: number;
+}
+
+/**
+ * Lines of tracked files under the `shared` entries against all tracked lines under the code root (BR-2121).
+ * Shared code is what no domain's rules describe, so its share is how much code sits outside every
+ * domain; undefined when the project sets no code root or no shared entry.
+ */
+export function sharedShare(root: string, layout: Layout): SharedShare | undefined {
+  if (layout.codeRoot === undefined || layout.shared.length === 0) return undefined;
+  const files = git(root, "-c", "core.quotePath=false", "ls-files", "--", layout.codeRoot);
+  if (!files.ok) return undefined;
+  let sharedLines = 0;
+  let totalLines = 0;
+  for (const f of files.value.split("\n").filter(Boolean)) {
+    const full = join(root, f);
+    if (!existsSync(full)) continue;
+    const text = readFileSync(full, "utf8");
+    const n = text === "" ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
+    totalLines += n;
+    if (layout.shared.some((s) => f === s || f.startsWith(`${s}/`))) sharedLines += n;
+  }
+  return { codeRoot: layout.codeRoot, sharedLines, totalLines };
+}
+
+export function renderSharedShare(s: SharedShare): string {
+  const pct = s.totalLines === 0 ? 0 : (100 * s.sharedLines) / s.totalLines;
+  const line = `shared code: ${s.sharedLines} of ${s.totalLines} lines under ${s.codeRoot} (${pct.toFixed(1)}%)`;
+  return pct > SHARED_LIMIT_PERCENT ? `${line}: above ${SHARED_LIMIT_PERCENT}%; move code that serves one domain into that domain's directory` : line;
 }

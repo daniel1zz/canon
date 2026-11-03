@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
-import { parseDocFile } from "./docfile.ts";
-import type { ChangeStatus, Corpus, DecisionStatus, Doc, Domain, RuleStatus } from "./model.ts";
+import { parseDocFile, parseReadme } from "./docfile.ts";
+import { NO_LAYOUT, type ChangeStatus, type Corpus, type DecisionStatus, type Doc, type Domain, type Layout, type RuleStatus } from "./model.ts";
 import { BUILTIN_TYPES, type DocType } from "./types.ts";
 
 /** A file under canon/ that does not fit the model. `canon check` reports these; reading never stops on one. */
@@ -22,7 +22,8 @@ export const CANON_DIR = "canon";
  * Files that do not parse become problems, not exceptions. A document missing a declared field is still
  * read (so references to it resolve) and the missing field is reported (BR-2054).
  */
-export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYPES): ReadResult {
+export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYPES, layout: Layout = NO_LAYOUT): ReadResult {
+  const { codeRoot, shared } = layout;
   const docs: Doc[] = [];
   const domains: Domain[] = [];
   const problems: FileProblem[] = [];
@@ -63,13 +64,17 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
     const readme = join(dir, "README.md");
     if (!existsSync(readme)) problems.push({ path: rel(dir), message: "domain has no README.md (scope, code directories, Terms)" });
     else {
-      const parsed = parseDocFile(readFileSync(readme, "utf8"), rel(readme));
+      const parsed = parseReadme(readFileSync(readme, "utf8"), rel(readme));
       if (!parsed.ok) problems.push({ path: rel(readme), message: parsed.error.message });
       else {
         const code = parsed.value.meta["code"];
-        const codeList = Array.isArray(code) ? code.filter((c): c is string => typeof c === "string") : [];
-        if (!Array.isArray(code) || codeList.length === 0) problems.push({ path: rel(readme), message: "front matter `code` must list at least one code directory this domain governs" });
-        domains.push({ name: domain, path: rel(readme), code: codeList, body: parsed.value.body, ...(parent ? { parent } : {}) });
+        const declared = Array.isArray(code) ? code.filter((c): c is string => typeof c === "string") : [];
+        // reason: only a top-level domain without a code root names its code; otherwise the location is the
+        // convention or the enclosing domain's, and a stray `code:` is a check finding, not a read problem (D-15, BR-2117)
+        const named = codeRoot === undefined && !parent;
+        if (named && declared.length === 0) problems.push({ path: rel(readme), message: "front matter `code` must list at least one code directory this domain governs (or set code_root in canon/config.yaml)" });
+        const effective = codeRoot !== undefined ? [`${codeRoot}/${domain}`] : named ? declared : [];
+        domains.push({ name: domain, path: rel(readme), code: effective, declared, body: parsed.value.body, ...(parent ? { parent } : {}) });
       }
     }
     for (const file of listFiles(dir)) {
@@ -134,7 +139,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
       }
     }
   }
-  return { corpus: { docs, domains, types }, problems };
+  return { corpus: { docs, domains, types, layout: { codeRoot, shared } }, problems };
 }
 
 function checkCommon(meta: Record<string, unknown>, idFromName: string): string | undefined {

@@ -17,7 +17,7 @@ import { skillsSource, type InstallReport } from "../skills/install.ts";
 import { WORKFLOW_GUIDE } from "./guide.ts";
 import { resolve, unknownArgument } from "./strict.ts";
 import { assetsStatus, installAssets, updateNotice, updateProject } from "../skills/update.ts";
-import { computeStats, renderStats } from "../stats/stats.ts";
+import { computeStats, renderSharedShare, renderStats, sharedShare } from "../stats/stats.ts";
 import { drop } from "../work/drop.ts";
 import { clean, land, mainCorpus, start, stop } from "../work/work.ts";
 
@@ -46,7 +46,7 @@ function workspace(): Workspace {
 }
 
 /** The corpus of this worktree, read with the project's declared types. */
-const corpusOf = (ws: Workspace) => readCorpus(ws.root, ws.config.types);
+const corpusOf = (ws: Workspace) => readCorpus(ws.root, ws.config.types, ws.config);
 
 const list = (v: unknown): string[] => (typeof v === "string" && v.trim() !== "" ? v.split(",").map((s) => s.trim()).filter(Boolean) : []);
 const say = (line: string) => console.log(line);
@@ -136,11 +136,12 @@ const rule = defineCommand({
       run: ({ args }) => void setStatus(String(args.id), "rule", "retired"),
     }),
     domain: defineCommand({
-      meta: { description: "Create a domain (canon/rules/<name>/README.md) or a subdomain (<domain>/<name>) with the code paths it governs" },
-      args: { name: { type: "positional", required: true }, code: { type: "string", required: true, description: "Comma-separated code directories" }, description: { type: "string" } },
+      meta: { description: "Create a domain (canon/rules/<name>/README.md) or a subdomain (<domain>/<name>); only a top-level domain without code_root names its code (--code)" },
+      args: { name: { type: "positional", required: true }, code: { type: "string", description: "Comma-separated code directories (top-level domain, no code_root)" }, description: { type: "string" } },
       run({ args }) {
         const ws = workspace();
-        say(must(createDomain(ws.root, String(args.name), list(args.code), typeof args.description === "string" ? args.description : "")));
+        if (args.code !== undefined && list(args.code).length === 0) fail({ code: "invalid", message: "--code needs at least one directory" });
+        say(must(createDomain(ws.root, String(args.name), list(args.code), typeof args.description === "string" ? args.description : "", ws.config.codeRoot)));
       },
     }),
     domains: defineCommand({
@@ -152,7 +153,7 @@ const rule = defineCommand({
           const n = corpus.docs.filter((r) => r.kind === "rule" && r.domain === d.name && r.status === "active").length;
           // reason: a hint, not a check: a big domain makes `canon context` long, splitting is a judgement call (BR-2114)
           const hint = n > SPLIT_HINT ? `  (more than ${SPLIT_HINT} rules: consider subdomains, canon rule domain ${d.name}/<name>)` : "";
-          say(`${`${"  ".repeat(d.name.split("/").length - 1)}${d.name}`.padEnd(24)} ${String(n).padStart(4)} rules  ${d.code.join(", ")}${hint}`);
+          say(`${`${"  ".repeat(d.name.split("/").length - 1)}${d.name}`.padEnd(24)} ${String(n).padStart(4)} rules  ${d.code.length ? d.code.join(", ") : `(code through ${d.name.split("/")[0]})`}${hint}`);
         }
       },
     }),
@@ -258,7 +259,7 @@ const context = defineCommand({
   },
   run({ args }) {
     const ws = workspace();
-    say(renderContext(ws.root, contextFor(corpusOf(ws).corpus, args.target), { full: Boolean(args.full), target: args.target }));
+    say(renderContext(ws.root, contextFor(corpusOf(ws).corpus, args.target, ws.root), { full: Boolean(args.full), target: args.target }));
   },
 });
 
@@ -532,6 +533,8 @@ const stats = defineCommand({
     const s = computeStats(ws.db, ws.config.checkReviews, today);
     if (args.json) return json(s);
     say(renderStats(s));
+    const share = sharedShare(ws.root, ws.config);
+    if (share) say(`\n${renderSharedShare(share)}`);
   },
 });
 

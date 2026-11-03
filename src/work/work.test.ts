@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claims, enqueue, finishEntry, handoffs, takeClaim, tryTurn, writeHandoff } from "../coord/state.ts";
@@ -303,6 +303,37 @@ describe("rule review at land", () => {
     const prompt = readFileSync(promptFile, "utf8");
     expect(prompt).toContain(`## ${id} — deleted canon/rules/billing/${id}.md`);
     expect(prompt).toContain("Refunds within 30 days.");
+  });
+
+  test("BR-2009: a rule file moved with identical content is not reviewed; moved and edited is reviewed as deleted plus added", async () => {
+    const { root, promptFile } = reviewedProject("ok");
+    const id = ["BR", 1].join("-");
+    const text = `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds within 30 days.\n`;
+    const seed = startNew(root, "Seed rule");
+    writeFileSync(join(seed.worktree, `canon/rules/billing/${id}.md`), text);
+    mkdirSync(join(seed.worktree, "canon/rules/billing/refunds"), { recursive: true });
+    writeFileSync(join(seed.worktree, "canon/rules/billing/refunds/README.md"), "# billing/refunds\n\n## 术语\n\n- **退款**：钱退回\n");
+    sh(seed.worktree, "add", "-A");
+    sh(seed.worktree, "commit", "-qm", "rule");
+    expect((await land(ws(seed.worktree), FAST, quiet)).kind).toBe("landed");
+    rmSync(promptFile, { force: true });
+
+    const move = startNew(root, "Move rule");
+    sh(move.worktree, "mv", `canon/rules/billing/${id}.md`, `canon/rules/billing/refunds/${id}.md`);
+    sh(move.worktree, "commit", "-qm", "move");
+    const lines: string[] = [];
+    expect((await land(ws(move.worktree), FAST, (l) => lines.push(l))).kind).toBe("landed");
+    expect(existsSync(promptFile)).toBe(false);
+    expect(lines).toContain("review: 1 file(s) only moved, not reviewed");
+
+    const edit = startNew(root, "Move and edit");
+    sh(edit.worktree, "mv", `canon/rules/billing/refunds/${id}.md`, `canon/rules/billing/${id}.md`);
+    writeFileSync(join(edit.worktree, `canon/rules/billing/${id}.md`), text.replace("30", "31"));
+    sh(edit.worktree, "commit", "-qam", "move and edit");
+    expect((await land(ws(edit.worktree), FAST, quiet)).kind).toBe("landed");
+    const prompt = readFileSync(promptFile, "utf8");
+    expect(prompt).toContain("Refunds within 31 days.");
+    expect(prompt).toContain(`## ${id} — deleted canon/rules/billing/refunds/${id}.md`);
   });
 
   test("BR-2010: the reviewer is not asked when no rule or decision text changed", async () => {

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { CoordDb } from "../coord/db.ts";
@@ -112,7 +112,7 @@ describe("canon check", () => {
     expect(findings.map((f) => f.rule)).toEqual(["file-invalid"]);
   });
 
-  test("BR-2006: a README without `code`, or with an empty list, is invalid; one code directory is enough", () => {
+  test("BR-2006: without code_root a top-level README without `code`, or with an empty list, is invalid; one code directory is enough", () => {
     const root = repo({
       "canon/rules/a/README.md": "---\ntitle: a\n---\n# a\n\n## 术语\n\n- **退款**：钱退回\n",
       "canon/rules/b/README.md": "---\ncode: []\n---\n# b\n\n## 术语\n\n- **退款**：钱退回\n",
@@ -297,5 +297,54 @@ describe("domain code paths", () => {
     });
     const findings = check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "domain-code-missing");
     expect(findings.map((f) => `${f.path} ${f.message}`)).toEqual(["canon/rules/billing/README.md code path src/gone does not exist; fix it or remove it from the README"]);
+  });
+});
+
+describe("code layout (D-15)", () => {
+  const readme = (name: string, code?: string) => `${code ? `---\ncode: [${code}]\n---\n` : ""}# ${name}\n\n## 术语\n\n- **x**：y\n`;
+  const kinds = (root: string, layout?: { codeRoot: string | undefined; shared: string[] }) =>
+    check({ root, ...readCorpus(root, undefined, layout), testFiles: [] }).map((f) => `${f.rule} ${f.path}`).sort();
+
+  test("BR-2006: without code_root a subdomain README needs no `code`; with code_root no README does, and front matter is optional", () => {
+    const root = repo({ "canon/rules/billing/README.md": readme("billing", "src/billing"), "canon/rules/billing/refunds/README.md": readme("billing/refunds") });
+    expect(kinds(root)).toEqual([]);
+    const layered = repo({ "canon/rules/billing/README.md": readme("billing"), "canon/rules/billing/refunds/README.md": readme("billing/refunds"), "src/billing/refunds/r.ts": "" });
+    expect(kinds(layered, { codeRoot: "src", shared: ["src/auth"] })).toEqual([]);
+  });
+
+  test("BR-2117: `code` is reported on a subdomain README, and on every README once code_root is set", () => {
+    const root = repo({ "canon/rules/billing/README.md": readme("billing", "src/billing"), "canon/rules/billing/refunds/README.md": readme("billing/refunds", "src/billing") });
+    expect(kinds(root)).toEqual(["domain-code-declared canon/rules/billing/refunds/README.md"]);
+    mkdirSync(join(root, "src/billing/refunds"), { recursive: true });
+    expect(kinds(root, { codeRoot: "src", shared: ["src/auth"] })).toEqual(["domain-code-declared canon/rules/billing/README.md", "domain-code-declared canon/rules/billing/refunds/README.md"]);
+  });
+
+  test("BR-2118: with code_root every domain has its directory and every directory at a branching level is a domain's or shared", () => {
+    const root = repo({
+      "canon/rules/work/README.md": readme("work"),
+      "canon/rules/work/land/README.md": readme("work/land"),
+      "canon/rules/work/drop/README.md": readme("work/drop"),
+      "canon/rules/billing/README.md": readme("billing"),
+      "src/work/db.ts": "", // a file in a branching domain's directory is that domain's
+      "src/work/land/steps/a.ts": "", // inside a leaf domain the layout is its own
+      "src/work/helpers/h.ts": "", // not a subdomain of work
+      "src/lib/kernel/git.ts": "", // src/lib is an ancestor of a shared entry
+      "src/lib/other/x.ts": "",
+      "src/__tests__/a.test.ts": "", // tests-only directories get no exemption
+      "src/index.ts": "",
+      "src/.cache/x": "",
+    });
+    rmSync(join(root, "src/billing"), { recursive: true });
+    expect(kinds(root, { codeRoot: "src", shared: ["src/lib/kernel", "src/gone"] })).toEqual([
+      "code-layout canon/config.yaml", // shared src/gone does not exist
+      "code-layout canon/rules/billing/README.md",
+      "code-layout canon/rules/work/drop/README.md",
+      "code-layout src/__tests__",
+      "code-layout src/auth", // the fixture's src/auth is no domain
+      "code-layout src/index.ts",
+      "code-layout src/lib/other",
+      "code-layout src/work/helpers",
+    ]);
+    expect(kinds(root)).not.toContain("code-layout src/work/helpers"); // no code_root: no layout check
   });
 });

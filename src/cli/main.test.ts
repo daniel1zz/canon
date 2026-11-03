@@ -326,19 +326,35 @@ describe("dropping from the command line", () => {
 });
 
 describe("subdomains from the CLI", () => {
-  test("BR-2115: a subdomain is created only under an existing domain, and every segment must be a valid name", () => {
+  test("BR-2115: a subdomain is created only under an existing domain, names no code, and every segment must be a valid name", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     mkdirSync(join(root, "src/billing"), { recursive: true });
     writeFileSync(join(root, "src/billing/refund.ts"), "");
-    expect(canon(root, "rule", "domain", "billing/refunds", "--code", "src/billing/refund.ts").code).toBe(3);
+    expect(canon(root, "rule", "domain", "billing/refunds").code).toBe(3);
     expect(existsSync(join(root, "canon/rules/billing"))).toBe(false);
+    expect(canon(root, "rule", "domain", "billing").code).toBe(2); // a top-level domain without code_root needs --code
     expect(canon(root, "rule", "domain", "billing", "--code", "src/billing").code).toBe(0);
-    expect(canon(root, "rule", "domain", "billing/refunds", "--code", "src/billing/refund.ts").code).toBe(0);
-    expect(existsSync(join(root, "canon/rules/billing/refunds/README.md"))).toBe(true);
-    expect(canon(root, "rule", "domain", "Billing/x", "--code", "src").code).toBe(2);
+    expect(readFileSync(join(root, "canon/rules/billing/README.md"), "utf8")).toStartWith("---\ncode:\n  - src/billing\n---\n");
+    expect(canon(root, "rule", "domain", "billing/refunds", "--code", "src/billing/refund.ts").code).toBe(2);
+    expect(existsSync(join(root, "canon/rules/billing/refunds"))).toBe(false);
+    expect(canon(root, "rule", "domain", "billing/refunds").code).toBe(0);
+    expect(readFileSync(join(root, "canon/rules/billing/refunds/README.md"), "utf8")).toStartWith("# billing/refunds");
+    expect(canon(root, "rule", "domain", "Billing/x").code).toBe(2);
     expect(canon(root, "rule", "new", "--domain", "billing/refunds", "--title", "Refund window", "--untested", "fixture").code).toBe(0);
     expect(canon(root, "rule", "list", "--domain", "billing").out).toContain("Refund window"); // a domain's list includes its subdomains
+    expect(canon(root, "check").out).not.toContain("domain-code-declared");
+  });
+
+  test("BR-2115: with code_root a top-level domain takes no --code and is told its directory", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    writeFileSync(join(root, "canon/config.yaml"), `${readFileSync(join(root, "canon/config.yaml"), "utf8")}code_root: src\n`);
+    expect(canon(root, "rule", "domain", "billing", "--code", "src/billing").code).toBe(2);
+    const r = canon(root, "rule", "domain", "billing");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("code: src/billing");
+    expect(readFileSync(join(root, "canon/rules/billing/README.md"), "utf8")).toStartWith("# billing");
   });
 
   test("BR-2114: rule domains indents subdomains and suggests splitting only above 25 direct rules", () => {
@@ -346,7 +362,7 @@ describe("subdomains from the CLI", () => {
     canon(root, "init", "--floor", "true");
     mkdirSync(join(root, "src/billing"), { recursive: true });
     canon(root, "rule", "domain", "billing", "--code", "src/billing");
-    canon(root, "rule", "domain", "billing/refunds", "--code", "src/billing");
+    canon(root, "rule", "domain", "billing/refunds");
     const add = (n: number) => { for (let i = 0; i < n; i++) canon(root, "rule", "new", "--domain", "billing", "--title", `R${i}`, "--untested", "fixture"); };
     add(25);
     let out = canon(root, "rule", "domains").out;

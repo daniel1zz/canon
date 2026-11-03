@@ -49,6 +49,13 @@ export interface Config {
    * node_modules; removing a worktree loses nothing by deleting them (BR-2019). Any other ignored file counts as work.
    */
   readonly regenerable: readonly string[];
+  /**
+   * The directory whose subdirectories mirror the rule domains one to one (`<codeRoot>/<domain path>`, D-15);
+   * undefined means top-level domain READMEs list their code directories instead.
+   */
+  readonly codeRoot: string | undefined;
+  /** Directories (or files) under codeRoot that belong to no business domain, such as a shared kernel; empty without codeRoot. */
+  readonly shared: readonly string[];
 }
 
 const HOUR = 3_600_000;
@@ -75,9 +82,11 @@ export const DEFAULT_CONFIG: Config = {
   templates: {},
   checkReviews: {},
   regenerable: DEFAULT_REGENERABLE,
+  codeRoot: undefined,
+  shared: [],
 };
 
-const TOP_KEYS = new Set(["main", "floor", "tests", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews", "regenerable"]);
+const TOP_KEYS = new Set(["main", "floor", "tests", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews", "regenerable", "code_root", "shared"]);
 const TYPE_KEYS = new Set(["prefix", "dir", "statuses", "default", "fields", "sections"]);
 const MOVED: Record<string, string> = { after_land: "hooks.after_land" };
 
@@ -123,6 +132,8 @@ export function readConfig(root: string): Result<Config> {
   if (regenerable !== undefined && (!Array.isArray(regenerable) || regenerable.some((t) => typeof t !== "string" || t.trim() === "" || t.includes("/")))) {
     return bad("`regenerable` must be a list of file or directory names (globs allowed, no `/`)");
   }
+  const layout = readLayout(c["code_root"], c["shared"]);
+  if (!layout.ok) return bad(layout.error.message);
   const lease = positive("claim_lease_hours", HOUR, DEFAULT_CONFIG.claimLeaseMs);
   const stale = positive("lander_stale_minutes", MINUTE, DEFAULT_CONFIG.landerStaleMs);
   const timeout = positive("land_timeout_minutes", MINUTE, DEFAULT_CONFIG.landTimeoutMs);
@@ -175,7 +186,26 @@ export function readConfig(root: string): Result<Config> {
     templates,
     checkReviews: reviews.value,
     regenerable: (regenerable as string[] | undefined) ?? DEFAULT_REGENERABLE,
+    codeRoot: layout.value.codeRoot,
+    shared: layout.value.shared,
   });
+}
+
+/** A repo-relative directory: no absolute path, no `..` or `.` segment, no trailing slash. */
+const REL_DIR = /^(?!\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[^\s]+(?<!\/)$/;
+
+/** `code_root` and `shared` (BR-2116): shared only makes sense under a code root, and each entry lies inside it. */
+function readLayout(root: unknown, shared: unknown): Result<{ codeRoot: string | undefined; shared: string[] }> {
+  if (root !== undefined && root !== null && (typeof root !== "string" || !REL_DIR.test(root))) {
+    return err("invalid", "`code_root` must be a directory relative to the repository root, such as src");
+  }
+  const codeRoot = typeof root === "string" ? root : undefined;
+  if (shared === undefined || shared === null) return ok({ codeRoot, shared: [] });
+  if (codeRoot === undefined) return err("invalid", "`shared` needs `code_root`: it lists directories under the code root that are no domain's");
+  if (!Array.isArray(shared) || shared.some((s) => typeof s !== "string" || !REL_DIR.test(s) || !s.startsWith(`${codeRoot}/`))) {
+    return err("invalid", `\`shared\` must be a list of directories under ${codeRoot}, such as ${codeRoot}/kernel`);
+  }
+  return ok({ codeRoot, shared: shared as string[] });
 }
 
 function readCheckReviews(v: unknown): Result<Record<string, string>> {
