@@ -758,10 +758,13 @@ describe("the claim during a landing", () => {
     expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(fix);
     expect(readFileSync(join(s.worktree, "fix.txt"), "utf8")).toBe("fix\n");
     expect(lines.join("\n")).toContain("was not reopened");
+    expect(lines.join("\n")).toContain("says done although it did not land");
 
     sh(s.worktree, "reset", "-q", "--hard", checked.value);
     writeFileSync(join(s.worktree, path), readFileSync(join(s.worktree, path), "utf8") + "\nlocal note\n");
-    expect(reopen(s.worktree, { subject: s.change, path }, quiet)).toBe(false);
+    const dirty: string[] = [];
+    expect(reopen(s.worktree, { subject: s.change, path }, (l) => dirty.push(l))).toBe(false);
+    expect(dirty.join("\n")).toContain("was not reopened");
     expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(checked.value);
     expect(readFileSync(join(s.worktree, path), "utf8")).toContain("local note");
   });
