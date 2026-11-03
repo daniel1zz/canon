@@ -77,10 +77,13 @@ export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs
     const expires = iso(new Date(now().getTime() + leaseMs));
     // reason: while a landing of this worktree is in the queue, the claim names that lander, and the holder's own
     // work commands (a `canon work stop` while it waits) leave it so, or the session exiting would free it (BR-2142, issue #30).
+    // A lander killed by SIGKILL leaves its queue row active: a gone lander is no landing (issue #31).
     const landing =
       cur.holder === actor &&
       cur.pid !== null &&
-      db.db.query("SELECT 1 FROM queue WHERE worktree = ? AND state IN ('waiting','landing') AND pid = ? AND pid_start = ?").get(worktree, cur.pid, cur.pid_start) !== null;
+      cur.pid_start !== null &&
+      db.db.query("SELECT 1 FROM queue WHERE worktree = ? AND state IN ('waiting','landing') AND pid = ? AND pid_start = ?").get(worktree, cur.pid, cur.pid_start) !== null &&
+      isGone({ pid: cur.pid, start: cur.pid_start }) !== true;
     // The holder's own session may run under a new process now (a resumed session): follow it, so the claim is not freed under it.
     const own = cur.holder === actor;
     const pid = landing ? cur.pid : (owner?.pid ?? (own ? cur.pid : null));

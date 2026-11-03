@@ -619,6 +619,31 @@ describe("the claim names the lander while it lands", () => {
     }
   });
 
+  test("BR-2142: after a lander is killed with SIGKILL, a work command of the live session names the session again", async () => {
+    const root = project();
+    const s = startNew(root, "Lander killed, session lives");
+    const session = Bun.spawn(["sleep", "30"]);
+    try {
+      const p0 = processOf(session.pid)!;
+      ws(root).db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(p0.pid, p0.start, s.change);
+      const other = ws(root, "agent:b");
+      const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
+      expect(tryTurn(other.db, ahead).mine).toBe(true);
+      const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: "agent:a" };
+      delete env["CLAUDECODE"];
+      const lander = Bun.spawn(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env });
+      for (let i = 0; i < 200 && pidOf(root, s.change) !== lander.pid; i++) await Bun.sleep(50);
+      expect(pidOf(root, s.change)).toBe(lander.pid);
+      lander.kill("SIGKILL");
+      await lander.exited; // its queue row is still active
+      expect(renewClaim(ws(root).db, s.worktree, "agent:a", 12 * 3600_000, p0).ok).toBe(true); // e.g. `canon work stop`
+      expect(pidOf(root, s.change)).toBe(session.pid);
+      expect(takeClaim(other.db, s.change, s.worktree, "agent:b").ok).toBe(false);
+    } finally {
+      session.kill();
+    }
+  });
+
   test("BR-2142: a lease-only claim names no process during or after the landing", async () => {
     await landingAsSession(null, async (root, s, landing) => {
       expect(pidOf(root, s.change)).toBeNull();
