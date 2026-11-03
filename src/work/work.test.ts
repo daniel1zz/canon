@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claims, enqueue, takeClaim, tryTurn } from "../coord/state.ts";
+import { claims, enqueue, finishEntry, takeClaim, tryTurn } from "../coord/state.ts";
 import { readCorpus } from "../knowledge/read.ts";
 import { clean, land, start, stop } from "./work.ts";
 
@@ -308,6 +308,58 @@ describe("work land", () => {
     const out = await land(ws(s.worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("main-moved");
     expect(sh(root, "log", "-1", "--format=%s", "main")).toBe("moved-meanwhile");
+  });
+
+  test("BR-2106: a commit made in the worktree while the floor runs is refused as moved-during-land, naming it; main stays", async () => {
+    const root = project();
+    const before = sh(root, "rev-parse", "main");
+    const s = startNew(root, "Sneaky commit");
+    writeFileSync(join(s.worktree, "canon/config.yaml"), `floor: "git commit -q --allow-empty -m sneaky"\ntests: []\n`);
+    sh(s.worktree, "commit", "-qam", "floor that commits");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("moved-during-land");
+    expect(out.kind === "refused" && out.message).toContain("sneaky");
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+  });
+
+  test("BR-2106: an uncommitted file left in the worktree after the floor is refused as moved-during-land, naming it", async () => {
+    const root = project();
+    const s = startNew(root, "Stray file");
+    writeFileSync(join(s.worktree, "canon/config.yaml"), `floor: "echo x > stray.txt"\ntests: []\n`);
+    sh(s.worktree, "commit", "-qam", "floor that writes a file");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("moved-during-land");
+    expect(out.kind === "refused" && out.message).toContain("stray.txt");
+  });
+
+  test("BR-2106: a floor that leaves HEAD and the worktree as they were lands the tested commit", async () => {
+    const root = project();
+    const s = startNew(root, "Clean floor");
+    writeFileSync(join(s.worktree, "x.txt"), "x\n");
+    sh(s.worktree, "add", "x.txt");
+    sh(s.worktree, "commit", "-qm", "x");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "landed" && out.sha).toBe(sh(s.worktree, "rev-parse", "HEAD"));
+  });
+
+  test("BR-2105: uncommitted edits made while waiting in the queue are refused as dirty, naming the files, not as a conflict", async () => {
+    const root = project();
+    const s = startNew(root, "Edited while waiting");
+    writeFileSync(join(s.worktree, "app.txt"), "one\nTWO\nthree\n");
+    sh(s.worktree, "commit", "-qam", "two");
+    writeFileSync(join(root, "app.txt"), "one\n2\nthree\n");
+    sh(root, "commit", "-qam", "main edits two too"); // a rebase would touch app.txt
+    const other = ws(root, "agent:b");
+    const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
+    expect(tryTurn(other.db, ahead).mine).toBe(true);
+    const landing = land(ws(s.worktree), FAST, quiet);
+    await Bun.sleep(300);
+    writeFileSync(join(s.worktree, "app.txt"), "edited while waiting\n");
+    finishEntry(other.db, ahead, "landed", "x");
+    const out = await landing;
+    expect(out.kind === "refused" && out.reason).toBe("dirty");
+    expect(out.kind === "refused" && out.message).toContain("app.txt");
+    expect(readFileSync(join(s.worktree, "app.txt"), "utf8")).toBe("edited while waiting\n");
   });
 
   test("BR-2039 BR-2026: a primary checkout with uncommitted changes on main keeps main still; the reason is main-dirty", async () => {

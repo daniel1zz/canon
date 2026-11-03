@@ -153,7 +153,7 @@ export interface LandOptions {
 
 export type LandOutcome =
   | { readonly kind: "landed"; readonly sha: string; readonly change: string | null; readonly finished: boolean }
-  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "check" | "review" | "hook" | "main-moved" | "main-dirty" | "no-floor" | "no-claim" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
+  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "check" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "no-floor" | "no-claim" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
   | { readonly kind: "timeout"; readonly ahead: number };
 
 /**
@@ -222,6 +222,13 @@ interface Running {
   floor?: { kill(): void } | undefined;
 }
 
+/** `git status --porcelain` lines of the worktree: uncommitted and untracked changes. */
+function changesIn(wt: string): string[] {
+  const st = git(wt, "status", "--porcelain");
+  if (!st.ok) return [`? (${st.error.message})`];
+  return st.value === "" ? [] : st.value.split("\n");
+}
+
 function rebaseInProgress(wt: string): boolean {
   return ["rebase-merge", "rebase-apply"].some((d) => {
     const p = git(wt, "rev-parse", "--path-format=absolute", "--git-path", d);
@@ -275,6 +282,10 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
     return { kind: "refused", reason, message, ...(findings ? { findings } : {}) };
   };
 
+  // Edits made while waiting in the queue would make the rebase fail; name them as uncommitted, not as a conflict (BR-2105).
+  const waited = changesIn(wt);
+  if (waited.length > 0) return refuse("dirty", `the worktree got uncommitted changes while waiting to land; commit them and land again:\n${waited.map((l) => `  ${l}`).join("\n")}`);
+
   const base = git(wt, "rev-parse", main);
   if (!base.ok) return refuse("main-moved", base.error.message);
   say(`rebase onto ${main} ${base.value.slice(0, 9)}`);
@@ -286,6 +297,9 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
     git(wt, "rebase", "--abort");
     return refuse("conflict", `rebase onto ${main} conflicts in: ${files.ok ? files.value.split("\n").join(", ") : "?"}\nResolve with \`git rebase ${main}\` in ${wt}, then land again.`);
   }
+  // The commit the floor, canon check, the review and before_land prove; only this commit may become main (BR-2106).
+  const tested = git(wt, "rev-parse", "HEAD");
+  if (!tested.ok) return refuse("main-moved", tested.error.message);
 
   say(`floor: ${ws.config.floor}`);
   const logPath = join(dirname(ws.db.db.filename), "logs", `land-${entry}.log`);
@@ -306,8 +320,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const findings = check({ root: wt, ...read, testFiles: tests });
   if (findings.length > 0) return refuse("check", `canon check: ${findings.length} finding(s)`, findings);
 
-  const head = git(wt, "rev-parse", "HEAD");
-  if (!head.ok) return refuse("main-moved", head.error.message);
+  const head = tested;
 
   // Every added, edited or deleted file under canon/rules or canon/decisions is reviewed (BR-2009): rule and
   // decision documents by their new text, deleted ones by the text they had on main, domain READMEs whole.
@@ -343,6 +356,17 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const hookEnv = { CANON_BASE: base.value, CANON_HEAD: head.value, CANON_BRANCH: t.branch };
   const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env: hookEnv }, ws.config.hooks.before_land, say, true);
   if (failed) return refuse("hook", `before_land \`${failed.command}\` exited ${failed.exit}\n${failed.output}`);
+  const now = git(wt, "rev-parse", "HEAD");
+  const edits = changesIn(wt);
+  if (!now.ok || now.value !== head.value || edits.length > 0) {
+    const lines: string[] = [];
+    if (!now.ok || now.value !== head.value) {
+      const log = now.ok ? git(wt, "log", "--format=%h %s", `${head.value}..${now.value}`) : now;
+      lines.push(`HEAD moved from ${head.value.slice(0, 9)} to ${now.ok ? now.value.slice(0, 9) : "?"}${log.ok && log.value !== "" ? `:\n${log.value.split("\n").map((l) => `    ${l}`).join("\n")}` : ""}`);
+    }
+    for (const e of edits) lines.push(`uncommitted: ${e}`);
+    return refuse("moved-during-land", `the worktree changed after the rebase, so what was tested is not what would land; land again:\n${lines.map((l) => `  ${l}`).join("\n")}`);
+  }
   const fingerprint = ownDiffId(wt, main); // before main moves: afterwards the merge base is HEAD itself
   const moved = moveMain(ws, base.value, head.value);
   if (moved !== "moved") return refuse(moved.reason, moved.message);
