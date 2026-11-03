@@ -6,7 +6,7 @@ import { enqueue, finishEntry, tryTurn } from "./queue.ts";
 import { handoffs, writeHandoff } from "../session/handoffs.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { clean, start, stop } from "../session/session.ts";
-import { land, LAND_MARKER, predictedConflicts, reopen } from "./land.ts";
+import { land, LAND_MARKER, predictedConflicts, reopen, reopenForGoneLander } from "./land.ts";
 import { ensureGuard } from "../../cli/install/githook.ts";
 import { processOf, type Proc } from "../claims/liveness.ts";
 
@@ -1231,4 +1231,31 @@ describe("batched landings", () => {
     expect(both.out.map((o) => o.kind)).toEqual(["landed", "landed"]);
     expect(single.floorRuns()).toBe(2);
   }, TIMED);
+
+  test("BR-2018 BR-2099: a locked member whose lander is gone gets its close commit taken back when main does not move; a live one keeps it", () => {
+    const { root } = batchProject();
+    const b = startNew(root, "Closed");
+    const file = `canon/changes/${b.change}-closed.md`;
+    writeFileSync(join(b.worktree, file), readFileSync(join(b.worktree, file), "utf8").replace("status: open", "status: done"));
+    sh(b.worktree, "commit", "-qam", `canon: close ${b.change}`);
+    const w = ws(b.worktree);
+    const live = enqueue(w.db, b.worktree, b.change, "agent:a", processOf(process.pid)!);
+    expect(reopenForGoneLander(w, { entry: live, subject: b.change, worktree: b.worktree }, quiet)).toBe(false);
+    expect(sh(b.worktree, "log", "-1", "--format=%s")).toBe(`canon: close ${b.change}`);
+    const gone = enqueue(w.db, b.worktree, b.change, "agent:a", { pid: 2 ** 22 + 12345, start: "never" });
+    expect(reopenForGoneLander(w, { entry: gone, subject: b.change, worktree: b.worktree }, quiet)).toBe(true);
+    expect(readFileSync(join(b.worktree, file), "utf8")).toContain("status: open");
+  });
+
+  test("BR-2173: a member whose commits a dead leader already put on main lands again with nothing new", async () => {
+    const root = project();
+    const b = startNew(root, "Already there");
+    commitFile(b.worktree, "b.txt", "b\n");
+    sh(root, "cherry-pick", `${sh(b.worktree, "rev-parse", "HEAD")}~1`, `${sh(b.worktree, "rev-parse", "HEAD")}`);
+    const before = sh(root, "rev-parse", "main");
+    const out = await land(ws(b.worktree), FAST, quiet);
+    expect(out.kind === "landed" && out.sha).toBe(before);
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+  }, TIMED);
 });
+

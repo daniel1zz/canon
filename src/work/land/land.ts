@@ -8,7 +8,7 @@ import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { bindToLander, keepClaim, releaseOwnClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
 import { dropHandoff } from "../session/handoffs.ts";
 import { batchCandidates, enqueue, failIfActive, finishEntry, heartbeat, holdsTurn, isSolo, joinBatch, landBatched, leaveBatch, lockBatch, tryTurn, unlockBatch } from "./queue.ts";
-import { selfProcess, sessionProcess } from "../claims/liveness.ts";
+import { isGone, selfProcess, sessionProcess } from "../claims/liveness.ts";
 import { logFile, runHooks, runHooksInBackground } from "../../config/hooks.ts";
 import { noticeOverlaps } from "../session/overlap.ts";
 import { type Doc } from "../../knowledge/documents/model.ts";
@@ -521,6 +521,7 @@ async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry:
     const moved = moveMain(ws, t.base, tip);
     if (moved !== "moved") {
       unlockBatch(ws.db, t.entry, memberIds);
+      for (const l of links.slice(1)) reopenForGoneLander(ws, l, say);
       return { kind: "refused", reason: moved.reason, message: moved.message };
     }
     // reason: members are recorded landed before the leader, so a member never sees its leader done while it is still batched (BR-2172).
@@ -537,6 +538,20 @@ async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry:
   } finally {
     git(ws.primary, "worktree", "remove", "--force", dir);
   }
+}
+
+/**
+ * After a batch was locked but main did not move: a member whose lander process is gone (a signal ended it while
+ * it was locked, so it left its close commit, BR-2099) gets its close commit taken back here, as its own landing
+ * would have done (BR-2018). A live member reopens it itself if its own landing later fails.
+ */
+export function reopenForGoneLander(ws: Workspace, l: { entry: number; subject: string | null; worktree: string }, say: Say): boolean {
+  const row = ws.db.db.query<{ pid: number | null; pid_start: string | null }, [number]>("SELECT pid, pid_start FROM queue WHERE id = ?").get(l.entry);
+  if (!l.subject || !row || row.pid === null || row.pid_start === null || isGone({ pid: row.pid, start: row.pid_start }) !== true) return false;
+  const top = git(l.worktree, "log", "-1", "--format=%s");
+  const files = git(l.worktree, "-c", "core.quotePath=false", "diff", "--name-only", "HEAD~1", "HEAD");
+  if (!top.ok || top.value !== closeSubject(l.subject) || !files.ok || files.value.includes("\n")) return false;
+  return reopen(l.worktree, { subject: l.subject, path: files.value }, say);
 }
 
 /**

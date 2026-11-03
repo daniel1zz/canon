@@ -110,9 +110,18 @@ describe("batches", () => {
     expect(tryTurn(d, n).batched).toEqual({ leader: silent, head: "h2" });
     d.db.query("UPDATE queue SET heartbeat = '2000-01-01T00:00:00.000Z' WHERE id = ?").run(silent);
     expect(tryTurn(d, n).batched).toBeUndefined();
+
+    const locked = enqueue(d, "/wt/l", "C-6", "x", me);
+    const dying = enqueue(d, "/wt/k", "C-7", "x", me);
+    finishEntry(d, silent, "failed", "x");
+    finishEntry(d, n, "landed", "x");
+    expect(tryTurn(d, locked).mine).toBe(true);
+    expect(joinBatch(d, locked, dying, "h3") && lockBatch(d, locked, [dying])).toBe(true);
+    d.db.query("UPDATE queue SET pid = ?, pid_start = 'never' WHERE id = ?").run(2 ** 22 + 12345, locked); // leader SIGKILLed after the lock
+    expect(tryTurn(d, dying)).toEqual({ mine: true, ahead: 0 });
   });
 
-  test("BR-2172: members are locked in all or none before main moves; a locked member's signal no longer gives it up (issue #42)", () => {
+  test("BR-2172 BR-2099: members are locked in all or none before main moves; a locked member's signal no longer gives it up (issue #42)", () => {
     const d = db();
     const me = selfProcess();
     const lead = enqueue(d, "/wt/a", "C-1", "x", me);
