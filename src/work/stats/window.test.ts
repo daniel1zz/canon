@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
 import { computeStats, searchStats } from "./stats.ts";
-import { eventsSince, parseSince, renderEvents, renderWindow, windowSummary } from "./window.ts";
+import { eventsSince, lastEventId, parseSince, renderEvents, renderWindow, windowSummary } from "./window.ts";
 
 function db(worktree?: string): CoordDb {
   const r = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-window-")), "state.db"), worktree);
@@ -102,6 +102,37 @@ describe("window summary", () => {
     expect(w.worktrees).toEqual(["/repo", "/wt/C-1", "/wt/C-2"]);
     expect(w.first! <= w.last!).toBe(true);
     expect(renderWindow(w)).toContain("actors (2): agent:a, agent:b");
+  });
+});
+
+describe("one upper bound", () => {
+  test("BR-2155: with the last id read once, an event written between the reads is in no part; the summary names the bound", () => {
+    const d = db();
+    d.event("agent:a", "land.ok", "C-1", {});
+    d.event("agent:a", "search", null, { query: "x", results: 1, full: 1 });
+    const until = lastEventId(d);
+    expect(until).toBe(2);
+    d.event("agent:b", "land.ok", "C-2", {}); // another session lands meanwhile
+    d.event("agent:b", "search", null, { query: "y", results: 0, full: 0 });
+    const floor = computeStats(d, {}, "2026-11-03", 0, until).find((s) => s.check === "floor")!;
+    const w = windowSummary(d, 0, until);
+    expect([floor.runs, w.landings.ok, w.until, searchStats(d, 0, until).searches]).toEqual([1, 1, 2, 1]);
+    expect(renderWindow(w)).toContain("window: events after #0 up to #2: 2 event(s)");
+    expect(eventsSince(d, { since: 0, until, kinds: [] }).map((e) => e.id)).toEqual([1, 2]);
+    expect(windowSummary(d, 0).until).toBe(4);
+    expect(lastEventId(db())).toBe(0);
+  });
+
+  test("BR-2155: an event with no worktree is not counted as one", () => {
+    const d = db();
+    d.event("agent:a", "start.ok", "C-1", {});
+    expect(windowSummary(d, 0).worktrees).toEqual([]);
+  });
+
+  test("BR-2154: --since above the last event id counts nothing", () => {
+    const d = db();
+    d.event("agent:a", "land.ok", "C-1", {});
+    expect(computeStats(d, {}, "2026-11-03", 100).every((s) => s.runs === 0)).toBe(true);
   });
 });
 

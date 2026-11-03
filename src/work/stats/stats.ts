@@ -47,13 +47,16 @@ interface Row {
   readonly detail: Record<string, unknown>;
 }
 
-/** `since`: only events with a higher id count, so a stretch of work can be measured on its own (BR-2154). */
-export function computeStats(db: CoordDb, reviews: Readonly<Record<string, string>>, today: string, since = 0): CheckStats[] {
+/**
+ * `since`: only events with a higher id count, so a stretch of work can be measured on its own (BR-2154).
+ * `until`: only events up to this id, so several reads cover the same events while others keep writing (issue #37).
+ */
+export function computeStats(db: CoordDb, reviews: Readonly<Record<string, string>>, today: string, since = 0, until = Number.MAX_SAFE_INTEGER): CheckStats[] {
   const rows: Row[] = db.db
-    .query<{ id: number; kind: string; subject: string | null; detail: string }, [number]>(
-      "SELECT id, kind, subject, detail FROM events WHERE kind IN ('land.refuse','land.ok','claim.take','claim.renew','claim.refuse','start.ok','start.refuse','drop.done','change.status') AND id > ? ORDER BY id",
+    .query<{ id: number; kind: string; subject: string | null; detail: string }, [number, number]>(
+      "SELECT id, kind, subject, detail FROM events WHERE kind IN ('land.refuse','land.ok','claim.take','claim.renew','claim.refuse','start.ok','start.refuse','drop.done','change.status') AND id > ? AND id <= ? ORDER BY id",
     )
-    .all(since)
+    .all(since, until)
     .map((r) => ({ ...r, detail: JSON.parse(r.detail) as Record<string, unknown> }));
   const count = (pred: (r: Row) => boolean) => rows.filter(pred).length;
   const refusalsOf = (check: string) => rows.filter((r) => r.kind === "land.refuse" && r.detail["reason"] === check);
@@ -195,8 +198,8 @@ export interface SearchStats {
   readonly noFull: number;
 }
 
-export function searchStats(db: CoordDb, since = 0): SearchStats {
-  const rows = db.db.query<{ detail: string }, [number]>("SELECT detail FROM events WHERE kind = 'search' AND id > ?").all(since);
+export function searchStats(db: CoordDb, since = 0, until = Number.MAX_SAFE_INTEGER): SearchStats {
+  const rows = db.db.query<{ detail: string }, [number, number]>("SELECT detail FROM events WHERE kind = 'search' AND id > ? AND id <= ?").all(since, until);
   let empty = 0;
   let noFull = 0;
   for (const r of rows) {

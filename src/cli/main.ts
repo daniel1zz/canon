@@ -24,7 +24,7 @@ import { WORKFLOW_GUIDE } from "./guide.ts";
 import { resolve, takesMany, unknownArgument } from "./strict.ts";
 import { assetsStatus, installAssets, updateNotice, updateProject } from "./install/update.ts";
 import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "../work/stats/stats.ts";
-import { eventsSince, parseSince, renderEvents, renderWindow, windowSummary } from "../work/stats/window.ts";
+import { eventsSince, lastEventId, parseSince, renderEvents, renderWindow, windowSummary } from "../work/stats/window.ts";
 import { drop } from "../work/drop/drop.ts";
 import { clean, mainCorpus, start, stop } from "../work/session/session.ts";
 import { land } from "../work/land/land.ts";
@@ -612,14 +612,16 @@ const stats = defineCommand({
     const ws = workspace();
     const since = args.since === undefined ? undefined : sinceArg(args.since);
     const today = new Date().toLocaleDateString("sv"); // YYYY-MM-DD, local time
-    const s = computeStats(ws.db, ws.config.checkReviews, today, since ?? 0);
-    const window = since === undefined ? undefined : windowSummary(ws.db, since);
+    // reason: every part reads up to one event id, so a landing written meanwhile cannot make them disagree (issue #37)
+    const until = lastEventId(ws.db);
+    const s = computeStats(ws.db, ws.config.checkReviews, today, since ?? 0, until);
+    const window = since === undefined ? undefined : windowSummary(ws.db, since, until);
     if (args.json) return json(window ? { since, checks: s, window } : s);
     if (window) say(`${renderWindow(window)}\n`);
     say(renderStats(s));
     const share = sharedShare(ws.root, ws.config);
     if (share) say(`\n${renderSharedShare(share)}`);
-    const searches = searchStats(ws.db, since ?? 0);
+    const searches = searchStats(ws.db, since ?? 0, until);
     if (searches.searches > 0) say(`\n${renderSearchStats(searches)}`);
   },
 });

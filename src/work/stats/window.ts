@@ -18,6 +18,8 @@ export interface EventRow {
 export interface EventFilter {
   /** Only events with an id above this one. */
   readonly since: number;
+  /** Only events up to this id; no upper bound when absent. */
+  readonly until?: number;
   /** Only these kinds; empty for every kind. */
   readonly kinds: readonly string[];
   /** Only events about this subject, e.g. a change id. */
@@ -30,10 +32,19 @@ export function parseSince(v: unknown): number | undefined {
   return Number(v);
 }
 
+/** The highest event id so far, 0 for an empty table: the upper bound that keeps several reads on the same events (issue #37). */
+export function lastEventId(db: CoordDb): number {
+  return db.db.query<{ n: number | null }, []>("SELECT MAX(id) AS n FROM events").get()?.n ?? 0;
+}
+
 /** The events after `since` that match the filter, oldest first (BR-2156). */
 export function eventsSince(db: CoordDb, f: EventFilter): EventRow[] {
   const where = ["id > ?"];
   const params: (string | number)[] = [f.since];
+  if (f.until !== undefined) {
+    where.push("id <= ?");
+    params.push(f.until);
+  }
   if (f.kinds.length > 0) {
     where.push(`kind IN (${f.kinds.map(() => "?").join(",")})`);
     params.push(...f.kinds);
@@ -57,6 +68,8 @@ export function renderEvents(rows: readonly EventRow[]): string {
 
 export interface WindowSummary {
   readonly since: number;
+  /** The last event id the summary covers. */
+  readonly until: number;
   readonly events: number;
   readonly first: string | null;
   readonly last: string | null;
@@ -84,9 +97,9 @@ const median = (xs: readonly number[]): number | null => {
   return s.length % 2 === 1 ? s[mid]! : Math.round((s[mid - 1]! + s[mid]!) / 2);
 };
 
-/** The concurrency summary of the events after `since` (BR-2155). */
-export function windowSummary(db: CoordDb, since: number): WindowSummary {
-  const rows = eventsSince(db, { since, kinds: [] });
+/** The concurrency summary of the events after `since`, up to `until` (BR-2155). */
+export function windowSummary(db: CoordDb, since: number, until = lastEventId(db)): WindowSummary {
+  const rows = eventsSince(db, { since, until, kinds: [] });
   const of = (kind: string) => rows.filter((r) => r.kind === kind);
   const refusals = of("land.refuse");
   const refused: Record<string, number> = {};
@@ -99,6 +112,7 @@ export function windowSummary(db: CoordDb, since: number): WindowSummary {
   const conflicts = refusals.filter((r) => r.detail["reason"] === "conflict");
   return {
     since,
+    until,
     events: rows.length,
     first: rows[0]?.ts ?? null,
     last: rows.at(-1)?.ts ?? null,
@@ -118,7 +132,7 @@ export function renderWindow(w: WindowSummary): string {
   const refused = Object.entries(w.landings.refused);
   const total = refused.reduce((n, [, c]) => n + c, 0);
   return [
-    `window: events after #${w.since}: ${w.events} event(s)${w.first ? `, ${w.first} to ${w.last}` : ""}`,
+    `window: events after #${w.since} up to #${w.until}: ${w.events} event(s)${w.first ? `, ${w.first} to ${w.last}` : ""}`,
     `  landings: ${w.landings.ok} ok, ${total} refused${total ? ` (${refused.map(([r, c]) => `${r} ${c}`).join(", ")})` : ""}, ${w.landings.lost} lost, ${w.landings.killed} killed`,
     `  queue waits: ${w.waits.count} turn(s), median ${secs(w.waits.medianMs)}, max ${secs(w.waits.maxMs)}`,
     `  conflicts: ${w.conflicts.total} (${w.conflicts.early} predicted before the turn)`,
