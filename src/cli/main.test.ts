@@ -231,6 +231,20 @@ describe("help", () => {
   });
 });
 
+describe("help after --", () => {
+  test("BR-2194: --help and -h print usage only before --; after it they are positional arguments", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    const help = canon(root, "search", "--help");
+    expect([help.code, help.out]).toEqual([0, expect.stringContaining("USAGE canon search")]);
+    const searched = canon(root, "search", "--", "--help");
+    expect(searched.code).toBe(0);
+    expect(searched.out).not.toContain("USAGE");
+    const extra = canon(root, "stats", "--", "-h");
+    expect([extra.code, extra.out, extra.err]).toEqual([2, "", expect.stringContaining('unexpected "-h"')]);
+  });
+});
+
 describe("project and documents", () => {
   test("BR-2032 BR-2076: init lays out canon/ with the floor, never overwrites, and warns without a floor", () => {
     const root = repo();

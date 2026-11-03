@@ -48,7 +48,9 @@ const main = defineCommand({
 async function run(): Promise<void> {
   const raw = process.argv.slice(2);
   const at = resolve(main, raw);
-  if (raw.includes("--help") || raw.includes("-h")) {
+  // reason: after `--` every word is a positional argument, `--help` included, as citty parses it (BR-2194)
+  const options = raw.includes("--") ? raw.slice(0, raw.indexOf("--")) : raw;
+  if (options.includes("--help") || options.includes("-h")) {
     // reason: printed with console.log, not citty's runMain: consola is silent under a test runner, so help could not be tested.
     // Its backticks are markup consola would have turned into colour.
     // reason: citty names a command without meta.name after process.argv[1], which is "/$bunfs/root/canon" in the compiled

@@ -87,6 +87,32 @@ describe("finding and applying updates", () => {
     expect(readFileSync(join(root, ".claude/skills/canon-a/SKILL.md"), "utf8")).toBe("a v1\n"); // discovery never updates
   });
 
+  test("BR-2085 BR-2195: when the skills source is missing or the manifest is broken, brief says it cannot check, and why", () => {
+    const { root, env } = project();
+    const missing = canon(root, { CANON_SKILLS_SOURCE: join(root, "no-such-skills") }, "brief");
+    expect(missing.out.split("\n").filter((l) => l.includes("cannot check"))).toEqual([expect.stringContaining("canon project files: cannot check for updates (cannot find canon's skills")]);
+    writeFileSync(join(root, ".claude/skills/.canon-skills.json"), "{ broken");
+    expect(canon(root, env, "brief").out).toContain("canon project files: cannot check for updates (.claude/skills/.canon-skills.json is not valid JSON");
+  });
+
+  test("BR-2196: update writes the change's title, sections and commit message itself", () => {
+    const { src, root, env } = project();
+    writeFileSync(join(src, "canon-a/SKILL.md"), "a v2\n");
+    writeFileSync(join(root, ".claude/settings.json"), "{}\n");
+    git(root, "add", "-A");
+    commitOnMain(root, "no session hook");
+    const version = canon(root, env, "update", "--check").out.match(/version (\w+)/)![1];
+    const r = canon(root, env, "update");
+    expect(r.code).toBe(0);
+    const change = r.out.match(/in (C-\d+), landed/)![1]!;
+    expect(git(root, "log", "--format=%s", "main")).toContain(`Update canon project files to ${version} (${change})`);
+    const file = git(root, "ls-tree", "--name-only", "main", "canon/changes/").split("\n").find((f) => f.includes(change))!;
+    const text = git(root, "show", `main:${file}`);
+    expect(text).toContain(`title: 更新 canon 装进项目的文件到版本 ${version}`);
+    expect(text).toContain("## 为什么\n\n项目里 canon 装的文件（skill、会话开始时的 hook）落后于当前的 canon，按负责人的要求更新。");
+    expect(text).toContain("## 要改什么\n\n- skill canon-a/SKILL.md\n- hook: canon brief at session start (.claude/settings.json)\n\n## 教训\n\n无。\n\n## 任务\n\n- [x] 由 `canon update` 安装并合入");
+  });
+
   test("BR-2086: update lands as its own change through the normal landing, and is a no-op when current", () => {
     const { src, root, env } = project();
     writeFileSync(join(src, "canon-a/SKILL.md"), "a v2\n");

@@ -1,11 +1,15 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { installSkills, MANIFEST, skillsSource } from "./install.ts";
+import { installSkills, MANIFEST, skillsSource, versionOf } from "./install.ts";
+import { BRIEF_COMMAND } from "./hook.ts";
 import { BUILTIN_TYPES, idsIn } from "../../knowledge/documents/types.ts";
 import { stripCode } from "../../knowledge/documents/model.ts";
 import { WORKFLOW_GUIDE } from "../guide.ts";
+
+// reason: these tests spawn the canon CLI, and one compiles it; at load a spawn alone can take seconds (C-111)
+setDefaultTimeout(60_000);
 
 const MAIN = join(import.meta.dir, "..", "main.ts");
 
@@ -66,6 +70,8 @@ describe("project-level skills", () => {
     const cli = canon(repo, { CANON_SKILLS_SOURCE: join(repo, ".claude/skills") }, "install");
     expect(cli.code).toBe(0);
     expect(cli.out).not.toContain("skill canon-"); // the skills are the source here; only the session hook is added (BR-2087)
+    const settings = JSON.parse(readFileSync(join(repo, ".claude/settings.json"), "utf8"));
+    expect(settings.hooks.SessionStart.flatMap((e: { hooks: { command: string }[] }) => e.hooks.map((h) => h.command))).toEqual([BRIEF_COMMAND]);
   });
 
   test("BR-2081: an unedited file follows canon's new version and a dropped one is removed; an edited one refuses the whole install until --force", () => {
@@ -100,6 +106,50 @@ describe("project-level skills", () => {
     const r = canon(root, { CANON_SKILLS_SOURCE: mkdtempSync(join(tmpdir(), "canon-empty-")) }, "init", "--floor", "true");
     expect(r.code).toBe(4);
     expect(r.err).toContain("cannot find canon's skills");
+    expect(existsSync(join(root, "canon"))).toBe(false);
+  });
+});
+
+describe("where the skills come from and their version", () => {
+  test("BR-2082: the compiled dist/canon installs from the .claude/skills of the repository that holds it", () => {
+    const repo = dir({ ".claude/skills/canon-z/SKILL.md": "z from the repository holding dist/canon\n" });
+    const built = Bun.spawnSync(["bun", "build", "--compile", MAIN, "--outfile", join(repo, "dist/canon")], { stdout: "pipe", stderr: "pipe" });
+    expect(built.exitCode).toBe(0);
+    const root = gitRepo();
+    const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: "agent:test" };
+    delete env["CANON_SKILLS_SOURCE"];
+    const r = Bun.spawnSync([join(repo, "dist/canon"), "install"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env });
+    expect([r.exitCode, r.stderr.toString()]).toEqual([0, ""]);
+    expect(readFileSync(join(root, ".claude/skills/canon-z/SKILL.md"), "utf8")).toBe("z from the repository holding dist/canon\n");
+  });
+
+  test("BR-2084: the version is computed from the skill files' content: the same files give the same version, any change gives another", () => {
+    expect(versionOf({ "canon-a/SKILL.md": "h1" })).toBe(versionOf({ "canon-a/SKILL.md": "h1" }));
+    expect(versionOf({ "canon-a/SKILL.md": "h2" })).not.toBe(versionOf({ "canon-a/SKILL.md": "h1" }));
+    const src = source();
+    const root = gitRepo();
+    const version = (out: string) => out.match(/version (\w+)/)![1];
+    const before = version(canon(root, { CANON_SKILLS_SOURCE: src }, "init", "--floor", "true").out + canon(root, { CANON_SKILLS_SOURCE: src }, "update", "--check").out);
+    writeFileSync(join(src, "canon-a/references/x.md"), "x v2\n");
+    const after = version(canon(root, { CANON_SKILLS_SOURCE: src }, "update", "--check").out);
+    expect(after).not.toBe(before);
+    writeFileSync(join(src, "canon-a/references/x.md"), "x v1\n");
+    expect(version(canon(root, { CANON_SKILLS_SOURCE: src }, "update", "--check").out)).toBe(before);
+  });
+
+  test("BR-2195: a manifest that is not valid JSON refuses install, init and update --check with 2 and writes nothing; brief says it cannot check", () => {
+    const src = source();
+    const root = gitRepo();
+    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "install").code).toBe(0);
+    const manifest = join(root, ".claude/skills", MANIFEST);
+    writeFileSync(manifest, "{ broken");
+    writeFileSync(join(src, "canon-a/SKILL.md"), "a v2\n");
+    for (const args of [["install"], ["init", "--floor", "true"], ["update", "--check"]]) {
+      const r = canon(root, { CANON_SKILLS_SOURCE: src }, ...args);
+      expect([args[0], r.code, r.err]).toEqual([args[0], 2, expect.stringContaining(".claude/skills/.canon-skills.json is not valid JSON; fix or delete it")]);
+    }
+    expect(readFileSync(manifest, "utf8")).toBe("{ broken");
+    expect(readFileSync(join(root, ".claude/skills/canon-a/SKILL.md"), "utf8")).toBe("a v1\n");
     expect(existsSync(join(root, "canon"))).toBe(false);
   });
 });
