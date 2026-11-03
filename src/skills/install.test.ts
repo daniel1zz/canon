@@ -3,6 +3,9 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { installSkills, MANIFEST, skillsSource } from "./install.ts";
+import { BUILTIN_TYPES, idsIn } from "../knowledge/types.ts";
+import { stripCode } from "../knowledge/model.ts";
+import { WORKFLOW_GUIDE } from "../cli/guide.ts";
 
 const MAIN = join(import.meta.dir, "..", "cli", "main.ts");
 
@@ -126,5 +129,19 @@ describe("installing stays inside the project", () => {
     const r = installSkills(root, src, true);
     expect(!r.ok && r.error.message).toContain("symbolic link");
     expect(readFileSync(join(elsewhere, "SKILL.md"), "utf8")).toBe("someone else's file\n");
+  });
+});
+
+describe("text canon ships into other projects", () => {
+  test("BR-2096: shipped skills and the workflow guide name no canon document ids outside code", () => {
+    const skills = join(import.meta.dir, "..", "..", ".claude", "skills");
+    const offending: string[] = [];
+    for (const rel of new Bun.Glob("canon-*/**/*").scanSync({ cwd: skills })) {
+      for (const id of idsIn(BUILTIN_TYPES, stripCode(readFileSync(join(skills, rel), "utf8")))) offending.push(`${rel}: ${id}`);
+    }
+    for (const id of idsIn(BUILTIN_TYPES, stripCode(WORKFLOW_GUIDE))) offending.push(`guide: ${id}`);
+    expect(offending).toEqual([]);
+    const sample = ["一条规则一个结果（", "D", "-5）"].join("");
+    expect(idsIn(BUILTIN_TYPES, stripCode(sample)).size).toBe(1); // the scan does catch a bare id
   });
 });

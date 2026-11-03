@@ -57,7 +57,7 @@ Read only the files of the mode you need. Cross-cutting references (`references/
 ## 4. Record the design
 
 1. **Decision** for each real choice: `canon decision new --title "..."` → fill 背景 (facts, data), 方案 (every option with why it was taken or rejected), 决定, 后果. Write it in Chinese (canon/ documents are Chinese). A decision without its rejected options is blocked at land.
-2. **Rules** for every behaviour the design commits the product to: `canon rule new --domain <d> --title "..."`. One rule = one trigger and one outcome (D-5); fill 规则 and 例子 with concrete inputs on both sides of the boundary. Each active rule needs a test that names it.
+2. **Rules** for every behaviour the design commits the product to: `canon rule new --domain <d> --title "..."`. One rule = one trigger and one outcome; fill 规则 and 例子 with concrete inputs on both sides of the boundary. Each active rule needs a test that names it.
 3. **Change file** (`canon/changes/C-n.md`): 为什么 / 要改什么 referencing the decision and the rules.
 4. Land as usual (`canon work land`). The rule review reads the decision and rules against the whole domain; fix what it blocks.
 
