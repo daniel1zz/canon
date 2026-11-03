@@ -71,6 +71,54 @@ export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs
   return tx.immediate();
 }
 
+interface ClaimRow {
+  readonly subject: string;
+  readonly holder: string;
+  readonly worktree: string | null;
+  readonly expires_at: string;
+  readonly pid: number | null;
+  readonly pid_start: string | null;
+}
+
+/**
+ * Holds a change for a moment while `canon work clean` or `canon work drop` removes its worktree, so a
+ * `canon work start` that arrives meanwhile is refused instead of getting a worktree that is about to vanish
+ * (BR-2019, BR-2064). `onlyIfUnclaimed` (clean) fails on any claim row; otherwise (drop) it fails only on a
+ * claim of another actor that still binds (BR-2100) and takes over any other. Returns the row it replaced, so
+ * a caller that gives up can put it back. Writes no claim events: it is not work, and `canon stats` counts
+ * claim events (BR-2067).
+ */
+export function holdClaim(db: CoordDb, subject: string, worktree: string, actor: string, onlyIfUnclaimed: boolean, leaseMs = CLAIM_LEASE_MS): Result<{ prior: ClaimRow | null }> {
+  const read = () => db.db.query<ClaimRow, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims WHERE subject = ?").get(subject) ?? null;
+  // reason: the process probe runs outside the write transaction (as in tryTurn); the transaction re-reads and
+  // only proceeds when the row is still the one probed.
+  const seen = read();
+  const binds = seen !== null && seen.holder !== actor && bindsStill(seen);
+  const tx = db.db.transaction((): Result<{ prior: ClaimRow | null }> => {
+    const cur = read();
+    const same = JSON.stringify(cur) === JSON.stringify(seen);
+    if (cur && (onlyIfUnclaimed || !same || binds)) {
+      return err("conflict", `${subject} is claimed by ${cur.holder} in ${cur.worktree} until ${cur.expires_at}; nothing was deleted`);
+    }
+    db.db
+      .query("INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start) VALUES (?, ?, ?, ?, NULL, NULL) ON CONFLICT(subject) DO UPDATE SET holder = excluded.holder, worktree = excluded.worktree, expires_at = excluded.expires_at, pid = NULL, pid_start = NULL, version = version + 1")
+      .run(subject, actor, worktree, iso(new Date(now().getTime() + leaseMs)));
+    return ok({ prior: cur });
+  });
+  return tx.immediate();
+}
+
+/** Ends a hold made by holdClaim, and only that one, putting back the row it replaced. */
+export function unholdClaim(db: CoordDb, subject: string, worktree: string, actor: string, prior: ClaimRow | null): void {
+  const tx = db.db.transaction(() => {
+    const gone = db.db.query("DELETE FROM claims WHERE subject = ? AND worktree = ? AND holder = ?").run(subject, worktree, actor).changes > 0;
+    if (gone && prior) {
+      db.db.query("INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start) VALUES (?, ?, ?, ?, ?, ?)").run(prior.subject, prior.holder, prior.worktree, prior.expires_at, prior.pid, prior.pid_start);
+    }
+  });
+  tx.immediate();
+}
+
 export function releaseClaim(db: CoordDb, subject: string, actor: string): void {
   db.db.query("DELETE FROM claims WHERE subject = ?").run(subject);
   db.event(actor, "claim.release", subject, {});

@@ -1,10 +1,10 @@
 import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import type { Workspace } from "../app/workspace.ts";
 import { check, type Finding } from "../check/check.ts";
 import { testFilesFor } from "../check/tests.ts";
-import { claimOfWorktree, dropHandoff, enqueue, failIfActive, finishEntry, heartbeat, releaseClaim, renewClaim, takeClaim, tryTurn, writeHandoff } from "../coord/state.ts";
+import { claimOfWorktree, dropHandoff, holdClaim, unholdClaim, enqueue, failIfActive, finishEntry, heartbeat, releaseClaim, renewClaim, takeClaim, tryTurn, writeHandoff } from "../coord/state.ts";
 import { selfProcess, sessionProcess } from "../coord/liveness.ts";
 import { logFile, runHooks, runHooksInBackground, runHooksSync } from "../hooks/hooks.ts";
 import { noticeOverlaps } from "./overlap.ts";
@@ -434,13 +434,24 @@ export function clean(ws: Workspace, say: Say): Result<{ removed: string[]; kept
       kept.push(`${w.path}: in use by ${describeOccupants(inside)}`);
       continue;
     }
-    // reason: without --force, so git itself still refuses if the worktree changed since the checks above.
-    const rm = git(ws.primary, "worktree", "remove", w.path);
-    if (!rm.ok) {
-      kept.push(`${w.path}: ${rm.error.message}`);
+    // reason: the claims were read before the checks and lsof; a start may have claimed it since (issue #12).
+    // Holding the claim row atomically until the removal is done closes that window (BR-2019).
+    const subject = basename(w.path);
+    if (!holdClaim(ws.db, subject, w.path, ws.actor, true).ok) {
+      kept.push(`${w.path}: claimed`);
       continue;
     }
-    if (w.branch) git(ws.primary, "branch", "-q", "-d", w.branch);
+    try {
+      // reason: without --force, so git itself still refuses if the worktree changed since the checks above.
+      const rm = git(ws.primary, "worktree", "remove", w.path);
+      if (!rm.ok) {
+        kept.push(`${w.path}: ${rm.error.message}`);
+        continue;
+      }
+      if (w.branch) git(ws.primary, "branch", "-q", "-d", w.branch);
+    } finally {
+      unholdClaim(ws.db, subject, w.path, ws.actor, null);
+    }
     removed.push(w.path);
     say(`removed ${w.path}`);
   }

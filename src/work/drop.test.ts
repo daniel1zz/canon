@@ -116,6 +116,32 @@ describe("dropping a change", () => {
     expect(events(root, "drop.refuse").map((e) => e.reason)).toEqual(["in-use", "in-use"]);
   });
 
+  test.skipIf(process.platform === "linux")("BR-2064: while drop runs the change is held: a start arriving meanwhile is refused with exit 5", async () => {
+    const root = project();
+    const s = startNew(root, "Racing");
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed"); // the change is open on main
+    writeFileSync(join(s.worktree, "wip.txt"), "wip\n");
+    sh(s.worktree, "add", "wip.txt");
+    sh(s.worktree, "commit", "-qm", "wip");
+    ws(root).db.db.query("DELETE FROM claims").run(); // the first session stopped with --release
+    // A stand-in for lsof: while drop waits for it, another session tries to start the change.
+    const bin = mkdtempSync(join(tmpdir(), "canon-racelsof-"));
+    const out = join(bin, "start-exit");
+    const main = join(import.meta.dir, "..", "cli", "main.ts");
+    writeFileSync(join(bin, "lsof"), `#!/bin/sh\ncd ${JSON.stringify(root)} && CANON_ACTOR=agent:b bun ${JSON.stringify(main)} work start ${s.change} >/dev/null 2>&1; echo $? > ${JSON.stringify(out)}\nexit 0\n`, { mode: 0o755 });
+    const path = process.env["PATH"];
+    process.env["PATH"] = `${bin}:${path}`;
+    try {
+      const r = drop(ws(root), s.change, quiet);
+      expect(r.ok && r.value.archive).toBeTruthy();
+    } finally {
+      process.env["PATH"] = path;
+    }
+    expect(readFileSync(out, "utf8").trim()).toBe("5");
+    expect(claims(ws(root).db)).toEqual([]);
+    expect(existsSync(s.worktree)).toBe(false);
+  });
+
   test.skipIf(process.platform === "linux")("BR-2064: when processes cannot be listed nothing is deleted and the error is an environment failure", async () => {
     const root = project();
     const s = startNew(root, "No lsof");
@@ -172,6 +198,21 @@ describe("dropping a change", () => {
     expect(readFileSync(join(s.worktree, "app.txt"), "utf8")).toBe("changed\n");
     expect(readFileSync(join(s.worktree, "notes.txt"), "utf8")).toBe("n\n");
     expect(readFileSync(join(s.worktree, ".env"), "utf8")).toBe("TOKEN=2\n");
+  });
+
+  test("BR-2103: a file that appears after the archive was written is not deleted: exit 4, the hold is released", () => {
+    const root = project();
+    const s = withCommit(root, "Late file");
+    // git runs reference-transaction when the archive ref is created: the moment to add work behind drop's back.
+    const hook = join(root, ".git", "hooks", "reference-transaction");
+    mkdirSync(join(hook, ".."), { recursive: true });
+    writeFileSync(hook, `#!/bin/sh\n[ "$1" = committed ] && grep -q refs/canon/archive && echo late > ${JSON.stringify(join(s.worktree, "late.txt"))}\nexit 0\n`, { mode: 0o755 });
+    const r = drop(ws(root), s.change, quiet);
+    expect(!r.ok && r.error.code).toBe("io");
+    expect(!r.ok && r.error.message).toContain("nothing was deleted");
+    expect(readFileSync(join(s.worktree, "late.txt"), "utf8")).toBe("late\n");
+    expect(branches(root)).toContain(s.branch);
+    expect(claims(ws(root).db).map((c) => [c.subject, c.holder])).toEqual([[s.change, s.worktree]]);
   });
 
   test("BR-2103: when the archive ref cannot be written nothing is deleted: exit 4, a drop.refuse with reason archive", () => {

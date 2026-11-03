@@ -394,6 +394,29 @@ describe("clean keeps what git does not show", () => {
     }
   });
 
+  test.skipIf(process.platform === "linux")("BR-2019: a worktree claimed after clean read the claims is kept, and clean leaves no claim behind", async () => {
+    const root = project();
+    const s = await landed(root, "Claimed meanwhile");
+    const other = await landed(root, "Free");
+    const db = ws(root).db.db.filename;
+    // A stand-in for lsof that, while clean waits for it, lets another session claim the first worktree.
+    const bin = mkdtempSync(join(tmpdir(), "canon-racelsof-"));
+    const insert = `INSERT INTO claims(subject, holder, worktree, expires_at) VALUES ('${s.change}', 'agent:b', '${s.worktree}', '2999-01-01T00:00:00.000Z')`;
+    writeFileSync(join(bin, "lsof"), `#!/bin/sh\nsqlite3 ${JSON.stringify(db)} ${JSON.stringify(insert)}\nexit 0\n`, { mode: 0o755 });
+    const path = process.env["PATH"];
+    process.env["PATH"] = `${bin}:${path}`;
+    try {
+      const r = clean(ws(root), quiet);
+      if (!r.ok) throw new Error(r.error.message);
+      expect(r.value.removed).toEqual([other.worktree]);
+      expect(r.value.kept).toContain(`${s.worktree}: claimed`);
+      expect(existsSync(s.worktree)).toBe(true);
+      expect(claims(ws(root).db).map((c) => [c.subject, c.actor])).toEqual([[s.change, "agent:b"]]);
+    } finally {
+      process.env["PATH"] = path;
+    }
+  });
+
   test("BR-2019: a landed worktree that another process has as its current directory is kept, naming the pid", async () => {
     const root = project();
     const s = await landed(root, "Busy");

@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Workspace } from "../app/workspace.ts";
-import { dropHandoff, liveClaim, releaseClaim } from "../coord/state.ts";
+import { dropHandoff, holdClaim, releaseClaim, unholdClaim } from "../coord/state.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { git, gitEnv, ignoredPaths, unregenerable } from "../repo/git.ts";
 import { processesIn } from "../repo/process.ts";
@@ -148,30 +148,43 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
   const t = located.value;
   if (t.worktree && ws.root === t.worktree) return err("invalid", `you are in ${t.worktree}; run \`canon work drop ${t.change}\` from another checkout`);
   // Someone else still at work there is not something an archive can save: refuse before looking at losses.
-  const held = liveClaim(ws.db, t.change); // a claim whose session process is gone binds no one (BR-2100)
-  if (held && held.actor !== ws.actor) {
-    ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "claimed", actor: held.actor });
-    return err("conflict", `${t.change} is claimed by ${held.actor} in ${held.holder} until ${held.expires_at}; nothing was deleted`);
+  // The hold is atomic and lasts until the end, so no `canon work start` can take the change over while the
+  // archive is written and the worktree removed (issue #13).
+  const holder = t.worktree ?? `branch:${t.branch}`;
+  const hold = holdClaim(ws.db, t.change, holder, ws.actor, false);
+  if (!hold.ok) {
+    ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "claimed" });
+    return hold;
   }
+  const giveUp = <T>(r: Result<T>): Result<T> => {
+    unholdClaim(ws.db, t.change, holder, ws.actor, hold.value.prior);
+    return r;
+  };
   if (t.worktree) {
     const occupied = processesIn([t.worktree]);
-    if (!occupied.ok) return occupied;
+    if (!occupied.ok) return giveUp(occupied);
     const inside = occupied.value.get(t.worktree) ?? [];
     if (inside.length > 0) {
       ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "in-use", pids: inside.map((o) => o.pid) });
-      return err("conflict", `${t.worktree} is in use by ${describeOccupants(inside)}; nothing was deleted. Run this again once that process has left it`);
+      return giveUp(err("conflict", `${t.worktree} is in use by ${describeOccupants(inside)}; nothing was deleted. Run this again once that process has left it`));
     }
   }
+  const tip = t.branch ? git(ws.primary, "rev-parse", "--verify", `refs/heads/${t.branch}`) : ok("");
+  if (!tip.ok) return giveUp(tip);
   const lost = losses(ws, t);
-  if (!lost.ok) return lost;
+  if (!lost.ok) return giveUp(lost);
 
   let archived: { ref: string; tip: string; commit: string } | null = null;
   const restore: string[] = [];
   if (lost.value.lines.length > 0) {
     const a = archive(ws, t, lost.value.ignored);
-    if (!a.ok) {
-      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "archive", message: a.error.message.slice(0, 2000), losses: lost.value.lines });
-      return err("io", `archiving ${t.change} failed, so nothing was deleted: ${a.error.message}`);
+    // reason: whatever appeared after the losses were listed is not in the archive; it must not be deleted (BR-2103).
+    const again = a.ok ? losses(ws, t) : a;
+    const failure = !a.ok ? a.error.message : !again.ok ? again.error.message : again.value.lines.join("\n") !== lost.value.lines.join("\n") ? `${t.change} changed while it was archived` : null;
+    if (failure !== null || !a.ok) {
+      const message = failure ?? "archive failed";
+      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "archive", message: message.slice(0, 2000), losses: lost.value.lines });
+      return giveUp(err("io", `archiving ${t.change} failed, so nothing was deleted: ${message}`));
     }
     archived = a.value;
     const branch = t.branch ?? `change/${t.change}`;
@@ -182,14 +195,15 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
     }
   }
 
+  if (t.branch) {
+    // reason: compare-and-delete: a commit made since the tip was read (and so not archived) makes this fail (issue #13).
+    const del = git(ws.primary, "update-ref", "-d", `refs/heads/${t.branch}`, tip.value);
+    if (!del.ok) return giveUp(err("io", `${t.branch} moved while ${t.change} was being dropped, so nothing was deleted: ${del.error.message}`));
+  }
   if (t.worktree) {
     // reason: --force is safe here: everything it would destroy is in the archive verified above (BR-2102).
     const rm = git(ws.primary, "worktree", "remove", "--force", t.worktree);
-    if (!rm.ok) return rm;
-  }
-  if (t.branch) {
-    const del = git(ws.primary, "branch", "-q", "-D", t.branch);
-    if (!del.ok) return del;
+    if (!rm.ok) return giveUp(rm);
   }
   releaseClaim(ws.db, t.change, ws.actor);
   dropHandoff(ws.db, t.change);
