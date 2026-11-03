@@ -6,7 +6,7 @@ import { enqueue, finishEntry, tryTurn } from "./queue.ts";
 import { handoffs, writeHandoff } from "../session/handoffs.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { clean, start, stop } from "../session/session.ts";
-import { land, LAND_MARKER } from "./land.ts";
+import { land, LAND_MARKER, predictedConflicts } from "./land.ts";
 import { ensureGuard } from "../../cli/install/githook.ts";
 import { processOf, type Proc } from "../claims/liveness.ts";
 
@@ -355,8 +355,8 @@ describe("work land", () => {
     const s = startNew(root, "Edited while waiting");
     writeFileSync(join(s.worktree, "app.txt"), "one\nTWO\nthree\n");
     sh(s.worktree, "commit", "-qam", "two");
-    writeFileSync(join(root, "app.txt"), "one\n2\nthree\n");
-    sh(root, "commit", "-qam", "main edits two too"); // a rebase would touch app.txt
+    writeFileSync(join(root, "app.txt"), "one\ntwo\nthree\nfour\n");
+    sh(root, "commit", "-qam", "main edits app.txt too"); // a rebase would touch app.txt, without a conflict (BR-2153)
     const other = ws(root, "agent:b");
     const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
     expect(tryTurn(other.db, ahead).mine).toBe(true);
@@ -598,6 +598,59 @@ describe("boundaries record and clean up", () => {
     expect(out.kind === "refused" && out.reason).toBe("lost-turn");
     expect(sh(root, "rev-parse", "main")).toBe(before);
     expect(events(root, "land.lost").map((e) => JSON.parse(e.detail).stage)).toEqual(["before-main"]);
+  });
+
+  test("BR-2153: a conflict with a main that moved while waiting refuses at once, before the turn, leaving the worktree as it was", async () => {
+    const root = project();
+    const s = startNew(root, "Waits and conflicts");
+    writeFileSync(join(s.worktree, "app.txt"), "one\n2\nthree\n");
+    sh(s.worktree, "commit", "-qam", "mine");
+    const head = sh(s.worktree, "rev-parse", "HEAD");
+    const other = ws(root, "agent:b");
+    const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
+    expect(tryTurn(other.db, ahead).mine).toBe(true); // someone else holds the turn throughout
+    const landing = land(ws(s.worktree), FAST, quiet);
+    await Bun.sleep(300);
+    writeFileSync(join(root, "app.txt"), "one\nTWO\nthree\n"); // another change lands meanwhile
+    sh(root, "commit", "-qam", "theirs");
+    const started = Date.now();
+    const out = await landing;
+    expect(Date.now() - started).toBeLessThan(10_000);
+    expect(out.kind === "refused" && out.reason).toBe("conflict");
+    expect(out.kind === "refused" && out.message).toContain("conflicts in: app.txt");
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(head);
+    expect(sh(s.worktree, "status", "--porcelain")).toBe("");
+    expect(other.db.db.query<{ state: string }, [string]>("SELECT state FROM queue WHERE worktree = ?").get(s.worktree)?.state).toBe("failed");
+    expect(other.db.db.query<{ state: string }, [number]>("SELECT state FROM queue WHERE id = ?").get(ahead)?.state).toBe("landing");
+    expect(events(root, "land.turn")).toEqual([]);
+    expect(events(root, "land.refuse").map((e) => JSON.parse(e.detail).reason)).toEqual(["conflict"]);
+  });
+
+  test("BR-2153: a main that moved without a conflict keeps the lander waiting, and it lands after the one ahead", async () => {
+    const root = project();
+    const s = startNew(root, "Waits cleanly");
+    writeFileSync(join(s.worktree, "mine.txt"), "m\n");
+    sh(s.worktree, "add", "mine.txt");
+    sh(s.worktree, "commit", "-qm", "mine");
+    const other = ws(root, "agent:b");
+    const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
+    expect(tryTurn(other.db, ahead).mine).toBe(true);
+    const landing = land(ws(s.worktree), FAST, quiet);
+    await Bun.sleep(300);
+    writeFileSync(join(root, "theirs.txt"), "t\n");
+    sh(root, "add", "theirs.txt");
+    sh(root, "commit", "-qm", "theirs");
+    await Bun.sleep(2500); // at least one more look at main while waiting
+    finishEntry(other.db, ahead, "landed", "x");
+    expect((await landing).kind).toBe("landed");
+  });
+
+  test("BR-2153: a prediction that cannot run is reported, not a refusal", () => {
+    const root = project();
+    const p = predictedConflicts(root, "0000000000000000000000000000000000000000");
+    expect(p.ok).toBe(false);
+    expect(!p.ok && p.error).toContain("git merge-tree exited");
+    expect(predictedConflicts(root, "main")).toEqual({ ok: true, files: [] });
   });
 
   test("BR-2031: landing from main is refused", async () => {

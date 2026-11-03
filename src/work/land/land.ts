@@ -174,6 +174,7 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
   const deadline = Date.now() + opts.timeoutMs;
   const queued = Date.now();
   let lastAhead = -1;
+  let lastMain = "";
   for (;;) {
     const turn = tryTurn(ws.db, entry, ws.config.landerStaleMs);
     // A later lander skipped this entry while it was silent; it may already have moved main (BR-2144, issue #29).
@@ -185,6 +186,21 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
     }
     if (turn.ahead !== lastAhead) say(`waiting: ${turn.ahead} landing(s) ahead`);
     lastAhead = turn.ahead;
+    // Each time main moves while this lander waits, a merge of main and HEAD in memory predicts the rebase:
+    // a conflict refuses now instead of when the turn comes, and the worktree is not touched (BR-2153, D-22).
+    const tip = git(wt, "rev-parse", main);
+    if (tip.ok && tip.value !== lastMain) {
+      lastMain = tip.value;
+      const predicted = predictedConflicts(wt, tip.value);
+      if (!predicted.ok) say(`conflict check while waiting did not run (${predicted.error}); a conflict shows at the turn`);
+      const files = predicted.ok ? predicted.files : [];
+      if (files.length > 0) {
+        const message = `while waiting to land: a merge with ${main} ${tip.value.slice(0, 9)} conflicts in: ${files.join(", ")}\nResolve with \`git rebase ${main}\` in ${wt}, then land again.`;
+        finishEntry(ws.db, entry, "failed", `conflict: ${message.slice(0, 500)}`);
+        ws.db.event(ws.actor, "land.refuse", subject, { reason: "conflict", message: message.slice(0, 2000), early: true, diff: ownDiffId(wt, main) });
+        return { kind: "refused", reason: "conflict", message };
+      }
+    }
     if (Date.now() > deadline) {
       finishEntry(ws.db, entry, "failed", "timeout");
       ws.db.event(ws.actor, "land.refuse", subject, { reason: "timeout", ahead: turn.ahead, diff: ownDiffId(wt, main) });
@@ -212,6 +228,21 @@ function lostTurn(ws: Workspace, subject: string | null, wt: string, state: stri
   // reason: the lander was interrupted, not judged by a check, so it is its own event kind and no check in `canon stats` (BR-2144, like land.killed in BR-2099).
   ws.db.event(ws.actor, "land.lost", subject, { stage, state, diff: ownDiffId(wt, ws.config.main) });
   return { kind: "refused", reason: "lost-turn", message };
+}
+
+/**
+ * Files a merge of `base` and HEAD would leave conflicted, from `git merge-tree --write-tree` (git 2.38+), which
+ * merges in memory and touches neither the index nor the worktree (D-22). Not ok when the prediction cannot run
+ * (an older git, a bad ref): then the real rebase at the turn decides, as before (BR-2015).
+ */
+export function predictedConflicts(wt: string, base: string): { ok: true; files: string[] } | { ok: false; error: string } {
+  const r = Bun.spawnSync(["git", "-c", "core.quotePath=false", "merge-tree", "--write-tree", "--name-only", "--no-messages", base, "HEAD"], { cwd: wt, stdout: "pipe", stderr: "pipe" });
+  const lines = r.stdout.toString().trim().split("\n");
+  // reason: exit 1 is a conflict only when the merged tree's id came first; a bad ref also exits 1, with no tree (BR-2153).
+  const merged = /^[0-9a-f]{40,64}$/.test(lines[0] ?? "");
+  if (r.exitCode === 0 && merged) return { ok: true, files: [] };
+  if (r.exitCode !== 1 || !merged) return { ok: false, error: `git merge-tree exited ${r.exitCode}: ${r.stderr.toString().trim().split("\n")[0] ?? ""}` };
+  return { ok: true, files: [...new Set(lines.slice(1).filter((l) => l !== ""))].sort() };
 }
 
 /** Per-kind counts and the files involved, so `canon stats` can tell which checks are precise (BR-2094, P6). */
