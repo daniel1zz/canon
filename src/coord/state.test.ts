@@ -177,14 +177,26 @@ describe("process liveness", () => {
 describe("holds while a worktree is removed", () => {
   test("BR-2019: a hold refuses a start of the same change even by the same actor at the same path, and unhold removes only the hold", () => {
     const d = db();
-    expect(holdClaim(d, "C-1", "/wt/C-1", "human:x", true).ok).toBe(true);
+    const h = holdClaim(d, "C-1", "/wt/C-1", "human:x", true);
+    if (!h.ok) throw new Error(h.error.message);
     const same = takeClaim(d, "C-1", "/wt/C-1", "human:x");
     expect(!same.ok && same.error.code).toBe("conflict");
-    unholdClaim(d, "C-1", "/wt/C-1", "human:x", null);
+    unholdClaim(d, h.value);
     expect(claims(d)).toEqual([]);
     expect(takeClaim(d, "C-1", "/wt/C-1", "human:x").ok).toBe(true);
-    unholdClaim(d, "C-1", "/wt/C-1", "human:x", null); // a real claim is never taken for a hold
+    unholdClaim(d, h.value); // a real claim is never taken for a hold
     expect(claims(d).map((c) => c.holder)).toEqual(["/wt/C-1"]);
+  });
+
+  test("BR-2064: a hold cannot be taken over by another clean or drop of the same actor, so ending one never ends the other", () => {
+    const d = db();
+    const cleaning = holdClaim(d, "C-1", "/wt/C-1", "human:x", true);
+    if (!cleaning.ok) throw new Error(cleaning.error.message);
+    const dropping = holdClaim(d, "C-1", "/wt/C-1", "human:x", false);
+    expect(!dropping.ok && dropping.error.code).toBe("conflict");
+    expect(holdClaim(d, "C-1", "/wt/C-1", "human:x", true).ok).toBe(false);
+    unholdClaim(d, { ...cleaning.value, mark: `${cleaning.value.mark}x` }); // some other hold's end
+    expect(claims(d).length).toBe(1);
   });
 
   test("BR-2100: a hold left by a clean or drop that was killed frees as soon as its process is gone", async () => {

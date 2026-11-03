@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Workspace } from "../app/workspace.ts";
-import { dropHandoff, holdClaim, releaseClaim, unholdClaim } from "../coord/state.ts";
+import { dropHandoff, holdClaim, unholdClaim } from "../coord/state.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { git, gitEnv, ignoredPaths, unregenerable } from "../repo/git.ts";
 import { processesIn } from "../repo/process.ts";
@@ -157,7 +157,7 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
     return hold;
   }
   const giveUp = <T>(r: Result<T>): Result<T> => {
-    unholdClaim(ws.db, t.change, holder, ws.actor, hold.value.prior);
+    unholdClaim(ws.db, hold.value);
     return r;
   };
   if (t.worktree) {
@@ -205,7 +205,8 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
     const rm = git(ws.primary, "worktree", "remove", "--force", t.worktree);
     if (!rm.ok) return giveUp(rm);
   }
-  releaseClaim(ws.db, t.change, ws.actor);
+  // reason: only this drop's own hold goes; a claim anyone took since is not this drop's to delete (issue #18).
+  unholdClaim(ws.db, { ...hold.value, prior: null });
   dropHandoff(ws.db, t.change);
   ws.db.event(ws.actor, "drop.done", t.change, { worktree: t.worktree, branch: t.branch, losses: lost.value.lines, archive: archived?.ref ?? null, archive_commit: archived?.commit ?? null });
   say(`dropped ${t.change}${t.worktree ? `: removed ${t.worktree}` : ""}${t.branch ? `, deleted branch ${t.branch}` : ""}`);

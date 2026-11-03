@@ -99,14 +99,16 @@ interface ClaimRow {
  * a caller that gives up can put it back. Writes no claim events: it is not work, and `canon stats` counts
  * claim events (BR-2067).
  */
-export function holdClaim(db: CoordDb, subject: string, worktree: string, actor: string, onlyIfUnclaimed: boolean, leaseMs = CLAIM_LEASE_MS): Result<{ prior: ClaimRow | null }> {
+export function holdClaim(db: CoordDb, subject: string, worktree: string, actor: string, onlyIfUnclaimed: boolean, leaseMs = CLAIM_LEASE_MS): Result<Hold> {
   const read = () => db.db.query<ClaimRow, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims WHERE subject = ?").get(subject) ?? null;
   // reason: the process probe runs outside the write transaction (as in tryTurn); the transaction re-reads and
   // only proceeds when the row is still the one probed.
   const seen = read();
-  const binds = seen !== null && seen.holder !== actor && bindsStill(seen);
+  // Another command's hold binds whoever runs it, the same actor included (issue #18).
+  const binds = seen !== null && (seen.holder !== actor || isHold(seen.worktree)) && bindsStill(seen);
   const self = selfProcess();
-  const tx = db.db.transaction((): Result<{ prior: ClaimRow | null }> => {
+  const mark = holdMark(worktree);
+  const tx = db.db.transaction((): Result<Hold> => {
     const cur = read();
     const same = JSON.stringify(cur) === JSON.stringify(seen);
     if (cur && (onlyIfUnclaimed || !same || binds)) {
@@ -115,27 +117,39 @@ export function holdClaim(db: CoordDb, subject: string, worktree: string, actor:
     // The hold names this process, so it frees as soon as a killed clean or drop is gone (BR-2100, issue #16).
     db.db
       .query("INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(subject) DO UPDATE SET holder = excluded.holder, worktree = excluded.worktree, expires_at = excluded.expires_at, pid = excluded.pid, pid_start = excluded.pid_start, version = version + 1")
-      .run(subject, actor, holdMark(worktree), iso(new Date(now().getTime() + leaseMs)), self?.pid ?? null, self?.start ?? null);
-    return ok({ prior: cur });
+      .run(subject, actor, mark, iso(new Date(now().getTime() + leaseMs)), self?.pid ?? null, self?.start ?? null);
+    return ok({ subject, mark, prior: cur });
   });
   return tx.immediate();
 }
 
+/** A hold taken by holdClaim: what unholdClaim needs to remove exactly this one. */
+export interface Hold {
+  readonly subject: string;
+  /** The worktree column of the hold row: `hold:<path>#<id>`, unique to this hold. */
+  readonly mark: string;
+  readonly prior: ClaimRow | null;
+}
+
 /**
  * The worktree a hold records: never a real worktree path, so `takeClaim` from the same actor and the same
- * path sees someone else's claim instead of its own to renew, and unholdClaim never deletes a real claim (issue #15).
+ * path sees someone else's claim instead of its own to renew (issue #15); unique per hold, so ending one hold
+ * never removes another command's hold or a real claim (issue #18).
  */
 function holdMark(worktree: string): string {
-  return `hold:${worktree}`;
+  return `hold:${worktree}#${crypto.randomUUID()}`;
+}
+
+function isHold(worktree: string | null): boolean {
+  return worktree?.startsWith("hold:") === true;
 }
 
 /** Ends a hold made by holdClaim, and only that one, putting back the row it replaced. */
-export function unholdClaim(db: CoordDb, subject: string, worktree: string, actor: string, prior: ClaimRow | null): void {
+export function unholdClaim(db: CoordDb, hold: Hold): void {
   const tx = db.db.transaction(() => {
-    const gone = db.db.query("DELETE FROM claims WHERE subject = ? AND worktree = ? AND holder = ?").run(subject, holdMark(worktree), actor).changes > 0;
-    if (gone && prior) {
-      db.db.query("INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start) VALUES (?, ?, ?, ?, ?, ?)").run(prior.subject, prior.holder, prior.worktree, prior.expires_at, prior.pid, prior.pid_start);
-    }
+    const gone = db.db.query("DELETE FROM claims WHERE subject = ? AND worktree = ?").run(hold.subject, hold.mark).changes > 0;
+    const p = hold.prior;
+    if (gone && p) db.db.query("INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start) VALUES (?, ?, ?, ?, ?, ?)").run(p.subject, p.holder, p.worktree, p.expires_at, p.pid, p.pid_start);
   });
   tx.immediate();
 }
