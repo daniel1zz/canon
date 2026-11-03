@@ -60,7 +60,6 @@ export function computeStats(db: CoordDb, reviews: Readonly<Record<string, strin
     .map((r) => ({ ...r, detail: JSON.parse(r.detail) as Record<string, unknown> }));
   const count = (pred: (r: Row) => boolean) => rows.filter(pred).length;
   const refusalsOf = (check: string) => rows.filter((r) => r.kind === "land.refuse" && r.detail["reason"] === check);
-  const landed = count((r) => r.kind === "land.ok");
 
   const outcomeOf = (r: Row): Outcome => {
     if (!r.subject) return "unknown";
@@ -101,8 +100,10 @@ export function computeStats(db: CoordDb, reviews: Readonly<Record<string, strin
     let outcomes: Record<Outcome, number> | null = null;
     if (LAND_CHECKS.includes(check)) {
       const stage = LAND_STAGES.findIndex((s) => s.includes(check));
-      const reachedLater = LAND_STAGES.slice(stage).flat().reduce((n, c) => n + refusalsOf(c).length, 0);
-      runs = reachedLater + landed;
+      // reason: a landing that skipped the floor reached the later stages without running it (BR-2164).
+      const ran = (r: Row) => check !== "floor" || r.detail["floor_skipped"] !== true;
+      const reachedLater = LAND_STAGES.slice(stage).flat().reduce((n, c) => n + refusalsOf(c).filter(ran).length, 0);
+      runs = reachedLater + count((r) => r.kind === "land.ok" && ran(r));
       const mine = refusalsOf(check);
       refused = mine.length;
       outcomes = zero();

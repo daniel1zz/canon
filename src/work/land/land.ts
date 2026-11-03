@@ -1,6 +1,7 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Say, Workspace } from "../workspace.ts";
+import type { Config } from "../../config/config.ts";
 import { check, type Finding } from "../../knowledge/check/check.ts";
 import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../../knowledge/check/sources.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
@@ -272,9 +273,10 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const wt = ws.root;
   const main = ws.config.main;
   const { entry, subject } = t;
+  let floorSkipped = false;
   const refuse = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], message: string, findings?: readonly Finding[]): LandOutcome => {
     finishEntry(ws.db, entry, "failed", `${reason}: ${message.slice(0, 500)}`);
-    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main), ...(findings ? findingDetail(findings) : {}) });
+    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main), ...(findings ? findingDetail(findings) : {}), ...(floorSkipped ? { floor_skipped: true } : {}) });
     return { kind: "refused", reason, message, ...(findings ? { findings } : {}) };
   };
 
@@ -297,18 +299,27 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const tested = git(wt, "rev-parse", "HEAD");
   if (!tested.ok) return refuse("main-moved", tested.error.message);
 
-  say(`floor: ${ws.config.floor}`);
-  const logPath = join(dirname(ws.db.db.filename), "logs", `land-${entry}.log`);
-  mkdirSync(dirname(logPath), { recursive: true });
-  const fd = openSync(logPath, "w");
-  const proc = Bun.spawn(["sh", "-c", ws.config.floor!], { cwd: wt, stdout: fd, stderr: fd });
-  t.running.floor = proc;
-  const code = await proc.exited;
-  t.running.floor = undefined;
-  closeSync(fd);
-  if (code !== 0) {
-    const tail = readFileSync(logPath, "utf8").split("\n").slice(-40).join("\n");
-    return refuse("floor", `floor exited ${code} (full log: ${logPath})\n${tail}`);
+  // A landing that changes only paths the project declares no test reads has main's already-tested code tree,
+  // so the floor would prove nothing new (BR-2164).
+  const skip = floorSkip(wt, ws.config, base.value, tested.value);
+  if (skip) {
+    floorSkipped = true;
+    say(`floor: skipped — all ${skip.paths.length} changed path(s) are under floor_skip_paths (${skip.under.join(", ")})`);
+    ws.db.event(ws.actor, "floor.skip", subject, { entry, paths: skip.paths.slice(0, 50), under: skip.under });
+  } else {
+    say(`floor: ${ws.config.floor}`);
+    const logPath = join(dirname(ws.db.db.filename), "logs", `land-${entry}.log`);
+    mkdirSync(dirname(logPath), { recursive: true });
+    const fd = openSync(logPath, "w");
+    const proc = Bun.spawn(["sh", "-c", ws.config.floor!], { cwd: wt, stdout: fd, stderr: fd });
+    t.running.floor = proc;
+    const code = await proc.exited;
+    t.running.floor = undefined;
+    closeSync(fd);
+    if (code !== 0) {
+      const tail = readFileSync(logPath, "utf8").split("\n").slice(-40).join("\n");
+      return refuse("floor", `floor exited ${code} (full log: ${logPath})\n${tail}`);
+    }
   }
 
   const read = readCorpus(wt, ws.config.types, ws.config);
@@ -405,7 +416,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   if (moved !== "moved") return refuse(moved.reason, moved.message);
 
   finishEntry(ws.db, entry, "landed", head.value);
-  ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: t.branch, diff: fingerprint, ...(reviewNotes ?? {}) });
+  ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: t.branch, diff: fingerprint, ...(reviewNotes ?? {}), ...(floorSkipped ? { floor_skipped: true } : {}) });
   say(`landed ${head.value.slice(0, 9)} on ${main}`);
   if (ws.config.hooks.after_land.length > 0) {
     const log = runHooksInBackground({ db: ws.db, actor: ws.actor, event: "after_land", change: subject, cwd: ws.primary, env: hookEnv }, ws.config.hooks.after_land, logFile(ws.db, `after-land-${entry}.log`), entry);
@@ -421,6 +432,31 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
     say(`${subject} closed; remove the worktree with \`canon work clean ${subject}\` once you have left it`);
   }
   return { kind: "landed", sha: head.value, change: subject, finished };
+}
+
+/**
+ * The paths `base..head` changes, when every one is under a `floor_skip_paths` entry and none is a test file
+ * (BR-2164); undefined when the floor must run. Renames count on both sides (`--no-renames`).
+ */
+export function floorSkip(wt: string, config: Config, base: string, head: string): { paths: string[]; under: string[] } | undefined {
+  if (config.floorSkipPaths.length === 0) return undefined;
+  const d = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", base, head);
+  if (!d.ok) return undefined;
+  const paths = d.value === "" ? [] : d.value.split("\n");
+  const under = new Set<string>();
+  for (const p of paths) {
+    const entry = config.floorSkipPaths.find((e) => p === e || p.startsWith(`${e}/`));
+    if (!entry) return undefined;
+    under.add(entry);
+  }
+  const tests = new Set(testFilesFor(wt, config));
+  if (paths.some((p) => tests.has(p) || isTestPath(config, p))) return undefined;
+  return { paths, under: [...under].sort() };
+}
+
+/** Whether a path matches a configured `tests` glob, so a deleted test file counts too (BR-2164). */
+function isTestPath(config: Config, path: string): boolean {
+  return (config.tests ?? []).some((g) => new Bun.Glob(g).match(path));
 }
 
 /**

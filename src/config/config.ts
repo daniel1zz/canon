@@ -58,6 +58,11 @@ export interface Config {
   readonly shared: readonly string[];
   /** Repo-relative files every session reads at start; changing one triggers the duplicate review (BR-2143). */
   readonly instructions: readonly string[];
+  /**
+   * Repo-relative directories or files the project declares no test reads: a landing that changes only paths
+   * under them skips the floor, since its code tree is main's already-tested one (BR-2164). Empty: never skip.
+   */
+  readonly floorSkipPaths: readonly string[];
 }
 
 const HOUR = 3_600_000;
@@ -87,9 +92,10 @@ export const DEFAULT_CONFIG: Config = {
   codeRoot: undefined,
   shared: [],
   instructions: ["CLAUDE.md"],
+  floorSkipPaths: [],
 };
 
-const TOP_KEYS = new Set(["main", "floor", "tests", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews", "regenerable", "code_root", "shared", "instructions"]);
+const TOP_KEYS = new Set(["main", "floor", "tests", "setup", "review", "hooks", "types", "claim_lease_hours", "lander_stale_minutes", "land_timeout_minutes", "worktrees", "check_reviews", "regenerable", "code_root", "shared", "instructions", "floor_skip_paths"]);
 const TYPE_KEYS = new Set(["prefix", "dir", "statuses", "default", "fields", "sections"]);
 const MOVED: Record<string, string> = { after_land: "hooks.after_land" };
 
@@ -139,6 +145,8 @@ export function readConfig(root: string): Result<Config> {
   if (instructions !== undefined && (!Array.isArray(instructions) || instructions.some((t) => typeof t !== "string" || !REL_DIR.test(t)))) {
     return bad("`instructions` must be a list of file paths relative to the repository root, such as CLAUDE.md");
   }
+  const skip = readFloorSkipPaths(c["floor_skip_paths"]);
+  if (!skip.ok) return bad(skip.error.message);
   const layout = readLayout(c["code_root"], c["shared"]);
   if (!layout.ok) return bad(layout.error.message);
   const lease = positive("claim_lease_hours", HOUR, DEFAULT_CONFIG.claimLeaseMs);
@@ -196,10 +204,28 @@ export function readConfig(root: string): Result<Config> {
     codeRoot: layout.value.codeRoot,
     shared: layout.value.shared,
     instructions: (instructions as string[] | undefined) ?? DEFAULT_CONFIG.instructions,
+    floorSkipPaths: skip.value,
   });
 }
 
 /** A repo-relative directory: no absolute path, no `..` or `.` segment, no trailing slash. */
+/**
+ * `floor_skip_paths` (BR-2165): relative paths; none may cover the files that decide how a landing runs (the
+ * floor command in canon/config.yaml, the document templates), or a change to them would land untested.
+ */
+function readFloorSkipPaths(v: unknown): Result<string[]> {
+  if (v === undefined || v === null) return ok([]);
+  if (!Array.isArray(v) || v.some((t) => typeof t !== "string" || !REL_DIR.test(t))) {
+    return err("invalid", "`floor_skip_paths` must be a list of directory or file paths relative to the repository root, such as canon/rules");
+  }
+  for (const p of v as string[]) {
+    if (p === "canon" || p === "canon/config.yaml" || p === "canon/templates" || p.startsWith("canon/templates/")) {
+      return err("invalid", `\`floor_skip_paths\` entry \`${p}\` covers canon/config.yaml or canon/templates, which decide how a landing runs; a change to them must run the floor`);
+    }
+  }
+  return ok(v as string[]);
+}
+
 const REL_DIR = /^(?!\/)(?!.*(?:^|\/)\.{1,2}(?:\/|$))[^\s]+(?<!\/)$/;
 
 /** `code_root` and `shared` (BR-2116): shared only makes sense under a code root, and each entry lies inside it. */

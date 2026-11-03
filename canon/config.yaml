@@ -12,6 +12,15 @@ tests:
 instructions:
   - CLAUDE.md
   - src/cli/guide.ts
+# 只改这些路径的合入不跑 floor（BR-2164）：代码树和 main 上已测过的一样。
+# 依据（C-122 核查）：测试只在临时仓库里读写 canon/ 下的文件；读真实仓库文件的只有 .claude/skills（BR-2096、install）和 scripts/，所以不列它们，也不列 canon/config.yaml
+floor_skip_paths:
+  - canon/rules
+  - canon/decisions
+  - canon/changes
+  - canon/notes
+  - canon/product.md
+  - canon/backlog.md
 # 新 worktree 里执行一次
 setup: "bun install"
 # 规则和决策文字的评审：从 stdin 读提示，在 stdout 输出 JSON 结论

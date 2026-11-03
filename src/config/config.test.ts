@@ -132,3 +132,19 @@ describe("test discovery", () => {
     expect(untested(repo({ ...base, "node_modules/x/a.test.js": `it("${br(1)}", () => {});` }))).toBe(1);
   });
 });
+
+describe("floor_skip_paths", () => {
+  test("BR-2165: relative paths are read; none may cover canon/config.yaml or canon/templates; absent is empty", () => {
+    const read = (yaml?: string) => readConfig(repo(yaml === undefined ? {} : { "canon/config.yaml": yaml }));
+    const good = read("floor_skip_paths: [canon/rules, canon/decisions]\n");
+    expect(good.ok && good.value.floorSkipPaths).toEqual(["canon/rules", "canon/decisions"]);
+    const none = read();
+    expect(none.ok && none.value.floorSkipPaths).toEqual([]);
+    const whole = read("floor_skip_paths: [canon]\n");
+    expect(!whole.ok && whole.error.message).toContain("canon/config.yaml");
+    for (const bad of ["[canon/templates/rule.md]", "[canon/config.yaml]", "[/abs/docs]", "[canon/rules/]", "canon/rules", "[../x]"]) {
+      const r = read(`floor_skip_paths: ${bad}\n`);
+      expect(r.ok ? `accepted ${bad}` : r.error.message).toContain("floor_skip_paths");
+    }
+  });
+});
