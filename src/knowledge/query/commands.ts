@@ -45,7 +45,9 @@ const context = defineCommand({
     const ctx = contextFor(corpusOf(ws).corpus, args.target, ws.root);
     say(renderContext(ws.root, ctx, { full: Boolean(args.full), target: args.target }));
     // Open review notes on what this context covers, shown to whoever is about to change it (BR-2146, D-21).
-    const ids = [...(ctx.target && ctx.target.kind !== "change" ? [ctx.target.id] : []), ...ctx.rules.map((r) => r.id), ...ctx.decisions.map((d) => d.id)];
+    // reason: an imported domain's rules are listed by title too, so their notes belong here as well (BR-2146, #73)
+    const listed = [...ctx.rules, ...ctx.imports.flatMap((i) => i.rules)];
+    const ids = [...(ctx.target && ctx.target.kind !== "change" ? [ctx.target.id] : []), ...listed.map((r) => r.id), ...ctx.decisions.map((d) => d.id)];
     const notes = openNotes(ws.db, ids);
     if (notes.length) say(`# Open review notes\n\nNot blocking and not changes of their own: handle them when you change the document they name.\n${notes.map((n) => `- ${renderNote(n)}`).join("\n")}\n`);
   },
