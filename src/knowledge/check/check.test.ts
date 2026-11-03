@@ -384,11 +384,11 @@ describe("backticked repository paths", () => {
 
   test("BR-2171: a moved or deleted path in a root doc or a README is reported; a path that never existed, an existing one or a non-path is not", () => {
     const root = moved({
-      "CLAUDE.md": "Code in `src/coord`, see `src/kernel/git.ts:12` and `state.ts`. Not paths: `src/<领域>/x.ts`, `src/**/*.test.ts`, `.ts`, `https://x.dev/src/old.ts`.\n\n```\n`src/old.ts`\n```\n\nPlain src/old.ts.\n",
-      "README.md": "Never existed: `src/billing`, `nothing.ts`.\n",
+      "CLAUDE.md": "Code in `src/coord`, see `src/kernel/git.ts:12`. Not paths: `src/<领域>/x.ts`, `src/**/*.test.ts`, `.ts`, `https://x.dev/src/old.ts`.\n\n```\n`src/old.ts`\n```\n\nPlain src/old.ts.\n",
+      "README.md": "Old `state.ts`. Never existed: `src/billing`, `nothing.ts`.\n",
       "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# Billing\n\nOld code in `src/old.ts`.\n\n## 术语\n\n- **退款**：钱退回\n",
     });
-    expect(missing(root).sort()).toEqual(["CLAUDE.md: src/coord", "CLAUDE.md: state.ts", "canon/rules/billing/README.md: src/old.ts"]);
+    expect(missing(root).sort()).toEqual(["CLAUDE.md: src/coord", "README.md: state.ts", "canon/rules/billing/README.md: src/old.ts"]);
   });
 
   test("BR-2171: rule examples, decision background and options, closed changes and superseded decisions are history", () => {
@@ -403,6 +403,7 @@ describe("backticked repository paths", () => {
     expect(at({ [`canon/decisions/${d(1)}.md`]: decision("superseded", body("决定")) })).toEqual([]);
     expect(at({ "canon/changes/C-1.md": change("open") })).toEqual(["canon/changes/C-1.md: src/old.ts"]); // the planned src/work/remote is not reported
     expect(at({ "canon/changes/C-1.md": change("done") })).toEqual([]);
+    expect(at({ "canon/changes/C-1.md": change("dropped") })).toEqual([]);
     expect(at({ "canon/notes/N-1.md": `---\nid: ${["N", 1].join("-")}\ntitle: X\n---\nWas \`src/old.ts\`.\n` })).toEqual([]);
   });
 
@@ -424,9 +425,26 @@ describe("backticked repository paths", () => {
     expect(check({ root, ...readCorpus(root) }).map((f) => `${f.rule} ${f.path}`)).toEqual([]);
   });
 
-  test("BR-2171: a candidate path outside a git repository is reported as unreadable history", () => {
-    const root = repo({ "CLAUDE.md": "See `src/old.ts`.\n" });
+  test("BR-2171: a missing candidate path outside a git repository is reported once as unreadable history; existing ones need no history", () => {
+    const root = repo({ "CLAUDE.md": "See `src/old.ts`.\n", "README.md": "See `src/old.ts`.\n" });
     const f = check({ root, ...readCorpus(root), testFiles: [] }).filter((x) => x.rule === "path-missing");
-    expect(f.map((x) => x.message)).toEqual([expect.stringContaining("cannot read git history")]);
+    expect(f.map((x) => `${x.path} ${x.message.split(":")[0]}`)).toEqual(["CLAUDE.md cannot read git history to check backticked paths"]);
+    const present = repo({ "CLAUDE.md": "See `src/billing` and `src/auth/`.\n" });
+    expect(check({ root: present, ...readCorpus(present), testFiles: [] }).filter((x) => x.rule === "path-missing")).toEqual([]);
+  });
+
+  test("BR-2171: a repository with no commit yet has no moved paths", () => {
+    const root = repo({ "CLAUDE.md": "See `src/old.ts`.\n" });
+    sh(root, "init", "-q", "-b", "main");
+    expect(check({ root, ...readCorpus(root), testFiles: [] }).filter((x) => x.rule === "path-missing")).toEqual([]);
+  });
+
+  test("BR-2171: backtick and tilde fences are code blocks, and a `## ` line inside one is no section heading", () => {
+    const root = moved({
+      "CLAUDE.md": "~~~\n`src/old.ts`\n~~~\n\n````md\n```\n`src/coord`\n```\n````\n",
+      "canon/rules/billing/README.md": domainReadme,
+      [`canon/rules/billing/${br(1)}.md`]: rule("## 规则\n\nx\n\n```\n## 例子\n```\n\nReads `src/old.ts`.\n\n## 例子\n\n~~~\n## 规则\n~~~\n\n- `src/coord` → y\n"),
+    });
+    expect(missing(root)).toEqual([`canon/rules/billing/${br(1)}.md: src/old.ts`]);
   });
 });
