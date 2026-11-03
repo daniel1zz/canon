@@ -154,6 +154,21 @@ export function unholdClaim(db: CoordDb, hold: Hold): void {
   tx.immediate();
 }
 
+/**
+ * Extends the lease only while this actor still holds the claim in this worktree: a landing keeps its claim alive
+ * while it waits and runs, without ever touching a claim another session has taken over since (BR-2108).
+ */
+export function keepClaim(db: CoordDb, worktree: string, actor: string, leaseMs = CLAIM_LEASE_MS): void {
+  db.db.query("UPDATE claims SET expires_at = ?, version = version + 1 WHERE worktree = ? AND holder = ?").run(iso(new Date(now().getTime() + leaseMs)), worktree, actor);
+}
+
+/** Releases the claim only if this actor still holds it in this worktree; false when someone else holds it now (BR-2108). */
+export function releaseOwnClaim(db: CoordDb, subject: string, worktree: string, actor: string): boolean {
+  const gone = db.db.query("DELETE FROM claims WHERE subject = ? AND worktree = ? AND holder = ?").run(subject, worktree, actor).changes > 0;
+  if (gone) db.event(actor, "claim.release", subject, {});
+  return gone;
+}
+
 export function releaseClaim(db: CoordDb, subject: string, actor: string): void {
   db.db.query("DELETE FROM claims WHERE subject = ?").run(subject);
   db.event(actor, "claim.release", subject, {});

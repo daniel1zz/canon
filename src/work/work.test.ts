@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claims, enqueue, finishEntry, takeClaim, tryTurn } from "../coord/state.ts";
+import { claims, enqueue, finishEntry, handoffs, takeClaim, tryTurn, writeHandoff } from "../coord/state.ts";
 import { readCorpus } from "../knowledge/read.ts";
 import { clean, land, start, stop } from "./work.ts";
 
@@ -663,6 +663,41 @@ describe("boundaries record and clean up", () => {
     expect(head).toBe(sh(root, "rev-parse", "main"));
     expect(base).toBe(sh(root, "rev-parse", "main~2")); // the open-change commit and x are the landed ones
     expect(change).toBe(s.change);
+  });
+});
+
+describe("the claim during a landing", () => {
+  test("BR-2108: a landing that waits longer than the lease keeps its claim renewed, so no one takes it meanwhile", async () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), "floor: \"true\"\ntests: []\nclaim_lease_hours: 0.0003\n"); // about 1 s
+    sh(root, "commit", "-qam", "tiny lease");
+    const s = startNew(root, "Long wait");
+    const other = ws(root, "agent:b");
+    const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
+    expect(tryTurn(other.db, ahead).mine).toBe(true);
+    const landing = land(ws(s.worktree), { finish: true, timeoutMs: 20_000 }, quiet);
+    await Bun.sleep(2500); // two and a half leases
+    expect(takeClaim(other.db, s.change, s.worktree, "agent:b", 1000).ok).toBe(false);
+    finishEntry(other.db, ahead, "landed", "x");
+    expect((await landing).kind).toBe("landed");
+  });
+
+  test("BR-2108: --finish leaves alone a claim and handoff that another session took over during the landing", async () => {
+    const root = project();
+    const s = startNew(root, "Taken over");
+    const other = ws(root, "agent:b");
+    const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
+    expect(tryTurn(other.db, ahead).mine).toBe(true);
+    const lines: string[] = [];
+    const landing = land(ws(s.worktree), { finish: true, timeoutMs: 20_000 }, (l) => lines.push(l));
+    await Bun.sleep(300);
+    other.db.db.query("UPDATE claims SET holder = 'agent:b' WHERE subject = ?").run(s.change); // taken over after the lease ran out
+    writeHandoff(other.db, { subject: s.change, worktree: s.worktree, actor: "agent:b", next: "mine now", note: null });
+    finishEntry(other.db, ahead, "landed", "x");
+    expect((await landing).kind).toBe("landed");
+    expect(claims(other.db).map((c) => [c.subject, c.actor])).toEqual([[s.change, "agent:b"]]);
+    expect(handoffs(other.db).map((h) => h.next)).toEqual(["mine now"]);
+    expect(lines.join("\n")).toContain("claimed by another session now");
   });
 });
 

@@ -4,7 +4,7 @@ import { basename, dirname, join } from "node:path";
 import type { Workspace } from "../app/workspace.ts";
 import { check, type Finding } from "../check/check.ts";
 import { testFilesFor } from "../check/tests.ts";
-import { claimOfWorktree, dropHandoff, holdClaim, unholdClaim, enqueue, failIfActive, finishEntry, heartbeat, releaseClaim, renewClaim, takeClaim, tryTurn, writeHandoff } from "../coord/state.ts";
+import { claimOfWorktree, dropHandoff, holdClaim, unholdClaim, enqueue, failIfActive, finishEntry, heartbeat, keepClaim, releaseClaim, releaseOwnClaim, renewClaim, takeClaim, tryTurn, writeHandoff } from "../coord/state.ts";
 import { selfProcess, sessionProcess } from "../coord/liveness.ts";
 import { logFile, runHooks, runHooksInBackground, runHooksSync } from "../hooks/hooks.ts";
 import { noticeOverlaps } from "./overlap.ts";
@@ -276,6 +276,17 @@ function rebaseInProgress(wt: string): boolean {
 
 async function queueAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running }): Promise<LandOutcome> {
   const wt = ws.root;
+  // The claim stays renewed for as long as this landing waits and runs, so it cannot expire under it (BR-2108).
+  const keep = setInterval(() => keepClaim(ws.db, wt, ws.actor, ws.config.claimLeaseMs), Math.min(60_000, Math.max(50, ws.config.claimLeaseMs / 3)));
+  try {
+    return await waitAndLand(ws, opts, say, t);
+  } finally {
+    clearInterval(keep);
+  }
+}
+
+async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running }): Promise<LandOutcome> {
+  const wt = ws.root;
   const main = ws.config.main;
   const { entry, subject } = t;
   const deadline = Date.now() + opts.timeoutMs;
@@ -419,8 +430,9 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
 
   let finished = false;
   if (opts.finish && subject) {
-    releaseClaim(ws.db, subject, ws.actor);
-    dropHandoff(ws.db, subject);
+    // Another session that took the change over meanwhile keeps its claim and its handoff (BR-2108).
+    if (releaseOwnClaim(ws.db, subject, ws.root, ws.actor)) dropHandoff(ws.db, subject);
+    else say(`${subject} is claimed by another session now; its claim and handoff were left as they are`);
     finished = true;
     say(`${subject} closed; remove the worktree with \`canon work clean\` once you have left it`);
   }
