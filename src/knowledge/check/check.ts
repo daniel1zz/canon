@@ -106,7 +106,8 @@ export function check(input: CheckInput): Finding[] {
 
 /**
  * BR-2118: with a code root, every domain has its directory and every directory is a domain's, a shared
- * entry or an ancestor of one; a file directly under the code root is reported too. Inside a domain without subdomains the layout is the domain's own business,
+ * entry or an ancestor of one; a file directly under the code root or in such an ancestor is reported too, and
+ * so is a shared path that overlaps a domain's directory. Inside a domain without subdomains the layout is the domain's own business,
  * so only the levels where domains branch are checked. A directory holding only tests or fixtures gets no
  * exemption: tests sit next to their code, and an exemption would let any stray directory pass.
  */
@@ -120,10 +121,16 @@ function layoutFindings(root: string, corpus: Corpus): Finding[] {
   }
   for (const s of shared) {
     if (!existsSync(join(root, s))) out.push({ path: "canon/config.yaml", rule: "code-layout", message: `shared path ${s} does not exist` });
+    // reason: shared code is no domain's; a shared path in or around a domain's directory would give one path two owners (BR-2118)
+    for (const dom of corpus.domains) {
+      const dir = `${codeRoot}/${dom.name}`;
+      if (s === dir || s.startsWith(`${dir}/`) || dir.startsWith(`${s}/`)) out.push({ path: "canon/config.yaml", rule: "code-layout", message: `shared path ${s} overlaps the directory ${dir} of domain ${dom.name}` });
+    }
   }
   const names = new Set(corpus.domains.map((d) => d.name));
   const branches = (name: string) => corpus.domains.some((d) => d.parent === name);
-  const walk = (rel: string, domain: string | undefined): void => {
+  // `owned`: rel is a domain's directory, so a file directly in it is that domain's.
+  const walk = (rel: string, domain: string | undefined, owned: boolean): void => {
     const full = join(root, codeRoot, rel);
     if (!isDir(full)) return;
     for (const child of readdirSync(full).sort()) {
@@ -131,21 +138,22 @@ function layoutFindings(root: string, corpus: Corpus): Finding[] {
       const name = rel === "" ? child : `${rel}/${child}`;
       const path = `${codeRoot}/${name}`;
       if (shared.some((s) => path === s || path.startsWith(`${s}/`))) continue;
-      // reason: a file inside a domain's directory is that domain's; one directly under the code root is nobody's (BR-2118)
+      // reason: a file inside a domain's directory is that domain's; one directly under the code root, or in an
+      // ancestor of a shared path, is nobody's (BR-2118)
       if (!isDir(join(full, child))) {
-        if (rel === "") out.push({ path, rule: "code-layout", message: `${path} belongs to no domain; move it into a domain's directory or list it under shared` });
+        if (!owned) out.push({ path, rule: "code-layout", message: `${path} belongs to no domain; move it into a domain's directory or list it under shared` });
         continue;
       }
       if (names.has(name)) {
-        if (branches(name)) walk(name, name);
-      } else if (shared.some((s) => s.startsWith(`${path}/`))) walk(name, domain);
+        if (branches(name)) walk(name, name, true);
+      } else if (shared.some((s) => s.startsWith(`${path}/`))) walk(name, domain, false);
       else {
         const where = domain ? `domain ${domain} has no subdomain ${name}` : `no domain ${name}`;
         out.push({ path, rule: "code-layout", message: `${path} belongs to no domain (${where}); create the domain, move the code, or list the directory under shared` });
       }
     }
   };
-  walk("", undefined);
+  walk("", undefined, false);
   return out;
 }
 

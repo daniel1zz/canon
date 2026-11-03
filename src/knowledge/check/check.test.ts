@@ -330,6 +330,7 @@ describe("code layout (D-15)", () => {
       "src/work/helpers/h.ts": "", // not a subdomain of work
       "src/lib/kernel/git.ts": "", // src/lib is an ancestor of a shared entry
       "src/lib/other/x.ts": "",
+      "src/lib/loose.ts": "", // a file in an ancestor of a shared path is nobody's
       "src/__tests__/a.test.ts": "", // tests-only directories get no exemption
       "src/index.ts": "",
       "src/.cache/x": "",
@@ -342,10 +343,15 @@ describe("code layout (D-15)", () => {
       "code-layout src/__tests__",
       "code-layout src/auth", // the fixture's src/auth is no domain
       "code-layout src/index.ts",
+      "code-layout src/lib/loose.ts",
       "code-layout src/lib/other",
       "code-layout src/work/helpers",
     ]);
     expect(kinds(root)).not.toContain("code-layout src/work/helpers"); // no code_root: no layout check
     expect(kinds(root, { codeRoot: "src", shared: ["src/lib/kernel", "src/gone", "src/index.ts"] })).not.toContain("code-layout src/index.ts"); // a shared file
+    const overlap = (shared: string[]) => check({ root, ...readCorpus(root, undefined, { codeRoot: "src", shared }), testFiles: [] }).filter((f) => f.message.includes("overlaps")).map((f) => f.message);
+    expect(overlap(["src/work"])).toEqual(["work", "work/drop", "work/land"].map((n) => `shared path src/work overlaps the directory src/${n} of domain ${n}`));
+    expect(overlap(["src/work/land/k"])).toEqual(["shared path src/work/land/k overlaps the directory src/work of domain work", "shared path src/work/land/k overlaps the directory src/work/land of domain work/land"]);
+    expect(overlap(["src/lib/kernel"])).toEqual([]);
   });
 });
