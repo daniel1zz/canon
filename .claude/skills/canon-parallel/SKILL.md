@@ -39,7 +39,7 @@ Copy this list into each brief and fill in the task. A subagent starts with none
 - **Hands off the others**: never enter, edit or clean another agent's worktree, and never edit the primary checkout.
 - **Test before landing**: run `canon work test`, which runs the test files related to the change, one file per run. Where that command does not exist, run each related test file in its own test-runner invocation (several files in one run have hung under load), and never the full suite: the floor runs it once at landing.
 - **Land with a long timeout**: `canon work land --finish`, with a command timeout of at least 10 minutes or in the background, output redirected to a log file; read the exit code directly, never through a pipe (a pipe reports the last command's code). Refused (exit 1): fix what the message names, commit, land again; never bypass the gate. Exit 75: still queued after the wait, run it again.
-- **After landing**: run `canon work after-land --wait` where it exists (check `canon work --help`); otherwise read the after-land log whose path the landing printed, until every background command has written its exit line, and read the code-review findings in it. A simple real bug found there is fixed in a new change; anything else is reported.
+- **After landing**: run `canon work after-land <C-n> --wait` with its own change id where the command exists (check `canon work --help`). Without the id it reports the newest landing of anyone, which may be another subagent's; otherwise read the after-land log whose path the landing printed, until every background command has written its exit line, and read the code-review findings in it. A simple real bug found there is fixed in a new change; anything else is reported.
 - **Clean only its own worktree**: `canon work clean <C-n>` with its own change id, never a bare `canon work clean`.
 - **Review notes that do not block are not changes**: do not open a follow-up change for them.
 - **Report with measurements**: change ids, what changed, rules and decisions, the tests run and their result, each landing's exit code and time (queued and total), review findings, and anything not done with the reason.
@@ -55,9 +55,10 @@ A subagent's report is a claim; the coordination database recorded what happened
 
 1. `canon stats --since <start>`: landings ok and refused, queue waits, conflicts, who took part, and the refusals per check.
 2. `canon events --since <start> --kind land.ok` (and `--kind land.refuse`, `--subject C-n`): each change a subagent reports as landed must have a `land.ok` event; a refusal it did not mention is a finding.
-3. `git log --oneline <main>`: every reported change has its commits and its close commit on main.
-4. `canon check` on main, and `canon work status`: no leftover claims or queued entries from the run.
-5. Spot-check the key points of each report against the code: a test named in the report exists and proves what it says.
+3. `canon work after-land <C-n>` for each change: its own background commands finished and exited 0, and what code review said about it; a failure the report did not mention is a finding.
+4. `git log --oneline <main>`: every reported change has its commits and its close commit on main.
+5. `canon check` on main, and `canon work status`: no leftover claims or queued entries from the run.
+6. Spot-check the key points of each report against the code: a test named in the report exists and proves what it says.
 
 Where `canon stats --since` or `canon events` does not exist yet, use `canon stats` (totals only), `canon work status` and `git log` on main, and say in your summary that the run was checked without the event window.
 
