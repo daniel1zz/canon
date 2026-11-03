@@ -210,15 +210,42 @@ export function stop(ws: Workspace, next: string, note: string | undefined, rele
  * be regenerated, has no process inside it, and its branch is fully contained in main, so no work can be lost
  * (P4, BR-2019). Anything else is listed with the reason it stays.
  */
-export function clean(ws: Workspace, say: Say): Result<{ removed: string[]; kept: string[] }> {
+/**
+ * Removes the change worktrees that cannot lose work (BR-2019). With `only`, just those changes' worktrees
+ * (BR-2152): every name must be a change, or nothing is removed; a named change without a worktree is kept, saying so.
+ */
+export function clean(ws: Workspace, say: Say, only?: readonly string[]): Result<{ removed: string[]; kept: string[] }> {
   const wts = listWorktrees(ws.primary);
   if (!wts.ok) return wts;
   const removed: string[] = [];
   const kept: string[] = [];
+  const ours = wts.value.filter((w) => w.path.startsWith(worktreesDir(ws) + "/"));
+  let named: Set<string> | undefined;
+  if (only !== undefined && only.length > 0) {
+    named = new Set(only);
+    const withWorktree = new Set(ours.map((w) => basename(w.path)));
+    let onMain: Corpus | undefined;
+    for (const id of named) {
+      if (withWorktree.has(id)) continue;
+      if (!onMain) {
+        const c = mainCorpus(ws);
+        if (!c.ok) return c;
+        onMain = c.value;
+      }
+      if (findDoc(onMain, id)?.kind === "change") {
+        kept.push(`${id}: no worktree`);
+        continue;
+      }
+      const off = changeOffMain(ws, id);
+      if (!off.ok) return off;
+      if (!off.value) return err("not_found", `${id} is not a change: nothing was removed`);
+      kept.push(`${id}: no worktree`);
+    }
+  }
   const held = new Set(ws.db.db.query<{ worktree: string }, []>("SELECT worktree FROM claims").all().map((r) => r.worktree));
   const candidates: WorktreeInfo[] = [];
-  for (const w of wts.value) {
-    if (!w.path.startsWith(worktreesDir(ws) + "/")) continue;
+  for (const w of ours) {
+    if (named && !named.has(basename(w.path))) continue;
     const why = keepReason(ws, w, held);
     if (why) kept.push(`${w.path}: ${why}`);
     else candidates.push(w);

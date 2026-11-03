@@ -10,6 +10,13 @@ export interface Resolved {
 type Def = { type?: string; alias?: string | string[] };
 
 const argsOf = (cmd: CommandDef<ArgsDef>) => (cmd.args ?? {}) as Record<string, Def>;
+
+/** Commands whose last positional takes any number of words, such as `canon work clean <C-n>...` (BR-2152). */
+const variadic = new WeakSet<object>();
+export function takesMany<T extends object>(cmd: T): T {
+  variadic.add(cmd);
+  return cmd;
+}
 const subsOf = (cmd: CommandDef<ArgsDef>) => (cmd.subCommands ?? {}) as Record<string, CommandDef<ArgsDef>>;
 
 /**
@@ -88,7 +95,7 @@ export function unknownArgument(cmd: CommandDef<ArgsDef>, name: string, args: re
     // reason: citty takes the next word as the value unless it starts with "-" (string flags only)
     if (eq < 0 && i + 1 < args.length && !args[i + 1]!.startsWith("-")) i++;
   }
-  if (given.length > positionals) {
+  if (given.length > positionals && !(positionals > 0 && variadic.has(cmd))) {
     const extra = JSON.stringify(given[positionals]);
     return `\`${name}\` takes ${positionals === 0 ? "no" : positionals} positional argument(s); unexpected ${extra}`;
   }

@@ -338,7 +338,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
     if (releaseOwnClaim(ws.db, subject, ws.root, ws.actor)) dropHandoff(ws.db, subject);
     else say(`${subject} is claimed by another session now; its claim and handoff were left as they are`);
     finished = true;
-    say(`${subject} closed; remove the worktree with \`canon work clean\` once you have left it`);
+    say(`${subject} closed; remove the worktree with \`canon work clean ${subject}\` once you have left it`);
   }
   return { kind: "landed", sha: head.value, change: subject, finished };
 }

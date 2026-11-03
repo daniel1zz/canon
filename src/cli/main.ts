@@ -21,7 +21,7 @@ import { overlapsOf } from "../work/session/overlap.ts";
 import { backgroundNotice, settleBackgroundHooks } from "../config/hooks.ts";
 import { skillsSource, type InstallReport } from "./install/install.ts";
 import { WORKFLOW_GUIDE } from "./guide.ts";
-import { resolve, unknownArgument } from "./strict.ts";
+import { resolve, takesMany, unknownArgument } from "./strict.ts";
 import { assetsStatus, installAssets, updateNotice, updateProject } from "./install/update.ts";
 import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "../work/stats/stats.ts";
 import { drop } from "../work/drop/drop.ts";
@@ -368,14 +368,15 @@ const work = defineCommand({
         if (doc?.kind === "change" && doc.status === "open") say(`${doc.id} is still open on ${ws.config.main}; mark it with \`canon change drop ${doc.id}\` in a change if the work will not happen`);
       },
     }),
-    clean: defineCommand({
-      meta: { description: "Remove worktrees that are clean and fully landed; list the rest with the reason they stay" },
-      run() {
+    clean: takesMany(defineCommand({
+      meta: { description: "Remove worktrees that are clean and fully landed; list the rest with the reason they stay. Name changes to remove only theirs" },
+      args: { changes: { type: "positional", required: false, description: "Only these changes' worktrees (C-n ...)" } },
+      run({ args }) {
         const ws = workspace();
-        const r = must(clean(ws, say));
+        const r = must(clean(ws, say, args._.map(String)));
         for (const k of r.kept) say(`kept ${k}`);
       },
-    }),
+    })),
   },
 });
 

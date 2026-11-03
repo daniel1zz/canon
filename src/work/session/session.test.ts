@@ -454,3 +454,62 @@ describe("concurrent starts", () => {
     expect(upstream.ok ? upstream.value : "").toBe("");
   }, 60_000);
 });
+
+describe("clean named changes", () => {
+  async function landed(root: string, title: string) {
+    const s = startNew(root, title);
+    const out = await land(ws(s.worktree), { ...FAST, finish: true }, quiet);
+    if (out.kind !== "landed") throw new Error(`expected landed, got ${out.kind}`);
+    return s;
+  }
+  const cli = (cwd: string, ...args: string[]) => {
+    const r = Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "clean", ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
+  };
+
+  test("BR-2152: only the named change's worktree is removed; another landed one stays and is not listed", async () => {
+    const root = project();
+    const one = await landed(root, "One");
+    const two = await landed(root, "Two");
+    const r = clean(ws(root), quiet, [one.change, one.change]);
+    if (!r.ok) throw new Error(r.error.message);
+    expect(r.value.removed).toEqual([one.worktree]);
+    expect(r.value.kept).toEqual([]);
+    expect(existsSync(two.worktree)).toBe(true);
+  });
+
+  test("BR-2152: a named change with unlanded work is kept with the BR-2019 reason; one without a worktree is listed as such", async () => {
+    const root = project();
+    const gone = await landed(root, "Gone");
+    sh(root, "worktree", "remove", gone.worktree);
+    const busy = startNew(root, "Busy");
+    stop(ws(busy.worktree), "later", undefined, true);
+    const r = clean(ws(root), quiet, [busy.change, gone.change]);
+    if (!r.ok) throw new Error(r.error.message);
+    expect(r.value.removed).toEqual([]);
+    expect(r.value.kept).toEqual([`${gone.change}: no worktree`, `${busy.worktree}: 1 commit(s) not on main`]);
+  });
+
+  test("BR-2152: a name that is not a change removes nothing", async () => {
+    const root = project();
+    const one = await landed(root, "One");
+    const r = clean(ws(root), quiet, [one.change, "C-99"]);
+    expect(r.ok ? "removed" : `${r.error.code}: ${r.error.message}`).toBe("not_found: C-99 is not a change: nothing was removed");
+    expect(existsSync(one.worktree)).toBe(true);
+  });
+
+  test("BR-2152 BR-2022: from the CLI any number of changes may be named; a non-change exits 3; no names keeps cleaning everything", async () => {
+    const root = project();
+    const one = await landed(root, "One");
+    const two = await landed(root, "Two");
+    const three = await landed(root, "Three");
+    const bad = cli(root, one.change, "foo");
+    expect([bad.code, bad.err]).toEqual([3, "canon: foo is not a change: nothing was removed\n"]);
+    expect(existsSync(one.worktree)).toBe(true);
+    const named = cli(root, one.change, two.change);
+    expect([named.code, named.out]).toEqual([0, `removed ${one.worktree}\nremoved ${two.worktree}\n`]);
+    expect(existsSync(three.worktree)).toBe(true);
+    const all = cli(root);
+    expect([all.code, all.out]).toEqual([0, `removed ${three.worktree}\n`]);
+  }, 30_000); // reason: four spawned CLI runs plus three landings; the CLI surface is what it tests (C-111)
+});
