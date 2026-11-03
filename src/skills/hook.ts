@@ -9,7 +9,14 @@ import { err, ok, type Result } from "../kernel/result.ts";
  * It is a *merged* asset: canon owns only its own entry in `.claude/settings.json` and never touches
  * anything else in that file. It reports; it never blocks (D-1: no hook checks how an agent works).
  */
-export const BRIEF_COMMAND = "canon brief";
+/**
+ * `|| echo` keeps the session informed when brief fails or canon is not on PATH: a failing hook's stdout is not
+ * shown to the model, and the echo makes the line exit 0 with something to read (BR-2087, BR-2090).
+ */
+export const BRIEF_COMMAND =
+  "canon brief || echo 'canon brief failed (see above), or canon is not on PATH. This project keeps its rules, decisions and work in canon/, and every change lands through canon work land: do not edit the main branch directly. Fix the error or install canon (ask the user if needed), then run canon brief.'";
+/** The form canon installed before BR-2087 required the fallback; found once and replaced in place. */
+const OLD_BRIEF_COMMAND = "canon brief";
 const SETTINGS = join(".claude", "settings.json");
 
 interface HookEntry {
@@ -32,27 +39,41 @@ function read(root: string): Result<Record<string, unknown> | undefined> {
   }
 }
 
-function hasBrief(settings: Record<string, unknown> | undefined): boolean {
+type HookState = "present" | "old" | "missing";
+
+const sessionStart = (settings: Record<string, unknown> | undefined): HookEntry[] => {
   const start = (settings?.["hooks"] as Record<string, unknown> | undefined)?.["SessionStart"];
-  return Array.isArray(start) && (start as HookEntry[]).some((e) => e.hooks?.some((h) => h.command?.trim() === BRIEF_COMMAND));
+  return Array.isArray(start) ? (start as HookEntry[]) : [];
+};
+
+function stateOf(settings: Record<string, unknown> | undefined): HookState {
+  const commands = sessionStart(settings).flatMap((e) => (Array.isArray(e.hooks) ? e.hooks : []).map((h) => h.command?.trim()));
+  if (commands.includes(BRIEF_COMMAND)) return "present";
+  return commands.includes(OLD_BRIEF_COMMAND) ? "old" : "missing";
 }
 
-/** Whether the project's settings already run `canon brief` at session start. */
-export function hookStatus(root: string): Result<"present" | "missing"> {
+/** Whether the project's settings run `canon brief` at session start, in the current form, an older one, or not at all. */
+export function hookStatus(root: string): Result<HookState> {
   const s = read(root);
   if (!s.ok) return s;
-  return ok(hasBrief(s.value) ? "present" : "missing");
+  return ok(stateOf(s.value));
 }
 
-/** Adds the SessionStart entry when it is missing; everything else in the file is kept as it was. */
+/**
+ * Adds the SessionStart entry when it is missing, or rewrites the old form's command in place, so a project
+ * never ends up with two; everything else in the file is kept as it was.
+ */
 export function ensureHook(root: string): Result<boolean> {
   const s = read(root);
   if (!s.ok) return s;
-  if (hasBrief(s.value)) return ok(false);
+  const state = stateOf(s.value);
+  if (state === "present") return ok(false);
   const settings = { ...(s.value ?? {}) };
   const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
-  const start = Array.isArray(hooks["SessionStart"]) ? [...(hooks["SessionStart"] as HookEntry[])] : [];
-  start.push({ hooks: [{ type: "command", command: BRIEF_COMMAND }] });
+  let start = sessionStart(s.value);
+  if (state === "old") {
+    start = start.map((e) => (Array.isArray(e.hooks) ? { ...e, hooks: e.hooks.map((h) => (h.command?.trim() === OLD_BRIEF_COMMAND ? { ...h, command: BRIEF_COMMAND } : h)) } : e));
+  } else start = [...start, { hooks: [{ type: "command", command: BRIEF_COMMAND }] }];
   hooks["SessionStart"] = start;
   settings["hooks"] = hooks;
   mkdirSync(join(root, ".claude"), { recursive: true });

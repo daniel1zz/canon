@@ -5,7 +5,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "canon brief"
+            "command": "canon brief || echo 'canon brief failed (see above), or canon is not on PATH. This project keeps its rules, decisions and work in canon/, and every change lands through canon work land: do not edit the main branch directly. Fix the error or install canon (ask the user if needed), then run canon brief.'"
           }
         ]
       }

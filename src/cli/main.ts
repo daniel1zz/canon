@@ -489,23 +489,41 @@ function noticeUpdates(ws: Workspace, out: (line: string) => void) {
 const brief = defineCommand({
   meta: { description: "Session start: how to work in a canon project, this worktree's change and handoff, and what else is in flight (printed by the session-start hook)" },
   run() {
-    const ws = workspace();
-    const mine = claimOfWorktree(ws.db, ws.root);
-    const hs = handoffs(ws.db);
-    const pending = questions(ws.db, "pending").length;
+    // reason: the guide comes before anything that can fail, and failures are also said on stdout, which is what a
+    // session-start hook shows the model; without it a session would know nothing about canon (BR-2090, lore KN-402)
     say(WORKFLOW_GUIDE);
-    if (mine) {
-      say(`You are in ${mine.subject} (${ws.root}). Read it: canon show ${mine.subject}; context: canon context ${mine.subject}`);
-      const h = hs.find((x) => x.subject === mine.subject);
-      if (h) say(`Handoff from ${h.actor} at ${h.updated_at}: next — ${h.next}${h.note ? `\n${h.note}` : ""}`);
-      for (const o of overlapsOf(ws, ws.root)) say(`Overlap: ${o.change} also changes ${o.files.join(", ")}`);
+    const failed = (what: string) =>
+      say(`canon brief failed: ${what}\nFix this, then run canon brief again. Until then work as the guide above says; do not edit the main branch directly.`);
+    const opened = openWorkspace(process.cwd());
+    if (!opened.ok) {
+      failed(opened.error.message);
+      fail(opened.error);
     }
-    const others = hs.filter((h) => h.subject !== mine?.subject);
-    if (others.length) say(`Unfinished changes with handoffs: ${others.map((h) => h.subject).join(", ")} (canon work status)`);
-    if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
-    noticeUpdates(ws, say);
+    try {
+      briefState(opened.value);
+    } catch (e) {
+      failed(e instanceof Error ? e.message : String(e));
+      throw e;
+    }
   },
 });
+
+/** What `canon brief` says after the guide: this worktree's change, handoffs, questions, the update notice. */
+function briefState(ws: Workspace) {
+  const mine = claimOfWorktree(ws.db, ws.root);
+  const hs = handoffs(ws.db);
+  const pending = questions(ws.db, "pending").length;
+  if (mine) {
+    say(`You are in ${mine.subject} (${ws.root}). Read it: canon show ${mine.subject}; context: canon context ${mine.subject}`);
+    const h = hs.find((x) => x.subject === mine.subject);
+    if (h) say(`Handoff from ${h.actor} at ${h.updated_at}: next — ${h.next}${h.note ? `\n${h.note}` : ""}`);
+    for (const o of overlapsOf(ws, ws.root)) say(`Overlap: ${o.change} also changes ${o.files.join(", ")}`);
+  }
+  const others = hs.filter((h) => h.subject !== mine?.subject);
+  if (others.length) say(`Unfinished changes with handoffs: ${others.map((h) => h.subject).join(", ")} (canon work status)`);
+  if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
+  noticeUpdates(ws, say);
+}
 
 const stats = defineCommand({
   meta: { description: "Check precision: runs, refusals and what happened after each refusal; checks due for review" },

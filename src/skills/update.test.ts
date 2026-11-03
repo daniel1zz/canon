@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
+import { BRIEF_COMMAND } from "./hook.ts";
 
 const MAIN = join(import.meta.dir, "..", "cli", "main.ts");
 
@@ -99,11 +100,42 @@ describe("finding and applying updates", () => {
     expect(canon(root, { CANON_SKILLS_SOURCE: src }, "init", "--floor", "true").code).toBe(0);
     const s = JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"));
     expect(s.permissions).toEqual({ allow: ["Bash(ls)"] });
-    expect(s.hooks.SessionStart.map((e: { hooks: { command: string }[] }) => e.hooks[0]!.command)).toEqual(["echo hi", "canon brief"]);
+    expect(s.hooks.SessionStart.map((e: { hooks: { command: string }[] }) => e.hooks[0]!.command)).toEqual(["echo hi", BRIEF_COMMAND]);
+    expect(BRIEF_COMMAND.startsWith("canon brief || echo ")).toBe(true);
     canon(root, { CANON_SKILLS_SOURCE: src }, "install");
     expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8")).hooks.SessionStart.length).toBe(2); // added once
     writeFileSync(join(root, ".claude/settings.json"), "{ not json");
     expect(canon(root, { CANON_SKILLS_SOURCE: src }, "install").code).toBe(2);
+  });
+
+  test("BR-2087 BR-2084: the old `canon brief` hook is reported once and rewritten in place, never added a second time", () => {
+    const { root, env } = project();
+    const old = { permissions: { allow: [] }, hooks: { SessionStart: [{ matcher: "startup", hooks: [{ type: "command", command: "canon brief" }] }, { hooks: [{ type: "command", command: "echo hi" }] }] } };
+    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify(old));
+    const r = canon(root, env, "update", "--check");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("hook: canon brief at session start, older form");
+    expect(canon(root, env, "install").code).toBe(0);
+    const s = JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"));
+    expect(s).toEqual({ ...old, hooks: { SessionStart: [{ matcher: "startup", hooks: [{ type: "command", command: BRIEF_COMMAND }] }, old.hooks.SessionStart[1]] } });
+    canon(root, env, "install");
+    expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual(s);
+    expect(canon(root, env, "update", "--check").code).toBe(0);
+  });
+
+  test("BR-2087: the hook command still tells the session about canon when canon is not on PATH or brief fails", () => {
+    const empty = mkdtempSync(join(tmpdir(), "canon-no-path-"));
+    const sh = (path: string) => Bun.spawnSync(["/bin/sh", "-c", BRIEF_COMMAND], { cwd: empty, stdout: "pipe", stderr: "pipe", env: { PATH: path } });
+    const missing = sh(empty);
+    expect(missing.exitCode).toBe(0);
+    expect(missing.stdout.toString()).toContain("canon is not on PATH");
+    expect(missing.stdout.toString()).toContain("do not edit the main branch directly");
+    writeFileSync(join(empty, "canon"), "#!/bin/sh\necho 'canon brief failed: broken config'\nexit 2\n", { mode: 0o755 });
+    const failing = sh(empty);
+    expect(failing.exitCode).toBe(0);
+    const out = failing.stdout.toString();
+    expect(out.indexOf("canon brief failed: broken config")).toBe(0);
+    expect(out).toContain("canon is not on PATH");
   });
 
   test("BR-2087: a settings.json or .claude that is a symlink, even a dangling one, is refused and nothing is written through it", () => {

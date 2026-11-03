@@ -264,6 +264,27 @@ describe("session continuity", () => {
   });
 });
 
+describe("brief when it cannot read the project", () => {
+  test("BR-2090: outside a repository and with a broken config, brief still prints the guide first and its error on stdout", () => {
+    const outside = mkdtempSync(join(tmpdir(), "canon-not-a-repo-"));
+    const r = canon(outside, "brief");
+    expect(r.code).toBe(4);
+    expect(r.out.startsWith(WORKFLOW_GUIDE)).toBe(true);
+    const after = r.out.slice(WORKFLOW_GUIDE.length);
+    expect(after).toContain("canon brief failed:");
+    expect(after).toContain("not a git repository");
+    expect(after).toContain("run canon brief again");
+    expect(r.err).toContain("not a git repository");
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    writeFileSync(join(root, "canon/config.yaml"), "main: [\n");
+    const bad = canon(root, "brief");
+    expect(bad.code).toBe(2);
+    expect(bad.out.startsWith(WORKFLOW_GUIDE)).toBe(true);
+    expect(bad.out.slice(WORKFLOW_GUIDE.length)).toContain("canon brief failed:");
+  });
+});
+
 describe("overlap in brief", () => {
   test("BR-2063: brief names the other change that touches the same file, and nothing when there is no overlap", () => {
     const root = repo();
