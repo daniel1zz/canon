@@ -28,7 +28,8 @@ Do not split, or put the tasks in one agent's hands, when:
 
 1. Note where the run starts in the event table: `canon events | tail -1` and take that event's id (call it `<start>`). Everything the subagents do is recorded after it.
 2. Give each task one change. Either let the subagent create it (`canon work start --title "<title>"`) or name an existing one (`canon work start C-n`). Never give two subagents the same change: the second start is refused as claimed (exit 5).
-3. If two tasks must touch the same file, say so in both briefs, and name which one lands first.
+3. List the files each task will likely touch: run `canon context <path>` for the area, and read what the change file plans to change where the change already exists. Two tasks that will edit the same file do not run at the same time: give them to one agent in sequence, or put them in different rounds. Watch for files every feature appends to, such as a central registry of commands or config keys, a guide listing every workflow, or one large shared test file; most conflicts land there.
+4. If two tasks must still touch the same file, say so in both briefs, and name which one lands first.
 
 ## 3. What every brief must contain
 
@@ -59,6 +60,7 @@ A subagent's report is a claim; the coordination database recorded what happened
 4. `git log --oneline <main>`: every reported change has its commits and its close commit on main.
 5. `canon check` on main, and `canon work status`: no leftover claims or queued entries from the run.
 6. Spot-check the key points of each report against the code: a test named in the report exists and proves what it says.
+7. Find the hotspots for the next run: group `canon events --since <start> --kind overlap.notice --json` by the files in each notice, and read the conflict refusals in `canon events --since <start> --kind land.refuse` for the files they name. A file that keeps showing up is worth splitting, or worth keeping to one agent per round.
 
 Where `canon stats --since` or `canon events` does not exist yet, use `canon stats` (totals only), `canon work status` and `git log` on main, and say in your summary that the run was checked without the event window.
 
