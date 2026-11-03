@@ -13,7 +13,8 @@ import { readCorpus } from "../knowledge/read.ts";
 import { createDoc, createDomain, setMeta } from "../knowledge/write.ts";
 import { git } from "../repo/git.ts";
 import { overlapsOf } from "../work/overlap.ts";
-import { installSkills, skillsSource, type InstallReport } from "../skills/install.ts";
+import { skillsSource, type InstallReport } from "../skills/install.ts";
+import { assetsStatus, installAssets, updateNotice, updateProject } from "../skills/update.ts";
 import { computeStats, renderStats } from "../stats/stats.ts";
 import { drop } from "../work/drop.ts";
 import { clean, land, mainCorpus, start, stop } from "../work/work.ts";
@@ -278,6 +279,7 @@ const work = defineCommand({
         if (!args.change && !args.title) fail({ code: "invalid", message: "give a change id or --title for a new change" });
         const target = typeof args.change === "string" && args.change ? { change: args.change } : { title: String(args.title), rules: list(args.rules) };
         const s = must(start(ws, target, say));
+        noticeUpdates(ws, say);
         say(`cd ${s.worktree}`);
       },
     }),
@@ -411,7 +413,7 @@ const init = defineCommand({
   run({ args }) {
     const root = must(git(process.cwd(), "rev-parse", "--show-toplevel"));
     // Skills first: a missing source (BR-2082) or an edited skill copy (BR-2081) refuses before anything else is written.
-    reportSkills(must(installSkills(root, must(skillsSource()), false)));
+    reportInstall(must(installAssets(root, must(skillsSource()), false)));
     const files: Record<string, string> = {
       "canon/product.md": "---\ntitle: 产品\n---\n# 产品\n\n## 目的\n\n## 使用者\n\n## 承诺\n\n## 不做的事\n",
       "canon/config.yaml": `main: main\nfloor: ${JSON.stringify(args.floor ?? "")}\n`,
@@ -430,26 +432,56 @@ const init = defineCommand({
   },
 });
 
-function reportSkills(r: InstallReport) {
+function reportInstall(r: InstallReport & { hook: boolean }) {
   for (const f of r.written) say(`skill ${f}`);
   for (const f of r.removed) say(`removed skill file ${f}`);
-  say(r.written.length + r.removed.length === 0 ? "skills: up to date" : "skills installed in .claude/skills; commit them with the project");
+  if (r.hook) say("hook: canon brief at session start (.claude/settings.json)");
+  say(r.written.length + r.removed.length === 0 && !r.hook ? "canon project files: up to date" : "canon project files installed; commit them with the project");
 }
 
-/** Project-level Claude Code skills shipped with canon (D-9). */
-const skills = defineCommand({
-  meta: { description: "canon's Claude Code skills, installed into this project's .claude/skills (never the user's global ~/.claude)" },
-  subCommands: {
-    install: defineCommand({
-      meta: { description: "Install or update canon's skills in this project; files edited here are not overwritten without --force" },
-      args: { force: { type: "boolean", description: "Overwrite skill files that were edited in this project" } },
-      run({ args }) {
-        const root = must(git(process.cwd(), "rev-parse", "--show-toplevel"));
-        reportSkills(must(installSkills(root, must(skillsSource()), Boolean(args.force))));
-      },
-    }),
+/** Installs canon's project files (skills, session hook) into this tree, as `canon init` does (D-9, D-10). */
+const install = defineCommand({
+  meta: { description: "Install canon's project files (skills, session-start hook) into this tree; files edited here are not overwritten without --force" },
+  args: { force: { type: "boolean", description: "Overwrite skill files that were edited in this project" } },
+  run({ args }) {
+    const root = must(git(process.cwd(), "rev-parse", "--show-toplevel"));
+    reportInstall(must(installAssets(root, must(skillsSource()), Boolean(args.force))));
   },
 });
+
+/** Discovery is automatic (brief, work start); updating happens only when someone asks for it (D-10). */
+const update = defineCommand({
+  meta: { description: "Update canon's project files to this canon's version as its own landed change; --check only reports" },
+  args: {
+    check: { type: "boolean", description: "Only report what is out of date; exit 1 when something is" },
+    force: { type: "boolean", description: "Overwrite skill files that were edited in this project" },
+  },
+  async run({ args }) {
+    const ws = workspace();
+    const source = must(skillsSource());
+    if (args.check) {
+      const st = must(assetsStatus(ws.root, source));
+      if (st.current) return say(`canon project files: up to date (version ${st.version})`);
+      say(`canon project files are out of date (version ${st.version}):`);
+      for (const o of st.outdated) say(`  ${o}${st.edited.some((e) => o === `skill ${e}`) ? "  (edited in this project)" : ""}`);
+      process.exit(EXIT.refused);
+    }
+    const out = must(await updateProject(ws, source, Boolean(args.force), ws.config.landTimeoutMs, say));
+    if (out.kind === "current") return say(`canon project files: up to date (version ${out.version})`);
+    if (out.kind === "landed") return say(`updated to ${out.version} in ${out.change}, landed ${out.sha.slice(0, 9)}`);
+    console.error(`canon: the update ${out.change} did not land: ${out.message}`);
+    process.exit(EXIT.refused);
+  },
+});
+/** The update notice (BR-2085); a missing skills source is reported on the same line, never hidden. */
+function noticeUpdates(ws: Workspace, out: (line: string) => void) {
+  const source = skillsSource();
+  if (!source.ok) return out(`canon project files: cannot check for updates (${source.error.message})`);
+  const st = assetsStatus(ws.root, source.value);
+  if (!st.ok) return out(`canon project files: cannot check for updates (${st.error.message})`);
+  const n = updateNotice(st.value);
+  if (n) out(n);
+}
 
 const brief = defineCommand({
   meta: { description: "Session start: this worktree's change and handoff, and what else is in flight (printed by the session-start hook)" },
@@ -467,6 +499,7 @@ const brief = defineCommand({
     const others = hs.filter((h) => h.subject !== mine?.subject);
     if (others.length) say(`Unfinished changes with handoffs: ${others.map((h) => h.subject).join(", ")} (canon work status)`);
     if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
+    noticeUpdates(ws, say);
   },
 });
 
@@ -484,7 +517,7 @@ const stats = defineCommand({
 
 const main = defineCommand({
   meta: { name: "canon", description: "Shared memory and coordination for a project built by many concurrent AI sessions" },
-  subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, doc, work, human, stats, skills },
+  subCommands: { init, brief, search: searchCmd, context, check: checkCmd, show, rule, decision, change, note, doc, work, human, stats, install, update },
 });
 
 /**

@@ -40,7 +40,7 @@ describe("project-level skills", () => {
     expect(existsSync(join(root, ".claude/skills/user-own"))).toBe(false); // only canon-* skills
     expect(Object.keys(JSON.parse(readFileSync(join(root, ".claude/skills", MANIFEST), "utf8")).files).sort()).toEqual(["canon-a/SKILL.md", "canon-a/references/x.md", "canon-b/SKILL.md"]);
     expect(existsSync(join(home, ".claude"))).toBe(false);
-    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "skills", "install").out).toContain("skills: up to date");
+    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "install").out).toContain("canon project files: up to date");
   });
 
   test("BR-2080: canon init meets an edited skill copy the way skills install does, and writes nothing", () => {
@@ -60,8 +60,9 @@ describe("project-level skills", () => {
     expect(r.ok && r.value).toEqual({ written: [], unchanged: [], removed: [] });
     expect(existsSync(join(repo, ".claude/skills", MANIFEST))).toBe(false);
     Bun.spawnSync(["git", "init", "-q"], { cwd: repo });
-    const cli = canon(repo, { CANON_SKILLS_SOURCE: join(repo, ".claude/skills") }, "skills", "install");
-    expect([cli.code, cli.out.trim()]).toEqual([0, "skills: up to date"]);
+    const cli = canon(repo, { CANON_SKILLS_SOURCE: join(repo, ".claude/skills") }, "install");
+    expect(cli.code).toBe(0);
+    expect(cli.out).not.toContain("skill canon-"); // the skills are the source here; only the session hook is added (BR-2087)
   });
 
   test("BR-2081: an unedited file follows canon's new version and a dropped one is removed; an edited one refuses the whole install until --force", () => {
@@ -83,7 +84,7 @@ describe("project-level skills", () => {
     expect(!refused.ok && refused.error.message).toContain(".claude/skills/canon-b/SKILL.md");
     expect(readFileSync(join(root, ".claude/skills/canon-a/SKILL.md"), "utf8")).toBe("a v2\n"); // nothing half-updated
     expect(readFileSync(join(root, ".claude/skills/canon-b/SKILL.md"), "utf8")).toBe("b edited here\n");
-    const r = canon(root, { CANON_SKILLS_SOURCE: src }, "skills", "install");
+    const r = canon(root, { CANON_SKILLS_SOURCE: src }, "install");
     expect(r.code).toBe(5);
 
     expect(installSkills(root, src, true).ok).toBe(true);

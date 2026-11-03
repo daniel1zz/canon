@@ -80,15 +80,74 @@ function isBrokenLink(p: string): boolean {
   }
 }
 
+/** Every file of every `canon-*` skill in `source`, by path relative to `source`. */
+function sourceFiles(source: string): Map<string, Buffer> {
+  const wanted = new Map<string, Buffer>();
+  for (const skill of readdirSync(source).filter((n) => n.startsWith(PREFIX) && statSync(join(source, n)).isDirectory())) {
+    for (const f of filesUnder(join(source, skill))) wanted.set(relative(source, f), readFileSync(f));
+  }
+  return wanted;
+}
+
+/** A short id of a set of skill files: the same files always give the same version (BR-2084). */
+export function versionOf(files: Readonly<Record<string, string>>): string {
+  return sha(Object.keys(files).sort().map((k) => `${k} ${files[k]}`).join("\n")).slice(0, 10);
+}
+
+export interface SkillsStatus {
+  /** current: the project has exactly canon's skills; outdated: some file differs or is missing; source: this is canon's own repository. */
+  readonly state: "current" | "outdated" | "source";
+  /** Version canon ships. */
+  readonly version: string;
+  /** Files an install would add, update or remove. */
+  readonly outdated: readonly string[];
+  /** Of those, files edited in the project (an install would refuse them, BR-2081). */
+  readonly edited: readonly string[];
+}
+
+/** How the project's installed skills compare with the ones canon ships (BR-2084); reads only. */
+export function skillsStatus(root: string, source: string): Result<SkillsStatus> {
+  const target = join(root, ".claude", "skills");
+  const wanted = sourceFiles(source);
+  const version = versionOf(Object.fromEntries([...wanted].map(([k, v]) => [k, sha(v)])));
+  if (existsSync(target) && realpathSync(target) === realpathSync(source)) return ok({ state: "source", version, outdated: [], edited: [] });
+  let manifest: Record<string, string> = {};
+  const manifestPath = join(target, MANIFEST);
+  if (existsSync(manifestPath)) {
+    try {
+      manifest = (JSON.parse(readFileSync(manifestPath, "utf8")) as { files?: Record<string, string> }).files ?? {};
+    } catch {
+      return err("invalid", `${relative(root, manifestPath)} is not valid JSON; fix or delete it`);
+    }
+  }
+  const outdated: string[] = [];
+  const edited: string[] = [];
+  for (const [rel, content] of wanted) {
+    const full = join(target, rel);
+    if (!existsSync(full)) outdated.push(rel);
+    else {
+      const current = readFileSync(full);
+      if (current.equals(content)) continue;
+      outdated.push(rel);
+      if (manifest[rel] !== sha(current)) edited.push(rel);
+    }
+  }
+  for (const rel of Object.keys(manifest)) {
+    if (wanted.has(rel) || !safeKey(rel)) continue;
+    const full = join(target, rel);
+    if (!existsSync(full)) continue;
+    outdated.push(rel);
+    if (manifest[rel] !== sha(readFileSync(full))) edited.push(rel);
+  }
+  return ok({ state: outdated.length === 0 ? "current" : "outdated", version, outdated: outdated.sort(), edited: edited.sort() });
+}
+
 /** Copies every `canon-*` skill from `source` into `<root>/.claude/skills`, keeping local edits safe. */
 export function installSkills(root: string, source: string, force: boolean): Result<InstallReport> {
   const target = join(root, ".claude", "skills");
   if (existsSync(target) && realpathSync(target) === realpathSync(source)) return ok({ written: [], unchanged: [], removed: [] });
 
-  const wanted = new Map<string, Buffer>();
-  for (const skill of readdirSync(source).filter((n) => n.startsWith(PREFIX) && statSync(join(source, n)).isDirectory())) {
-    for (const f of filesUnder(join(source, skill))) wanted.set(relative(source, f), readFileSync(f));
-  }
+  const wanted = sourceFiles(source);
   const manifestPath = join(target, MANIFEST);
   let manifest: Record<string, string> = {};
   if (existsSync(manifestPath)) {
@@ -141,6 +200,6 @@ export function installSkills(root: string, source: string, force: boolean): Res
   for (const rel of remove) rmSync(join(target, rel));
   const files = Object.fromEntries([...wanted].map(([rel, content]) => [rel, sha(content)]));
   mkdirSync(target, { recursive: true });
-  writeFileSync(manifestPath, `${JSON.stringify({ note: "Written by canon skills install; edit the skills in canon, not here.", files }, null, 2)}\n`);
+  writeFileSync(manifestPath, `${JSON.stringify({ note: "Written by canon skills install; edit the skills in canon, not here.", version: versionOf(files), files }, null, 2)}\n`);
   return ok({ written: write, unchanged, removed: remove });
 }
