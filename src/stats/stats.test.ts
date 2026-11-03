@@ -6,7 +6,7 @@ import { CoordDb } from "../coord/db.ts";
 import { readConfig } from "../repo/config.ts";
 import { drop } from "../work/drop.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../work/testkit.ts";
-import { land } from "../work/work.ts";
+import { findingDetail, land } from "../work/work.ts";
 import { computeStats, renderStats } from "./stats.ts";
 
 const of = (stats: ReturnType<typeof computeStats>, check: string) => stats.find((s) => s.check === check)!;
@@ -129,6 +129,10 @@ describe("canon stats", () => {
     expect(details[1]!["reason"]).toBe("floor");
     expect(details[1]).not.toHaveProperty("findings");
     expect(details[1]).not.toHaveProperty("paths");
+
+    const many = Array.from({ length: 51 }, (_, i) => ({ path: `f${String(50 - i).padStart(2, "0")}`, rule: "ref-dangling" as const, message: "" }));
+    const kept = findingDetail(many).paths;
+    expect([kept.length, kept[0], kept[49], kept.includes("f50")]).toEqual([50, "f00", "f49", false]);
   });
 
   test("BR-2095: check refusals are broken down per finding kind with what happened after; old refusals are unrecorded", () => {

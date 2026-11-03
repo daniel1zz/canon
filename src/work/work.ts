@@ -218,7 +218,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
 }
 
 /** Per-kind counts and the files involved, so `canon stats` can tell which checks are precise (BR-2094, P6). */
-function findingDetail(findings: readonly Finding[]): { findings: Record<string, number>; paths: string[] } {
+export function findingDetail(findings: readonly Finding[]): { findings: Record<string, number>; paths: string[] } {
   const kinds: Record<string, number> = {};
   for (const f of findings) kinds[f.rule] = (kinds[f.rule] ?? 0) + 1;
   return { findings: kinds, paths: [...new Set(findings.map((f) => f.path))].sort().slice(0, 50) };
