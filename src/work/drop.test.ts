@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { answer, claims, questions } from "../coord/state.ts";
 import { drop } from "./drop.ts";
@@ -63,19 +64,41 @@ describe("dropping a change", () => {
     expect(existsSync(join(secret.worktree, ".env"))).toBe(true);
   });
 
-  test("BR-2064: a worktree another process is in is not dropped: exit 5 naming the pid, nothing deleted", async () => {
+  test("BR-2064: a worktree another process is in is not dropped, before anything is asked: exit 5 naming the pid, nothing deleted", async () => {
     const root = project();
     const s = startNew(root, "Busy");
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
-    const proc = Bun.spawn(["sleep", "30"], { cwd: s.worktree });
+    const unlanded = withCommit(root, "Busy and unlanded");
+    for (const t of [s, unlanded]) {
+      const proc = Bun.spawn(["sleep", "30"], { cwd: t.worktree });
+      try {
+        const r = drop(ws(root), t.change, quiet);
+        expect(!r.ok && r.error.code).toBe("conflict");
+        expect(!r.ok && r.error.message).toContain(`pid ${proc.pid} (sleep)`);
+        expect(existsSync(t.worktree)).toBe(true);
+      } finally {
+        proc.kill();
+        await proc.exited;
+      }
+    }
+    expect(questions(ws(root).db, "all")).toEqual([]);
+    expect(events(root, "drop.refuse").map((e) => e.reason)).toEqual(["in-use", "in-use"]);
+  });
+
+  test.skipIf(process.platform === "linux")("BR-2064: when processes cannot be listed nothing is deleted and the error is an environment failure", async () => {
+    const root = project();
+    const s = startNew(root, "No lsof");
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    const bin = mkdtempSync(join(tmpdir(), "canon-nolsof-"));
+    writeFileSync(join(bin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+    const path = process.env["PATH"];
+    process.env["PATH"] = `${bin}:${path}`;
     try {
       const r = drop(ws(root), s.change, quiet);
-      expect(!r.ok && r.error.code).toBe("conflict");
-      expect(!r.ok && r.error.message).toContain(`pid ${proc.pid} (sleep)`);
+      expect(!r.ok && r.error.code).toBe("io");
       expect(existsSync(s.worktree)).toBe(true);
     } finally {
-      proc.kill();
-      await proc.exited;
+      process.env["PATH"] = path;
     }
   });
 

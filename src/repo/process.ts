@@ -43,7 +43,10 @@ function listCwds(): Result<{ pid: number; command: string; cwd: string }[]> {
   }
   let text: string;
   try {
-    const r = Bun.spawnSync(["lsof", "-w", "-d", "cwd", "-Fpcn"], { stdout: "pipe", stderr: "pipe" });
+    // reason: resolved against process.env's PATH, which Bun's own lookup does not always follow once it changes.
+    const lsof = Bun.which("lsof", { PATH: process.env["PATH"] ?? "" });
+    if (!lsof) return err("io", "cannot list processes: lsof is not on PATH");
+    const r = Bun.spawnSync([lsof, "-w", "-d", "cwd", "-Fpcn"], { stdout: "pipe", stderr: "pipe" });
     text = r.stdout.toString();
     // reason: lsof exits 1 when some process could not be read, yet still lists the others.
     if (r.exitCode !== 0 && text === "") return err("io", `cannot list processes: lsof exited ${r.exitCode}: ${r.stderr.toString().trim()}`);
