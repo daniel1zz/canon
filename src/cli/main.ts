@@ -410,7 +410,8 @@ const init = defineCommand({
   args: { floor: { type: "string", description: "Command that must pass before anything lands, e.g. \"bun run typecheck && bun test\"" } },
   run({ args }) {
     const root = must(git(process.cwd(), "rev-parse", "--show-toplevel"));
-    const source = must(skillsSource()); // resolved first: a missing source fails before anything is written (BR-2082)
+    // Skills first: a missing source (BR-2082) or an edited skill copy (BR-2081) refuses before anything else is written.
+    reportSkills(must(installSkills(root, must(skillsSource()), false)));
     const files: Record<string, string> = {
       "canon/product.md": "---\ntitle: 产品\n---\n# 产品\n\n## 目的\n\n## 使用者\n\n## 承诺\n\n## 不做的事\n",
       "canon/config.yaml": `main: main\nfloor: ${JSON.stringify(args.floor ?? "")}\n`,
@@ -425,7 +426,6 @@ const init = defineCommand({
       }
     }
     for (const dir of ["rules", "decisions", "changes", "notes"]) mkdirSync(join(root, "canon", dir), { recursive: true });
-    reportSkills(must(installSkills(root, source, false)));
     if (!args.floor) say("set `floor` in canon/config.yaml before landing anything");
   },
 });

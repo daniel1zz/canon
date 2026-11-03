@@ -43,11 +43,25 @@ describe("project-level skills", () => {
     expect(canon(root, { CANON_SKILLS_SOURCE: src }, "skills", "install").out).toContain("skills: up to date");
   });
 
+  test("BR-2080: canon init meets an edited skill copy the way skills install does, and writes nothing", () => {
+    const src = source();
+    const root = gitRepo();
+    expect(installSkills(root, src, false).ok).toBe(true);
+    writeFileSync(join(root, ".claude/skills/canon-b/SKILL.md"), "b edited here\n");
+    writeFileSync(join(src, "canon-b/SKILL.md"), "b v2\n");
+    const r = canon(root, { CANON_SKILLS_SOURCE: src }, "init", "--floor", "true");
+    expect(r.code).toBe(5);
+    expect(existsSync(join(root, "canon"))).toBe(false);
+  });
+
   test("BR-2080: in canon's own repository the source is the target, so installing changes nothing", () => {
     const repo = dir({ ".claude/skills/canon-a/SKILL.md": "a\n" });
     const r = installSkills(repo, join(repo, ".claude/skills"), false);
     expect(r.ok && r.value).toEqual({ written: [], unchanged: [], removed: [] });
     expect(existsSync(join(repo, ".claude/skills", MANIFEST))).toBe(false);
+    Bun.spawnSync(["git", "init", "-q"], { cwd: repo });
+    const cli = canon(repo, { CANON_SKILLS_SOURCE: join(repo, ".claude/skills") }, "skills", "install");
+    expect([cli.code, cli.out.trim()]).toEqual([0, "skills: up to date"]);
   });
 
   test("BR-2081: an unedited file follows canon's new version and a dropped one is removed; an edited one refuses the whole install until --force", () => {
