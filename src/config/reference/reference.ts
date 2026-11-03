@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
 import { parse } from "yaml";
 import { git } from "../../kernel/git.ts";
@@ -107,6 +107,8 @@ function excludeGenerated(root: string): Result<void> {
   const text = existsSync(file) ? readFileSync(file, "utf8") : "";
   if (text.split("\n").some((l) => l.trim() === EXCLUDE_LINE)) return ok(undefined);
   mkdirSync(join(dir, "info"), { recursive: true });
-  writeFileSync(file, `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}${EXCLUDE_LINE}\n`);
+  // reason: every worktree's git reads this file; appending never empties it and never drops a line someone else
+  // added since the read. Two sessions racing may both append, and a repeated line is harmless (issue #44, BR-2176).
+  appendFileSync(file, `${text === "" || text.endsWith("\n") ? "" : "\n"}${EXCLUDE_LINE}\n`);
   return ok(undefined);
 }

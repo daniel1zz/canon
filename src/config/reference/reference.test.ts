@@ -215,6 +215,17 @@ describe("the generated schema file", () => {
     expect(excludeOf(root).split("\n").filter((l) => l === "/.canon/")).toHaveLength(1);
   });
 
+  test("BR-2176: the exclude line is appended after what info/exclude already holds, which stays as it was", () => {
+    const root = withConfig("floor: test ! -e FAIL\ntests: []\n");
+    const common = git(root, "rev-parse", "--git-common-dir");
+    if (!common.ok) throw new Error(common.error.message);
+    const file = join(common.value.startsWith("/") ? common.value : join(root, common.value), "info", "exclude");
+    mkdirSync(join(file, ".."), { recursive: true });
+    writeFileSync(file, ".env");
+    expect(canon(root, "brief").code).toBe(0);
+    expect(readFileSync(file, "utf8")).toBe(".env\n/.canon/\n");
+  });
+
   test("BR-2176: canon config writes it too", () => {
     const root = withConfig("floor: test ! -e FAIL\ntests: []\n");
     expect(canon(root, "config").code).toBe(0);
