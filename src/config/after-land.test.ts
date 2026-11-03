@@ -1,7 +1,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { logFile, runHooksInBackground } from "./hooks.ts";
+import { logFile, runHooksInBackground, waitBackgroundHooks } from "./hooks.ts";
 import { project, ws } from "../work/testkit.ts";
 
 // reason: these tests spawn the canon CLI and real background shells, which is what they test (C-111).
@@ -99,6 +99,30 @@ describe("canon work after-land", () => {
     expect(timedOut.code).toBe(75);
     expect(timedOut.out).toContain("still running after 0.01 min");
     writeFileSync(join(root, "go"), "");
+  });
+
+  test("BR-2167: the wait stays on the batch it found first, even when a later landing's batch finishes meanwhile", async () => {
+    const root = project();
+    background(root, "C-5", 5, [`while [ ! -e ${root}/go ]; do sleep 0.05; done; exit 1`]);
+    const waiting = waitBackgroundHooks(ws(root).db, "agent:test", undefined, 20_000, 50);
+    await Bun.sleep(200);
+    const six = background(root, "C-6", 6, ["true"]);
+    await finished(six, 1);
+    await Bun.sleep(200); // several polls see batch 6 finished
+    writeFileSync(join(root, "go"), "");
+    const b = await waiting;
+    expect([b?.change, b?.commands.map((c) => c.exit)]).toEqual(["C-5", [1]]);
+  });
+
+  test("BR-2166: the whole batch is recorded before its first command runs", async () => {
+    const root = project();
+    const dbPath = join(root, ".git/canon/state.db");
+    const script = join(root, "count.ts");
+    writeFileSync(script, `import { Database } from "bun:sqlite";\nconst d = new Database(${JSON.stringify(dbPath)}, { readonly: true });\nconsole.log("rows=" + d.query("SELECT count(*) AS n FROM events WHERE kind = 'hook.run'").get().n);\n`);
+    const counter = `bun ${script}`;
+    const log = background(root, "C-1", 1, [counter, "true"]);
+    await finished(log, 2);
+    expect(readFileSync(log, "utf8")).toContain("rows=2");
   });
 
   test("BR-2167: --timeout must be a positive number and needs --wait", () => {

@@ -89,10 +89,14 @@ export function runHooksInBackground(ctx: HookContext, commands: readonly string
   const fd = openSync(logPath, "w");
   // Each command runs in its own subshell; its exit code is written to the log after its output.
   const script = commands.map((c, i) => `(\n${c}\n); echo "[hook ${i + 1}/${commands.length} exited $?]"`).join("\n");
+  // reason: the whole batch is recorded in one transaction before any command can finish, so a reader never sees
+  // part of a batch whose recorded commands have all exited and takes it for finished (BR-2166, issue #38)
+  ctx.db.db
+    .transaction(() => commands.forEach((command, i) => ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit: null, background: true, log: logPath, index: i + 1, batch })))
+    .immediate();
   const p = Bun.spawn(["sh", "-c", script], { cwd: ctx.cwd, env: envFor(ctx), stdout: fd, stderr: fd, stdin: "ignore" });
   p.unref();
   closeSync(fd);
-  commands.forEach((command, i) => ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit: null, background: true, log: logPath, index: i + 1, batch }));
   return logPath;
 }
 
@@ -122,18 +126,19 @@ const REVIEW_LINE = /^code-review:.*$/gm;
 /**
  * Reads the exit codes of the latest background batch from its log and records each finished command once as a
  * `hook.exit` event (BR-2137). Returns the batch, or undefined when no background run recorded a log path.
- * With `change`, the batch is that change's latest landing instead of the latest of all (BR-2166).
+ * With `change`, the batch is that change's latest landing instead of the latest of all (BR-2166); with `log`, it is
+ * the batch of that log, which is how a wait keeps reading the batch it started with (BR-2167, issue #39).
  */
-export function settleBackgroundHooks(db: CoordDb, actor: string, change?: string): BackgroundBatch | undefined {
+export function settleBackgroundHooks(db: CoordDb, actor: string, change?: string, log?: string): BackgroundBatch | undefined {
   // reason: a landing releases its queue turn before it records its batch, so a later landing's rows can be written
   // first; the queue entry, not the event id, says which landing came last (BR-2138, issue #28)
   const latest = db.db
-    .query<{ detail: string }, [string | null]>(
-      "SELECT detail FROM events WHERE kind = 'hook.run' AND json_extract(detail, '$.log') IS NOT NULL AND (?1 IS NULL OR subject = ?1) ORDER BY json_extract(detail, '$.batch') DESC, id DESC LIMIT 1",
+    .query<{ detail: string }, [string | null, string | null]>(
+      "SELECT detail FROM events WHERE kind = 'hook.run' AND json_extract(detail, '$.log') IS NOT NULL AND (?1 IS NULL OR subject = ?1) AND (?2 IS NULL OR json_extract(detail, '$.log') = ?2) ORDER BY json_extract(detail, '$.batch') DESC, id DESC LIMIT 1",
     )
-    .get(change ?? null);
+    .get(change ?? null, log ?? null);
   if (!latest) return undefined;
-  const log = (JSON.parse(latest.detail) as { log: string }).log;
+  log = (JSON.parse(latest.detail) as { log: string }).log;
   const runs = db.db
     .query<{ subject: string | null; detail: string }, [string]>("SELECT subject, detail FROM events WHERE kind = 'hook.run' AND json_extract(detail, '$.log') = ? ORDER BY id")
     .all(log)
@@ -198,9 +203,13 @@ export const AFTER_LAND_WAIT_MS = 20 * 60_000;
  */
 export async function waitBackgroundHooks(db: CoordDb, actor: string, change: string | undefined, timeoutMs: number, pollMs = 1000): Promise<BackgroundBatch | undefined> {
   const deadline = Date.now() + timeoutMs;
+  let log: string | undefined;
   for (;;) {
-    const b = settleBackgroundHooks(db, actor, change);
+    // reason: after the first read the wait stays on that batch; picking the latest again would switch to a landing
+    // that finished meanwhile and hide this one's result (issue #39)
+    const b = settleBackgroundHooks(db, actor, change, log);
     if (!b) return undefined;
+    log = b.log;
     if (!b.logFound || b.commands.every((c) => c.exit !== null) || Date.now() >= deadline) return b;
     await Bun.sleep(Math.min(pollMs, Math.max(0, deadline - Date.now())));
   }
