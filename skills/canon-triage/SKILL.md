@@ -1,0 +1,83 @@
+---
+name: canon-triage
+description: "Use when triaging open GitHub issues, especially the ones canon's post-land code review files with the canon-review label, or when an issue or a large piece of work has to become canon changes. Triggers: 'triage', 'triage issues', 'review issues', 'canon-review', 'what's open', 'break this into issues', '处理 issue', '分拣 issue', '看看 issue', '拆成变更'. Ends in a closed issue, a fix, a canon change (C-n) or a decision (D-n). NOT for debugging one known bug (use canon-diagnose)."
+---
+
+# Triage (canon)
+
+Every open issue leaves triage with exactly one outcome: closed with a reason, fixed, turned into a canon change, or rejected by a decision. An issue that is only read and left open has not been triaged. The agent decides; only direction or a decision reserved for humans goes to `canon human ask`, and work on the other issues continues meanwhile (P7).
+
+## 1. Collect
+
+```
+gh issue list --label canon-review --state open --json number,title,createdAt   # oldest first
+gh issue view <n> --comments
+```
+
+Without a label filter the same steps apply to any issue. For each one, before judging it:
+
+- Read earlier comments, so nothing already established is redone.
+- `canon search <concept>` and `canon decision list`: a decision may already reject this request, or an open change may already cover it. Match by concept, not keyword ("night theme" matches a decision about dark mode).
+- `canon context <path>` for the code it names: the domain's rules say what the code must do, which is what "wrong" means.
+
+## 2. Reproduce before anything else
+
+Before forming an opinion, attempt reproduction: follow the reporter's steps, trace the code path, run the command or write the failing test. A canon-review issue names a file, a line and the input or interleaving under which it fails; check that scenario is real at current main (`git log` since the commit it names: it may already be fixed). For a race, force the interleaving in a test (two processes, a barrier, a pre-seeded state) rather than hoping to hit it.
+
+Record one of three results in an issue comment, with the commands and their output:
+
+- **Reproduced**: the code path from the entry point to the wrong result.
+- **Not reproduced**: what was tried, at which commit.
+- **Insufficient detail**: what is missing. A review-filed issue has no reporter to ask, so either fill the gap yourself (read the diff it cites) or close it as not reproducible with what you tried; it can be reopened.
+
+## 3. Decide the outcome
+
+| Situation | Outcome |
+|-----------|---------|
+| Not reproducible, or already fixed on main | `gh issue close <n> --reason "not planned" --comment "<what was tried, at which commit>"` |
+| Same root cause as another issue | comment `Duplicate of #m: <why it is the same root cause>`, then close it the same way. One root cause, one issue. |
+| Matches a decision that rejected it | comment linking the decision and its reason, close; add the issue number to that decision's 背景 in your next commit |
+| Reproduced and simple: at most 2 files, a test proves it, no rule's meaning changes | fix now (section 4, small) |
+| Reproduced, bigger | a canon change (section 4) |
+| A request that should not be done | a decision (section 5) |
+| Needs direction, or a decision reserved for humans (money, irreversible on shared scope, a person's credentials) | `canon human ask "<question with the options>"`; comment on the issue that it waits on that question; move on |
+
+## 4. Turn it into a change
+
+Every code change goes through a change, small ones included: `canon work start --title "<what will be true afterwards>"`.
+
+The change file is the agent brief: the contract a later session works from, possibly weeks later after the code has moved. It describes the behaviour contract, not file paths or line numbers, which go stale.
+
+- `## 为什么`: the issue number, the current behaviour (for a bug, the broken behaviour and the reproduced scenario) and why it matters.
+- `## 要改什么`: the desired behaviour, including edge and error cases; which rules change or are added (write them per `canon-rules`: condition → outcome, examples on both sides of the boundary); what is explicitly out of scope, so the implementer does not gold-plate or guess at adjacent features.
+- `## 任务`: checkable tasks; the regression test named after the rule it proves (`it("BR-n: ...")`) is one of them.
+
+Bad brief: "fix the bug around line 150 of the handler". Good brief: "a second session opening an old database at the same time succeeds; the missing column is added once; neither command exits 4".
+
+After `canon work land` succeeds, close the issue with where it was fixed:
+
+```
+gh issue close <n> --reason completed --comment "C-n 修复（main <sha>）：<one line>, <rule id>"
+```
+
+### Large work: vertical slices
+
+When an issue or plan is too big for one change, split it into **vertical slices**, one change each: a narrow but complete path through every layer (command, storage, output, test), verifiable on its own from the real entry point. Not horizontal layers ("all the schema first"). Prefer many thin slices; state in each change's 为什么 which slices must land first.
+
+Mark each slice as one an agent can finish alone, or one that needs a human (a direction choice, a credential, a manual check only a person can do). Prefer the first kind; for the second, ask the specific question with `canon human ask` and keep the rest moving. Do not present the breakdown for approval and wait: decide it, write it down, start.
+
+## 5. Record a rejection as a decision
+
+A request rejected only in an issue comment will be filed again and argued again. Record it by **concept**, so the next request is recognised even in different words:
+
+1. `canon search <concept>`: if a decision already covers it, link it (section 3) instead of writing another.
+2. Otherwise `canon decision new --title "不做：<concept>"`: 背景 lists the issues that asked for it; 方案 gives doing it and not doing it, each with its reason; 决定 states the durable reason (scope, a constraint, an earlier decision), not a temporary one ("busy now" is a deferral, not a rejection; leave that issue open); 后果 says what would make it worth revisiting.
+3. Comment on the issue linking the decision, then close it with `--reason "not planned"`.
+
+If a later issue makes the case again and it is now right, supersede the decision (`canon decision new --supersedes D-n`) and treat the issue as a normal change.
+
+## Done when
+
+- [ ] Every open issue in scope has a reproduction result comment and exactly one outcome.
+- [ ] Each change file states current behaviour, desired behaviour, rules, and out of scope, with no file paths or line numbers.
+- [ ] Every rejection is a decision, and the closed issue links it.
