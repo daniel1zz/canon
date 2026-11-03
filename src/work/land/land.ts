@@ -4,7 +4,7 @@ import type { Say, Workspace } from "../workspace.ts";
 import { check, type Finding } from "../../knowledge/check/check.ts";
 import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../../knowledge/check/sources.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
-import { keepClaim, releaseOwnClaim, renewClaim } from "../claims/claims.ts";
+import { bindToLander, keepClaim, releaseOwnClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
 import { dropHandoff } from "../session/handoffs.ts";
 import { enqueue, failIfActive, finishEntry, heartbeat, tryTurn } from "./queue.ts";
 import { selfProcess, sessionProcess } from "../claims/liveness.ts";
@@ -76,7 +76,10 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
 
   // Same-file overlap with other changes in flight: a notice only, never a refusal (BR-2062).
   noticeOverlaps(ws, wt, subject, "land", say);
-  const entry = enqueue(ws.db, wt, subject, ws.actor, selfProcess());
+  const lander = selfProcess();
+  const entry = enqueue(ws.db, wt, subject, ws.actor, lander);
+  // The claim names this lander until the landing ends, so the session exiting meanwhile frees it to no one (BR-2142, issue #17).
+  const bound = lander ? bindToLander(ws.db, wt, ws.actor, lander) : undefined;
   const running: Running = {};
   // A lander killed by a signal (a tool timeout, Ctrl-C) gives its turn up at once and leaves no rebase half done (BR-2099).
   const onSignal = (signal: NodeJS.Signals) => {
@@ -85,6 +88,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     // A signal after main moved leaves the landed entry as it is: the landing happened.
     // reason: an interruption, not a check's verdict, so it is its own event kind and no check in `canon stats` (BR-2067).
     if (failIfActive(ws.db, entry, "killed")) ws.db.event(ws.actor, "land.killed", subject, { signal, rebaseAborted: aborted });
+    if (bound) unbindFromLander(ws.db, bound);
     process.exit(signal === "SIGINT" ? 130 : 143);
   };
   process.on("SIGTERM", onSignal);
@@ -92,6 +96,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   try {
     return await queueAndLand(ws, opts, say, { entry, subject, branch: branch.value, running });
   } finally {
+    if (bound) unbindFromLander(ws.db, bound);
     process.off("SIGTERM", onSignal);
     process.off("SIGINT", onSignal);
   }

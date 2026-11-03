@@ -8,6 +8,7 @@ import { readCorpus } from "../../knowledge/documents/read.ts";
 import { clean, start, stop } from "../session/session.ts";
 import { land, LAND_MARKER } from "./land.ts";
 import { ensureGuard } from "../../cli/install/githook.ts";
+import { processOf, type Proc } from "../claims/liveness.ts";
 
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
@@ -525,6 +526,67 @@ describe("the claim during a landing", () => {
     expect(claims(other.db).map((c) => [c.subject, c.actor])).toEqual([[s.change, "agent:b"]]);
     expect(handoffs(other.db).map((h) => h.next)).toEqual(["mine now"]);
     expect(lines.join("\n")).toContain("claimed by another session now");
+  });
+});
+
+describe("the claim names the lander while it lands", () => {
+  async function deadProcess(): Promise<Proc> {
+    const p = Bun.spawn(["sleep", "30"]);
+    const proc = processOf(p.pid);
+    if (!proc) throw new Error("no start time for a live child");
+    p.kill("SIGKILL");
+    await p.exited;
+    return proc;
+  }
+  const pidOf = (root: string, change: string) => ws(root).db.db.query<{ pid: number | null }, [string]>("SELECT pid FROM claims WHERE subject = ?").get(change)?.pid;
+  // reason: outside Claude Code, land keeps the session process the claim already names (BR-2100), so a test can set it.
+  async function landingAsSession(session: Proc | null, body: (root: string, s: { change: string; worktree: string }, landing: Promise<unknown>) => Promise<void>) {
+    const saved = process.env["CLAUDECODE"];
+    delete process.env["CLAUDECODE"];
+    try {
+      const root = project();
+      const s = startNew(root, "Session exits");
+      ws(root).db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(session?.pid ?? null, session?.start ?? null, s.change);
+      const other = ws(root, "agent:b");
+      const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
+      expect(tryTurn(other.db, ahead).mine).toBe(true);
+      const landing = land(ws(s.worktree), FAST, quiet);
+      await Bun.sleep(300);
+      await body(root, s, (async () => { finishEntry(other.db, ahead, "landed", "x"); return landing; })());
+    } finally {
+      if (saved === undefined) delete process.env["CLAUDECODE"];
+      else process.env["CLAUDECODE"] = saved;
+    }
+  }
+
+  test("BR-2142: a session that exits while its landing waits does not free the claim until the landing ends", async () => {
+    await landingAsSession(await deadProcess(), async (root, s, landing) => {
+      expect(pidOf(root, s.change)).toBe(process.pid); // the lander, which is this test process
+      expect(takeClaim(ws(root, "agent:b").db, s.change, s.worktree, "agent:b").ok).toBe(false);
+      expect(((await landing) as { kind: string }).kind).toBe("landed");
+      expect(takeClaim(ws(root, "agent:b").db, s.change, s.worktree, "agent:b").ok).toBe(true); // the session is gone
+    });
+  });
+
+  test("BR-2142: a session still running names the claim again after the landing, so it still binds", async () => {
+    const session = Bun.spawn(["sleep", "30"]);
+    try {
+      await landingAsSession(processOf(session.pid)!, async (root, s, landing) => {
+        expect(((await landing) as { kind: string }).kind).toBe("landed");
+        expect(pidOf(root, s.change)).toBe(session.pid);
+        expect(takeClaim(ws(root, "agent:b").db, s.change, s.worktree, "agent:b").ok).toBe(false);
+      });
+    } finally {
+      session.kill();
+    }
+  });
+
+  test("BR-2142: a lease-only claim names no process during or after the landing", async () => {
+    await landingAsSession(null, async (root, s, landing) => {
+      expect(pidOf(root, s.change)).toBeNull();
+      expect(((await landing) as { kind: string }).kind).toBe("landed");
+      expect(pidOf(root, s.change)).toBeNull();
+    });
   });
 });
 

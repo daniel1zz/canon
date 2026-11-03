@@ -166,6 +166,41 @@ export function keepClaim(db: CoordDb, worktree: string, actor: string, leaseMs 
   db.db.query("UPDATE claims SET expires_at = ?, version = version + 1 WHERE worktree = ? AND holder = ?").run(iso(new Date(now().getTime() + leaseMs)), worktree, actor);
 }
 
+/** The session process a claim named before a landing bound it to the lander; what `unbindFromLander` puts back. */
+export interface LanderBinding {
+  readonly worktree: string;
+  readonly actor: string;
+  readonly lander: Proc;
+  readonly prior: { readonly pid: number; readonly pid_start: string };
+}
+
+/**
+ * While a landing runs, the claim this actor holds in this worktree names the lander's own process instead of
+ * the session's, so a session that exits mid-landing does not free the claim to another session (BR-2142).
+ * Only a claim that names a process is bound: a lease-only claim never frees on a process's exit anyway.
+ * Undefined when nothing was bound.
+ */
+export function bindToLander(db: CoordDb, worktree: string, actor: string, lander: Proc): LanderBinding | undefined {
+  const tx = db.db.transaction((): LanderBinding | undefined => {
+    const cur = db.db.query<{ pid: number | null; pid_start: string | null }, [string, string]>("SELECT pid, pid_start FROM claims WHERE worktree = ? AND holder = ?").get(worktree, actor);
+    if (!cur || cur.pid === null || cur.pid_start === null) return undefined;
+    db.db.query("UPDATE claims SET pid = ?, pid_start = ?, version = version + 1 WHERE worktree = ? AND holder = ?").run(lander.pid, lander.start, worktree, actor);
+    return { worktree, actor, lander, prior: { pid: cur.pid, pid_start: cur.pid_start } };
+  });
+  return tx.immediate();
+}
+
+/**
+ * Ends a landing's binding: the claim names the session process again, if it still names this lander. A session
+ * that exited meanwhile thus frees the claim the moment the landing ends (BR-2100, BR-2142); a holder that renewed
+ * under a new session process during the landing keeps that one.
+ */
+export function unbindFromLander(db: CoordDb, b: LanderBinding): void {
+  db.db
+    .query("UPDATE claims SET pid = ?, pid_start = ?, version = version + 1 WHERE worktree = ? AND holder = ? AND pid = ? AND pid_start = ?")
+    .run(b.prior.pid, b.prior.pid_start, b.worktree, b.actor, b.lander.pid, b.lander.start);
+}
+
 /** Releases the claim only if this actor still holds it in this worktree; false when someone else holds it now (BR-2108). */
 export function releaseOwnClaim(db: CoordDb, subject: string, worktree: string, actor: string): boolean {
   const gone = db.db.query("DELETE FROM claims WHERE subject = ? AND worktree = ? AND holder = ?").run(subject, worktree, actor).changes > 0;
