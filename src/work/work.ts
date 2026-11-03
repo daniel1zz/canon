@@ -14,7 +14,7 @@ import { readCorpus } from "../knowledge/read.ts";
 import { createDoc, setMeta } from "../knowledge/write.ts";
 import { worktreesDirOf } from "../repo/config.ts";
 import { git, isClean, listWorktrees } from "../repo/git.ts";
-import { reviewPrompt, runReview } from "../review/review.ts";
+import { reviewPrompt, runReview, type DeletedDoc } from "../review/review.ts";
 
 /**
  * The work flow (design §6): one change, one worktree, one agent from start to land.
@@ -257,17 +257,31 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const head = git(wt, "rev-parse", "HEAD");
   if (!head.ok) return refuse("main-moved", head.error.message);
 
-  const knowledge = git(wt, "diff", "--name-only", base.value, head.value, "--", "canon/rules", "canon/decisions");
-  const changedDocs = knowledge.ok ? read.corpus.docs.filter((d) => knowledge.value.split("\n").includes(d.path)) : [];
-  if (changedDocs.length > 0) {
+  // Every added, edited or deleted file under canon/rules or canon/decisions is reviewed (BR-2009): rule and
+  // decision documents by their new text, deleted ones by the text they had on main, domain READMEs whole.
+  const knowledge = git(wt, "diff", "--name-status", "--no-renames", base.value, head.value, "--", "canon/rules", "canon/decisions");
+  const entries = knowledge.ok && knowledge.value !== "" ? knowledge.value.split("\n").map((l) => ({ status: l[0]!, path: l.slice(l.indexOf("\t") + 1) })) : [];
+  const live = new Set(entries.filter((e) => e.status !== "D").map((e) => e.path));
+  const changedDocs = read.corpus.docs.filter((d) => live.has(d.path));
+  const deleted: DeletedDoc[] = entries
+    .filter((e) => e.status === "D" && e.path.endsWith(".md") && !e.path.endsWith("/README.md"))
+    .map((e) => {
+      const old = git(wt, "show", `${base.value}:${e.path}`);
+      const id = e.path.split("/").pop()!.match(/^[A-Z][A-Z0-9]*-\d+/)?.[0] ?? e.path;
+      return { id, path: e.path, text: old.ok ? old.value : "" };
+    });
+  const readmes = read.corpus.domains.filter((dom) => live.has(dom.path)).map((dom) => dom.name);
+  const deletedReadmes = entries.filter((e) => e.status === "D" && e.path.endsWith("/README.md")).map((e) => e.path);
+  const reviewed = [...changedDocs.map((d) => d.id), ...deleted.map((d) => `${d.id} (deleted)`), ...readmes.map((n) => `${n} README`), ...deletedReadmes.map((p) => `${p} (deleted)`)];
+  if (reviewed.length > 0) {
     if (!ws.config.review) {
-      say(`review: not configured — ${changedDocs.map((d) => d.id).join(", ")} land without a rule review`);
-      ws.db.event(ws.actor, "review.skip", subject, { docs: changedDocs.map((d) => d.id) });
+      say(`review: not configured — ${reviewed.join(", ")} land without a rule review`);
+      ws.db.event(ws.actor, "review.skip", subject, { docs: reviewed });
     } else {
-      say(`review: ${changedDocs.map((d) => d.id).join(", ")}`);
-      const v = await runReview(ws.config.review, wt, reviewPrompt(wt, read.corpus, changedDocs));
+      say(`review: ${reviewed.join(", ")}`);
+      const v = await runReview(ws.config.review, wt, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes }));
       if (!v.ok) return refuse("review", `the rule review could not run: ${v.error.message}`);
-      ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: changedDocs.map((d) => d.id), findings: v.value.findings });
+      ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings });
       if (v.value.verdict === "block") return refuse("review", `rule review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
       for (const f of v.value.findings) say(`review note: ${f}`);
     }

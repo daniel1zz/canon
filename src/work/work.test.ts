@@ -162,6 +162,38 @@ describe("rule review at land", () => {
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'review.skip'").get()?.n).toBe(1);
   });
 
+  test("BR-2009: changing only a domain README is reviewed, and a block refuses it", async () => {
+    const { root, promptFile } = reviewedProject("block");
+    const before = sh(root, "rev-parse", "main");
+    const s = startNew(root, "Readme only");
+    writeFileSync(join(s.worktree, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\nRules here are optional.\n");
+    sh(s.worktree, "commit", "-qam", "readme");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(readFileSync(promptFile, "utf8")).toContain("Rules here are optional.");
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+  });
+
+  test("BR-2009: deleting a rule file is reviewed with the text it had on main, and a block refuses it", async () => {
+    const { root, promptFile } = reviewedProject("ok");
+    const id = ["BR", 1].join("-");
+    const seed = startNew(root, "Seed rule");
+    writeFileSync(join(seed.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds within 30 days.\n`);
+    sh(seed.worktree, "add", "-A");
+    sh(seed.worktree, "commit", "-qm", "rule");
+    expect((await land(ws(seed.worktree), FAST, quiet)).kind).toBe("landed");
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: 'cat > ${promptFile}; echo ''{"verdict":"block","findings":["deleting it drops a promise"]}'''\n`);
+    sh(root, "commit", "-qam", "blocking reviewer");
+    const s = startNew(root, "Delete rule");
+    sh(s.worktree, "rm", "-q", `canon/rules/billing/${id}.md`);
+    sh(s.worktree, "commit", "-qm", "delete");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    const prompt = readFileSync(promptFile, "utf8");
+    expect(prompt).toContain(`## ${id} — deleted canon/rules/billing/${id}.md`);
+    expect(prompt).toContain("Refunds within 30 days.");
+  });
+
   test("BR-2010: the reviewer is not asked when no rule or decision text changed", async () => {
     const { root, promptFile } = reviewedProject("block");
     const s = startNew(root, "Code only");

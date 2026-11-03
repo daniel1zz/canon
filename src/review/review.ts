@@ -12,7 +12,21 @@ export interface ReviewVerdict {
   readonly findings: readonly string[];
 }
 
-export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc[]): string {
+/** A rule or decision file the landing deletes, with the text it had on main. */
+export interface DeletedDoc {
+  readonly id: string;
+  readonly path: string;
+  readonly text: string;
+}
+
+export interface ReviewExtras {
+  readonly deleted?: readonly DeletedDoc[];
+  /** Domains whose README the landing changes; the review sees each whole domain. */
+  readonly readmes?: readonly string[];
+  readonly deletedReadmes?: readonly string[];
+}
+
+export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras = {}): string {
   const parts: string[] = [
     "You review changes to a project's rules and decisions. Rules are the current truth of what the product must do; decisions record why.",
     "Block only for: a rule that contradicts another active rule (in any domain: see the rule index) or an accepted decision; a rule a test cannot decide (vague, no boundary, examples that do not pin the boundary); a decision without the options it rejected.",
@@ -23,7 +37,17 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
     "# Changed documents (new text)",
   ];
   for (const d of changed) parts.push(`## ${d.id} ${d.title} (${d.kind}${"status" in d ? `, ${d.status}` : ""})\n\n${d.body.trim()}\n`);
+  if (extras.deleted?.length || extras.deletedReadmes?.length) {
+    parts.push("# Deleted documents (text on main before this landing; deleting a rule removes a behaviour the product promised, retiring it keeps the record)");
+    for (const d of extras.deleted ?? []) parts.push(`## ${d.id} — deleted ${d.path}\n\n${d.text.trim()}\n`);
+    for (const p of extras.deletedReadmes ?? []) parts.push(`## deleted domain README ${p}\n`);
+  }
+  if (extras.readmes?.length) parts.push(`# Domain READMEs changed: ${extras.readmes.join(", ")} (their new text is in the current context below)`);
   const seen = new Set<string>();
+  for (const name of extras.readmes ?? []) {
+    seen.add(name);
+    parts.push(`# Current context for ${name}\n\n${renderContext(root, contextFor(corpus, name))}`);
+  }
   for (const d of changed) {
     const target = d.kind === "rule" ? d.domain : d.id;
     if (seen.has(target)) continue;
