@@ -123,6 +123,30 @@ describe("canon check", () => {
     expect(findings.map((f) => `${f.rule} ${f.path}`).sort()).toEqual(["file-invalid canon/rules/a/README.md", "file-invalid canon/rules/b/README.md"]);
   });
 
+  test("BR-2004: a decision id named bare in a change body, or a decision's supersedes naming nothing, is reported on that file", () => {
+    const dec = (n: number, extra: string) => `---\nid: ${d(n)}\ntitle: X\nstatus: proposed\n${extra}---\n## 背景\n\nx\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nB.\n`;
+    const root = repo({
+      "canon/rules/billing/README.md": domainReadme,
+      "canon/changes/C-1-a.md": `---\nid: C-1\ntitle: A\nrules: []\n---\n## 为什么\n\nAs ${d(99)} said; example only: \`${d(98)}\`.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n`,
+      [`canon/decisions/${d(1)}.md`]: dec(1, `supersedes: ${d(97)}\n`),
+      [`canon/decisions/${d(2)}.md`]: dec(2, `supersedes: ${d(1)}\n`),
+    });
+    const got = check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "ref-dangling").map((f) => `${f.path} ${f.message}`).sort();
+    expect(got).toEqual([`canon/changes/C-1-a.md names ${d(99)}, which does not exist`, `canon/decisions/${d(1)}.md names ${d(97)}, which does not exist`]);
+  });
+
+  test("BR-2150: a backlog id that is no change is reported by line; a done or a dropped change is not", () => {
+    const change = (n: number, status: string) => `---\nid: C-${n}\ntitle: X\nstatus: ${status}\nrules: []\n---\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n## 任务\n\n- [ ] x\n`;
+    const root = repo({
+      "canon/rules/billing/README.md": domainReadme,
+      "canon/changes/C-1.md": change(1, "done"),
+      "canon/changes/C-2.md": change(2, "dropped"),
+      "canon/backlog.md": `- C-1\n- C-2\n- ${["C", 99].join("-")}\n`,
+    });
+    const got = check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "ref-dangling").map((f) => `${f.path}: ${f.message}`);
+    expect(got).toEqual([`canon/backlog.md:3: lists ${["C", 99].join("-")}, which is not a change`]);
+  });
+
   test("BR-2004: a domain README naming an id that does not exist is reported on the README", () => {
     const root = repo({ "canon/rules/billing/README.md": `${domainReadme}\nSee ${br(9999)}. Example only: \`${br(9998)}\`.\n` });
     const findings = check({ root, ...readCorpus(root), testFiles: [] });
@@ -348,7 +372,7 @@ describe("code layout (D-15)", () => {
       "code-layout src/lib/other",
       "code-layout src/work/helpers",
     ]);
-    expect(kinds(root)).not.toContain("code-layout src/work/helpers"); // no code_root: no layout check
+    expect(kinds(root).filter((k) => k.startsWith("code-layout"))).toEqual([]); // no code_root: none of the above is reported
     expect(kinds(root, { codeRoot: "src", shared: ["src/lib/kernel", "src/gone", "src/index.ts"] })).not.toContain("code-layout src/index.ts"); // a shared file
     const overlap = (shared: string[]) => check({ root, ...readCorpus(root, undefined, { codeRoot: "src", shared }), testFiles: [] }).filter((f) => f.message.includes("overlaps")).map((f) => f.message);
     expect(overlap(["src/work"])).toEqual(["work", "work/drop", "work/land"].map((n) => `shared path src/work overlaps the directory src/${n} of domain ${n}`));
