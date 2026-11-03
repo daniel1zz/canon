@@ -56,6 +56,14 @@ describe("canon stats", () => {
     const df = computeStats(deferred.value, {}, "2026-11-03");
     expect([of(df, "floor").runs, of(df, "floor").refused, of(df, "check").runs, of(df, "check").refused]).toEqual([2, 0, 3, 1]); // BR-2218: the background floor's runs
 
+    const cfg = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
+    if (!cfg.ok) throw new Error(cfg.error.message);
+    for (let i = 0; i < 2; i++) cfg.value.event("agent:a", "land.ok", `C-${i + 1}`, { floor_deferred: true });
+    cfg.value.event("agent:a", "land.refuse", "C-3", { reason: "config", floor_deferred: true });
+    cfg.value.event("agent:a", "land.ok", "C-4", {});
+    const cf = computeStats(cfg.value, {}, "2026-11-03");
+    expect([of(cf, "config").runs, of(cf, "config").refused]).toEqual([3, 1]); // BR-2224: only after-mode landings run it
+
     const src = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
     if (!src.ok) throw new Error(src.error.message);
     for (let i = 0; i < 2; i++) src.value.event("agent:a", "land.ok", `C-${i + 1}`, {});

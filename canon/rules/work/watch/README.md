@@ -1,6 +1,6 @@
 # 先合后测（work/watch）
 
-项目把 `floor_timing` 设成 `after` 时，合入不等 floor：rebase、每个变更自己的检查（`canon check`、来源核对、规则评审、`before_land`）通过后 main 就前移，floor 改为在后台对 main 的最新提交跑；没通过时不追查是哪个变更造成的，由下一个空闲会话针对失败去修（向前修，D-31）。默认的 `before` 是先测再合（BR-2014），这个领域的规则在 `before` 下都不起作用。
+项目把 `floor_timing` 设成 `after` 时，合入不等 floor：rebase、每个变更自己的检查（`canon check`、来源核对、规则评审、`before_land`）通过后 main 就前移，floor 改为在后台对 main 的最新提交跑；没通过时不追查是哪个变更造成的，由下一个空闲会话针对失败去修（向前修，D-31）。因为 PATH 上的 canon 只从通过的提交构建，`after` 下的合入还要确认 PATH 上的 canon 读得了合入后的配置（BR-2224）：新配置项先合入，main 通过后再启用。默认的 `before` 是先测再合（BR-2014），这个领域的规则在 `before` 下都不起作用。
 
 ## 术语
 

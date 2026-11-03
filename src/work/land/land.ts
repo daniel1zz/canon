@@ -18,7 +18,7 @@ import { setMeta } from "../../knowledge/documents/write.ts";
 import { hasLessons, LESSONS_SECTION } from "../../knowledge/documents/templates.ts";
 import { git, gitEnv, isClean, listWorktrees } from "../../kernel/git.ts";
 import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, type DeletedDoc } from "../../knowledge/review/review.ts";
-import { ensureWatcher, timingOf } from "../watch/watch.ts";
+import { ensureWatcher, pathCanonReads, timingOf } from "../watch/watch.ts";
 
 /**
  * Landing (design §6): queue → rebase onto main → floor → canon check → sources → review → before_land →
@@ -38,7 +38,7 @@ export interface LandOptions {
 
 export type LandOutcome =
   | { readonly kind: "landed"; readonly sha: string; readonly change: string | null; readonly finished: boolean }
-  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "lost-turn" | "no-floor" | "no-claim" | "lessons" | "on-main" | "environment"; readonly message: string; readonly findings?: readonly Finding[] }
+  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "config" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "lost-turn" | "no-floor" | "no-claim" | "lessons" | "on-main" | "environment"; readonly message: string; readonly findings?: readonly Finding[] }
   | { readonly kind: "timeout"; readonly ahead: number };
 
 /**
@@ -362,6 +362,10 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   // With floor_timing after, the floor runs on main in the background once main has moved, so this landing runs
   // only its own steps and joins no batch; the landing tree decides, as it decides the floor command (BR-2218, D-31).
   floorDeferred = timingOf(wt) === "after";
+  if (floorDeferred) {
+    const readable = pathCanonReads(wt);
+    if (!readable.ok) return refuse("config", readable.error.message);
+  }
 
   // Landings waiting right behind this one are tested with it under one floor run (BR-2172, D-26); a batch that
   // does not land as a whole sends them back to land on their own, and this landing goes on alone (BR-2173).

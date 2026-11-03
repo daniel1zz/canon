@@ -1,5 +1,6 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, writeFileSync } from "node:fs";
+import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { land } from "../land/land.ts";
 import { enqueue, finishEntry } from "../land/queue.ts";
@@ -41,6 +42,23 @@ async function backgroundResult(root: string, sha: string): Promise<string | und
   }
   return undefined;
 }
+
+// reason: an after-mode landing runs the canon on PATH (BR-2224); these tests put their own one first on PATH, so
+// they do not depend on what canon this machine has installed.
+const FAKE_BIN = mkdtempSync(join(tmpdir(), "canon-fake-bin-"));
+const FAKE_CANON = join(FAKE_BIN, "canon");
+const fakeCanon = (script: string) => {
+  writeFileSync(FAKE_CANON, `#!/bin/sh\n${script}\n`);
+  chmodSync(FAKE_CANON, 0o755);
+};
+const realPath = process.env["PATH"];
+beforeAll(() => {
+  fakeCanon("exit 0");
+  process.env["PATH"] = `${FAKE_BIN}:${realPath}`;
+});
+afterAll(() => {
+  process.env["PATH"] = realPath;
+});
 
 describe("landing with floor_timing: after", () => {
   test("BR-2218: a floor that fails does not stop the landing: main moves, land.ok says floor_deferred, the floor is not run, and the background floor starts on the new main", async () => {
@@ -120,5 +138,66 @@ describe("landing with floor_timing: after", () => {
       [true, undefined, undefined],
     ]);
     expect(await backgroundResult(root, sh(root, "rev-parse", "main"))).toBe("floor.pass");
+  });
+});
+
+describe("the canon on PATH reads the landing's config in after mode", () => {
+  test("BR-2224: a PATH canon that cannot read the config refuses the landing with reason config, naming its path, exit code and error; main stays", async () => {
+    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\n");
+    const before = sh(root, "rev-parse", "main");
+    const s = startNew(root, "New key");
+    commitFile(s.worktree, "new.txt", "x\n");
+    fakeCanon("echo \"canon: canon/config.yaml: unknown key \\`brand_new\\`\" >&2; exit 2");
+    try {
+      const out = await land(ws(s.worktree), FAST, quiet);
+      expect(out.kind === "refused" && out.reason).toBe("config");
+      const message = out.kind === "refused" ? out.message : "";
+      expect(message).toContain(FAKE_CANON);
+      expect(message).toContain("exited 2");
+      expect(message).toContain("unknown key");
+      expect(sh(root, "rev-parse", "main")).toBe(before);
+      expect(events(root, "land.refuse").at(-1)).toMatchObject({ reason: "config", floor_deferred: true });
+    } finally {
+      fakeCanon("exit 0");
+    }
+  });
+
+  test("BR-2224: a PATH canon that reads the config lets the landing go ahead", async () => {
+    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\n");
+    const s = startNew(root, "Fine");
+    commitFile(s.worktree, "new.txt", "x\n");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind).toBe("landed");
+  });
+
+  test("BR-2224: no canon on PATH refuses the landing with reason config", async () => {
+    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\n");
+    const before = sh(root, "rev-parse", "main");
+    const s = startNew(root, "No canon");
+    commitFile(s.worktree, "new.txt", "x\n");
+    const w = ws(s.worktree);
+    // reason: git and sh are in /usr/bin and /bin, canon is not
+    process.env["PATH"] = "/usr/bin:/bin";
+    try {
+      const out = await land(w, FAST, quiet);
+      expect(out.kind === "refused" && out.reason).toBe("config");
+      expect(out.kind === "refused" ? out.message : "").toContain("canon is not on PATH");
+    } finally {
+      process.env["PATH"] = `${FAKE_BIN}:${realPath}`;
+    }
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+  });
+
+  test("BR-2224: with floor_timing before the PATH canon is not run; the floor decides", async () => {
+    const root = configured("floor: test ! -e FAIL\n");
+    const s = startNew(root, "Before");
+    commitFile(s.worktree, "new.txt", "x\n");
+    fakeCanon("exit 2");
+    try {
+      const out = await land(ws(s.worktree), FAST, quiet);
+      expect(out.kind).toBe("landed");
+    } finally {
+      fakeCanon("exit 0");
+    }
   });
 });

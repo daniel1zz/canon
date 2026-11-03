@@ -104,7 +104,9 @@ export function computeStats(db: CoordDb, reviews: Readonly<Record<string, strin
       // reason: a landing that skipped the floor reached the later stages without running it (BR-2164); a batch
       // member's floor was its leader's one run (BR-2172); with floor_timing after the floor ran in the background
       // on main, where each floor.pass and floor.fail is one run and no landing's refusal (BR-2067, D-31).
-      const ran = (r: Row) => check !== "floor" || (r.detail["floor_skipped"] !== true && r.detail["batched_by"] === undefined && r.detail["floor_deferred"] !== true);
+      // reason: config runs only in after mode, so it counts only landings that deferred the floor (BR-2224, BR-2067).
+      const ran = (r: Row) =>
+        check === "config" ? r.detail["floor_deferred"] === true : check !== "floor" || (r.detail["floor_skipped"] !== true && r.detail["batched_by"] === undefined && r.detail["floor_deferred"] !== true);
       const reachedLater = LAND_STAGES.slice(stage).flat().reduce((n, c) => n + refusalsOf(c).filter(ran).length, 0);
       runs = reachedLater + count((r) => r.kind === "land.ok" && ran(r)) + (check === "floor" ? count((r) => r.kind === "floor.pass" || r.kind === "floor.fail") : 0);
       const mine = refusalsOf(check);

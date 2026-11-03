@@ -7,6 +7,7 @@ export const LAND_STAGES: readonly (readonly string[])[] = [
   ["on-main", "no-floor", "dirty", "no-claim", "lessons"],
   ["timeout"],
   ["conflict"],
+  ["config"],
   ["floor"],
   ["check"],
   ["source"],
