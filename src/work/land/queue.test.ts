@@ -68,6 +68,7 @@ describe("batches", () => {
     const e = enqueue(d, "/wt/e", "C-4", "x", me);
     expect(tryTurn(d, lead).mine).toBe(true);
     expect(batchCandidates(d, lead, 2).map((x) => x.id)).toEqual([b, c]);
+    expect(batchCandidates(d, lead, 1).map((x) => x.id)).toEqual([b]); // land_batch_max 2: the leader and one more
     expect(joinBatch(d, lead, c, "h")).toBe(true);
     leaveBatch(d, c, true); // c lands on its own from now on (BR-2173)
     expect(batchCandidates(d, lead, 3).map((x) => x.id)).toEqual([b]); // stops at c, never takes e ahead of it
