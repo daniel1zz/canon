@@ -1,6 +1,6 @@
 ---
 name: canon-design
-description: "Use before implementing when a change needs an architecture, API, data model, system (scale, reliability) or module-boundary design, or when choosing between real alternatives. Triggers: 'design this', 'architecture', 'API design', 'data model', 'schema', '设计一下', '架构', '方案对比'. Ends in a canon decision (D-n) and rules, not a separate design document. NOT for visual UI design."
+description: "Use when deciding how something should be structured: designing a new architecture, API, data model, system (scale, reliability) or module boundary, or judging whether an existing structure, model, layout or process is the right design and how it should change ('is this the best design', 'evaluate our X', 'should we reorganise'). Also whenever choosing between real alternatives. Triggers: 'design this', 'architecture', 'API design', 'data model', 'schema', 'is this the best', 'evaluate the design', '设计一下', '架构', '方案对比', '是不是最佳', '评估一下', '该怎么改'. Ends in a canon decision (D-n) and rules, not a separate design document. NOT for visual UI design or a defect-only audit."
 ---
 
 # Design (canon)
@@ -28,7 +28,9 @@ Read only the files of the mode you need. Cross-cutting references (`references/
 
 ## 3. Design
 
-- Give at least two real options with their trade-offs, and a recommendation. Three or more options or several dimensions → reason step by step (sequential thinking) instead of a pros/cons list from memory.
+- Frame the problem before listing options: what questions must this design answer, which scenarios must it serve? When evaluating an existing design, a list of its defects is input, not the frame: a plan built only from the defect list is a patch, not a design.
+- Give at least two real options with their trade-offs, and a recommendation. Real means different designs, not one design done more or less ("fix 3 things" vs "fix 10 things" is one option). Three or more options or several dimensions → write the reasoning out dimension by dimension instead of a pros/cons list from memory.
+- Before giving the recommendation, have it challenged once by a subagent that sees the problem and the options but not your recommendation. Ask it: is the question itself framed wrong, is a genuinely different design missing, in which scenario does each option fail? Address what it raises, then recommend. Skip this only for a small design inside one module that changes no interface, and say that you skipped it and why.
 - Check current official docs before proposing any library, version or API.
 - Quantify vague goals first ("fast" → p99 under X ms at Y rps).
 - Every scenario the design serves names at least one business-level failure it must handle (limit hit, payment declined, permission revoked mid-flow, upstream outage) and how it fails loudly and recoverably; "no failure mode applies" has to be argued, not assumed.
