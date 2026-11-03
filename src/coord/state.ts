@@ -57,16 +57,27 @@ export function takeClaim(db: CoordDb, subject: string, holder: string, actor: s
  * Extends the lease of the claim this worktree holds (BR-2011): every work command in the worktree renews it,
  * so a session working longer than one lease is never taken over. Returns the claim, or undefined when the
  * worktree holds none (it may have been taken over after expiring).
+ *
+ * Only the holder renews (BR-2104): another actor running a work command in the worktree is refused while the
+ * claim still binds, and takes it over once it no longer does (lease expired or session process gone, BR-2100).
  */
-export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs = CLAIM_LEASE_MS, owner?: Proc): Claim | undefined {
-  const tx = db.db.transaction((): Claim | undefined => {
-    const cur = claimOfWorktree(db, worktree);
-    if (!cur) return undefined;
+export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs = CLAIM_LEASE_MS, owner?: Proc): Result<Claim | undefined> {
+  const tx = db.db.transaction((): Result<Claim | undefined> => {
+    const cur = db.db
+      .query<{ subject: string; holder: string; expires_at: string; pid: number | null; pid_start: string | null }, [string]>("SELECT subject, holder, expires_at, pid, pid_start FROM claims WHERE worktree = ?")
+      .get(worktree);
+    if (!cur) return ok(undefined);
+    if (cur.holder !== actor && bindsStill(cur)) {
+      db.event(actor, "claim.refuse", cur.subject, { reason: "held", by: worktree, actor: cur.holder, until: cur.expires_at });
+      return err("conflict", `${cur.subject} in ${worktree} is claimed by ${cur.holder} until ${cur.expires_at}; only that session can renew, stop, release or land it`);
+    }
     const expires = iso(new Date(now().getTime() + leaseMs));
-    db.db.query("UPDATE claims SET expires_at = ?, version = version + 1 WHERE subject = ? AND worktree = ?").run(expires, cur.subject, worktree);
     // The holder's own session may run under a new process now (a resumed session): follow it, so the claim is not freed under it.
-    if (owner && cur.actor === actor) db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(owner.pid, owner.start, cur.subject);
-    return { ...cur, expires_at: expires };
+    db.db
+      .query("UPDATE claims SET holder = ?, expires_at = ?, pid = ?, pid_start = ?, version = version + 1 WHERE subject = ?")
+      .run(actor, expires, owner?.pid ?? (cur.holder === actor ? cur.pid : null), owner?.start ?? (cur.holder === actor ? cur.pid_start : null), cur.subject);
+    db.event(actor, cur.holder === actor ? "claim.renew" : "claim.take", cur.subject, { worktree, ...(cur.holder === actor ? {} : { from: cur.holder }) });
+    return ok({ subject: cur.subject, holder: worktree, actor, expires_at: expires });
   });
   return tx.immediate();
 }

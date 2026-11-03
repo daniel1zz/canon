@@ -63,6 +63,33 @@ describe("work start", () => {
     expect(same.stdout.toString()).toContain(`cd ${s.worktree}`);
   });
 
+  test("BR-2104: in a worktree another actor holds, stop, stop --release and land are refused with exit 5; nothing changes", () => {
+    const root = project();
+    const s = startNew(root, "Held here");
+    const before = sh(root, "rev-parse", "main");
+    const cli = (actor: string, ...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "../cli/main.ts"), "work", ...args], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: actor } });
+    for (const args of [["stop", "--release", "--next", "x"], ["stop", "--next", "x"], ["land", "--finish"]]) {
+      const r = cli("agent:b", ...args);
+      expect(r.exitCode).toBe(5);
+      expect(r.stderr.toString()).toContain("claimed by agent:a");
+    }
+    expect(claims(ws(root).db).map((c) => [c.subject, c.actor])).toEqual([[s.change, "agent:a"]]);
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+    expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM handoffs").get()?.n).toBe(0);
+    expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'land.refuse'").get()?.n).toBe(0);
+    expect(cli("agent:a", "stop", "--release", "--next", "x").exitCode).toBe(0);
+    expect(claims(ws(root).db)).toEqual([]);
+  });
+
+  test("BR-2104: once the holder's lease has expired, another actor's stop in that worktree takes the claim over", () => {
+    const root = project();
+    const s = startNew(root, "Expired here");
+    const db = ws(root).db;
+    db.db.query("UPDATE claims SET expires_at = ? WHERE subject = ?").run(new Date(Date.now() - 60_000).toISOString(), s.change);
+    expect(stop(ws(s.worktree, "agent:b"), "carry on", undefined, false).ok).toBe(true);
+    expect(claims(db).map((c) => c.actor)).toEqual(["agent:b"]);
+  });
+
   test("BR-2011: work commands in the holding worktree renew the lease, so a long session is never taken over", async () => {
     const root = project();
     const s = startNew(root, "Long");

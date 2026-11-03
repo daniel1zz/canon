@@ -153,7 +153,7 @@ export interface LandOptions {
 
 export type LandOutcome =
   | { readonly kind: "landed"; readonly sha: string; readonly change: string | null; readonly finished: boolean }
-  | { readonly kind: "refused"; readonly reason: "dirty" | "conflict" | "floor" | "check" | "review" | "hook" | "main-moved" | "main-dirty" | "no-floor" | "no-claim" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
+  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "check" | "review" | "hook" | "main-moved" | "main-dirty" | "no-floor" | "no-claim" | "on-main"; readonly message: string; readonly findings?: readonly Finding[] }
   | { readonly kind: "timeout"; readonly ahead: number };
 
 /**
@@ -163,7 +163,10 @@ export type LandOutcome =
 export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<LandOutcome> {
   const wt = ws.root;
   const main = ws.config.main;
-  const claim = renewClaim(ws.db, wt, ws.actor, ws.config.claimLeaseMs, sessionProcess());
+  const renewed = renewClaim(ws.db, wt, ws.actor, ws.config.claimLeaseMs, sessionProcess());
+  // reason: another session's live claim is a claim conflict (recorded as claim.refuse, exit 5), not a landing check (BR-2104).
+  if (!renewed.ok) return { kind: "refused", reason: "claimed", message: renewed.error.message };
+  const claim = renewed.value;
   const subject = claim?.subject ?? null;
   // Every refusal, early or late, is recorded with its reason so a check's precision can be measured (P6, BR-2026).
   const early = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], message: string): LandOutcome => {
@@ -395,7 +398,10 @@ function moveMain(ws: Workspace, expected: string, next: string): "moved" | { re
 
 /** Records where the change stands so the next session can continue without a human re-briefing (P3). */
 export function stop(ws: Workspace, next: string, note: string | undefined, release: boolean, say: Say = () => {}): Result<string> {
-  const claim = release ? claimOfWorktree(ws.db, ws.root) : renewClaim(ws.db, ws.root, ws.actor, ws.config.claimLeaseMs, sessionProcess());
+  // Release too goes through the holder check: only the holder lets its claim go (BR-2104).
+  const renewed = renewClaim(ws.db, ws.root, ws.actor, ws.config.claimLeaseMs, sessionProcess());
+  if (!renewed.ok) return renewed;
+  const claim = renewed.value;
   if (!claim) return err("not_found", "this worktree holds no change; nothing to hand off");
   writeHandoff(ws.db, { subject: claim.subject, worktree: ws.root, actor: ws.actor, next, note: note ?? null });
   if (release) releaseClaim(ws.db, claim.subject, ws.actor);
