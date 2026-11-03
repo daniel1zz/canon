@@ -213,3 +213,39 @@ describe("subdomains", () => {
     expect(prompt).toContain("Queue."); // work/land's rule text, a sibling subdomain
   });
 });
+
+describe("amended decisions", () => {
+  const dec = (n: number, status: string, extra = "") => `---\nid: ${id("D", n)}\ntitle: Decision ${n}\nstatus: ${status}\n${extra}---\nAbout ${id("BR", 1)}.\n`;
+  const withAmends = (amends: string, status = "accepted") => ({
+    ...files,
+    [`canon/decisions/${id("D", 3)}.md`]: dec(3, status, `amends: ${amends}\n`),
+  });
+
+  test("BR-2139: amends lists decisions; a non-list, a missing id or a non-decision is reported by check", () => {
+    const findings = (amends: string) => check({ ...corpusOf(withAmends(amends)), testFiles: [] }).filter((f) => f.path.includes(id("D", 3)) && f.rule !== "doc-missing-section");
+    expect(findings(`[${id("D", 1)}]`)).toEqual([]);
+    expect(findings(id("D", 1)).map((f) => f.rule)).toEqual(["file-invalid"]);
+    expect(findings(`[${id("D", 99)}]`).map((f) => f.rule)).toEqual(["ref-dangling"]);
+    expect(findings(`[${id("BR", 1)}]`).map((f) => f.rule)).toEqual(["amends-not-decision"]);
+  });
+
+  test("BR-2140: context marks a decision an accepted decision amends; a proposed amendment does not count", () => {
+    const { corpus } = corpusOf(withAmends(`[${id("D", 1)}]`));
+    const out = renderContext("", contextFor(corpus, "billing"), { full: false });
+    expect(out).toContain(`- ${id("D", 1)} Why 30 days (canon/decisions/${id("D", 1)}-a.md) — partly amended by ${id("D", 3)}`);
+    expect(renderContext("", contextFor(corpus, id("D", 1)), { full: false })).toContain(`# ${id("D", 1)} Why 30 days — partly amended by ${id("D", 3)}`);
+    const proposed = corpusOf(withAmends(`[${id("D", 1)}]`, "proposed")).corpus;
+    expect(renderContext("", contextFor(proposed, "billing"), { full: false })).not.toContain("partly amended by");
+  });
+
+  test("BR-2141: the review prompt asks for amends and shows a changed decision's supersedes and amends", () => {
+    const { root, corpus } = corpusOf(withAmends(`[${id("D", 1)}]`));
+    const amending = corpus.docs.find((d) => d.id === id("D", 3))!;
+    const prompt = reviewPrompt(root, corpus, [amending]);
+    expect(prompt).toContain("must list it in `amends:`");
+    expect(prompt).toContain(`## ${id("D", 3)} Decision 3 (decision, accepted)\n\namends: ${id("D", 1)}\n`);
+    const plain = corpus.docs.find((d) => d.id === id("D", 1))!;
+    const plainPrompt = reviewPrompt(root, corpus, [plain]);
+    expect(plainPrompt).toContain(`## ${id("D", 1)} Why 30 days (decision, accepted)\n\nBecause of`);
+  });
+});

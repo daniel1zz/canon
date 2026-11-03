@@ -11,7 +11,7 @@ import { claimOfWorktree, claims } from "../work/claims/claims.ts";
 import { handoffs } from "../work/session/handoffs.ts";
 import type { CanonError, Result } from "../kernel/result.ts";
 import type { Doc, Kind } from "../knowledge/documents/model.ts";
-import { contextFor, findDoc, isIdQuery, rawText, renderContext, renderSearch, search } from "../knowledge/query/query.ts";
+import { amendedBy, contextFor, findDoc, isIdQuery, rawText, renderContext, renderSearch, search } from "../knowledge/query/query.ts";
 import { readCorpus } from "../knowledge/documents/read.ts";
 import { createDoc, createDomain, setMeta } from "../knowledge/documents/write.ts";
 import { git } from "../kernel/git.ts";
@@ -238,9 +238,11 @@ const show = defineCommand({
   args: { id: { type: "positional", required: true } },
   run({ args }) {
     const ws = workspace();
-    const doc = findDoc(corpusOf(ws).corpus, args.id);
+    const { corpus } = corpusOf(ws);
+    const doc = findDoc(corpus, args.id);
     if (!doc) fail({ code: "not_found", message: `${args.id} does not exist` });
     process.stdout.write(`${doc.path}\n\n${rawText(ws.root, doc)}`);
+    for (const d of amendedBy(corpus, doc.id)) say(`partly amended by ${d.id} ${d.title} (${d.path})`); // BR-2140
   },
 });
 

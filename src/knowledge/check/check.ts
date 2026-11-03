@@ -22,6 +22,7 @@ export type CheckRule =
   | "file-invalid" // a canon/ file does not fit the model
   | "id-duplicate" // two files claim one id
   | "ref-dangling" // a document or test names an id that does not exist
+  | "amends-not-decision" // a decision's `amends` names a document that is not a decision (BR-2139)
   | "rule-untested" // an active rule has no test and no `untested:` reason
   | "test-retired-rule" // a test still names a retired rule
   | "rule-no-statement" // an active rule has no non-empty "## 规则" section
@@ -53,8 +54,14 @@ export function check(input: CheckInput): Finding[] {
 
   for (const d of input.corpus.docs) {
     // Ids written as code (`BR-12` or inside a fenced block) are examples, not references.
-    for (const ref of idsIn(stripCode(d.body) + (d.kind === "change" ? ` ${d.rules.join(" ")}` : "") + (d.kind === "decision" && d.supersedes ? ` ${d.supersedes}` : ""))) {
+    for (const ref of idsIn(stripCode(d.body) + (d.kind === "change" ? ` ${d.rules.join(" ")}` : "") + (d.kind === "decision" && d.supersedes ? ` ${d.supersedes}` : "") + (d.kind === "decision" ? ` ${d.amends.join(" ")}` : ""))) {
       if (ref !== d.id && !byId.has(ref)) findings.push({ path: d.path, rule: "ref-dangling", message: `names ${ref}, which does not exist` });
+    }
+    if (d.kind === "decision") {
+      for (const a of d.amends) {
+        const target = input.corpus.docs.find((x) => x.id === a);
+        if (target && target.kind !== "decision") findings.push({ path: d.path, rule: "amends-not-decision", message: `amends ${a}, which is a ${target.kind}, not a decision (BR-2139)` });
+      }
     }
   }
   const { codeRoot } = input.corpus.layout;

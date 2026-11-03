@@ -43,6 +43,8 @@ export interface Decision extends Base {
   readonly kind: "decision";
   readonly status: DecisionStatus;
   readonly supersedes?: string;
+  /** Decisions this one changes in part without replacing them (BR-2139). */
+  readonly amends: readonly string[];
 }
 
 export interface Change extends Base {

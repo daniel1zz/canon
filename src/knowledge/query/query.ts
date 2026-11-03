@@ -1,6 +1,6 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
-import { stripCode, type Change, type Corpus, type Doc, type Domain, type Extra, type Rule } from "../documents/model.ts";
+import { stripCode, type Change, type Corpus, type Decision, type Doc, type Domain, type Extra, type Rule } from "../documents/model.ts";
 import { idsIn, type DocType } from "../documents/types.ts";
 
 /** Plain scan over the files: the corpus is small enough that an index would only add a second source of truth. */
@@ -64,7 +64,13 @@ export function referencedIds(doc: Doc, types: readonly DocType[]): Set<string> 
   const ids = idsIn(types, stripCode(doc.body));
   if (doc.kind === "change") for (const r of doc.rules) ids.add(r);
   if (doc.kind === "decision" && doc.supersedes) ids.add(doc.supersedes);
+  if (doc.kind === "decision") for (const a of doc.amends) ids.add(a);
   return ids;
+}
+
+/** Accepted decisions that list `id` in their `amends`: the ones a reader of `id` must also read (BR-2140). */
+export function amendedBy(corpus: Corpus, id: string): Decision[] {
+  return corpus.docs.filter((d): d is Decision => d.kind === "decision" && d.status === "accepted" && d.amends.includes(id));
 }
 
 function count(text: string, term: string): number {
@@ -100,6 +106,8 @@ export interface Context {
   readonly imports: readonly ImportedDomain[];
   /** Subdomains of the returned top-level domains that were not returned, by name (BR-2120). */
   readonly others: readonly string[];
+  /** For each listed decision (and a decision target) that accepted decisions amend, their ids (BR-2140). */
+  readonly amended: ReadonlyMap<string, readonly string[]>;
 }
 
 export interface ImportedDomain {
@@ -160,7 +168,12 @@ export function contextFor(corpus: Corpus, target: string, root?: string): Conte
   const decisions = corpus.docs.filter((d) => d.kind === "decision" && d.status === "accepted" && mentions(d));
   const changes = corpus.docs.filter((d): d is Change => d.kind === "change" && d.status === "open" && (mentions(d) || d.rules.some((r) => ruleIds.has(r))));
   const extras = corpus.docs.filter((d): d is Extra => d.kind === "extra" && mentions(d));
-  return { domains, rules, decisions, changes, extras, imports, others, ...(targetDoc ? { target: targetDoc } : {}) };
+  const amended = new Map<string, string[]>();
+  for (const d of [...decisions, ...(targetDoc?.kind === "decision" ? [targetDoc] : [])]) {
+    const by = amendedBy(corpus, d.id).map((x) => x.id);
+    if (by.length) amended.set(d.id, by);
+  }
+  return { domains, rules, decisions, changes, extras, imports, others, amended, ...(targetDoc ? { target: targetDoc } : {}) };
 }
 
 /** The domain whose code path covers a path most specifically (the longest covering path wins). */
@@ -229,7 +242,8 @@ export function renderContext(root: string, ctx: Context, opts: { readonly full:
     if (opts.full) for (const r of rules) out.push(`## ${r.id} ${r.title}\n\n${r.body.trim()}\n`);
     else if (rules.length) out.push(`## Rules (${rules.length})\n\n${rules.map((r) => `- ${r.id} ${r.title}`).join("\n")}\n`);
   };
-  if (ctx.target) out.push(`# ${ctx.target.id} ${ctx.target.title}\n\n${ctx.target.body.trim()}\n`);
+  const amended = (id: string) => (ctx.amended.has(id) ? ` — partly amended by ${ctx.amended.get(id)!.join(", ")}` : "");
+  if (ctx.target) out.push(`# ${ctx.target.id} ${ctx.target.title}${amended(ctx.target.id)}\n\n${ctx.target.body.trim()}\n`);
   for (const d of ctx.domains) {
     out.push(`# Domain: ${d.name}  (code: ${d.code.length ? d.code.join(", ") : `through ${d.parent ?? "the enclosing domain"}`})\n\n${d.body.trim()}\n`);
     rulesOf(ctx.rules.filter((x) => x.domain === d.name));
@@ -241,7 +255,7 @@ export function renderContext(root: string, ctx: Context, opts: { readonly full:
   const elsewhere = ctx.imports.filter((x) => x.elsewhere);
   if (elsewhere.length) out.push(`Imported from other domains, not included: ${elsewhere.map((i) => `${i.domain.name} (${i.via.join(", ")})`).join("; ")} (canon context <name>)\n`);
   if (ctx.others.length) out.push(`Other subdomains, not included: ${ctx.others.join(", ")} (canon context <name>)\n`);
-  if (ctx.decisions.length) out.push(`# Decisions\n\n${ctx.decisions.map((d) => `- ${d.id} ${d.title} (${d.path})`).join("\n")}\n`);
+  if (ctx.decisions.length) out.push(`# Decisions\n\n${ctx.decisions.map((d) => `- ${d.id} ${d.title} (${d.path})${amended(d.id)}`).join("\n")}\n`);
   if (ctx.changes.length) out.push(`# Open changes\n\n${ctx.changes.map((c) => `- ${c.id} ${c.title} (${c.path})`).join("\n")}\n`);
   for (const type of [...new Set(ctx.extras.map((e) => e.type))]) {
     const of = ctx.extras.filter((e) => e.type === type);

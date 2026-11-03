@@ -124,7 +124,12 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
       const common = { id, title: String(p.meta["title"]), path, body: p.body };
       if (type.name === "decision") {
         const supersedes = p.meta["supersedes"];
-        docs.push({ kind: "decision", ...common, status: p.status as DecisionStatus, ...(typeof supersedes === "string" ? { supersedes } : {}) });
+        const amends = p.meta["amends"] ?? [];
+        if (!Array.isArray(amends) || amends.some((a) => typeof a !== "string")) {
+          problems.push({ path, message: "`amends` must be a list of decision ids" });
+          continue;
+        }
+        docs.push({ kind: "decision", ...common, status: p.status as DecisionStatus, ...(typeof supersedes === "string" ? { supersedes } : {}), amends: amends as string[] });
       } else if (type.name === "change") {
         const rules = p.meta["rules"] ?? [];
         if (!Array.isArray(rules) || rules.some((r) => typeof r !== "string")) {

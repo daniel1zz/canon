@@ -229,6 +229,20 @@ describe("project and documents", () => {
     expect(canon(root, "show", ["D", 3].join("-")).out).toContain("status: proposed"); // nothing was written
   });
 
+  test("BR-2140: show ends with the accepted decisions that amend a decision, and not a proposed one", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    const d = (n: number) => ["D", n].join("-");
+    canon(root, "decision", "new", "--title", "Old way");
+    canon(root, "decision", "new", "--title", "Part change");
+    const path = join(root, "canon/decisions", readdirSync(join(root, "canon/decisions")).find((f) => f.startsWith(`${d(2)}`))!);
+    writeFileSync(path, readFileSync(path, "utf8").replace("status: proposed", `amends: [${d(1)}]\nstatus: proposed`));
+    expect(canon(root, "show", d(1)).out).not.toContain("partly amended by");
+    expect(canon(root, "decision", "accept", d(2)).code).toBe(0);
+    const out = canon(root, "show", d(1)).out.trimEnd().split("\n");
+    expect(out.at(-1)).toBe(`partly amended by ${d(2)} Part change (${path.slice(root.length + 1)})`);
+  });
+
   test("BR-2028 BR-2041: a retired rule keeps its file and leaves context; a dropped change keeps its file", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
