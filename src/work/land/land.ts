@@ -333,7 +333,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
     const until = reason === "conflict" ? failForConflict(ws.db, entry, `${reason}: ${found.slice(0, 500)}`, ws.config.landKeepPlaceMs) : null;
     if (reason !== "conflict") finishEntry(ws.db, entry, "failed", `${reason}: ${found.slice(0, 500)}`);
     const message = found + keptNote(until);
-    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main), ...(findings ? findingDetail(findings) : {}), ...(floorSkipped ? { floor_skipped: true } : {}), ...(until ? { keeps_place_until: until } : {}) });
+    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main), ...(findings ? findingDetail(findings) : {}), ...(floorSkipped ? { floor_skipped: true } : {}), ...(floorDeferred ? { floor_deferred: true } : {}), ...(until ? { keeps_place_until: until } : {}) });
     return { kind: "refused", reason, message, ...(findings ? { findings } : {}) };
   };
 

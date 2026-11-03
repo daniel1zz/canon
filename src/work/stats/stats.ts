@@ -54,7 +54,7 @@ interface Row {
 export function computeStats(db: CoordDb, reviews: Readonly<Record<string, string>>, today: string, since = 0, until = Number.MAX_SAFE_INTEGER): CheckStats[] {
   const rows: Row[] = db.db
     .query<{ id: number; kind: string; subject: string | null; detail: string }, [number, number]>(
-      "SELECT id, kind, subject, detail FROM events WHERE kind IN ('land.refuse','land.ok','claim.take','claim.renew','claim.refuse','start.ok','start.refuse','drop.done','change.status') AND id > ? AND id <= ? ORDER BY id",
+      "SELECT id, kind, subject, detail FROM events WHERE kind IN ('land.refuse','land.ok','claim.take','claim.renew','claim.refuse','start.ok','start.refuse','drop.done','change.status','floor.pass','floor.fail') AND id > ? AND id <= ? ORDER BY id",
     )
     .all(since, until)
     .map((r) => ({ ...r, detail: JSON.parse(r.detail) as Record<string, unknown> }));
@@ -102,10 +102,11 @@ export function computeStats(db: CoordDb, reviews: Readonly<Record<string, strin
     if (LAND_CHECKS.includes(check)) {
       const stage = LAND_STAGES.findIndex((s) => s.includes(check));
       // reason: a landing that skipped the floor reached the later stages without running it (BR-2164); a batch
-      // member's floor was its leader's one run (BR-2172).
-      const ran = (r: Row) => check !== "floor" || (r.detail["floor_skipped"] !== true && r.detail["batched_by"] === undefined);
+      // member's floor was its leader's one run (BR-2172); with floor_timing after the floor ran in the background
+      // on main, where each floor.pass and floor.fail is one run and no landing's refusal (BR-2067, D-31).
+      const ran = (r: Row) => check !== "floor" || (r.detail["floor_skipped"] !== true && r.detail["batched_by"] === undefined && r.detail["floor_deferred"] !== true);
       const reachedLater = LAND_STAGES.slice(stage).flat().reduce((n, c) => n + refusalsOf(c).filter(ran).length, 0);
-      runs = reachedLater + count((r) => r.kind === "land.ok" && ran(r));
+      runs = reachedLater + count((r) => r.kind === "land.ok" && ran(r)) + (check === "floor" ? count((r) => r.kind === "floor.pass" || r.kind === "floor.fail") : 0);
       const mine = refusalsOf(check);
       refused = mine.length;
       outcomes = zero();

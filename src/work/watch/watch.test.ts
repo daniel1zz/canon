@@ -175,6 +175,9 @@ describe("a failing main", () => {
     expect(text.split("\n")[0]).toStartWith(`main is failing floor since ${a.slice(0, 9)}`);
     expect(text).toContain(`  log: ${r.log}`);
     expect(text).toContain("`canon work start --fix-main`");
+    // The last 10 lines of the recorded tail, no more.
+    const shown = text.slice(text.indexOf("  last lines of its output:\n") + "  last lines of its output:\n".length, text.indexOf("  last passing commit:")).trimEnd().split("\n");
+    expect(shown).toEqual(r.tail.trimEnd().split("\n").slice(-10).map((l) => `    ${l}`));
   });
 
   test("BR-2220: a later failure on C updates the same record: its commit and log change, when it began does not", async () => {

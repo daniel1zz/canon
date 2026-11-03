@@ -51,6 +51,8 @@ describe("hooks config", () => {
       const r = read(yaml);
       expect([yaml, r.ok && Object.values(r.value.hooks).flat()]).toEqual([yaml, []]);
     }
+    const green = read('hooks:\n  after_green: "bun run build"\n');
+    expect(green.ok && green.value.hooks.after_green).toEqual(["bun run build"]);
     const quoted = read('hooks:\n  after_start: ["true"]\n');
     expect(quoted.ok && quoted.value.hooks.after_start).toEqual(["true"]);
   });

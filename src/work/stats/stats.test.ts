@@ -19,7 +19,7 @@ function commit(wt: string, file: string, text: string) {
 }
 
 describe("canon stats", () => {
-  test("BR-2067: runs count the landings that reached each check; an empty table is all zeros", () => {
+  test("BR-2067: runs count the landings that reached each check, and with floor_deferred the background floor runs; an empty table is all zeros", () => {
     const empty = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
     if (!empty.ok) throw new Error(empty.error.message);
     expect(computeStats(empty.value, {}, "2026-11-03").every((s) => s.runs === 0 && s.refused === 0)).toBe(true);
@@ -46,6 +46,15 @@ describe("canon stats", () => {
     skipped.value.event("agent:a", "land.refuse", "C-2", { reason: "check", floor_skipped: true });
     const sk = computeStats(skipped.value, {}, "2026-11-03");
     expect([of(sk, "floor").runs, of(sk, "check").runs, of(sk, "check").refused]).toEqual([0, 2, 1]); // BR-2164: no floor ran
+
+    const deferred = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
+    if (!deferred.ok) throw new Error(deferred.error.message);
+    for (let i = 0; i < 2; i++) deferred.value.event("agent:a", "land.ok", `C-${i + 1}`, { floor_deferred: true });
+    deferred.value.event("agent:a", "land.refuse", "C-3", { reason: "check", floor_deferred: true });
+    deferred.value.event("agent:a", "floor.pass", null, { sha: "a" });
+    deferred.value.event("agent:a", "floor.fail", null, { sha: "b" });
+    const df = computeStats(deferred.value, {}, "2026-11-03");
+    expect([of(df, "floor").runs, of(df, "floor").refused, of(df, "check").runs, of(df, "check").refused]).toEqual([2, 0, 3, 1]); // BR-2218: the background floor's runs
 
     const src = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
     if (!src.ok) throw new Error(src.error.message);
