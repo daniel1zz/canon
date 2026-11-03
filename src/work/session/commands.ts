@@ -12,7 +12,7 @@ import { findDoc, referencedIds } from "../../knowledge/query/query.ts";
 import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
 import { claimOfWorktree, claims } from "../claims/claims.ts";
 import { questions } from "../humans/questions.ts";
-import { activeQueue } from "../land/queue.ts";
+import { activeQueue, keptPlaces } from "../land/queue.ts";
 import { openWorkspace, type Workspace } from "../workspace.ts";
 import { handoffs } from "./handoffs.ts";
 import { overlapsOf } from "./overlap.ts";
@@ -49,12 +49,14 @@ const status = defineCommand({
   args: { json: { type: "boolean" } },
   run({ args }) {
     const ws = workspace();
-    const data = { claims: claims(ws.db), queue: activeQueue(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending") };
+    const data = { claims: claims(ws.db), queue: activeQueue(ws.db), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending") };
     if (args.json) return json(data);
     say("Claims:");
     for (const c of data.claims) say(`  ${c.subject.padEnd(8)} ${c.actor}  ${c.holder}  until ${c.expires_at}`);
     say("Landing queue:");
     for (const q of data.queue) say(`  #${q.id} ${q.state.padEnd(8)} ${q.subject ?? "-"}  ${q.worktree}`);
+    // Refused for a conflict, keeping its place while its lander resolves it; the entries behind it land meanwhile (BR-2177).
+    for (const q of data.resolving) say(`  #${q.id} resolving ${q.subject ?? "-"}  ${q.worktree}  keeps its place until ${q.keep_until}`);
     say("Handoffs:");
     for (const h of data.handoffs) say(`  ${h.subject.padEnd(8)} next: ${h.next}  (${h.actor}, ${h.updated_at})`);
     say(`Questions waiting for a human: ${data.questions.length}`);

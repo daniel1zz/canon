@@ -1,6 +1,6 @@
 # 合入（work/land）
 
-`canon work land` 怎样把一个变更安全地变成 main：先排队，一次只有一个合入者；轮到后 rebase 到 main，在这棵树上跑 floor、`canon check`、规则评审和 `before_land`；全部通过、worktree 期间没变，才用比较并交换移动 main（只改了项目声明的 `floor_skip_paths` 下文件的合入不跑 floor）；之后在后台跑 `after_land`。配了 `land_batch_max` 时，轮到的合入者把紧跟在后面的几个等着的合入一起测，只跑一次 floor，不整体通过就退回各自单独合入（D-26）。合入者进程不在了或被信号终止，它的轮次立刻让出。
+`canon work land` 怎样把一个变更安全地变成 main：先排队，一次只有一个合入者；轮到后 rebase 到 main，在这棵树上跑 floor、`canon check`、规则评审和 `before_land`；全部通过、worktree 期间没变，才用比较并交换移动 main（只改了项目声明的 `floor_skip_paths` 下文件的合入不跑 floor）；之后在后台跑 `after_land`。配了 `land_batch_max` 时，轮到的合入者把紧跟在后面的几个等着的合入一起测，只跑一次 floor，不整体通过就退回各自单独合入（D-26）。合入者进程不在了或被信号终止，它的轮次立刻让出。因冲突被拒的合入在 `land_keep_place_minutes` 内重新合入时回到原来的排队位置，等它解决冲突时后面的照常合入（D-29）。
 
 不管：评审怎么判断（`knowledge/review`）、检查查什么（`knowledge/check`）。
 
@@ -11,4 +11,5 @@
 - **比较并交换**：只有 main 仍是 rebase 时的那个提交，才把它移到新提交。
 - **一起测（batch）**：领头的合入者和紧跟在后面的成员组成一条提交链，floor 只在链顶跑一次。
 - **单独合入（solo）**：一起测失败后成员带上的标记，之后只能自己单独合入。
+- **保留位置（resolving）**：因冲突被拒的条目在限定时间内等它自己的合入者重新合入，期间不挡任何人（BR-2177）。
 - **--finish**：合入时一起关闭变更并释放自己的认领。

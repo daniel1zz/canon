@@ -24,13 +24,64 @@ export interface QueueEntry {
 
 /** `lander` is the landing process itself, so a waiter can see at once that it died (D-11). */
 export function enqueue(db: CoordDb, worktree: string, subject: string | null, actor: string, lander?: Proc): number {
-  const t = iso(now());
-  const r = db.db
-    // reason: solo = 0 says this lander understands batches; an older canon leaves it NULL and is never batched (BR-2172).
-    .query("INSERT INTO queue(worktree, subject, state, enqueued_at, heartbeat, pid, pid_start, solo) VALUES (?, ?, 'waiting', ?, ?, ?, ?, 0)")
-    .run(worktree, subject, t, t, lander?.pid ?? null, lander?.start ?? null);
-  db.event(actor, "queue.enter", subject, { worktree });
-  return Number(r.lastInsertRowid);
+  return enter(db, worktree, subject, actor, lander).id;
+}
+
+/** Where a landing entered the queue: `kept` when it took back the place a conflict refusal kept for it (BR-2177). */
+export interface Entered {
+  readonly id: number;
+  readonly kept?: { readonly resolveMs: number };
+}
+
+/**
+ * Enters the landing queue. A landing from the same worktree and change whose last entry was refused for a conflict
+ * within its keep time takes that entry back, so it is ahead of every entry queued after it (BR-2177, D-29);
+ * otherwise it gets a new entry at the tail. Looked up and taken in one transaction, so it is taken at most once.
+ */
+export function enter(db: CoordDb, worktree: string, subject: string | null, actor: string, lander?: Proc): Entered {
+  const tx = db.db.transaction((): Entered => {
+    const t = iso(now());
+    const kept = db.db
+      .query<{ id: number; heartbeat: string }, [string, string | null, string]>(
+        "SELECT id, heartbeat FROM queue WHERE worktree = ? AND subject IS ? AND state = 'failed' AND keep_until IS NOT NULL AND keep_until >= ? ORDER BY id DESC LIMIT 1",
+      )
+      .get(worktree, subject, t);
+    if (kept) {
+      // reason: the row keeps its id, and queue order is id order, so it is back where it was (BR-2177); it is a fresh attempt otherwise (solo, batch reset).
+      db.db
+        .query("UPDATE queue SET state = 'waiting', result = NULL, heartbeat = ?, pid = ?, pid_start = ?, solo = 0, batch = NULL, head = NULL, keep_until = NULL WHERE id = ? AND state = 'failed'")
+        .run(t, lander?.pid ?? null, lander?.start ?? null, kept.id);
+      // The heartbeat of a failed entry is the time it was refused (finishEntry), so this is how long the conflict took to resolve.
+      const resolveMs = Date.parse(t) - Date.parse(kept.heartbeat);
+      db.event(actor, "queue.enter", subject, { worktree, kept_place: kept.id, resolve_ms: resolveMs });
+      return { id: kept.id, kept: { resolveMs } };
+    }
+    const r = db.db
+      // reason: solo = 0 says this lander understands batches; an older canon leaves it NULL and is never batched (BR-2172).
+      .query("INSERT INTO queue(worktree, subject, state, enqueued_at, heartbeat, pid, pid_start, solo) VALUES (?, ?, 'waiting', ?, ?, ?, ?, 0)")
+      .run(worktree, subject, t, t, lander?.pid ?? null, lander?.start ?? null);
+    db.event(actor, "queue.enter", subject, { worktree });
+    return { id: Number(r.lastInsertRowid) };
+  });
+  return tx.immediate();
+}
+
+/**
+ * Refuses an entry for a conflict: failed, and keeping its place for `keepMs` so that its own next landing takes it
+ * back (BR-2177). Returns until when, or null when `keepMs` is 0 (the landing goes to the tail, as before D-29).
+ */
+export function failForConflict(db: CoordDb, entryId: number, result: string, keepMs: number): string | null {
+  const t = now();
+  const until = keepMs > 0 ? iso(new Date(t.getTime() + keepMs)) : null;
+  db.db.query("UPDATE queue SET state = 'failed', result = ?, heartbeat = ?, keep_until = ? WHERE id = ?").run(result, iso(t), until, entryId);
+  return until;
+}
+
+/** Entries refused for a conflict whose place is still kept: their landers are resolving it (BR-2177). */
+export function keptPlaces(db: CoordDb): (QueueEntry & { readonly keep_until: string })[] {
+  return db.db
+    .query<QueueEntry & { keep_until: string }, [string]>("SELECT id, worktree, subject, 'resolving' AS state, enqueued_at, heartbeat, keep_until FROM queue WHERE state = 'failed' AND keep_until >= ? ORDER BY id")
+    .all(iso(now()));
 }
 
 /** The outcome of one try for the turn. `lost` is set when this entry is no longer waiting (BR-2144). */
@@ -52,9 +103,10 @@ export interface Turn {
  * heart-beating, or looked gone) gets `lost` and never lands after the landing that skipped it (BR-2144, issue #29).
  */
 export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS): Turn {
+  // reason: an entry that took its kept place back (BR-2177) can be ahead of one that is landing, so every landing entry is probed too (BR-2178).
   const ahead = db.db
-    .query<{ id: number; pid: number; pid_start: string }, [number]>("SELECT id, pid, pid_start FROM queue WHERE id < ? AND state IN ('waiting','landing') AND pid IS NOT NULL AND pid_start IS NOT NULL")
-    .all(entryId);
+    .query<{ id: number; pid: number; pid_start: string }, [number, number]>("SELECT id, pid, pid_start FROM queue WHERE (id < ? AND state IN ('waiting','landing') OR state = 'landing' AND id != ?) AND pid IS NOT NULL AND pid_start IS NOT NULL")
+    .all(entryId, entryId);
   const dead = ahead.filter((e) => isGone({ pid: e.pid, start: e.pid_start }) === true).map((e) => e.id);
   const tx = db.db.transaction((): Turn => {
     // reason: the state is read and set in this one write transaction, so a skipped entry cannot slip back in (BR-2144).
@@ -79,7 +131,8 @@ export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS):
     const stale = iso(new Date(now().getTime() - staleMs));
     db.db.query("UPDATE queue SET state = 'abandoned', result = 'no heartbeat' WHERE state IN ('waiting','landing') AND heartbeat < ? AND id != ?").run(stale, entryId);
     db.db.query("UPDATE queue SET heartbeat = ? WHERE id = ?").run(iso(now()), entryId);
-    const ahead = db.db.query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM queue WHERE id < ? AND state IN ('waiting','landing')").get(entryId)?.n ?? 0;
+    // reason: a landing that is under way is never interrupted, even by an entry ahead of it in order that took its kept place back (BR-2178).
+    const ahead = db.db.query<{ n: number }, [number, number]>("SELECT COUNT(*) AS n FROM queue WHERE id < ? AND state IN ('waiting','landing') OR state = 'landing' AND id != ?").get(entryId, entryId)?.n ?? 0;
     if (ahead === 0) db.db.query("UPDATE queue SET state = 'landing' WHERE id = ? AND state = 'waiting'").run(entryId);
     return { mine: ahead === 0, ahead };
   });
@@ -98,7 +151,7 @@ export function holdsTurn(db: CoordDb, entryId: number): { readonly held: boolea
 }
 
 export function finishEntry(db: CoordDb, entryId: number, state: "landed" | "failed", result: string): void {
-  db.db.query("UPDATE queue SET state = ?, result = ?, heartbeat = ? WHERE id = ?").run(state, result, iso(now()), entryId);
+  db.db.query("UPDATE queue SET state = ?, result = ?, heartbeat = ?, keep_until = NULL WHERE id = ?").run(state, result, iso(now()), entryId);
 }
 
 /** Marks an entry failed only while it is still waiting or landing; false when it had already finished. */
@@ -120,14 +173,15 @@ export interface BatchCandidate {
 }
 
 /**
- * The entries right behind `leader` in queue order that may join its batch, at most `max`: each still waiting,
+ * The entries behind `leader` in queue order that may join its batch, at most `max`: each still waiting,
  * queued by a canon that knows batches and not marked to land on its own, with a live lander that beat within the stale time. Stops at the first entry
- * that may not, so no entry is tested ahead of an earlier one (BR-2020, BR-2172).
+ * that may not, so no entry is tested ahead of an earlier one (BR-2020, BR-2172). An entry that took its kept place
+ * back while the leader held the turn is earlier in order than the leader, and comes first (BR-2178).
  */
 export function batchCandidates(db: CoordDb, leader: number, max: number, staleMs = QUEUE_STALE_MS): BatchCandidate[] {
   const rows = db.db
     .query<{ id: number; worktree: string; subject: string | null; state: string; batch: number | null; solo: number | null; heartbeat: string; pid: number | null; pid_start: string | null }, [number]>(
-      "SELECT id, worktree, subject, state, batch, solo, heartbeat, pid, pid_start FROM queue WHERE id > ? AND state IN ('waiting','landing') ORDER BY id",
+      "SELECT id, worktree, subject, state, batch, solo, heartbeat, pid, pid_start FROM queue WHERE id != ? AND state IN ('waiting','landing') ORDER BY id",
     )
     .all(leader);
   const fresh = iso(new Date(now().getTime() - staleMs));

@@ -7,7 +7,7 @@ import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../..
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { bindToLander, keepClaim, releaseOwnClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
 import { dropHandoff } from "../session/handoffs.ts";
-import { batchCandidates, enqueue, failIfActive, finishEntry, heartbeat, holdsTurn, isSolo, joinBatch, landBatched, leaveBatch, lockBatch, tryTurn, unlockBatch } from "./queue.ts";
+import { batchCandidates, enter, failForConflict, failIfActive, finishEntry, heartbeat, holdsTurn, isSolo, joinBatch, landBatched, leaveBatch, lockBatch, tryTurn, unlockBatch } from "./queue.ts";
 import { isGone, selfProcess, sessionProcess } from "../claims/liveness.ts";
 import { logFile, runHooks, runHooksInBackground } from "../../config/hooks.ts";
 import { noticeOverlaps } from "../session/overlap.ts";
@@ -87,7 +87,9 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   // Same-file overlap with other changes in flight: a notice only, never a refusal (BR-2062).
   noticeOverlaps(ws, wt, subject, "land", say);
   const lander = selfProcess();
-  const entry = enqueue(ws.db, wt, subject, ws.actor, lander);
+  const entered = enter(ws.db, wt, subject, ws.actor, lander);
+  const entry = entered.id;
+  if (entered.kept) say(`back in the landing queue at the place it kept after its conflict (queue entry ${entry}, resolved in ${Math.round(entered.kept.resolveMs / 1000)}s)`);
   // The claim names this lander until the landing ends, so the session exiting meanwhile frees it to no one (BR-2142, issue #17).
   const bound = lander ? bindToLander(ws.db, wt, ws.actor, lander) : undefined;
   const running: Running = {};
@@ -229,9 +231,10 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
       if (!predicted.ok) say(`conflict check while waiting did not run (${predicted.error}); a conflict shows at the turn`);
       const files = predicted.ok ? predicted.files : [];
       if (files.length > 0) {
-        const message = `while waiting to land: a merge with ${main} ${tip.value.slice(0, 9)} conflicts in: ${files.join(", ")}\nResolve with \`git rebase ${main}\` in ${wt}, then land again.`;
-        finishEntry(ws.db, entry, "failed", `conflict: ${message.slice(0, 500)}`);
-        ws.db.event(ws.actor, "land.refuse", subject, { reason: "conflict", message: message.slice(0, 2000), early: true, diff: ownDiffId(wt, main) });
+        const found = `while waiting to land: a merge with ${main} ${tip.value.slice(0, 9)} conflicts in: ${files.join(", ")}\nResolve with \`git rebase ${main}\` in ${wt}, then land again.`;
+        const until = failForConflict(ws.db, entry, `conflict: ${found.slice(0, 500)}`, ws.config.landKeepPlaceMs);
+        const message = found + keptNote(until);
+        ws.db.event(ws.actor, "land.refuse", subject, { reason: "conflict", message: message.slice(0, 2000), early: true, diff: ownDiffId(wt, main), ...(until ? { keeps_place_until: until } : {}) });
         return { kind: "refused", reason: "conflict", message };
       }
     }
@@ -251,6 +254,12 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
   } finally {
     clearInterval(beat);
   }
+}
+
+/** What a conflict refusal tells the lander about the place it keeps in the queue (BR-2177). */
+function keptNote(until: string | null): string {
+  if (!until) return "";
+  return `\nThis landing keeps its place in the queue until ${until}: landing again from this worktree before then puts it back ahead of the landings queued after it; they go on landing while you resolve.`;
 }
 
 /**
@@ -291,9 +300,12 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const main = ws.config.main;
   const { entry, subject } = t;
   let floorSkipped = false;
-  const refuse = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], message: string, findings?: readonly Finding[]): LandOutcome => {
-    finishEntry(ws.db, entry, "failed", `${reason}: ${message.slice(0, 500)}`);
-    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main), ...(findings ? findingDetail(findings) : {}), ...(floorSkipped ? { floor_skipped: true } : {}) });
+  const refuse = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], found: string, findings?: readonly Finding[]): LandOutcome => {
+    // A conflict keeps this entry's place for its own next landing; every other refusal sends that one to the tail (BR-2177).
+    const until = reason === "conflict" ? failForConflict(ws.db, entry, `${reason}: ${found.slice(0, 500)}`, ws.config.landKeepPlaceMs) : null;
+    if (reason !== "conflict") finishEntry(ws.db, entry, "failed", `${reason}: ${found.slice(0, 500)}`);
+    const message = found + keptNote(until);
+    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main), ...(findings ? findingDetail(findings) : {}), ...(floorSkipped ? { floor_skipped: true } : {}), ...(until ? { keeps_place_until: until } : {}) });
     return { kind: "refused", reason, message, ...(findings ? { findings } : {}) };
   };
 

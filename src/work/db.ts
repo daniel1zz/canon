@@ -74,6 +74,8 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ["queue", "batch INTEGER"],
   ["queue", "head TEXT"],
   ["queue", "solo INTEGER"],
+  // Until when an entry refused for a conflict keeps its place for its own next landing (BR-2177, D-29).
+  ["queue", "keep_until TEXT"],
 ];
 
 /**

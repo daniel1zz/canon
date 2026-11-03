@@ -82,8 +82,11 @@ export interface WindowSummary {
   };
   /** Queue waits from `land.turn`, in milliseconds; median and max are null when no landing got its turn. */
   readonly waits: { readonly count: number; readonly medianMs: number | null; readonly maxMs: number | null };
-  /** Refusals with reason `conflict`; `early` of them were predicted before the turn. */
-  readonly conflicts: { readonly total: number; readonly early: number };
+  /**
+   * Refusals with reason `conflict`; `early` of them were predicted before the turn. `keptPlace` landings came back
+   * at the place their conflict refusal kept (BR-2177), with the median time from that refusal to coming back.
+   */
+  readonly conflicts: { readonly total: number; readonly early: number; readonly keptPlace: number; readonly resolveMedianMs: number | null };
   readonly overlapNotices: number;
   readonly claimRefusals: number;
   readonly actors: readonly string[];
@@ -110,6 +113,7 @@ export function windowSummary(db: CoordDb, since: number, until = lastEventId(db
   const sortedRefused = Object.fromEntries(Object.entries(refused).sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0])));
   const waits = of("land.turn").flatMap((r) => (typeof r.detail["waited_ms"] === "number" ? [r.detail["waited_ms"]] : []));
   const conflicts = refusals.filter((r) => r.detail["reason"] === "conflict");
+  const resolves = of("queue.enter").flatMap((r) => (typeof r.detail["kept_place"] === "number" && typeof r.detail["resolve_ms"] === "number" ? [r.detail["resolve_ms"]] : []));
   return {
     since,
     until,
@@ -118,7 +122,7 @@ export function windowSummary(db: CoordDb, since: number, until = lastEventId(db
     last: rows.at(-1)?.ts ?? null,
     landings: { ok: of("land.ok").length, refused: sortedRefused, lost: of("land.lost").length, killed: of("land.killed").length },
     waits: { count: waits.length, medianMs: median(waits), maxMs: waits.length ? Math.max(...waits) : null },
-    conflicts: { total: conflicts.length, early: conflicts.filter((r) => r.detail["early"] === true).length },
+    conflicts: { total: conflicts.length, early: conflicts.filter((r) => r.detail["early"] === true).length, keptPlace: resolves.length, resolveMedianMs: median(resolves) },
     overlapNotices: of("overlap.notice").length,
     claimRefusals: of("claim.refuse").length,
     actors: [...new Set(rows.map((r) => r.actor))].sort(),
@@ -135,7 +139,7 @@ export function renderWindow(w: WindowSummary): string {
     `window: events after #${w.since} up to #${w.until}: ${w.events} event(s)${w.first ? `, ${w.first} to ${w.last}` : ""}`,
     `  landings: ${w.landings.ok} ok, ${total} refused${total ? ` (${refused.map(([r, c]) => `${r} ${c}`).join(", ")})` : ""}, ${w.landings.lost} lost, ${w.landings.killed} killed`,
     `  queue waits: ${w.waits.count} turn(s), median ${secs(w.waits.medianMs)}, max ${secs(w.waits.maxMs)}`,
-    `  conflicts: ${w.conflicts.total} (${w.conflicts.early} predicted before the turn)`,
+    `  conflicts: ${w.conflicts.total} (${w.conflicts.early} predicted before the turn); ${w.conflicts.keptPlace} landed again at their kept place, median resolve ${secs(w.conflicts.resolveMedianMs)}`,
     `  overlap notices: ${w.overlapNotices}; claim refusals: ${w.claimRefusals}`,
     `  actors (${w.actors.length}): ${w.actors.join(", ") || "-"}`,
     `  worktrees (${w.worktrees.length}): ${w.worktrees.join(", ") || "-"}`,

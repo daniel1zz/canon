@@ -63,12 +63,24 @@ describe("window summary", () => {
     const w = windowSummary(d, 10);
     expect(w.landings).toEqual({ ok: 2, refused: { conflict: 1, floor: 1 }, lost: 1, killed: 1 });
     expect(w.waits).toEqual({ count: 3, medianMs: 3000, maxMs: 8000 });
-    expect(w.conflicts).toEqual({ total: 1, early: 1 });
+    expect(w.conflicts).toEqual({ total: 1, early: 1, keptPlace: 0, resolveMedianMs: null });
     expect([w.overlapNotices, w.claimRefusals, w.events]).toEqual([1, 1, 11]);
     const text = renderWindow(w);
     expect(text).toContain("landings: 2 ok, 2 refused (conflict 1, floor 1), 1 lost, 1 killed");
     expect(text).toContain("queue waits: 3 turn(s), median 3.0s, max 8.0s");
-    expect(text).toContain("conflicts: 1 (1 predicted before the turn)");
+    expect(text).toContain("conflicts: 1 (1 predicted before the turn); 0 landed again at their kept place, median resolve -");
+  });
+
+  test("BR-2155 BR-2177: landings that came back at their kept place are counted, with the median time to resolve", () => {
+    const d = db();
+    d.event("agent:a", "queue.enter", "C-1", { worktree: "/wt/a" }); // a new entry at the tail: not counted
+    d.event("agent:a", "land.refuse", "C-2", { reason: "conflict", early: true, keeps_place_until: "2026-11-03T12:00:00.000Z" });
+    d.event("agent:a", "queue.enter", "C-2", { worktree: "/wt/b", kept_place: 2, resolve_ms: 101_000 });
+    d.event("agent:a", "land.refuse", "C-3", { reason: "conflict" });
+    d.event("agent:a", "queue.enter", "C-3", { worktree: "/wt/c", kept_place: 3, resolve_ms: 245_000 });
+    const w = windowSummary(d, 0);
+    expect(w.conflicts).toEqual({ total: 2, early: 1, keptPlace: 2, resolveMedianMs: 173_000 });
+    expect(renderWindow(w)).toContain("conflicts: 2 (1 predicted before the turn); 2 landed again at their kept place, median resolve 173.0s");
   });
 
   test("BR-2155: an even number of waits takes the mean of the middle two", () => {
