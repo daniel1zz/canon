@@ -57,6 +57,28 @@ CREATE TABLE IF NOT EXISTS events (
   subject TEXT,
   detail  TEXT NOT NULL DEFAULT '{}'   -- JSON; a refusal carries its reason
 );
+-- The one \`canon floor watch\` running for this repository, by pid and process start (BR-2219, D-11).
+CREATE TABLE IF NOT EXISTS watcher (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  pid        INTEGER NOT NULL,
+  pid_start  TEXT NOT NULL,
+  sha        TEXT,                     -- the commit it is testing
+  started_at TEXT NOT NULL
+);
+-- "main is failing": at most one row, from the background floor's last failure until it passes (BR-2220, BR-2221).
+CREATE TABLE IF NOT EXISTS red_main (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  sha        TEXT NOT NULL,            -- the latest failing commit
+  first_sha  TEXT NOT NULL,            -- the commit main first failed on
+  log        TEXT NOT NULL,
+  tail       TEXT NOT NULL,            -- the last 40 lines of the floor's output
+  since      TEXT NOT NULL,            -- when it first failed
+  green      TEXT,                     -- refs/canon/green at the first failure
+  change     TEXT,                     -- the fix change (canon work start --fix-main)
+  fix_pid    INTEGER,                  -- the process opening the fix change, while it does
+  fix_start  TEXT,
+  updated_at TEXT NOT NULL
+);
 `;
 
 /** Columns added after the first schema, as `table`, `column definition`. */

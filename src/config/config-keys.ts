@@ -5,8 +5,8 @@ import { templateFor } from "../knowledge/documents/templates.ts";
 import { BUILTIN_TYPES, RESERVED_DIRS, RESERVED_FIELDS, type DocType } from "../knowledge/documents/types.ts";
 import { configKey, REL_DIR, relPath, type JsonSchema } from "./key.ts";
 
-export type HookEvent = "after_start" | "before_land" | "after_land" | "after_stop";
-export const HOOK_EVENTS: readonly HookEvent[] = ["after_start", "before_land", "after_land", "after_stop"];
+export type HookEvent = "after_start" | "before_land" | "after_land" | "after_stop" | "after_green";
+export const HOOK_EVENTS: readonly HookEvent[] = ["after_start", "before_land", "after_land", "after_stop", "after_green"];
 
 /** A command: a string with something other than white space (readHooks rejects a blank one). */
 const NON_BLANK: JsonSchema = { type: "string", pattern: "\\S" };
@@ -16,7 +16,7 @@ export const hookKeys = {
   hooks: configKey<Readonly<Record<HookEvent, readonly string[]>>>({
     key: "hooks",
     doc: "Commands per lifecycle event, run in order; each event takes a command or a list of commands.",
-    default: { after_start: [], before_land: [], after_land: [], after_stop: [] },
+    default: { after_start: [], before_land: [], after_land: [], after_stop: [], after_green: [] },
     schema: { type: ["object", "null"], additionalProperties: false, properties: Object.fromEntries(HOOK_EVENTS.map((e) => [e, { anyOf: [NON_BLANK, { type: "array", items: NON_BLANK }] }])), default: {} },
     read: readHooks,
     commands: (v) => Object.values(v).flat(),
@@ -27,7 +27,7 @@ export const hookKeys = {
 };
 
 function readHooks(v: unknown): Result<Record<HookEvent, readonly string[]>> {
-  const out: Record<HookEvent, string[]> = { after_start: [], before_land: [], after_land: [], after_stop: [] };
+  const out: Record<HookEvent, string[]> = { after_start: [], before_land: [], after_land: [], after_stop: [], after_green: [] };
   if (v === null) return ok(out);
   if (typeof v !== "object" || Array.isArray(v)) return err("invalid", "`hooks` must be a mapping of event → command or list of commands");
   for (const [event, cmds] of Object.entries(v as Record<string, unknown>)) {

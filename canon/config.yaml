@@ -1,7 +1,9 @@
 # yaml-language-server: $schema=../.canon/config.schema.json
 main: main
-# 必须在即将成为 main 的代码树上执行成功
+# 必须在 main 的代码树上执行成功；floor_timing: after 下合入不跑它，main 前移后在后台跑（canon floor watch）
 floor: "bun install --frozen-lockfile && bunx tsc --noEmit -p tsconfig.json && bun test"
+# 先合后测（D-31、BR-2218）：开发阶段合入不等 floor，main 没通过时由 canon work start --fix-main 开的变更向前修
+floor_timing: after
 # 代码目录和规则领域一一对应（D-15）：canon/rules/work/land ↔ src/work/land；src/kernel 是不属于任何业务领域的共享内核
 code_root: src
 shared:
@@ -36,7 +38,7 @@ floor_skip_paths:
   - canon/notes
   - canon/product.md
   - canon/backlog.md
-# 轮到的合入者最多把几个合入一起测、只跑一次 floor（D-26、BR-2172）
+# 轮到的合入者最多把几个合入一起测、只跑一次 floor（D-26、BR-2172）；floor_timing: after 下不分批
 land_batch_max: 4
 # 新 worktree 里执行一次
 setup: "bun install"
@@ -45,10 +47,12 @@ review: "scripts/review-claude.sh"
 # 生命周期 hook（D-2、D-3）：每项是一条命令或命令列表
 hooks:
   after_land:
-    # 合入后在主 checkout 重新构建 dist/canon，让 PATH 上的 canon 和 main 一致
-    - "bun run build"
     # 合入后的代码评审（C-2）：只找安全和并发问题，一个根因一个 issue，写到 GitHub（负责人 2026-11-03 同意开启）
     - "bun scripts/code-review.ts"
+  after_green:
+    # main 的后台 floor 通过后，从这个测过的提交重新构建主 checkout 的 dist/canon（PATH 上的 canon），
+    # 不从没测过的 main 构建：合入了把命令行弄坏的变更时，修复变更还能用旧的 canon 合进来（D-31、BR-2222）
+    - 'bun build --compile src/cli/main.ts --outfile "$CANON_PRIMARY/dist/canon"'
 # 每个检查的复审日期（BR-2069）：到期后 `canon stats` 把它列为待复审
 check_reviews:
   on-main: "2027-02-03"

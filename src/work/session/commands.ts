@@ -18,17 +18,26 @@ import { openWorkspace, type Workspace } from "../workspace.ts";
 import { handoffs } from "./handoffs.ts";
 import { overlapsOf } from "./overlap.ts";
 import { clean, LESSON_REMINDER, mainCorpus, start, stop } from "./session.ts";
+import { redMainNotice, startFixMain } from "../watch/redmain.ts";
+import { ensureWatcher } from "../watch/watch.ts";
 
 /** `canon brief` and `canon work start`, `stop`, `status`, `clean`: a session and its change's worktree. */
 
 const startCmd = defineCommand({
   meta: { description: "Start a change in its own worktree: `--title` for a new one, or an existing change id" },
-  args: { change: { type: "positional", required: false }, title: { type: "string" }, rules: { type: "string", description: "Rule ids the new change touches" } },
+  args: {
+    change: { type: "positional", required: false },
+    title: { type: "string" },
+    rules: { type: "string", description: "Rule ids the new change touches" },
+    "fix-main": { type: "boolean", description: "Open the one change that fixes main's failing background floor (floor_timing: after, BR-2221)" },
+  },
   run({ args }) {
     const ws = workspace();
-    if (!args.change && !args.title) fail({ code: "invalid", message: "give a change id or --title for a new change" });
+    const fixMain = Boolean(args["fix-main"]);
+    if (fixMain && (args.change || args.title || args.rules)) fail({ code: "invalid", message: "--fix-main opens its own change; give no change id, --title or --rules with it" });
+    if (!fixMain && !args.change && !args.title) fail({ code: "invalid", message: "give a change id, --title for a new change, or --fix-main" });
     const target = typeof args.change === "string" && args.change ? { change: args.change } : { title: String(args.title), rules: list(args.rules) };
-    const s = must(start(ws, target, say));
+    const s = must(fixMain ? startFixMain(ws, say) : start(ws, target, say));
     noticeUpdates(ws, say);
     say(`cd ${s.worktree}`);
   },
@@ -115,6 +124,9 @@ function mainBacklog(ws: Workspace): Result<ReturnType<typeof parseBacklog>> {
 function briefState(ws: Workspace): Result<void> {
   const mine = claimOfWorktree(ws.db, ws.root);
   const hs = handoffs(ws.db);
+  // A failing main comes first, in every worktree (BR-2220); then the background floor starts if main's latest commit needs it (BR-2219).
+  for (const line of redMainNotice(ws.db, mine?.subject)) say(line);
+  ensureWatcher(ws, say);
   if (mine) {
     say(`You are in ${mine.subject} (${ws.root}). Read it: canon show ${mine.subject}; context: canon context ${mine.subject}`);
     const h = hs.find((x) => x.subject === mine.subject);

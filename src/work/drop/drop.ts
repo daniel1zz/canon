@@ -8,6 +8,7 @@ import { err, ok, type Result } from "../../kernel/result.ts";
 import { git, gitEnv, ignoredPaths, unregenerable } from "../../kernel/git.ts";
 import { GENERATED_DIR } from "../../config/reference/reference.ts";
 import { processesIn } from "../../kernel/process.ts";
+import { clearFixChange } from "../watch/redmain.ts";
 import { describeOccupants, worktreesDir } from "../session/session.ts";
 
 /**
@@ -233,6 +234,7 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
   // reason: only this drop's own hold goes; a claim anyone took since is not this drop's to delete (issue #18).
   unholdClaim(ws.db, { ...hold.value, prior: null });
   dropHandoff(ws.db, t.change);
+  clearFixChange(ws.db, t.change);
   ws.db.event(ws.actor, "drop.done", t.change, { worktree: t.worktree, branch: t.branch, losses: lost.value.lines, archive: archived?.ref ?? null, archive_commit: archived?.commit ?? null });
   say(`dropped ${t.change}${t.worktree ? `: removed ${t.worktree}` : ""}${t.branch ? `, deleted branch ${t.branch}` : ""}`);
   if (archived) {

@@ -1,6 +1,6 @@
 # 工作流（work）
 
-多个会话同时干活时怎样不丢工作：一个变更对应一个 worktree、一个认领；合入一次只进行一个，按排队顺序；只有 floor 和 `canon check` 在即将成为 main 的那棵代码树上通过后，main 才会通过比较并交换前移（只改了项目声明的 `floor_skip_paths` 下文件时代码树和 main 一样，不跑 floor）。所有协调状态（认领、合入队列、交接记录、问题、事件）存在 git 公共目录下的协调数据库里，所有 worktree 共用。
+多个会话同时干活时怎样不丢工作：一个变更对应一个 worktree、一个认领；合入一次只进行一个，按排队顺序；只有 floor 和 `canon check` 在即将成为 main 的那棵代码树上通过后，main 才会通过比较并交换前移（只改了项目声明的 `floor_skip_paths` 下文件时代码树和 main 一样，不跑 floor；项目设了 `floor_timing: after` 时合入不跑 floor，main 前移后在后台测试，见 `work/watch`）。所有协调状态（认领、合入队列、交接记录、问题、事件）存在 git 公共目录下的协调数据库里，所有 worktree 共用。
 
 这一层只放贯穿整个领域的规则（谁做的、每次拒绝都记下、数据库升级）。具体行为按子领域分：
 
@@ -12,6 +12,7 @@
 - `work/stats`：每个检查的运行和拒绝统计。
 - `work/issues`：列出项目开着的 GitHub issue，标出 main 上已写明修复的。
 - `work/verify`：合入前的验证，`canon work test`。
+- `work/watch`：先合后测（`floor_timing: after`）：main 上的后台测试、main 没通过时的记录和修复变更。
 
 ## 术语
 

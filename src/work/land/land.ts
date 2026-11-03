@@ -18,6 +18,7 @@ import { setMeta } from "../../knowledge/documents/write.ts";
 import { hasLessons, LESSONS_SECTION } from "../../knowledge/documents/templates.ts";
 import { git, gitEnv, isClean, listWorktrees } from "../../kernel/git.ts";
 import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, type DeletedDoc } from "../../knowledge/review/review.ts";
+import { ensureWatcher, timingOf } from "../watch/watch.ts";
 
 /**
  * Landing (design §6): queue → rebase onto main → floor → canon check → sources → review → before_land →
@@ -326,6 +327,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const main = ws.config.main;
   const { entry, subject } = t;
   let floorSkipped = false;
+  let floorDeferred = false;
   const refuse = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], found: string, findings?: readonly Finding[]): LandOutcome => {
     // A conflict keeps this entry's place for its own next landing; every other refusal sends that one to the tail (BR-2177).
     const until = reason === "conflict" ? failForConflict(ws.db, entry, `${reason}: ${found.slice(0, 500)}`, ws.config.landKeepPlaceMs) : null;
@@ -357,9 +359,13 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const tested = git(wt, "rev-parse", "HEAD");
   if (!tested.ok) return refuse("environment", tested.error.message);
 
+  // With floor_timing after, the floor runs on main in the background once main has moved, so this landing runs
+  // only its own steps and joins no batch; the landing tree decides, as it decides the floor command (BR-2218, D-31).
+  floorDeferred = timingOf(wt) === "after";
+
   // Landings waiting right behind this one are tested with it under one floor run (BR-2172, D-26); a batch that
   // does not land as a whole sends them back to land on their own, and this landing goes on alone (BR-2173).
-  if (ws.config.landBatchMax > 1 && !isSolo(ws.db, entry)) {
+  if (ws.config.landBatchMax > 1 && !floorDeferred && !isSolo(ws.db, entry)) {
     const batched = await landBatch(ws, opts, say, { ...t, base: base.value, head: tested.value });
     if (batched?.kind === "landed") return finishLanding(ws, opts, say, { entry, subject, sha: tested.value });
     if (batched?.kind === "lost") return batched.outcome;
@@ -368,8 +374,10 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
 
   // A landing that changes only paths the project declares no test reads has main's already-tested code tree,
   // so the floor would prove nothing new (BR-2164).
-  const skip = floorSkip(wt, base.value, tested.value);
-  if (skip) {
+  const skip = floorDeferred ? undefined : floorSkip(wt, base.value, tested.value);
+  if (floorDeferred) {
+    say("floor: deferred — floor_timing is after; main is tested in the background once it moves (canon floor watch)");
+  } else if (skip) {
     floorSkipped = true;
     say(`floor: skipped — all ${skip.paths.length} changed path(s) are under floor_skip_paths (${skip.under.join(", ")})`);
     ws.db.event(ws.actor, "floor.skip", subject, { entry, paths: skip.paths.slice(0, 50), under: skip.under });
@@ -401,8 +409,10 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   if (moved !== "moved") return refuse(moved.reason, moved.message);
 
   finishEntry(ws.db, entry, "landed", head.value);
-  ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: t.branch, diff: fingerprint, ...(steps.reviewNotes ?? {}), ...(floorSkipped ? { floor_skipped: true } : {}) });
+  ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: t.branch, diff: fingerprint, ...(steps.reviewNotes ?? {}), ...(floorSkipped ? { floor_skipped: true } : {}), ...(floorDeferred ? { floor_deferred: true } : {}) });
   say(`landed ${head.value.slice(0, 9)} on ${main}`);
+  // The background floor starts on the main this landing made, before after_land (BR-2218, BR-2219).
+  if (floorDeferred) ensureWatcher(ws, say);
   afterLand(ws, say, { entry, subject, base: base.value, head: head.value, branch: t.branch });
   return finishLanding(ws, opts, say, { entry, subject, sha: head.value });
 }

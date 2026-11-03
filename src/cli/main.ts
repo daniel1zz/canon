@@ -17,6 +17,7 @@ import { sessionCommands } from "../work/session/commands.ts";
 import { snapshotCommands } from "../work/snapshots/commands.ts";
 import { statsCommands } from "../work/stats/commands.ts";
 import { verifyCommands } from "../work/verify/commands.ts";
+import { watchCommands } from "../work/watch/commands.ts";
 
 /**
  * Only assembles: every domain defines its commands in commands.ts in its own directory, with their place in --help,
@@ -35,6 +36,7 @@ const main = defineCommand({
     sessionCommands,
     landCommands,
     verifyCommands,
+    watchCommands,
     dropCommands,
     humanCommands,
     statsCommands,
