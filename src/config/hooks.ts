@@ -1,4 +1,4 @@
-import { closeSync, mkdirSync, openSync } from "node:fs";
+import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CoordDb } from "../work/db.ts";
 import type { HookEvent } from "./config.ts";
@@ -89,8 +89,77 @@ export function runHooksInBackground(ctx: HookContext, commands: readonly string
   const p = Bun.spawn(["sh", "-c", script], { cwd: ctx.cwd, env: envFor(ctx), stdout: fd, stderr: fd, stdin: "ignore" });
   p.unref();
   closeSync(fd);
-  for (const command of commands) ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit: null, background: true });
+  commands.forEach((command, i) => ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit: null, background: true, log: logPath, index: i + 1 }));
   return logPath;
+}
+
+interface BackgroundRun {
+  readonly subject: string | null;
+  readonly event: string;
+  readonly command: string;
+  readonly log: string;
+  readonly index: number;
+}
+
+export interface BackgroundBatch {
+  readonly change: string | null;
+  readonly log: string;
+  /** False when the log file is gone, so the exit codes cannot be known. */
+  readonly logFound: boolean;
+  readonly failed: readonly { readonly command: string; readonly exit: number }[];
+}
+
+const EXIT_LINE = /^\[hook (\d+)\/\d+ exited (\d+)\]$/gm;
+
+/**
+ * Reads the exit codes of the latest background batch from its log and records each finished command once as a
+ * `hook.exit` event (BR-2137). Returns the batch, or undefined when no background run recorded a log path.
+ */
+export function settleBackgroundHooks(db: CoordDb, actor: string): BackgroundBatch | undefined {
+  const latest = db.db
+    .query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'hook.run' AND json_extract(detail, '$.log') IS NOT NULL ORDER BY id DESC LIMIT 1")
+    .get();
+  if (!latest) return undefined;
+  const log = (JSON.parse(latest.detail) as { log: string }).log;
+  const runs = db.db
+    .query<{ subject: string | null; detail: string }, [string]>("SELECT subject, detail FROM events WHERE kind = 'hook.run' AND json_extract(detail, '$.log') = ? ORDER BY id")
+    .all(log)
+    .map((e): BackgroundRun => ({ subject: e.subject, ...(JSON.parse(e.detail) as Omit<BackgroundRun, "subject">) }));
+  const change = runs[0]?.subject ?? null;
+  if (!existsSync(log)) return { change, log, logFound: false, failed: [] };
+  const exits = new Map<number, number>();
+  for (const m of readFileSync(log, "utf8").matchAll(EXIT_LINE)) exits.set(Number(m[1]), Number(m[2]));
+  // reason: several sessions may run canon brief at once; check-then-insert inside one write transaction records each command once (BR-2137)
+  db.db
+    .transaction(() => {
+      const recorded = new Set(
+        db.db
+          .query<{ index: number }, [string]>("SELECT json_extract(detail, '$.index') AS \"index\" FROM events WHERE kind = 'hook.exit' AND json_extract(detail, '$.log') = ?")
+          .all(log)
+          .map((r) => r.index),
+      );
+      for (const r of runs) {
+        const exit = exits.get(r.index);
+        if (exit === undefined || recorded.has(r.index)) continue;
+        db.event(actor, "hook.exit", r.subject, { event: r.event, command: r.command, exit, background: true, log, index: r.index });
+      }
+    })
+    .immediate();
+  const failed = runs.flatMap((r) => {
+    const exit = exits.get(r.index);
+    return exit !== undefined && exit !== 0 ? [{ command: r.command, exit }] : [];
+  });
+  return { change, log, logFound: true, failed };
+}
+
+/** The `canon brief` line about the latest background batch (BR-2138), or undefined when there is nothing to say. */
+export function backgroundNotice(batch: BackgroundBatch | undefined): string | undefined {
+  if (!batch) return undefined;
+  const after = batch.change ? ` after ${batch.change}` : "";
+  if (!batch.logFound) return `after_land${after}: the log ${batch.log} is missing, so whether the background commands succeeded is unknown`;
+  if (batch.failed.length === 0) return undefined;
+  const what = batch.failed.map((f) => `\`${f.command}\` exited ${f.exit}`).join(", ");
+  return `after_land${after} failed in the background: ${what} (log: ${batch.log})`;
 }
 
 export const logFile = (db: CoordDb, name: string) => join(dirname(db.db.filename), "logs", name);

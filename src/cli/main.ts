@@ -16,6 +16,7 @@ import { readCorpus } from "../knowledge/documents/read.ts";
 import { createDoc, createDomain, setMeta } from "../knowledge/documents/write.ts";
 import { git } from "../kernel/git.ts";
 import { overlapsOf } from "../work/session/overlap.ts";
+import { backgroundNotice, settleBackgroundHooks } from "../config/hooks.ts";
 import { skillsSource, type InstallReport } from "./install/install.ts";
 import { WORKFLOW_GUIDE } from "./guide.ts";
 import { resolve, unknownArgument } from "./strict.ts";
@@ -532,6 +533,8 @@ function briefState(ws: Workspace) {
     const pending = questions(ws.db, "pending").length;
     if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
   }
+  const background = backgroundNotice(settleBackgroundHooks(ws.db, ws.actor));
+  if (background) say(background);
   noticeUpdates(ws, say);
 }
 

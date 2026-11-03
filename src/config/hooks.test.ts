@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claims } from "../work/claims/claims.ts";
 import { handoffs } from "../work/session/handoffs.ts";
 import { start, stop } from "../work/session/session.ts";
 import { land } from "../work/land/land.ts";
+import { backgroundNotice, settleBackgroundHooks } from "./hooks.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../work/testkit.ts";
 
 function configured(hooks: string) {
@@ -122,5 +124,88 @@ describe("lifecycle hooks", () => {
     const root = configured(`  before_land: exit 3\n`);
     await commitAndLand(root, "Failing", "x.txt");
     expect(hookRuns(root).map((r) => [r.event, r.exit])).toEqual([["before_land", 3]]);
+  });
+});
+
+describe("background hook exit codes", () => {
+  const MAIN = join(import.meta.dir, "..", "cli", "main.ts");
+  const brief = (cwd: string) =>
+    Bun.spawnSync(["bun", MAIN, "brief"], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:test" } }).stdout.toString();
+  const exits = (root: string) =>
+    ws(root)
+      .db.db.query<{ subject: string | null; detail: string }, []>("SELECT subject, detail FROM events WHERE kind = 'hook.exit' ORDER BY id")
+      .all()
+      .map((e) => ({ subject: e.subject, ...(JSON.parse(e.detail) as { event: string; command: string; exit: number; log: string; index: number }) }));
+  const logOf = (root: string) => hookRuns(root).find((r) => r.background)! as unknown as { log: string };
+  async function finished(log: string, n: number) {
+    const count = () => (existsSync(log) ? (readFileSync(log, "utf8").match(/^\[hook \d+\/\d+ exited \d+\]$/gm) ?? []).length : 0);
+    for (let i = 0; i < 100 && count() < n; i++) await Bun.sleep(50);
+    expect(count()).toBe(n);
+  }
+
+  test("BR-2059: a background run records its log path and its place in the batch", async () => {
+    const root = configured(`  after_land:\n    - exit 0\n    - exit 0\n`);
+    await commitAndLand(root, "Logged", "x.txt");
+    const runs = hookRuns(root) as unknown as { log: string; index: number }[];
+    expect(runs.map((r) => r.index)).toEqual([1, 2]);
+    expect(runs[0]!.log).toMatch(/after-land-\d+\.log$/);
+    expect(runs[1]!.log).toBe(runs[0]!.log);
+  });
+
+  test("BR-2137: brief records each finished background command once as hook.exit; an unfinished one is not recorded", async () => {
+    const root = configured(`  after_land:\n    - exit 0\n    - exit 7\n    - 'while [ ! -e "$CANON_WORKTREE/go" ]; do sleep 0.05; done'\n`);
+    const { s } = await commitAndLand(root, "Exits", "x.txt");
+    const { log } = logOf(root);
+    await finished(log, 2);
+    brief(root);
+    expect(exits(root).map((e) => [e.subject, e.event, e.command, e.exit, e.index, e.log])).toEqual([
+      [s.change, "after_land", "exit 0", 0, 1, log],
+      [s.change, "after_land", "exit 7", 7, 2, log],
+    ]);
+    brief(root);
+    expect(exits(root)).toHaveLength(2);
+    writeFileSync(join(root, "go"), "");
+    await finished(log, 3);
+    settleBackgroundHooks(ws(root).db, "agent:test");
+    expect(exits(root).map((e) => [e.index, e.exit])).toEqual([[1, 0], [2, 7], [3, 0]]);
+  });
+
+  test("BR-2138: brief names the failed command and the log when the latest landing's background commands failed, in a worktree too", async () => {
+    const marker = `${mkdtempSync(join(tmpdir(), "canon-broken-"))}/broken`;
+    const root = configured(`  after_land:\n    - exit 0\n    - 'test ! -e ${marker}'\n`);
+    writeFileSync(marker, ""); // outside the repository, so main stays clean
+    const first = await commitAndLand(root, "Broken build", "x.txt");
+    const firstLog = logOf(root).log;
+    await finished(firstLog, 2);
+    const line = `after_land after ${first.s.change} failed in the background: \`test ! -e ${marker}\` exited 1 (log: ${firstLog})`;
+    expect(brief(root)).toContain(line);
+    const other = startNew(root, "Elsewhere");
+    expect(brief(other.worktree)).toContain(line);
+
+    rmSync(marker);
+    const second = await commitAndLand(root, "Fixed build", "y.txt");
+    const secondLog = (hookRuns(root) as unknown as { log: string; background?: boolean }[]).filter((r) => r.background).at(-1)!.log;
+    expect(secondLog).not.toBe(firstLog);
+    await finished(secondLog, 2);
+    expect(second.out.kind).toBe("landed");
+    expect(brief(root)).not.toContain("after_land");
+  });
+
+  test("BR-2138: nothing is said while the latest batch still runs; a missing log is said with its path", async () => {
+    const root = configured(`  after_land: 'while [ ! -e "$CANON_WORKTREE/go" ]; do sleep 0.05; done; exit 3'\n`);
+    const { s } = await commitAndLand(root, "Slow", "x.txt");
+    const { log } = logOf(root);
+    expect(brief(root)).not.toContain("after_land");
+    writeFileSync(join(root, "go"), "");
+    await finished(log, 1);
+    expect(brief(root)).toContain(`\`while [ ! -e "$CANON_WORKTREE/go" ]; do sleep 0.05; done; exit 3\` exited 3`);
+    rmSync(log);
+    expect(backgroundNotice(settleBackgroundHooks(ws(root).db, "agent:test"))).toBe(
+      `after_land after ${s.change}: the log ${log} is missing, so whether the background commands succeeded is unknown`,
+    );
+  });
+
+  test("BR-2138: with no background run recorded, there is nothing to say", () => {
+    expect(backgroundNotice(settleBackgroundHooks(ws(project()).db, "agent:test"))).toBeUndefined();
   });
 });
