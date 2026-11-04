@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,6 +8,10 @@ import { slugify } from "./model.ts";
 import { readCorpus } from "./read.ts";
 import { createDoc, setMeta } from "./write.ts";
 import { ws } from "../../work/testkit.ts";
+
+// reason: the CLI cases spawn canon several times each; under a loaded machine (load average 20 while other sessions ran
+// their suites) one such case took over bun's 5 s default, as in backlog.test.ts and drop.test.ts (C-111, C-238)
+setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
 // Ids are assembled at runtime so this file does not itself name documents when canon check scans the repo.

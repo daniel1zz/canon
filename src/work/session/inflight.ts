@@ -98,6 +98,8 @@ export function listedBefore(ws: Workspace): Result<Set<string>> {
 function changeIdsAt(ws: Workspace, ref: string): Result<Set<string>> {
   const type = changeType(ws);
   const dir = `${CANON_DIR}/${type.dir}/`;
+  // reason: a repository whose main has no commit yet has no change on main; any other git failure is an error
+  if (!git(ws.primary, "rev-parse", "--verify", "-q", `${ref}^{commit}`).ok) return ok(new Set());
   const files = git(ws.primary, "ls-tree", "--name-only", ref, "--", dir);
   if (!files.ok) return files;
   const name = new RegExp(`^(${type.prefix}-\\d+)(?:-[a-z0-9-]+)?\\.md$`);
