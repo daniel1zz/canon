@@ -6,6 +6,7 @@ import { git } from "../../kernel/git.ts";
 import { FILE_PLACEHOLDER } from "./config-keys.ts";
 import { backlogNotes, check, noteLine } from "../../knowledge/check/check.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
+import { envSpawnHints, renderEnvSpawnHint } from "../../knowledge/check/env-spawn.ts";
 import { testTitles } from "../../knowledge/check/test-titles.ts";
 import { budgetHint, sessionText } from "../../knowledge/check/session-text.ts";
 import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
@@ -252,7 +253,8 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   if (!onBranches.ok) return onBranches;
   const onMain = listedBefore(ws);
   if (!onMain.ok) return onMain;
-  const input = { root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config), floorSkipPaths: ws.config.floorSkipPaths, branchChanges: onBranches.value, backlogBase: onMain.value };
+  const testFiles = testFilesFor(ws.root, ws.config);
+  const input = { root: ws.root, ...read, testFiles, floorSkipPaths: ws.config.floorSkipPaths, branchChanges: onBranches.value, backlogBase: onMain.value };
   const findings = check(input);
   for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
   for (const n of backlogNotes(input)) say(noteLine(n)); // never a failure (BR-2150, #112)
@@ -260,6 +262,8 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   // A hint on standard error, never a failure (BR-2257, D-37).
   const hint = budgetHint(sessionText(ws.root, WORKFLOW_GUIDE), ws.config.sessionTextBudget);
   if (hint) console.error(hint);
+  // A hint, never a failure: the static judgement has false positives (BR-2300).
+  for (const h of envSpawnHints(ws.root, testFiles)) console.error(renderEnvSpawnHint(h));
 
   // Open review notes on what this change touches, the ones canon context shows; a hint, never a failure (BR-2249, D-21).
   const notes = openNotes(ws.db, [...rules, ...decisions]);
