@@ -15,4 +15,12 @@ describe("member that cannot follow its commit on main", () => {
     expect(hint).toContain("the branch was left as it is");
     expect(hint).toContain("`git rebase main`");
   });
+
+  test("BR-2191: when local edits stop the files and moving the branch back fails too, the hint says where HEAD is and never that the branch was left as it is", () => {
+    const message = "Entry 'a.txt' not uptodate. Cannot merge.; HEAD could not be moved back to abc (error): HEAD is def while the index and the files are still abc's; check git status before committing";
+    const hint = followHint({ kind: "undo", message }, "main");
+    expect(hint).toContain("HEAD could not be moved back");
+    expect(hint).toContain("`git rebase main`");
+    expect(hint).not.toContain("the branch was left as it is");
+  });
 });
