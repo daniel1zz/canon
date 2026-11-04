@@ -29,9 +29,12 @@ Without a label filter the same steps apply to any issue. For each one, before j
 
 Before forming an opinion, attempt reproduction: trace the code path, then run your own command or write the failing test. A canon-review issue names a file, a line and the input or interleaving under which it fails; check that scenario is real at current main (`git log` since the commit it names: it may already be fixed). For a race, force the interleaving in a test (two processes, a barrier, a pre-seeded state) rather than hoping to hit it.
 
-Record one of three results in an issue comment, with the commands and their output:
+Forcing a scenario in a test (a barrier, a pre-seeded state, a fake binary) shows the code *can* fail, not that anyone hits it. It counts as reproduced only when you can also name who hits it in which normal operation, or it loses data or is a security problem. Otherwise record it as **constructed only** (D-54).
+
+Record one of four results in an issue comment, with the commands and their output:
 
 - **Reproduced**: the code path from the entry point to the wrong result.
+- **Constructed only**: the forced scenario, and why no normal operation reaches it.
 - **Not reproduced**: what was tried, at which commit.
 - **Insufficient detail**: what is missing. A review-filed issue has no reporter to ask, so either fill the gap yourself (read the diff it cites) or close it as not reproducible with what you tried; it can be reopened.
 
@@ -39,6 +42,7 @@ Record one of three results in an issue comment, with the commands and their out
 
 | Situation | Outcome |
 |-----------|---------|
+| Constructed only, no data loss and no security problem | `gh issue close <n> --reason "not planned" --comment "Not seen in real use; reopen if it happens. <the forced scenario>"`; no new mechanism (D-54) |
 | Not reproducible, or already fixed on main | `gh issue close <n> --reason "not planned" --comment "<what was tried, at which commit>"` |
 | Same root cause as another issue | comment `Duplicate of #m: <why it is the same root cause>`, then close it the same way. One root cause, one issue. |
 | Matches a decision that rejected it | comment linking the decision and its reason, close; add the issue number to that decision's 背景 in your next commit |

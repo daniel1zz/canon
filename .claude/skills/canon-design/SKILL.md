@@ -34,6 +34,7 @@ Read only the files of the mode you need. Cross-cutting references (`references/
 - Check current official docs before proposing any library, version or API.
 - Quantify vague goals first ("fast" → p99 under X ms at Y rps).
 - Every scenario the design serves names at least one business-level failure it must handle (limit hit, payment declined, permission revoked mid-flow, upstream outage) and how it fails loudly and recoverably; "no failure mode applies" has to be argued, not assumed.
+- Weigh each option's complexity against how often each scenario happens in real use and what it costs then. A rare interleaving, an unusual platform setup or hostile input that crosses no security boundary becomes a known limit (one line in the decision's 后果 or the rule), not a new mechanism; data loss and security are the exceptions (D-54).
 - Review the draft against the mode's lenses yourself. Parallel review subagents (one per lens, see the mode file) are optional: each starts from zero context and costs tens of thousands of tokens, so use them only when the blast radius is large (cross-module, public API, data migration, security).
 
 ### Quality gates (all must pass, or say which one does not and why)
@@ -51,7 +52,7 @@ Read only the files of the mode you need. Cross-cutting references (`references/
 | Concern | When | Do |
 |---------|------|----|
 | Security | user input, auth, storage, external calls | trace the data flow, list threats and mitigations |
-| Concurrency | shared state, several sessions or processes | name the interleaving that could break it and what makes it atomic |
+| Concurrency | shared state, several sessions or processes | name the interleaving that could break it in normal use and what makes it atomic; rarer ones are known limits unless they lose data |
 | Performance | latency-sensitive paths, large data | set a budget and show the design meets it |
 | Observability | new component | what is logged or recorded, and how a failure is noticed |
 | Data privacy | PII or other user data | classify its sensitivity; encryption at rest and in transit; retention period and deletion; audit trail of who reads or changes it |

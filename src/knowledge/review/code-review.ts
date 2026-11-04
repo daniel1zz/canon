@@ -60,9 +60,11 @@ export function reviewPrompt(diff: string, files: readonly { path: string; text:
   return [
     "You review code that has just landed on main. Look ONLY for security problems and concurrency problems (races, lost updates, missing atomicity, unsafe shared state, deadlocks). Ignore style, naming, performance and everything else.",
     "Report a problem only when you can name the exact file and line, and the concrete input or interleaving of events under which it goes wrong. If you cannot, do not report it.",
+    // reason: findings that only a constructed test can reach grew code no real use needed (D-54)
+    "Report only problems hit in normal use: the scenario must say who hits it in which normal operation. Do not report rare interleavings, unusual platform setups or hostile input that crosses no security boundary, unless the problem loses data or is a security problem.",
     "Before reporting a problem, try once to disprove it: read the code that guards it, its callers and its tests. Report only what survives that attempt.",
     "Several symptoms of one root cause are ONE finding. If an open issue below already describes the same root cause, set `existing` to its number.",
-    'Answer with JSON only: {"findings":[{"kind":"security"|"concurrency","title":"<short>","root_cause":"<one sentence>","file":"<path>","line":<n>,"scenario":"<input or timing → wrong result>","existing":<issue number or null>}]}',
+    'Answer with JSON only: {"findings":[{"kind":"security"|"concurrency","title":"<short>","root_cause":"<one sentence>","file":"<path>","line":<n>,"scenario":"<who, in which normal operation, with which input or timing → wrong result>","existing":<issue number or null>}]}',
     "",
     "# Diff of the landing",
     "",

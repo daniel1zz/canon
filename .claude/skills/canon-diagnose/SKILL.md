@@ -32,7 +32,7 @@ If you genuinely cannot build a loop: stop, say so, list what you tried, and ask
 
 ## Phase 2 — Reproduce
 
-Run the loop and watch the bug appear. Confirm it is the failure the user described (not a nearby different one), that it reproduces across runs, and capture the exact symptom so you can verify the fix against it later.
+Run the loop and watch the bug appear. Confirm it is the failure the user described (not a nearby different one), that it reproduces across runs, and capture the exact symptom so you can verify the fix against it later. A failure you can only force (a barrier, a pre-seeded state, a fake binary) and that no normal operation reaches is not this bug: unless it loses data or is a security problem, write it down as a known limit instead of fixing it (D-54).
 
 ## Phase 3 — Hypothesise
 
