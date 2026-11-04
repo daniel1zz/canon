@@ -71,6 +71,8 @@ describe("batches", () => {
     expect(batchCandidates(d, lead, 1).map((x) => x.id)).toEqual([b]); // land_batch_max 2: the leader and one more
     expect(joinBatch(d, lead, c, "h")).toBe(true);
     expect(leaveBatch(d, c)).toBe(true); // back in the queue, and it may join a batch again (BR-2173)
+    // no solo mark is set on leaving: the entry stays one that may be batched (D-42)
+    expect(d.db.query<{ solo: number | null; batch: number | null }, [number]>("SELECT solo, batch FROM queue WHERE id = ?").get(c)).toEqual({ solo: 0, batch: null });
     expect(batchCandidates(d, lead, 3).map((x) => x.id)).toEqual([b, c, e]);
     expect(e).toBeGreaterThan(c);
     const silent = enqueue(d, "/wt/s", "C-5", "x"); // no lander process recorded

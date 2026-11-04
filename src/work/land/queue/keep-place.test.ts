@@ -34,6 +34,8 @@ describe("a landing refused for a conflict keeps its place", () => {
     expect(back.id).toBe(r);
     expect(back.kept?.resolveMs).toBeGreaterThanOrEqual(0);
     expect(keptPlaces(d)).toEqual([]);
+    // a fresh landing at the old place: no batch and no solo mark carried over (D-42)
+    expect(d.db.query<{ solo: number | null; batch: number | null }, [number]>("SELECT solo, batch FROM queue WHERE id = ?").get(r)).toEqual({ solo: 0, batch: null });
     expect(tryTurn(d, r)).toEqual({ mine: false, ahead: 1 }); // B is landing: it is not interrupted (BR-2178)
     finishEntry(d, b, "landed", "sb");
     expect(tryTurn(d, c)).toEqual({ mine: false, ahead: 1 }); // C-2 is ahead of C-4

@@ -116,6 +116,8 @@ describe("a config key added and used in one landing", () => {
     expect(Bun.spawnSync(["git", "merge-base", "--is-ancestor", cOnMain, bOnMain], { cwd: root }).exitCode).toBe(0);
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'batch.drop'").get()?.n).toBe(1);
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'batch.fail'").get()?.n).toBe(0);
+    // B went back to the queue, not refused, and its later landing passed this step since main then declared the key (BR-2173)
+    expect(ws(root).db.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM events WHERE kind = 'land.refuse' AND subject = ?").get(b.change)?.n).toBe(0);
     expect(sh(root, "show", "main:canon/config.yaml")).toContain("typecheck_command");
   }, TIMED);
 });
