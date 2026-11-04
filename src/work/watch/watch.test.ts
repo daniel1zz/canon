@@ -645,6 +645,14 @@ describe("a passing main", () => {
     expect(alive(pid)).toBe(false);
   });
 
+  test("BR-2285: a watcher that leads its group also stops a descendant that moved to a session of its own while its parent still runs", async () => {
+    const { late } = await termedWhile((ready, late) => {
+      writeFileSync(`${ready}.pl`, `use POSIX; POSIX::setsid(); sleep 1; open(my $f, ">", "${late}");\n`);
+      return `hooks:\n  after_green: 'perl ${ready}.pl & touch ${ready}; wait'\n`;
+    });
+    expect(existsSync(late)).toBe(false);
+  });
+
   test("BR-2285: a process that left the watcher's process group with setsid is not stopped: it goes on and writes its file", async () => {
     const { late } = await termedWhile((ready, late) => {
       writeFileSync(`${ready}.pl`, `use POSIX; if (fork() == 0) { POSIX::setsid(); sleep 1; open(my $f, ">", "${late}"); exit 0 }\n`);

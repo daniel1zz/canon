@@ -29,12 +29,18 @@ function table(): Row[] | undefined {
 }
 
 /**
- * What `self` started that still runs. A watcher leads its own process group (canon starts it detached): then every
- * other process in the group, which takes in those whose parent exited, since they keep the group. Otherwise only its
- * descendants, parents listed before their children.
+ * What `self` started that still runs: its descendants, parents listed before their children, including those that
+ * moved to a group or session of their own. A watcher that leads its own process group (canon starts it detached) also
+ * takes every other process in the group, which takes in those whose parent exited, since they keep the group.
  */
 function startedBy(rows: readonly Row[], self: number): number[] {
-  if (rows.find((r) => r.pid === self)?.pgid === self) return rows.filter((r) => r.pgid === self && r.pid !== self).map((r) => r.pid);
+  const out = descendants(rows, self);
+  // reason: a descendant that called setpgid or setsid is not in the group but is still found as a child (BR-2285, issue #107)
+  if (rows.find((r) => r.pid === self)?.pgid === self) for (const r of rows) if (r.pgid === self && r.pid !== self && !out.includes(r.pid)) out.push(r.pid);
+  return out;
+}
+
+function descendants(rows: readonly Row[], self: number): number[] {
   const out: number[] = [];
   const parents = [self];
   while (parents.length > 0) {
