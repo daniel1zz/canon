@@ -93,6 +93,24 @@ describe("batches", () => {
     expect(tryTurn(d, m)).toEqual({ mine: true, ahead: 0 });
   });
 
+  test("BR-2018 BR-2173: a locked member is unlocked once its leader is gone, so a later signal gives its entry up; while the leader lives it is kept", () => {
+    const d = db();
+    const me = selfProcess();
+    const lead = enqueue(d, "/wt/a", "C-1", "x", me);
+    const m = enqueue(d, "/wt/b", "C-2", "x", me);
+    expect(tryTurn(d, lead).mine).toBe(true);
+    expect(joinBatch(d, lead, m, "h1")).toBe(true);
+    expect(lockBatch(d, lead, [m])).toBe(true);
+    // the leader lives: the locked member's signal handler does not give its entry up, so it keeps its close commit
+    expect(failIfActive(d, m, "killed", me)).toBe(false);
+    // the leader is killed with SIGKILL: its process is gone
+    d.db.query("UPDATE queue SET pid = ?, pid_start = ? WHERE id = ?").run(2 ** 22 + 12345, "never", lead);
+    expect(tryTurn(d, m).batched).toBeUndefined();
+    expect(d.db.query<{ batch: number | null }, [number]>("SELECT batch FROM queue WHERE id = ?").get(m)?.batch).toBeNull();
+    // now unlocked, a signal ends it like any lander: the entry is given up and its own handler takes the close commit back
+    expect(failIfActive(d, m, "killed", me)).toBe(true);
+  });
+
   test("BR-2173: a member does not wait behind a leader whose process is gone or that stopped beating (issue #41)", () => {
     const d = db();
     const me = selfProcess();

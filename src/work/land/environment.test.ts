@@ -13,7 +13,7 @@ const CLI = join(import.meta.dir, "../../cli/main.ts");
 const reasons = (root: string) => ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'land.refuse' ORDER BY id").all().map((e) => JSON.parse(e.detail).reason as string);
 
 describe("a git or file operation that fails during a landing", () => {
-  test("BR-2193: a close commit that git refuses exits 4 as environment, and leaves the change open and the worktree clean", async () => {
+  test("BR-2193 BR-2229: a close commit that git refuses exits 4 as environment, leaves status: done uncommitted, and says what to do next", async () => {
     const root = project();
     const s = startNew(root, "Hook refuses");
     const head = sh(s.worktree, "rev-parse", "HEAD");
@@ -25,14 +25,18 @@ describe("a git or file operation that fails during a landing", () => {
     expect(code).toBe(4);
     expect(err).toContain("land refused (environment)");
     expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(head);
-    expect(sh(s.worktree, "status", "--porcelain")).toBe("");
+    const file = sh(s.worktree, "ls-files", "canon/changes").split("\n").find((f) => f.includes(s.change))!;
+    // reason: canon no longer writes the file back, so the only change in the worktree is its own uncommitted status: done (issue #82)
+    expect(sh(s.worktree, "status", "--porcelain")).toBe(`M ${file}`);
     const change = readCorpus(s.worktree).corpus.docs.find((d) => d.id === s.change);
-    expect(change?.kind === "change" && change.status).toBe("open");
+    expect(change?.kind === "change" && change.status).toBe("done");
+    expect(err).toContain("is left with status: done and not committed");
+    expect(err).toContain("land --finish again");
     expect(reasons(root)).toEqual(["environment"]);
     expect(ws(root).db.db.query("SELECT 1 FROM queue").all()).toEqual([]);
   }, TIMED);
 
-  test("BR-2193: a change file edited while the failing close commit runs keeps that edit (issue #80)", async () => {
+  test("BR-2229: a change file edited while the failing close commit runs keeps that edit and status: done (issues #80, #82)", async () => {
     const root = project();
     const s = startNew(root, "Edited meanwhile");
     const file = sh(s.worktree, "ls-files", "canon/changes").split("\n").find((f) => f.includes(s.change))!;
@@ -41,8 +45,10 @@ describe("a git or file operation that fails during a landing", () => {
     writeFileSync(join(hooks, "pre-commit"), `#!/bin/sh\necho 'edit saved meanwhile' >> ${file}\nexit 1\n`, { mode: 0o755 });
     const out = await land(ws(s.worktree), { ...FAST, finish: true }, quiet);
     expect(out.kind === "refused" && out.reason).toBe("environment");
-    expect(out.kind === "refused" && out.message).toContain("left as it is");
-    expect(readFileSync(join(s.worktree, file), "utf8")).toContain("edit saved meanwhile");
+    expect(out.kind === "refused" && out.message).toContain("is left with status: done and not committed");
+    const text = readFileSync(join(s.worktree, file), "utf8");
+    expect(text).toContain("edit saved meanwhile");
+    expect(text).toContain("status: done");
   }, TIMED);
 
   test("BR-2193 BR-2067: a rebase that fails without a conflicted file is environment, keeps no place, and counts as no check", async () => {

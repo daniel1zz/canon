@@ -2,10 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { renewClaim, takeClaim } from "../claims/claims.ts";
-import { enqueue, finishEntry, tryTurn } from "./queue.ts";
+import { enqueue, finishEntry, heartbeat, tryTurn } from "./queue.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
-import { land } from "./land.ts";
-import { processOf, type Proc } from "../claims/liveness.ts";
+import { land, waitPollMs } from "./land.ts";
+import { processOf, selfProcess, type Proc } from "../claims/liveness.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
@@ -218,5 +218,40 @@ describe("a lander killed by a signal", () => {
     expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(before);
     expect(sh(s.worktree, "status", "--porcelain")).toBe("");
     expect(entryOf(root)).toMatchObject({ state: "failed", result: "killed" });
+  }, TIMED);
+});
+
+describe("a waiting lander's heartbeat", () => {
+  test("BR-2044: with a stale time under the 2 s poll, a waiting lander keeps beating and is not skipped by the one behind it", async () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\nlander_stale_minutes: 0.01\n"); // 0.6 s
+    sh(root, "commit", "-qam", "short stale time");
+    const s = startNew(root, "Waits");
+    const staleMs = 600;
+    const other = ws(root, "agent:b");
+    const me = selfProcess();
+    const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b", me);
+    expect(tryTurn(other.db, ahead, staleMs).mine).toBe(true);
+    const beat = setInterval(() => heartbeat(other.db, ahead), 100);
+    try {
+      const landing = land(ws(s.worktree), FAST, quiet);
+      await Bun.sleep(300);
+      const behind = enqueue(other.db, "/elsewhere-too", "C-98", "agent:c", me);
+      // reason: the entry behind tries for its turn often, so a waiting lander silent for more than 0.6 s would be marked abandoned
+      for (let i = 0; i < 30; i++) {
+        tryTurn(other.db, behind, staleMs);
+        await Bun.sleep(100);
+      }
+      const state = () => other.db.db.query<{ state: string }, [string]>("SELECT state FROM queue WHERE subject = ? ORDER BY id DESC LIMIT 1").get(s.change)?.state;
+      expect(state()).toBe("waiting");
+      finishEntry(other.db, behind, "failed", "test");
+      clearInterval(beat);
+      finishEntry(other.db, ahead, "landed", "x");
+      expect((await landing).kind).toBe("landed");
+      // the other side: at the default 10 minutes the wait poll stays at 2 s
+      expect([waitPollMs(staleMs), waitPollMs(10 * 60_000)]).toEqual([200, 2000]);
+    } finally {
+      clearInterval(beat);
+    }
   }, TIMED);
 });

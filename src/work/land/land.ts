@@ -105,20 +105,15 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
         if (!hasLessons(doc.body)) return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
         // reason: a file write or git commit that fails is an environment error, not a check's verdict (BR-2193).
         // setMeta fails before it writes, so the file is left as it is: whatever is in it now is someone else's edit (issue #80).
-        const file = join(wt, doc.path);
-        // reason: what was on disk right before canon wrote, including any edit saved since readCorpus, is what a rollback puts back (issue #80).
-        const before = readFileSync(file, "utf8");
         const s = setMeta(wt, doc, { status: "done" });
         if (!s.ok) return early("environment", `the close commit could not be made: ${s.error.message}`);
-        const written = readFileSync(file, "utf8");
         git(wt, "add", doc.path);
         const c = git(wt, "commit", "-q", "-m", closeSubject(subject));
         if (!c.ok) {
           git(wt, "reset", "-q", "--", doc.path);
-          // reason: put back only canon's own write; an edit saved meanwhile (e.g. during a slow pre-commit hook) stays (BR-2193, issue #80).
-          const mine = existsSync(file) && readFileSync(file, "utf8") === written;
-          if (mine) writeFileSync(file, before);
-          return early("environment", `the close commit could not be made: ${c.error.message}${mine ? "" : `\n${doc.path} changed while it was being committed, so it was left as it is`}`);
+          // reason: never written back: no check-then-write is atomic across processes, so any rollback could overwrite
+          // an edit saved after its check; the file keeps status: done uncommitted and the message says what to do (BR-2229, issue #82).
+          return early("environment", `the close commit could not be made: ${c.error.message}\n${closeLeftNote(doc.path)}`);
         }
         close = { subject, path: doc.path };
       }
@@ -148,6 +143,10 @@ export interface CloseCommit {
 }
 
 const closeSubject = (change: string) => `canon: close ${change}`;
+
+/** What a failed close commit leaves behind and what to do next (BR-2229). */
+const closeLeftNote = (path: string) =>
+  `${path} is left with status: done and not committed (canon does not put it back, so no edit saved meanwhile is lost). Next: fix what made the commit fail, set status back to open in ${path} (git checkout -- ${path} when git diff shows only that line), then land --finish again`;
 
 /**
  * Takes the close commit back out after a landing that did not reach main: only while HEAD is still `top`, the
@@ -210,8 +209,14 @@ async function queueAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { ent
   }
 }
 
-/** How often a waiting lander tries for its turn. */
+/** How often a waiting lander tries for its turn, at most. */
 const POLL_MS = 2000;
+
+/**
+ * Each try for the turn is the waiting lander's heartbeat, so it comes at least three times per stale time, as
+ * the landing heartbeat does (BR-2044, BR-2049): a stale time under 2 s must not make a waiting lander look gone.
+ */
+export const waitPollMs = (staleMs: number) => Math.min(POLL_MS, Math.max(50, staleMs / 3));
 
 async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running }): Promise<LandOutcome> {
   const wt = ws.root;
@@ -223,6 +228,7 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
   let lastMain = "";
   // When this entry started being tested in another lander's batch; that time does not count toward the timeout (BR-2048).
   let batchedSince: number | undefined;
+  const poll = waitPollMs(ws.config.landerStaleMs);
   for (;;) {
     const turn = tryTurn(ws.db, entry, ws.config.landerStaleMs);
     if (!turn.batched && batchedSince !== undefined) {
@@ -239,7 +245,7 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
       batchedSince ??= Date.now();
       if (lastAhead !== -2) say(`being tested in the batch of queue entry ${turn.batched.leader}; keep this worktree as it is`);
       lastAhead = -2;
-      await Bun.sleep(POLL_MS);
+      await Bun.sleep(poll);
       continue;
     }
     if (turn.mine) {
@@ -270,7 +276,7 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
       ws.db.event(ws.actor, "land.refuse", subject, { reason: "timeout", ahead: turn.ahead, diff: ownDiffId(wt, main) });
       return { kind: "timeout", ahead: turn.ahead };
     }
-    await Bun.sleep(POLL_MS);
+    await Bun.sleep(poll);
   }
 
   // The heartbeat runs from the moment this lander has its turn until the landing ends, through the floor,
