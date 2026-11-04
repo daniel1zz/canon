@@ -189,7 +189,7 @@ describe("the claim during a landing", () => {
       throw new Error("EIO: i/o error");
     };
     const failed = moveBranch(s.worktree, top, parent, "test", 0, { copy: copyFileSync, rename });
-    expect(failed?.kind).toBe("io");
+    expect(failed?.kind).toBe("undo");
     expect(failed?.message).toContain("the files could not be put back");
     expect(failed?.message).not.toContain("the branch and the files were left as they were");
     expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(top);

@@ -145,7 +145,9 @@ export type BranchMoveFailure =
   | { readonly kind: "locked"; readonly message: string }
   | { readonly kind: "moved"; readonly message: string }
   | { readonly kind: "files"; readonly message: string }
-  | { readonly kind: "io"; readonly message: string };
+  | { readonly kind: "io"; readonly message: string }
+  // the index could not be replaced and undoing the move failed too: the branch or the files have moved (BR-2258)
+  | { readonly kind: "undo"; readonly message: string };
 
 /** The file operations moveBranch uses on the index; tests pass ones that fail, as a full disk would. */
 export interface IndexFiles {
@@ -203,8 +205,8 @@ export function moveBranch(wt: string, from: string, to: string, message: string
     const head = moved ? git(wt, "update-ref", "-m", `${message} (undone)`, "HEAD", from, to) : ok("");
     const why = `the index could not be replaced (${(e as Error).message})`;
     // reason: an undo that fails is said, never reported as nothing changed (BR-2258, issue #100).
-    if (!head.ok) return fail("io", `${why}; HEAD could not be moved back to ${from.slice(0, 9)} (${head.error.message.split("\n")[0]}): HEAD is ${to.slice(0, 9)} while the index is still ${from.slice(0, 9)}'s; check git status before committing`);
-    if (!back.ok) return fail("io", `${why}; the branch was left as it was, but the files could not be put back (${back.error.message.split("\n")[0]}): they hold ${to.slice(0, 9)}'s content, and git status shows them as uncommitted changes`);
+    if (!head.ok) return fail("undo", `${why}; HEAD could not be moved back to ${from.slice(0, 9)} (${head.error.message.split("\n")[0]}): HEAD is ${to.slice(0, 9)} while the index is still ${from.slice(0, 9)}'s; check git status before committing`);
+    if (!back.ok) return fail("undo", `${why}; the branch was left as it was, but the files could not be put back (${back.error.message.split("\n")[0]}): they hold ${to.slice(0, 9)}'s content, and git status shows them as uncommitted changes`);
     return fail("io", `${why}; the branch and the files were left as they were`);
   } finally {
     closeSync(fd);
