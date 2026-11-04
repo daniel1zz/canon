@@ -803,6 +803,18 @@ describe("canon work test stops on a signal", () => {
     expect(lastEvent(wt)["signal"]).toBeUndefined();
   });
 
+  test("BR-2227 BR-2304: a run stopped by a signal runs no canon check, so a finding in the worktree is not reported", async () => {
+    const wt = jobsFixture(1, 'touch "started.$$"\nsleep 30 &\nwait\n', "1");
+    write(wt, { "canon/rules/core/BR-999.md": ruleText("dangling").replace("x\n\n## 例子", "refers to BR-998\n\n## 例子").replace(`id: ${rule}`, "id: BR-999") }); // a finding canon check would list
+    const { d, signals } = fakeDeps();
+    const lines: string[] = [];
+    const run = workTest(ws(wt), false, (l) => lines.push(l), d);
+    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 1) await Bun.sleep(25);
+    signals.emit("SIGTERM", "SIGTERM");
+    await run;
+    expect(lines.some((l) => l.startsWith("canon check") || l.includes("ref-dangling"))).toBe(false);
+  });
+
   test("BR-2304: signals during a run that reached the pool are on; after the files finish canon check runs with them off", async () => {
     const wt = jobsFixture(1, "exit 0\n", "1");
     const { d, signals } = fakeDeps();
