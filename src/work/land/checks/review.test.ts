@@ -224,17 +224,18 @@ describe("rule review at land", () => {
   test("BR-2296: a reviewer past review_timeout_minutes is stopped with its children and the landing is refused with reason review", async () => {
     const root = billingProject(`floor: "true"\ntests: []\n`);
     const pidFile = join(root, "..", `${root.split("/").pop()}-child.pid`);
-    const r = reviewer(root, `sleep 30 &\necho $! > ${pidFile}\nwait`);
-    configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\nreview_timeout_minutes: 0.1\n`);
+    const r = reviewer(root, `sleep 90 &\necho $! > ${pidFile}\nwait`);
+    // reason: 15 s leaves the reviewer time to start and write its pid under parallel floor load; 6 s did not (C-293)
+    configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\nreview_timeout_minutes: 0.25\n`);
     const s = startNew(root, "New rule");
     addRule(s.worktree);
     const started = Date.now();
     const out = await land(ws(s.worktree), FAST, quiet);
-    expect(Date.now() - started).toBeLessThan(25_000); // the limit is 6 s; the reviewer would sleep 30 s
+    expect(Date.now() - started).toBeLessThan(60_000); // the limit is 15 s; the reviewer would sleep 90 s
     expect(out.kind === "refused" && out.reason).toBe("review");
     expect(out.kind === "refused" && out.message).toContain("did not finish within");
     expect(await gone(Number(readFileSync(pidFile, "utf8").trim()))).toBe(true);
-  }, 30_000);
+  }, 75_000);
 
   test("BR-2296 BR-2099: canon work land stopped by SIGTERM while the reviewer runs exits 143 and stops the reviewer", async () => {
     const root = billingProject(`floor: "true"\ntests: []\n`);
