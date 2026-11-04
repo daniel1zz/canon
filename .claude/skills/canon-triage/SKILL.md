@@ -29,7 +29,7 @@ Without a label filter the same steps apply to any issue. For each one, before j
 
 Before forming an opinion, attempt reproduction: trace the code path, then run your own command or write the failing test. A canon-review issue names a file, a line and the input or interleaving under which it fails; check that scenario is real at current main (`git log` since the commit it names: it may already be fixed). For a race, force the interleaving in a test (two processes, a barrier, a pre-seeded state) rather than hoping to hit it.
 
-One criterion decides whether a finding is real: do normal operations lead to it? For canon, several sessions working and landing at the same time is normal use. How your test reproduces it (a barrier, a pre-seeded state, a fake binary) does not decide: a race between two normal landings forced with a barrier is reproduced. It counts as reproduced when you can name who hits it in which normal operation. A situation that needs an abnormal setup or action (a user's wrapper around a system command, a non-default backend nobody uses, killing one specific process mid-step, hostile input that crosses no security boundary) is a **known limit** (D-54), unless it loses data, is a security problem, or breaks one of the project's promises (for canon, P1 to P7 in canon/product.md); those are fixed like any reproduced problem.
+One criterion decides whether a finding is real: do normal operations lead to it? For canon, several sessions working and landing at the same time is normal use. How your test reproduces it (a barrier, a pre-seeded state, a fake binary) does not decide: a race between two normal landings forced with a barrier is reproduced. It counts as reproduced when you can name who hits it in which normal operation. A situation that needs an abnormal setup or action (a user's wrapper around a system command, a non-default backend nobody uses, killing one specific process mid-step, hostile input that crosses no security boundary) is a **known limit**, unless it loses data, is a security problem, or breaks one of the project's promises (for canon, P1 to P7 in canon/product.md); those are fixed like any reproduced problem.
 
 Record one of four results in an issue comment, with the commands and their output:
 
@@ -42,7 +42,7 @@ Record one of four results in an issue comment, with the commands and their outp
 
 | Situation | Outcome |
 |-----------|---------|
-| Known limit: needs an abnormal setup or action, no data loss, no security problem, no broken promise | `gh issue close <n> --reason "not planned" --comment "Needs an abnormal setup or action; reopen if it happens in normal use. <the situation>"`; no new mechanism (D-54) |
+| Known limit: needs an abnormal setup or action, no data loss, no security problem, no broken promise | `gh issue close <n> --reason "not planned" --comment "Needs an abnormal setup or action; reopen if it happens in normal use. <the situation>"`; no new mechanism |
 | Not reproducible, or already fixed on main | `gh issue close <n> --reason "not planned" --comment "<what was tried, at which commit>"` |
 | Same root cause as another issue | comment `Duplicate of #m: <why it is the same root cause>`, then close it the same way. One root cause, one issue. |
 | Matches a decision that rejected it | comment linking the decision and its reason, close; add the issue number to that decision's 背景 in your next commit |
