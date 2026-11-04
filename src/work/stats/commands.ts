@@ -3,6 +3,7 @@ import { entry, fail, json, must, say, workspace, type DomainCommands } from "..
 import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "./stats.ts";
 import { pendingBlocks, pendingJson, recordVerdict, renderPending, renderRun, renderVerdictSummary, runVerdicts, verdictSummary } from "./verdict.ts";
 import { dirname } from "node:path";
+import { REVIEW_NONE } from "../../knowledge/review/config-keys.ts";
 import { CoordDb } from "../db.ts";
 import { worktreesDir } from "../session/session.ts";
 import { DEFAULT_DAYS, projectsDir, renderUsage, usageReport } from "./usage.ts";
@@ -86,7 +87,7 @@ const verdict = defineCommand({
         if (!/^[1-9]\d*$/.test(raw)) fail({ code: "invalid", message: `--limit must be how many blocks to judge (a whole number, 1 or more), got ${JSON.stringify(args.limit)}` });
         const ws = workspace();
         const command = ws.config.review;
-        if (!command) fail({ code: "io", message: "no judge command: canon verdict run uses the project's review command (canon/config.yaml `review`), and none is configured" });
+        if (!command || command === REVIEW_NONE) fail({ code: "io", message: "no judge command: canon verdict run uses the project's review command (canon/config.yaml `review`), and none is configured (or it is `none`)" });
         const r = await runVerdicts(ws.db, ws.root, ws.actor, command, Number(raw), args["dry-run"] === true);
         say(renderRun(r));
         if (r.failure) fail({ code: "io", message: r.failure });

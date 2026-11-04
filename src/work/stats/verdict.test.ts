@@ -258,7 +258,7 @@ describe("canon verdict run", () => {
     expect(verdictRows(db).length).toBe(0);
   });
 
-  test("BR-2290: through the CLI a bad --limit is 2, no review command is 4, a failing judge is 4", () => {
+  test("BR-2290: through the CLI a bad --limit is 2, no review command or `review: none` is 4, a failing judge is 4", () => {
     const root = project();
     const db = dbOf(root);
     blocked(root, db, "C-1", ["a"]);
@@ -266,6 +266,8 @@ describe("canon verdict run", () => {
     expect(canon(root, "agent:r", "verdict", "run").code).toBe(2);
     expect(canon(root, "agent:r", "verdict", "run", "--limit", "0").code).toBe(2);
     expect(canon(root, "agent:r", "verdict", "run", "--limit", "x").code).toBe(2);
+    expect(canon(root, "agent:r", "verdict", "run", "--limit", "1").code).toBe(4);
+    writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\nreview: none\n");
     expect(canon(root, "agent:r", "verdict", "run", "--limit", "1").code).toBe(4);
     writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\nreview: scripts/judge.sh\n");
     judge(root, "no json here");
