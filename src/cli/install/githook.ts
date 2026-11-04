@@ -43,9 +43,11 @@ while read -r old new ref; do
   status=1
   # git pull, merge --ff-only and reset have already put the refused commit in this checkout's index and working tree;
   # an existing commit (another ref or FETCH_HEAD has it) is put back to main two-way, which keeps uncommitted changes.
-  # A new commit (git commit) is the user's own work and stays staged. (BR-2284)
+  # So is the merge commit git pull itself just made on main: git can make it again from its parents. Any other new commit
+  # (git commit, or the commit that ends a merge after conflicts) is the user's own work and stays staged. (BR-2284)
   remote=$(git for-each-ref --format='%(refname)' --contains "$new" refs/remotes 2>/dev/null)
   [ "$(git rev-parse -q --verify FETCH_HEAD 2>/dev/null)" = "$new" ] && remote=FETCH_HEAD
+  case "\${GIT_REFLOG_ACTION:-}" in pull*) [ "$(git rev-parse -q --verify "$new^1" 2>/dev/null)" = "$cur" ] && remote=pull ;; esac
   if [ "$(git symbolic-ref -q HEAD 2>/dev/null)" = "$ref" ] && { [ -n "$remote" ] || git for-each-ref --format='%(refname)' --contains "$new" 2>/dev/null | grep -Fqvx "$ref"; }; then
     if said=$(git read-tree -m -u "$new" "$cur" 2>&1); then
       echo "canon: the index and working tree are back at ${name} ($(git rev-parse --short "$cur")); uncommitted changes are kept." >&2

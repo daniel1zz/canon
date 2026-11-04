@@ -404,7 +404,7 @@ describe("what a refusal leaves in the checkout", () => {
     return { clone, main: sh(clone, "rev-parse", "main"), status: sh(clone, "status", "--porcelain") };
   }
 
-  test("BR-2284 BR-2126: a refused git pull leaves main, the index and the working tree as they were, own changes kept, and names canon sync", () => {
+  test("BR-2284 BR-2286 BR-2126: a refused git pull leaves main, the index and the working tree as they were, own changes kept, and names canon sync", () => {
     const { clone, main, status } = behind();
     const pull = git(clone, ["pull", "-q", "origin", "main"]);
     expect(pull.code).not.toBe(0);
@@ -430,7 +430,29 @@ describe("what a refusal leaves in the checkout", () => {
     expect(sh(clone, "rev-parse", "main")).toBe(main);
   });
 
-  test("BR-2284: a refused git commit keeps its changes staged and says nothing about putting them back", () => {
+  test("BR-2284 BR-2286: a refused git pull that would make a merge commit, main and origin having moved apart, is put back too and names canon sync", () => {
+    const { clone } = behind();
+    sh(clone, "reset", "-q", "mine.txt"); // a merge needs an index without staged changes
+    const status = sh(clone, "status", "--porcelain");
+    sh(clone, "stash", "-q", "-u");
+    writeFileSync(join(clone, "local.txt"), "landed here\n");
+    sh(clone, "add", "local.txt");
+    const tree = sh(clone, "write-tree");
+    const own = sh(clone, "commit-tree", tree, "-p", "main", "-m", "landed here");
+    expect(git(clone, ["update-ref", "refs/heads/main", own], { CANON_LAND_MAIN: own }).code).toBe(0);
+    sh(clone, "reset", "-q", "--hard");
+    sh(clone, "stash", "pop", "-q");
+    expect(sh(clone, "status", "--porcelain")).toBe(status);
+    const pull = git(clone, ["-c", "pull.rebase=false", "pull", "-q", "--no-edit", "origin", "main"]);
+    expect(pull.code).not.toBe(0);
+    expect(pull.err).toContain("the index and working tree are back at main");
+    expect(pull.err).toContain("to take in the remote's main, run canon sync");
+    expect(sh(clone, "rev-parse", "main")).toBe(own);
+    expect(sh(clone, "status", "--porcelain")).toBe(status);
+    expect(existsSync(join(clone, "new.txt"))).toBe(false);
+  });
+
+  test("BR-2284 BR-2286: a refused git commit keeps its changes staged and says nothing about putting them back or canon sync", () => {
     const root = adopted();
     writeFileSync(join(root, "app.txt"), "two\n");
     sh(root, "add", "app.txt");
@@ -439,6 +461,21 @@ describe("what a refusal leaves in the checkout", () => {
     expect(commit.err).not.toContain("back at main");
     expect(commit.err).not.toContain("canon sync");
     expect(sh(root, "status", "--porcelain")).toBe("M  app.txt");
+  });
+
+  test("BR-2284 BR-2286: a refused merge --no-ff of a local branch keeps the merge result staged and names neither putting back nor canon sync", () => {
+    const root = adopted();
+    sh(root, "checkout", "-qb", "x");
+    writeFileSync(join(root, "x.txt"), "x\n");
+    sh(root, "add", "x.txt");
+    sh(root, "commit", "-qm", "x");
+    sh(root, "checkout", "-q", "main");
+    const merge = git(root, ["merge", "-q", "--no-ff", "-m", "m", "x"]);
+    expect(merge.code).not.toBe(0);
+    expect(merge.err).toContain("canon: refusing to move main");
+    expect(merge.err).not.toContain("back at main");
+    expect(merge.err).not.toContain("canon sync");
+    expect(sh(root, "status", "--porcelain")).toBe("A  x.txt");
   });
 
   test("BR-2284: a refused update-ref from the checkout keeps the staged change; one the two-way switch cannot keep is reported and left as it was", () => {
