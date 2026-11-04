@@ -7,7 +7,7 @@ import type { FileProblem } from "../documents/read.ts";
 import { idsIn as idsOf } from "../documents/types.ts";
 import { BACKLOG_FILE, readBacklog } from "../documents/backlog.ts";
 import { testTitles } from "./test-titles.ts";
-import { pathFindings } from "./paths.ts";
+import { historyOf, pathFindings } from "./paths.ts";
 import { listFindings } from "./lists.ts";
 import { skipReadFindings } from "./skip-reads.ts";
 import { EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, RULE_SECTION, section } from "../documents/templates.ts";
@@ -241,10 +241,19 @@ function structureFindings(root: string, corpus: Corpus): Finding[] {
       for (const p of optionProblems(d.body)) out.push({ path: d.path, rule: "decision-options", message: `${d.id} ${p.message}` });
       const found = sources(d.body);
       for (const line of found.malformed) out.push({ path: d.path, rule: "source-malformed", message: `${d.id}: ${line} (want 来源：<URL or repository path> “<quote of at least ${MIN_QUOTE} characters>”)` });
-      // reason: a path that is no file (a word such as arXiv taken as a path) is found here, not only at landing (BR-2110, BR-2111)
-      for (const src of found.sources) {
-        const file = src.target.replace(/:\d+(?:-\d+)?$/, "");
-        if (!/^https?:\/\//.test(src.target) && !isFile(join(root, file))) out.push({ path: d.path, rule: "source-malformed", message: `${d.id}: ${src.line} (${file} is not a file in the repository)` });
+      // reason: a path that is no file (a word such as arXiv taken as a path) is found here, not only at landing (BR-2110, BR-2111);
+      // a file git history had was moved or deleted after the decision quoted it, so it is not reported (BR-2110, D-25)
+      const gone = found.sources
+        .filter((src) => !/^https?:\/\//.test(src.target))
+        .map((src) => ({ line: src.line, file: src.target.replace(/:\d+(?:-\d+)?$/, "") }))
+        .filter((src) => !isFile(join(root, src.file)));
+      if (gone.length > 0) {
+        const history = historyOf(root, [...new Set(gone.map((g) => g.file))], "source paths");
+        for (const g of gone) {
+          if (history.ok && history.files.includes(g.file)) continue;
+          const why = history.ok ? "" : `; ${history.message}`;
+          out.push({ path: d.path, rule: "source-malformed", message: `${d.id}: ${g.line} (${g.file} is not a file in the repository${why})` });
+        }
       }
     }
     if (d.kind !== "rule" || d.status !== "active") continue;

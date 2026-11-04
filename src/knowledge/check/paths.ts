@@ -126,14 +126,17 @@ export function pathFindings(root: string, corpus: Corpus): PathFinding[] {
   }));
 }
 
-/** Every file path HEAD's history touched under the given paths; one git call (BR-2171). */
-function historyOf(root: string, paths: readonly string[]): { ok: true; files: string[] } | { ok: false; message: string } {
+/**
+ * Every file path HEAD's history touched under the given paths; one git call (BR-2171, BR-2110). `what` names the
+ * check in the error message. A path without `/` matches that file name in any directory.
+ */
+export function historyOf(root: string, paths: readonly string[], what = "backticked paths"): { ok: true; files: string[] } | { ok: false; message: string } {
   // reason: without a commit nothing was ever moved, so no path can be stale; a directory that is not a repository is an error
   const inside = git(root, "rev-parse", "--is-inside-work-tree");
-  if (!inside.ok) return { ok: false, message: `cannot read git history to check backticked paths: ${inside.error.message}` };
+  if (!inside.ok) return { ok: false, message: `cannot read git history to check ${what}: ${inside.error.message}` };
   if (!git(root, "rev-parse", "-q", "--verify", "HEAD").ok) return { ok: true, files: [] };
   const specs = paths.map((p) => (p.includes("/") ? `:(literal)${p}` : `:(glob)**/${p}`));
   const log = git(root, "log", "--no-renames", "--format=", "--name-only", "HEAD", "--", ...specs);
-  if (!log.ok) return { ok: false, message: `cannot read git history to check backticked paths: ${log.error.message}` };
+  if (!log.ok) return { ok: false, message: `cannot read git history to check ${what}: ${log.error.message}` };
   return { ok: true, files: log.value.split("\n").filter((l) => l !== "") };
 }

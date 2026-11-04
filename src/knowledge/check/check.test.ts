@@ -287,9 +287,23 @@ describe("decision options and sources", () => {
 describe("source paths", () => {
   const decision = (sources: string) =>
     ({ [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: X\nstatus: proposed\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n${sources}\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n` });
-  const malformed = (files: Record<string, string>) => {
-    const root = repo(files);
-    return check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "source-malformed").map((f) => f.message);
+  const git = (cwd: string, ...args: string[]) => {
+    const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe" });
+    if (r.exitCode !== 0) throw new Error(r.stderr.toString());
+  };
+  const findings = (root: string) => check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "source-malformed").map((f) => f.message);
+  /** A git repo whose first commit had the `gone` files, deleted again in the second commit that adds `files`. */
+  const malformed = (files: Record<string, string>, gone: readonly string[] = []) => {
+    const root = repo(Object.fromEntries(gone.map((p) => [p, "export function refund(\n"])));
+    for (const args of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"], ["add", "-A"], ["commit", "-qm", "old", "--allow-empty"]]) git(root, ...args);
+    for (const p of gone) rmSync(join(root, p));
+    for (const [p, text] of Object.entries(files)) {
+      mkdirSync(dirname(join(root, p)), { recursive: true });
+      writeFileSync(join(root, p), text);
+    }
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "now");
+    return findings(root);
   };
 
   test("BR-2110: a source path must be a file of the repository: a word taken as a path, or a directory, is reported; an existing file with a line number is not", () => {
@@ -299,6 +313,24 @@ describe("source paths", () => {
     const word = malformed({ ...file, ...decision("   - 来源：arXiv “struggle to self-correct”") });
     expect(word).toEqual([`${d(1)}: - 来源：arXiv “struggle to self-correct” (arXiv is not a file in the repository)`]);
     expect(malformed({ ...file, ...decision("   - 来源：src/billing “export function refund(”") })).toHaveLength(1);
+  });
+
+  test("BR-2110: a source file git history had is moved, not malformed; a path history never had, or a directory, is reported", () => {
+    const old = (line: string) => malformed(decision(line), ["src/old/refund.ts"]);
+    expect(old("   - 来源：src/old/refund.ts “export function refund(”")).toEqual([]);
+    expect(old("   - 来源：src/old/refund.ts:1 “export function refund(”")).toEqual([]);
+    expect(old("   - 来源：src/biling/refund.ts “export function refund(”")).toEqual([
+      `${d(1)}: - 来源：src/biling/refund.ts “export function refund(” (src/biling/refund.ts is not a file in the repository)`,
+    ]);
+    expect(old("   - 来源：refund.ts “export function refund(”")).toHaveLength(1); // only the same path counts, not the same file name
+    expect(old("   - 来源：src/old “export function refund(”")).toHaveLength(1); // history had files under it, never the path itself
+  });
+
+  test("BR-2110: a missing source path outside a git repository is reported, saying history cannot be read", () => {
+    const root = repo(decision("   - 来源：src/old/refund.ts “export function refund(”"));
+    const got = findings(root);
+    expect(got).toHaveLength(1);
+    expect(got[0]).toContain("src/old/refund.ts is not a file in the repository; cannot read git history to check source paths");
   });
 });
 
