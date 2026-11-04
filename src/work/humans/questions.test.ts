@@ -222,6 +222,8 @@ describe("Claude Code's record of the question tool", () => {
     expect(records(root)[1]).toMatchObject({ questions: [{ question: "Ship it?", answer: "a, b", note: null }], response: null, afk_timeout_ms: null });
     expect(record(root, asked({ "Ship it?": "no" }), { CANON_ACTOR: "agent:89d45e3f:add88b47" }).code).toBe(0); // BR-2023: CANON_ACTOR first
     expect(records(root)[2]?.actor).toBe("agent:89d45e3f:add88b47");
+    expect(record(root, asked({ "Ship it?": "no" }), { CANON_ACTOR: "human:x", CLAUDECODE: "1" }).code).toBe(2); // BR-2023: a human: actor inside Claude Code
+    expect([records(root).length, kind(root, "human.asked.refuse").length]).toEqual([3, 0]);
   });
 
   test("BR-2275: data that is not a usable question-tool record exits 2, writes no human.asked and writes a human.asked.refuse with its reason and session", () => {
