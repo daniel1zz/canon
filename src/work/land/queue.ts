@@ -97,16 +97,41 @@ export interface Turn {
 }
 
 /**
+ * Who lands first among waiting entries (BR-2232, D-34): the change that fixes a failing main, then the changes the
+ * owner lists under 优先合入 in canon/backlog.md on main, then everyone else; within one rank, queue order.
+ */
+export interface Priority {
+  readonly fix?: string | undefined;
+  readonly urgent: ReadonlySet<string>;
+}
+
+export const NO_PRIORITY: Priority = { urgent: new Set() };
+
+export function rankOf(subject: string | null, p: Priority): number {
+  if (subject === null) return 0;
+  if (p.fix !== undefined && subject === p.fix) return 2;
+  return p.urgent.has(subject) ? 1 : 0;
+}
+
+/** Whether entry `a` lands before entry `b`: higher rank first, then the lower queue id (BR-2232, BR-2020). */
+export function landsBefore(a: { id: number; subject: string | null }, b: { id: number; subject: string | null }, p: Priority): boolean {
+  const ra = rankOf(a.subject, p);
+  const rb = rankOf(b.subject, p);
+  return ra !== rb ? ra > rb : a.id < b.id;
+}
+
+/**
  * Becomes the lander if every earlier entry is finished, stale, or held by a process that is gone. Returns the
  * entries still ahead otherwise. The process probe runs before the transaction so it never holds the write lock.
  * Only an entry that is still 'waiting' can take the turn: one another lander marked abandoned (it stopped
  * heart-beating, or looked gone) gets `lost` and never lands after the landing that skipped it (BR-2144, issue #29).
  */
-export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS): Turn {
-  // reason: an entry that took its kept place back (BR-2177) can be ahead of one that is landing, so every landing entry is probed too (BR-2178).
+export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS, priority: Priority = NO_PRIORITY): Turn {
+  // reason: with priorities any other active entry can be ahead (BR-2232), and an entry that took its kept place back
+  // can be ahead of one that is landing (BR-2177, BR-2178), so every other active entry is probed.
   const ahead = db.db
-    .query<{ id: number; pid: number; pid_start: string }, [number, number]>("SELECT id, pid, pid_start FROM queue WHERE (id < ? AND state IN ('waiting','landing') OR state = 'landing' AND id != ?) AND pid IS NOT NULL AND pid_start IS NOT NULL")
-    .all(entryId, entryId);
+    .query<{ id: number; pid: number; pid_start: string }, [number]>("SELECT id, pid, pid_start FROM queue WHERE id != ? AND state IN ('waiting','landing') AND pid IS NOT NULL AND pid_start IS NOT NULL")
+    .all(entryId);
   const gone = ahead.filter((e) => isGone({ pid: e.pid, start: e.pid_start }) === true);
   const dead = gone.map((e) => e.id);
   const tx = db.db.transaction((): Turn => {
@@ -133,7 +158,10 @@ export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS):
     db.db.query("UPDATE queue SET state = 'abandoned', result = 'no heartbeat' WHERE state IN ('waiting','landing') AND heartbeat < ? AND id != ?").run(stale, entryId);
     db.db.query("UPDATE queue SET heartbeat = ? WHERE id = ?").run(iso(now()), entryId);
     // reason: a landing that is under way is never interrupted, even by an entry ahead of it in order that took its kept place back (BR-2178).
-    const ahead = db.db.query<{ n: number }, [number, number]>("SELECT COUNT(*) AS n FROM queue WHERE id < ? AND state IN ('waiting','landing') OR state = 'landing' AND id != ?").get(entryId, entryId)?.n ?? 0;
+    const me = db.db.query<{ id: number; subject: string | null }, [number]>("SELECT id, subject FROM queue WHERE id = ?").get(entryId)!;
+    const others = db.db.query<{ id: number; subject: string | null; state: string }, [number]>("SELECT id, subject, state FROM queue WHERE id != ? AND state IN ('waiting','landing')").all(entryId);
+    // reason: priority only reorders who goes next; a landing under way is never interrupted (BR-2232, BR-2178).
+    const ahead = others.filter((o) => o.state === "landing" || landsBefore(o, me, priority)).length;
     if (ahead === 0) db.db.query("UPDATE queue SET state = 'landing' WHERE id = ? AND state = 'waiting'").run(entryId);
     return { mine: ahead === 0, ahead };
   });
@@ -195,12 +223,14 @@ export interface BatchCandidate {
  * that may not, so no entry is tested ahead of an earlier one (BR-2020, BR-2172). An entry that took its kept place
  * back while the leader held the turn is earlier in order than the leader, and comes first (BR-2178).
  */
-export function batchCandidates(db: CoordDb, leader: number, max: number, staleMs = QUEUE_STALE_MS): BatchCandidate[] {
+export function batchCandidates(db: CoordDb, leader: number, max: number, staleMs = QUEUE_STALE_MS, priority: Priority = NO_PRIORITY): BatchCandidate[] {
   const rows = db.db
     .query<{ id: number; worktree: string; subject: string | null; state: string; batch: number | null; solo: number | null; heartbeat: string; pid: number | null; pid_start: string | null }, [number]>(
       "SELECT id, worktree, subject, state, batch, solo, heartbeat, pid, pid_start FROM queue WHERE id != ? AND state IN ('waiting','landing') ORDER BY id",
     )
-    .all(leader);
+    .all(leader)
+    // reason: members are taken in landing order, priorities included, so none is tested ahead of one that lands before it (BR-2232).
+    .sort((a, b) => (landsBefore(a, b, priority) ? -1 : landsBefore(b, a, priority) ? 1 : 0));
   const fresh = iso(new Date(now().getTime() - staleMs));
   const out: BatchCandidate[] = [];
   for (const r of rows) {

@@ -51,3 +51,28 @@ export function inBacklogOrder<T extends Pick<Change, "id">>(changes: readonly T
     return num(a.id) - num(b.id);
   });
 }
+
+/** The heading in canon/backlog.md whose list items the owner wants landed ahead of the queue (BR-2232, D-34). */
+export const URGENT_HEADING = "优先合入";
+
+/**
+ * The change ids listed under the `优先合入` heading of a backlog text, up to the next heading of the same or a
+ * higher level; empty when there is no such heading (BR-2232).
+ */
+export function parseUrgent(text: string, types: readonly DocType[] = BUILTIN_TYPES): Set<string> {
+  const lines = text.split("\n");
+  const out = new Set<string>();
+  let level = 0;
+  const section: string[] = [];
+  for (const line of lines) {
+    const h = line.match(/^(#{1,6})\s+(.*?)\s*#*\s*$/);
+    if (h) {
+      if (level > 0 && h[1]!.length <= level) break;
+      if (level === 0 && h[2] === URGENT_HEADING) level = h[1]!.length;
+      continue;
+    }
+    if (level > 0) section.push(line);
+  }
+  for (const e of parseBacklog(section.join("\n"), types)) out.add(e.id);
+  return out;
+}

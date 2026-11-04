@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
-import { batchCandidates, enqueue, failIfActive, finishEntry, joinBatch, landBatched, leaveBatch, lockBatch, QUEUE_STALE_MS, tryTurn, unlockBatch } from "./queue.ts";
+import { batchCandidates, enqueue, failIfActive, finishEntry, joinBatch, landBatched, leaveBatch, lockBatch, QUEUE_STALE_MS, tryTurn, unlockBatch, type Priority } from "./queue.ts";
 import { selfProcess } from "../claims/liveness.ts";
 
 function db(): CoordDb {
@@ -163,3 +163,56 @@ describe("batches", () => {
   });
 });
 
+describe("jumping the landing queue", () => {
+  const urgent = (...ids: string[]): Priority => ({ urgent: new Set(ids) });
+
+  test("BR-2232: a change listed under 优先合入 takes the turn before one that queued earlier", () => {
+    const d = db();
+    const a = enqueue(d, "/wt/a", "C-1", "x");
+    const b = enqueue(d, "/wt/b", "C-2", "x");
+    expect(tryTurn(d, a, QUEUE_STALE_MS, urgent("C-2"))).toEqual({ mine: false, ahead: 1 });
+    expect(tryTurn(d, b, QUEUE_STALE_MS, urgent("C-2"))).toEqual({ mine: true, ahead: 0 });
+    finishEntry(d, b, "landed", "sha");
+    expect(tryTurn(d, a, QUEUE_STALE_MS, urgent("C-2"))).toEqual({ mine: true, ahead: 0 });
+  });
+
+  test("BR-2232: without a priority the queue keeps arrival order", () => {
+    const d = db();
+    const a = enqueue(d, "/wt/a", "C-1", "x");
+    const b = enqueue(d, "/wt/b", "C-2", "x");
+    expect(tryTurn(d, b, QUEUE_STALE_MS, urgent())).toEqual({ mine: false, ahead: 1 });
+    expect(tryTurn(d, a, QUEUE_STALE_MS, urgent()).mine).toBe(true);
+  });
+
+  test("BR-2232: the fix change of a failing main goes before an urgent one, and both before the rest", () => {
+    const d = db();
+    const a = enqueue(d, "/wt/a", "C-1", "x");
+    const c = enqueue(d, "/wt/c", "C-3", "x");
+    const b = enqueue(d, "/wt/b", "C-2", "x");
+    const p: Priority = { fix: "C-2", urgent: new Set(["C-3"]) };
+    expect(tryTurn(d, a, QUEUE_STALE_MS, p)).toEqual({ mine: false, ahead: 2 });
+    expect(tryTurn(d, c, QUEUE_STALE_MS, p)).toEqual({ mine: false, ahead: 1 });
+    expect(tryTurn(d, b, QUEUE_STALE_MS, p)).toEqual({ mine: true, ahead: 0 });
+  });
+
+  test("BR-2232: a landing under way is not interrupted by a fix change that queues after it", () => {
+    const d = db();
+    const a = enqueue(d, "/wt/a", "C-1", "x");
+    expect(tryTurn(d, a).mine).toBe(true);
+    const b = enqueue(d, "/wt/b", "C-2", "x");
+    const p: Priority = { fix: "C-2", urgent: new Set() };
+    expect(tryTurn(d, b, QUEUE_STALE_MS, p)).toEqual({ mine: false, ahead: 1 });
+    finishEntry(d, a, "landed", "sha");
+    expect(tryTurn(d, b, QUEUE_STALE_MS, p).mine).toBe(true);
+  });
+
+  test("BR-2232: batch members are taken in the same order, an urgent one first", () => {
+    const d = db();
+    const lead = enqueue(d, "/wt/l", "C-1", "x", selfProcess());
+    expect(tryTurn(d, lead).mine).toBe(true);
+    const m1 = enqueue(d, "/wt/m1", "C-2", "x", selfProcess());
+    const m2 = enqueue(d, "/wt/m2", "C-3", "x", selfProcess());
+    expect(batchCandidates(d, lead, 1, QUEUE_STALE_MS, urgent("C-3")).map((c) => c.id)).toEqual([m2]);
+    expect(batchCandidates(d, lead, 2, QUEUE_STALE_MS, urgent()).map((c) => c.id)).toEqual([m1, m2]);
+  });
+});

@@ -7,7 +7,9 @@ import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../..
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { bindToLander, keepClaim, releaseOwnClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
 import { dropHandoff } from "../session/handoffs.ts";
-import { batchCandidates, enter, failForConflict, failIfActive, finishEntry, heartbeat, holdsTurn, isSolo, joinBatch, landBatched, leaveBatch, lockBatch, tryTurn, unlockBatch } from "./queue.ts";
+import { batchCandidates, enter, failForConflict, failIfActive, finishEntry, heartbeat, holdsTurn, isSolo, joinBatch, landBatched, leaveBatch, lockBatch, tryTurn, unlockBatch, type Priority } from "./queue.ts";
+import { BACKLOG_FILE, parseUrgent } from "../../knowledge/documents/backlog.ts";
+import { redMain } from "../watch/redmain.ts";
 import { isGone, selfProcess, sessionProcess } from "../claims/liveness.ts";
 import { logFile, runHooks, runHooksInBackground } from "../../config/hooks.ts";
 import { noticeOverlaps } from "../session/overlap.ts";
@@ -218,6 +220,17 @@ const POLL_MS = 2000;
  */
 export const waitPollMs = (staleMs: number) => Math.min(POLL_MS, Math.max(50, staleMs / 3));
 
+/**
+ * Who goes first right now (BR-2232): the fix change of a failing main, and the changes listed under 优先合入 in the
+ * backlog committed on main. Read from main, never from a worktree, so no change can promote itself by editing its own copy.
+ */
+export function priorityNow(ws: Workspace): Priority {
+  const text = git(ws.primary, "cat-file", "-p", `refs/heads/${ws.config.main}:${BACKLOG_FILE}`);
+  // reason: a main without canon/backlog.md lists nothing urgent; a backlog that cannot be read otherwise is checked by canon check (BR-2148).
+  const urgent = text.ok ? parseUrgent(text.value, ws.config.types) : new Set<string>();
+  return { fix: redMain(ws.db)?.change ?? undefined, urgent };
+}
+
 async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running }): Promise<LandOutcome> {
   const wt = ws.root;
   const main = ws.config.main;
@@ -230,7 +243,7 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
   let batchedSince: number | undefined;
   const poll = waitPollMs(ws.config.landerStaleMs);
   for (;;) {
-    const turn = tryTurn(ws.db, entry, ws.config.landerStaleMs);
+    const turn = tryTurn(ws.db, entry, ws.config.landerStaleMs, priorityNow(ws));
     if (!turn.batched && batchedSince !== undefined) {
       // reason: the deadline moves later by the time spent in the batch, so a member that comes back keeps the wait it had left (BR-2048, issue #75).
       deadline += Date.now() - batchedSince;
@@ -487,7 +500,7 @@ interface Link {
 async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running; base: string; head: string }): Promise<{ kind: "landed" } | { kind: "refused"; reason: "main-moved" | "main-dirty" | "environment"; message: string } | { kind: "lost"; outcome: LandOutcome } | undefined> {
   const main = ws.config.main;
   const members: { id: number; subject: string | null; worktree: string; branch: string; joined: string }[] = [];
-  for (const c of batchCandidates(ws.db, t.entry, ws.config.landBatchMax - 1, ws.config.landerStaleMs)) {
+  for (const c of batchCandidates(ws.db, t.entry, ws.config.landBatchMax - 1, ws.config.landerStaleMs, priorityNow(ws))) {
     const head = git(c.worktree, "rev-parse", "HEAD");
     const branch = git(c.worktree, "rev-parse", "--abbrev-ref", "HEAD");
     const clean = isClean(c.worktree);
