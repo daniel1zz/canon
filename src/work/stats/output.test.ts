@@ -171,7 +171,7 @@ describe("shared code files", () => {
     expect(sharedShare(root, layout)).toEqual({ codeRoot: "src", sharedLines: 0, totalLines: 2 });
   });
 
-  test("BR-2205: a file that vanishes between the lstat and the read is not counted, and counting goes on (issue #81)", () => {
+  test("BR-2205: a file that vanishes or stops being a regular file between the lstat and the read is not counted, and counting goes on (issue #81)", () => {
     const root = codeRepo();
     const vanishing = join(root, "src/kernel/a.ts");
     // reason: the reader deletes the file just before reading it, as a landing in this checkout would, so the race is deterministic
@@ -180,6 +180,16 @@ describe("shared code files", () => {
       return readFileSync(p, "utf8");
     };
     expect(sharedShare(root, layout, read)).toEqual({ codeRoot: "src", sharedLines: 0, totalLines: 2 });
+    // replaced by a directory (EISDIR), or its directory replaced by a file (ENOTDIR), after the lstat
+    for (const swap of [(p: string) => (rmSync(p), mkdirSync(p)), (p: string) => (rmSync(join(p, ".."), { recursive: true }), writeFileSync(join(p, ".."), "x\n"))]) {
+      const r = codeRepo();
+      const target = join(r, "src/kernel/a.ts");
+      const replacing = (p: string) => {
+        if (p === target) swap(p);
+        return readFileSync(p, "utf8");
+      };
+      expect(sharedShare(r, layout, replacing)).toEqual({ codeRoot: "src", sharedLines: 0, totalLines: 2 });
+    }
     // the other side: a file that stays is counted
     const steady = codeRepo();
     expect(sharedShare(steady, layout, (p) => readFileSync(p, "utf8"))).toEqual({ codeRoot: "src", sharedLines: 1, totalLines: 3 });

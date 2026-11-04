@@ -175,6 +175,9 @@ export interface SharedShare {
  * domain; undefined when the project sets no code root or no shared entry. `read` reads one file; a test passes
  * its own to make a file vanish between the lstat and the read.
  */
+/** Read errors that mean the path stopped being a regular file after the lstat (BR-2205): deleted, now a directory, or under what is now a file. */
+const NOT_A_FILE_NOW = new Set(["ENOENT", "EISDIR", "ENOTDIR"]);
+
 export function sharedShare(root: string, layout: Layout, read: (path: string) => string = (p) => readFileSync(p, "utf8")): SharedShare | undefined {
   if (layout.codeRoot === undefined || layout.shared.length === 0) return undefined;
   const files = git(root, "-c", "core.quotePath=false", "ls-files", "--", layout.codeRoot);
@@ -190,8 +193,9 @@ export function sharedShare(root: string, layout: Layout, read: (path: string) =
     try {
       text = read(full);
     } catch (e) {
-      // reason: a landing in this checkout can delete the file between lstat and the read; a file gone is not counted (BR-2205, issue #81)
-      if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
+      // reason: a landing in this checkout can delete the file, or replace it or a parent directory by a directory or a file,
+      // between lstat and the read; a path that is no longer a regular file is not counted (BR-2205, issue #81)
+      if (NOT_A_FILE_NOW.has((e as NodeJS.ErrnoException).code ?? "")) continue;
       throw e;
     }
     const n = text === "" ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
