@@ -2,7 +2,7 @@ import { defineCommand } from "citty";
 import { MODELINE } from "../../config/reference/reference.ts";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { entry, EXIT, must, say, workspace, type DomainCommands } from "../command.ts";
+import { entry, EXIT, fail, must, say, workspace, type DomainCommands } from "../command.ts";
 import { git } from "../../kernel/git.ts";
 import type { Workspace } from "../../work/workspace.ts";
 import { skillsSource, type InstallReport } from "./install.ts";
@@ -15,11 +15,13 @@ const init = defineCommand({
   args: { floor: { type: "string", description: "Command that must pass before anything lands, e.g. \"bun run typecheck && bun test\"" } },
   run({ args }) {
     const root = must(git(process.cwd(), "rev-parse", "--show-toplevel"));
+    // The branch checked out now becomes main; it is only needed when init is about to write canon/config.yaml (BR-2032).
+    const branch = existsSync(join(root, "canon/config.yaml")) ? undefined : currentBranch(root);
     // Skills first: a missing source (BR-2082) or an edited skill copy (BR-2081) refuses before anything else is written.
-    reportInstall(must(installAssets(root, must(skillsSource()), false)));
+    reportInstall(must(installAssets(root, must(skillsSource()), false, branch)));
     const files: Record<string, string> = {
       "canon/product.md": "---\ntitle: 产品\n---\n# 产品\n\n## 目的\n\n## 使用者\n\n## 承诺\n\n## 不做的事\n",
-      "canon/config.yaml": `${MODELINE}\nmain: main\nfloor: ${JSON.stringify(args.floor ?? "")}\n`,
+      "canon/config.yaml": `${MODELINE}\nmain: ${JSON.stringify(branch ?? "main")}\nfloor: ${JSON.stringify(args.floor ?? "")}\n`,
     };
     for (const [p, text] of Object.entries(files)) {
       const full = join(root, p);
@@ -34,6 +36,13 @@ const init = defineCommand({
     if (!args.floor) say("set `floor` in canon/config.yaml before landing anything");
   },
 });
+
+/** The branch HEAD is on, also in a repository with no commits yet; a detached HEAD refuses with exit 4 (BR-2032). */
+function currentBranch(root: string): string {
+  const r = git(root, "symbolic-ref", "--short", "-q", "HEAD");
+  if (r.ok && r.value) return r.value;
+  return fail({ code: "io", message: "HEAD is detached: check out the branch that is to be main, then run canon init again (it becomes `main` in canon/config.yaml)" });
+}
 
 function reportInstall(r: InstallReport & { hook: boolean; guard: boolean }) {
   for (const f of r.written) say(`skill ${f}`);

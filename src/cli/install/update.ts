@@ -72,22 +72,27 @@ export function updateNotice(st: AssetsStatus): string | undefined {
  * else's git hook (BR-2123, BR-2124), then the skills (symlinks and the manifest, BR-2083, before edited files, BR-2081),
  * then `.claude/settings.json` (BR-2087). Edited skill files are returned, not refused, so each caller words the refusal.
  */
-function preflight(root: string, source: string, force: boolean): Result<{ main: string; skills: SkillsPlan; settings: Settings | undefined }> {
+function preflight(root: string, source: string, force: boolean, mainBranch?: string): Result<{ main: string; skills: SkillsPlan; settings: Settings | undefined }> {
   const config = readConfig(root);
   if (!config.ok) return config;
-  const g = guardStatus(root, config.value.main);
+  const main = mainBranch ?? config.value.main;
+  const g = guardStatus(root, main);
   if (!g.ok) return g;
   if (g.value.state === "foreign") return foreignGuard(g.value.path);
   const skills = planSkills(root, source, force);
   if (!skills.ok) return skills;
   const settings = planHook(root);
   if (!settings.ok) return settings;
-  return ok({ main: config.value.main, skills: skills.value, settings: settings.value });
+  return ok({ main, skills: skills.value, settings: settings.value });
 }
 
-/** Installs every asset into `root` (the current tree), only after every check passed. Used by `canon init`, `canon install` and by `canon update` in its worktree. */
-export function installAssets(root: string, source: string, force: boolean): Result<InstallReport & { hook: boolean; guard: boolean }> {
-  const p = preflight(root, source, force);
+/**
+ * Installs every asset into `root` (the current tree), only after every check passed. Used by `canon init`, `canon install`
+ * and by `canon update` in its worktree. `mainBranch` is for `canon init` before it writes canon/config.yaml: the guard
+ * then protects the branch init is about to write there, not the default (BR-2032).
+ */
+export function installAssets(root: string, source: string, force: boolean, mainBranch?: string): Result<InstallReport & { hook: boolean; guard: boolean }> {
+  const p = preflight(root, source, force, mainBranch);
   if (!p.ok) return p;
   if (p.value.skills.conflicts.length > 0) return editedSkills(p.value.skills.conflicts, "run again with --force");
   const skills = applySkills(p.value.skills);

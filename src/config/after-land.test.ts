@@ -47,7 +47,7 @@ describe("canon work after-land", () => {
     expect([j.state, j.review, j.commands.map((c) => c.exit)]).toEqual(["ok", ["code-review: no findings"], [0, 0]]);
   });
 
-  test("BR-2166: exit 1 when a command failed, also while the next still runs; 75 while running without a failure", async () => {
+  test("BR-2166 BR-2022: exit 1 when a command failed, also while the next still runs; 75 while running without a failure", async () => {
     const root = project();
     const log = background(root, "C-3", 3, ["exit 2", `while [ ! -e ${root}/go ]; do sleep 0.05; done`]);
     await finished(log, 1);
