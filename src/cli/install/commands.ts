@@ -7,6 +7,7 @@ import { git } from "../../kernel/git.ts";
 import type { Workspace } from "../../work/workspace.ts";
 import { skillsSource, type InstallReport } from "./install.ts";
 import { assetsStatus, installAssets, updateNotice, updateProject } from "./update.ts";
+import { uninstall as uninstallProject } from "./uninstall.ts";
 
 /** `canon init`, `install`, `update`: canon's own files in a project (D-9, D-10). */
 
@@ -92,6 +93,27 @@ const update = defineCommand({
   },
 });
 
+/** Removes canon from the project (D-46): one landed change, then the local cleanup in each clone. */
+const uninstall = defineCommand({
+  meta: { description: "Remove canon from this project: lands one change deleting canon's skills, its .claude/settings.json entries and canon/config.yaml once no work is in flight, then removes the git hook, worktrees, coordination state and refs in this clone; in another clone after that change, only the local cleanup. canon/ documents and recovery refs stay unless asked" },
+  args: {
+    force: { type: "boolean", description: "Also delete canon skill files that were edited in this project" },
+    "purge-recovery": { type: "boolean", description: "Also delete refs/canon/archive (work canon work drop kept) and refs/canon/snapshots" },
+    "remove-knowledge": { type: "boolean", description: "Also remove canon/ (rules, decisions, changes, notes) from main in a commit of its own" },
+    timeout: { type: "string", description: "Minutes to wait in the landing queue (default: land_timeout_minutes, 60)" },
+  },
+  async run({ args }) {
+    const minutes = args.timeout === undefined ? undefined : Number(args.timeout);
+    if (minutes !== undefined && (!Number.isFinite(minutes) || minutes <= 0)) fail({ code: "invalid", message: `--timeout must be a positive number of minutes, got ${JSON.stringify(args.timeout)}` });
+    const out = must(await uninstallProject(process.cwd(), { force: Boolean(args.force), purgeRecovery: Boolean(args["purge-recovery"]), removeKnowledge: Boolean(args["remove-knowledge"]), timeoutMs: minutes === undefined ? undefined : minutes * 60_000 }, say));
+    if (out.kind === "done") return say("canon is uninstalled from this clone");
+    if (out.kind === "not-installed") return say("canon is not installed here");
+    console.error(`canon: ${out.message}`);
+    // reason: still queued or background commands still running is "later", not a refusal (BR-2022, BR-2283)
+    process.exit(out.kind === "refused" ? EXIT.refused : EXIT.timeout);
+  },
+});
+
 /** The update notice (BR-2085); a missing skills source is reported on the same line, never hidden. */
 export function noticeUpdates(ws: Workspace, out: (line: string) => void) {
   const source = skillsSource();
@@ -103,5 +125,5 @@ export function noticeUpdates(ws: Workspace, out: (line: string) => void) {
 }
 
 export const installCommands: DomainCommands = {
-  commands: [entry("init", 10, init), entry("install", 160, install), entry("update", 170, update)],
+  commands: [entry("init", 10, init), entry("install", 160, install), entry("update", 170, update), entry("uninstall", 175, uninstall)],
 };

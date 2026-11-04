@@ -233,6 +233,61 @@ export function applySkills(plan: SkillsPlan): InstallReport {
   return { written: plan.write, unchanged: plan.unchanged, removed: plan.remove, kept: plan.kept };
 }
 
+/** What `canon uninstall` removes from `.claude/skills` (BR-2278, BR-2279), computed before anything is touched. */
+export interface UnskillPlan {
+  readonly target: string;
+  readonly manifestPath: string;
+  /** Files the manifest lists that are still there: unchanged ones, plus edited ones when forced. */
+  readonly remove: readonly string[];
+  /** Listed files edited in this project: refused unless forced (BR-2279). */
+  readonly edited: readonly string[];
+  readonly manifest: boolean;
+}
+
+/** Reads only: refuses a bad manifest (BR-2195) or a symlink on any path it would delete (BR-2083). */
+export function planUnskills(root: string, force: boolean): Result<UnskillPlan> {
+  const target = join(root, ".claude", "skills");
+  const manifestPath = join(target, MANIFEST);
+  if (!existsSync(manifestPath)) return ok({ target, manifestPath, remove: [], edited: [], manifest: false });
+  let manifest: Record<string, string>;
+  try {
+    manifest = (JSON.parse(readFileSync(manifestPath, "utf8")) as { files?: Record<string, string> }).files ?? {};
+  } catch {
+    return err("invalid", `${relative(root, manifestPath)} is not valid JSON; fix or delete it`);
+  }
+  const bad = Object.keys(manifest).filter((k) => !safeKey(k));
+  if (bad.length > 0) return err("invalid", `${relative(root, manifestPath)} lists paths canon never writes (${bad.join(", ")}); fix or delete it`);
+  for (const full of [manifestPath, ...Object.keys(manifest).map((rel) => join(target, rel))]) {
+    const link = symlinkOnPath(root, full);
+    if (link) return err("invalid", `${relative(root, link)} is a symbolic link; canon deletes skills only as plain files inside the project`);
+  }
+  const remove: string[] = [];
+  const edited: string[] = [];
+  for (const rel of Object.keys(manifest).sort()) {
+    const full = join(target, rel);
+    if (!existsSync(full)) continue;
+    const same = manifest[rel] === sha(readFileSync(full));
+    if (!same) edited.push(rel);
+    if (same || force) remove.push(rel);
+  }
+  return ok({ target, manifestPath, remove, edited, manifest: true });
+}
+
+/** Deletes what planUnskills listed, the manifest, and every directory that removal left empty; returns the files removed. */
+export function applyUnskills(plan: UnskillPlan): readonly string[] {
+  for (const rel of plan.remove) {
+    rmSync(join(plan.target, rel));
+    // reason: only directories this removal emptied go; one holding the project's own files stays (BR-2279)
+    for (let d = dirname(join(plan.target, rel)); d !== plan.target && d.startsWith(plan.target + sep); d = dirname(d)) {
+      if (readdirSync(d).length > 0) break;
+      rmSync(d, { recursive: true });
+    }
+  }
+  if (plan.manifest) rmSync(plan.manifestPath);
+  if (existsSync(plan.target) && readdirSync(plan.target).length === 0) rmSync(plan.target, { recursive: true });
+  return plan.remove;
+}
+
 /** Copies every `canon-*` skill from `source` into `<root>/.claude/skills`, keeping local edits safe; plans first, so a conflict refuses the whole install and nothing is half-updated. */
 export function installSkills(root: string, source: string, force: boolean): Result<InstallReport> {
   const plan = planSkills(root, source, force);

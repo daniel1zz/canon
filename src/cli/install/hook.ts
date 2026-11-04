@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { symlinkOnPath } from "./install.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
@@ -210,6 +210,67 @@ export function planHook(root: string): Result<Settings | undefined> {
   }
   if (base !== "head") settings["worktree"] = { ...((settings["worktree"] as Settings | undefined) ?? {}), baseRef: "head" };
   return ok(settings);
+}
+
+/** Whether a hook command is one canon writes or once wrote into settings.json. */
+const isCanonCommand = (c: unknown) => {
+  if (typeof c !== "string") return false;
+  const t = c.trim();
+  return t === BRIEF_COMMAND || t === OLD_BRIEF_COMMAND || t === SNAPSHOT_COMMAND || t === RECORD_COMMAND || t.startsWith(RETIRED_HOOK_PREFIX);
+};
+
+/** `list` without canon's hooks; an entry left with no hooks goes. Undefined when nothing of canon's was in it. */
+function withoutCanonEntries(list: unknown[]): unknown[] | undefined {
+  let changed = false;
+  const out = list.flatMap((e) => {
+    if (!isObject(e) || !Array.isArray(e["hooks"]) || !e["hooks"].some((h) => isObject(h) && isCanonCommand(h["command"]))) return [e];
+    changed = true;
+    const kept = (e["hooks"] as unknown[]).filter((h) => !(isObject(h) && isCanonCommand(h["command"])));
+    return kept.length > 0 ? [{ ...e, hooks: kept }] : [];
+  });
+  return changed ? out : undefined;
+}
+
+/**
+ * The settings with every entry canon wrote removed, for `canon uninstall` (BR-2278): its hooks (current, older and
+ * withdrawn forms) and its withdrawn allow rule. A list or object left empty only by that removal goes too; `worktree.baseRef`
+ * stays, since canon never recorded what was there before (D-46). Reads only: undefined when nothing needs writing,
+ * `null` when the file would be left as `{}` and is to be deleted.
+ */
+export function planUnhook(root: string): Result<Settings | null | undefined> {
+  const s = read(root);
+  if (!s.ok) return s;
+  if (s.value === undefined) return ok(undefined);
+  let changed = false;
+  const out: Settings = { ...s.value };
+  if (isObject(out["hooks"])) {
+    const hooks: Settings = { ...out["hooks"] };
+    for (const event of Object.keys(hooks)) {
+      const list = hooks[event];
+      if (!Array.isArray(list)) continue;
+      const next = withoutCanonEntries(list);
+      if (next === undefined) continue;
+      changed = true;
+      if (next.length > 0) hooks[event] = next;
+      else delete hooks[event];
+    }
+    if (changed) {
+      if (Object.keys(hooks).length > 0) out["hooks"] = hooks;
+      else delete out["hooks"];
+    }
+  }
+  // reason: the withdrawn allow rule is canon's too; withoutRetired drops `permissions` when that removal empties it (BR-2130)
+  const final = retiredIn(out).includes("actor permission") ? withoutRetired(out) : out;
+  if (!changed && final === out) return ok(undefined);
+  return ok(Object.keys(final).length === 0 ? null : final);
+}
+
+/** Writes what planUnhook computed: the new settings, or deletes the file for `null`; true when it changed anything. */
+export function writeUnhook(root: string, settings: Settings | null | undefined): boolean {
+  if (settings === undefined) return false;
+  if (settings === null) rmSync(join(root, SETTINGS));
+  else writeFileSync(join(root, SETTINGS), `${JSON.stringify(settings, null, 2)}\n`);
+  return true;
 }
 
 /** Writes what planHook computed; true when it wrote anything. */

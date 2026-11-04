@@ -145,6 +145,36 @@ export function ensureGuard(root: string, main: string, beforeReplace?: () => vo
 }
 
 /**
+ * Removes canon's guard, of any version, for `canon uninstall` (BR-2280); someone else's hook stays. Like replaceOld, the
+ * file is first moved aside, which takes exactly what is there at that instant, and only then checked: anyone else's goes
+ * back by an exclusive link, so a hook written in between is never deleted (BR-2124, D-36).
+ */
+export function removeGuard(root: string): Result<"removed" | "absent" | "foreign"> {
+  const dir = hooksDir(root);
+  if (!dir.ok) return dir;
+  const path = join(dir.value, NAME);
+  if (!existsSync(path) && !isLink(path)) return ok("absent");
+  if (!canonsOwn(path)) return ok("foreign");
+  const aside = `${path}.canon-${process.pid}.old`;
+  try {
+    renameSync(path, aside);
+  } catch (e) {
+    if (code(e) === "ENOENT") return ok("absent");
+    return err("io", `cannot move ${path} aside to remove it: ${(e as Error).message}`);
+  }
+  if (canonsOwn(aside)) {
+    rmSync(aside, { force: true });
+    return ok("removed");
+  }
+  const back = placeExclusive(aside, path);
+  if (back.ok && back.value) {
+    rmSync(aside, { force: true });
+    return ok("foreign");
+  }
+  return err("conflict", `${path} was replaced by a hook canon did not write while canon was removing its guard, and canon could not put it back; that hook is kept at ${aside}. Put it back where it belongs.`);
+}
+
+/**
  * Replaces canon's older guard with `tmp` (D-36). rename has no compare-and-swap, so the file at `path` is first moved
  * aside, which takes exactly what is there at that instant, and checked: canon's own is dropped and the new guard put in
  * its place; anyone else's goes back and the install refuses (BR-2124). Only canon's files are ever deleted.

@@ -1,6 +1,6 @@
 # 安装和更新（cli/install）
 
-canon 自带的项目级 skill、会话 hook、每次 Bash 调用前做快照的 hook（D-30）和让 main 只能通过 `canon work land` 移动的 git 守卫怎样装进项目、怎样更新（D-9、D-10、D-16）：`canon init` 安装，`canon update` 把更新作为一个变更合入，`canon brief` 和 `canon work start` 在装的东西过期时提示一行。
+canon 自带的项目级 skill、会话 hook、每次 Bash 调用前做快照的 hook（D-30）和让 main 只能通过 `canon work land` 移动的 git 守卫怎样装进项目、怎样更新（D-9、D-10、D-16）：`canon init` 安装，`canon update` 把更新作为一个变更合入，`canon brief` 和 `canon work start` 在装的东西过期时提示一行；`canon uninstall` 把它们移除（D-46）：先合入一个删掉 canon 装的文件和 `canon/config.yaml` 的变更，再清理每个克隆里不进版本库的东西。
 
 不管：其余命令的行为和退出码（`cli`）。
 

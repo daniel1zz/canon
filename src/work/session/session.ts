@@ -351,7 +351,7 @@ function deleteLandedBranch(ws: Workspace, branch: string): void {
 }
 
 /** Why `clean` must keep a worktree, cheapest check first; undefined when only the process check remains. */
-function keepReason(ws: Workspace, w: WorktreeInfo, held: ReadonlySet<string>): string | undefined {
+export function keepReason(ws: Workspace, w: WorktreeInfo, held: ReadonlySet<string>): string | undefined {
   if (w.path === ws.root) return "you are in it";
   if (held.has(w.path)) return "claimed";
   const c = isClean(w.path);
