@@ -37,7 +37,7 @@ describe("canon work status", () => {
   test("BR-2192: status lists claims, queue, handoffs and the question count, and --json gives the same lists", () => {
     const root = project();
     const empty = canon(root, "work", "status");
-    expect([empty.code, empty.out]).toEqual([0, "Claims:\nLanding queue:\nHandoffs:\nQuestions waiting for a human: 0\n"]);
+    expect([empty.code, empty.out]).toEqual([0, "Claims:\nLanding queue:\nLandings with no result yet:\nHandoffs:\nQuestions waiting for a human: 0\n"]);
     const s = startNew(root, "Status");
     stop(ws(s.worktree), "land it", undefined, false);
     ask(ws(root).db, "agent:a", null, "which way?", []);
@@ -45,15 +45,16 @@ describe("canon work status", () => {
     expect(text[0]).toBe("Claims:");
     expect(text[1]).toMatch(new RegExp(`^  ${s.change}\\s+agent:a  ${s.worktree}  until \\S+$`));
     expect(text[2]).toBe("Landing queue:");
-    expect(text[3]).toBe("Handoffs:");
-    expect(text[4]).toMatch(new RegExp(`^  ${s.change}\\s+next: land it  \\(agent:a, \\S+\\)$`));
-    expect(text[5]).toBe("Questions waiting for a human: 1");
+    expect(text[3]).toBe("Landings with no result yet:");
+    expect(text[4]).toBe("Handoffs:");
+    expect(text[5]).toMatch(new RegExp(`^  ${s.change}\\s+next: land it  \\(agent:a, \\S+\\)$`));
+    expect(text[6]).toBe("Questions waiting for a human: 1");
     const data = JSON.parse(canon(root, "work", "status", "--json").out);
-    expect(Object.keys(data)).toEqual(["claims", "queue", "resolving", "handoffs", "questions"]);
+    expect(Object.keys(data)).toEqual(["claims", "queue", "landings", "resolving", "handoffs", "questions"]);
     expect(data.claims.map((c: { subject: string }) => c.subject)).toEqual([s.change]);
     expect(data.handoffs.map((h: { next: string }) => h.next)).toEqual(["land it"]);
     expect(data.questions.length).toBe(1);
-    expect([data.queue, data.resolving]).toEqual([[], []]);
+    expect([data.queue, data.landings, data.resolving]).toEqual([[], [], []]);
     ws(root).db.db.query("UPDATE claims SET expires_at = '2000-01-01T00:00:00.000Z'").run();
     expect(canon(root, "work", "status").out).toContain(`  ${s.change}`);
   });
