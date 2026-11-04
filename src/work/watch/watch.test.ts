@@ -452,6 +452,14 @@ describe("a passing main", () => {
     expect(watcherRows(root)).toEqual([]);
   });
 
+  test("BR-2285: a process that left the group with setsid is not followed: the watcher exits 143 and it goes on and writes its file", async () => {
+    const { late } = await termedWhile((ready, late) => {
+      writeFileSync(`${ready}.pl`, `use POSIX; if (fork() == 0) { POSIX::setsid(); sleep 1; open(my $f, ">", "${late}"); exit 0 }\n`);
+      return `hooks:\n  after_green: 'perl ${ready}.pl; touch ${ready}; while true; do sleep 0.1; done'\n`;
+    });
+    expect(existsSync(late)).toBe(true);
+  });
+
   test("BR-2285: a watcher stopped by SIGINT exits 130 and stops what after_green left running too", async () => {
     const { late } = await termedWhile(orphaning, { signal: "SIGINT" });
     expect(existsSync(late)).toBe(false);
