@@ -3,7 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeHandoff } from "./handoffs.ts";
 import { changeOnBranch } from "./inflight.ts";
-import { project, sh, ws } from "../testkit.ts";
+import { project, sh, startNew, ws } from "../testkit.ts";
 
 // reason: each case spawns the CLI several times (work start, stop, change list, brief); under load one spawn takes seconds (C-111)
 setDefaultTimeout(60_000);
@@ -58,7 +58,7 @@ function backlog(root: string, text: string) {
 
 const rows = (out: string) => out.split("\n").filter(Boolean);
 const ids = (out: string) => rows(out).map((l) => l.split(/\s+/)[0]);
-const PICK = "with no task, take the first unclaimed one: ";
+const PICK = "with no task, take the first unclaimed, not ambiguous one: ";
 
 describe("changes that so far exist only on their branch", () => {
   test("BR-2291: a released, handed-off change only on its branch is listed first, marked, in change list, --json and brief", () => {
@@ -208,6 +208,35 @@ describe("unusual change branches", () => {
     sh(landed, "add", "-A");
     sh(landed, "commit", "-qm", "landed");
     expect(ids(canon(landed, "change", "list").out)).toEqual([id(1)]);
+  });
+});
+
+describe("judged against main, not the current checkout", () => {
+  test("BR-2294: in an old worktree, a change landed on main since, whose branch was kept, is not listed as closed on branch, not landed", () => {
+    const root = mainWithC1();
+    const old = canon(root, "work", "start", "--title", "Old");
+    expect(old.code).toBe(0);
+    const wt = old.out.match(/cd (.+)/)![1]!.trim();
+    onBranch(root, `change/${id(3)}-x`, () => changeFile(root, 3, "done"));
+    changeFile(root, 3, "done"); // it landed: main has it done, the branch stays
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "landed");
+    const list = canon(wt, "change", "list");
+    expect(list.code).toBe(0);
+    expect(list.out).not.toContain(id(3));
+    expect(canon(root, "brief").out).not.toContain(id(3));
+  });
+
+  test("BR-2150: after the owner removes a dangling backlog line on main, a worktree not rebased gets a note, not a finding", () => {
+    const root = mainWithC1();
+    const stale = id(9);
+    backlog(root, `- ${stale}\n- ${id(1)}\n`);
+    const s = startNew(root, "Before the cleanup");
+    backlog(root, `- ${id(1)}\n`);
+    const r = canon(s.worktree, "check");
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain("ref-dangling");
+    expect(r.err).toContain(`note: canon/backlog.md:6: lists ${stale}, which is not a change on main or on a local change branch`);
   });
 });
 

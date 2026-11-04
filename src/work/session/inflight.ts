@@ -38,7 +38,11 @@ export function listedChanges(ws: Workspace, corpus: Corpus, backlog: readonly B
   const branches = changeBranches(ws);
   if (!branches.ok) return branches;
   const local = corpus.docs.filter((d): d is Change => d.kind === "change");
-  const known = new Set(local.map((c) => c.id));
+  // reason: a branch is judged against main's tip, not this checkout: an old worktree lacks changes main has landed since,
+  // whose branches were kept, and must not offer them as unlanded (BR-2294, BR-2291)
+  const onMain = changeIdsAt(ws, ws.config.main);
+  if (!onMain.ok) return onMain;
+  const known = new Set([...local.map((c) => c.id), ...onMain.value]);
   const found = new Map<string, { change: Change; onBranch: string[] }>();
   const unreadable: string[] = [];
   for (const [id, refs] of branches.value) {
@@ -71,10 +75,38 @@ export function listedChanges(ws: Workspace, corpus: Corpus, backlog: readonly B
   });
 }
 
-/** The ids main's committed backlog lists, for `canon check`: a dangling one among them is a note, not a finding (BR-2150, #112). */
-export function listedOnMain(ws: Workspace): Result<Set<string>> {
-  const listed = backlogAt(ws.primary, ws.config.main, ws.config.types);
-  return listed.ok ? ok(new Set(listed.value.map((e) => e.id))) : listed;
+/**
+ * The ids already listed before this work, for `canon check`: those main's committed backlog lists, and those the backlog
+ * at this checkout's base (merge-base of HEAD and main) lists, so an owner removing a line on main does not make a worktree
+ * not yet rebased look as if it added it. A dangling one among them is a note, not a finding (BR-2150, #112).
+ */
+export function listedBefore(ws: Workspace): Result<Set<string>> {
+  const out = new Set<string>();
+  const tip = backlogAt(ws.primary, ws.config.main, ws.config.types);
+  if (!tip.ok) return tip;
+  for (const e of tip.value) out.add(e.id);
+  const base = git(ws.root, "merge-base", "HEAD", ws.config.main);
+  // reason: no common history with main (an orphan branch) means no base backlog to compare, only main's tip
+  if (!base.ok) return ok(out);
+  const atBase = backlogAt(ws.root, base.value, ws.config.types);
+  if (!atBase.ok) return atBase;
+  for (const e of atBase.value) out.add(e.id);
+  return ok(out);
+}
+
+/** The change ids whose files are committed at `ref`, by file name. */
+function changeIdsAt(ws: Workspace, ref: string): Result<Set<string>> {
+  const type = changeType(ws);
+  const dir = `${CANON_DIR}/${type.dir}/`;
+  const files = git(ws.primary, "ls-tree", "--name-only", ref, "--", dir);
+  if (!files.ok) return files;
+  const name = new RegExp(`^(${type.prefix}-\\d+)(?:-[a-z0-9-]+)?\\.md$`);
+  const out = new Set<string>();
+  for (const p of files.value.split("\n")) {
+    const m = p.slice(dir.length).match(name);
+    if (m) out.add(m[1]!);
+  }
+  return ok(out);
 }
 
 /** The ids whose change file is on their own change branch, for `canon check`: the owner may order them in the backlog (BR-2150). */

@@ -157,7 +157,7 @@ function briefState(ws: Workspace): Result<void> {
         const marks = marksOf(l, false);
         return marks.length ? `${l.change.id} (${marks.join(", ")})` : l.change.id;
       });
-      say(`Open changes in the owner's order (canon change list); with no task, take the first unclaimed one: ${order.join(", ")}`);
+      say(`Open changes in the owner's order (canon change list); with no task, take the first unclaimed, not ambiguous one: ${order.join(", ")}`);
     }
   }
   // The schema editors read for canon/config.yaml, from this canon; a failure is said, never fatal (BR-2176).

@@ -104,7 +104,7 @@ describe("claims that no longer bind", () => {
     db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = 'C-2'").run(dead.pid, dead.start);
     const r = canon(root, "brief");
     expect(r.code).toBe(0);
-    expect(r.out).toContain("with no task, take the first unclaimed one: C-3 (claimed), C-2, C-1\n");
+    expect(r.out).toContain("with no task, take the first unclaimed, not ambiguous one: C-3 (claimed), C-2, C-1\n");
   });
 });
 

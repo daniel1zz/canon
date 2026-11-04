@@ -2,7 +2,7 @@ import { defineCommand } from "citty";
 import { corpusOf, entry, EXIT, json, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
 import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
 import { backlogNotes, check, noteLine } from "./check.ts";
-import { changeIdsOnBranches, listedOnMain } from "../../work/session/inflight.ts";
+import { changeIdsOnBranches, listedBefore } from "../../work/session/inflight.ts";
 import { budgetHint, sessionText, sizeLines } from "./session-text.ts";
 import { testFilesFor } from "./tests.ts";
 
@@ -14,7 +14,7 @@ const checkCmd = defineCommand({
   run({ args }) {
     const ws = workspace();
     const read = corpusOf(ws);
-    const input = { root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config), floorSkipPaths: ws.config.floorSkipPaths, branchChanges: must(changeIdsOnBranches(ws)), backlogBase: must(listedOnMain(ws)) };
+    const input = { root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config), floorSkipPaths: ws.config.floorSkipPaths, branchChanges: must(changeIdsOnBranches(ws)), backlogBase: must(listedBefore(ws)) };
     const findings = check(input);
     // reason: a dangling id main already lists is said on stderr and never fails the check (BR-2150, #112)
     for (const n of backlogNotes(input)) console.error(noteLine(n));

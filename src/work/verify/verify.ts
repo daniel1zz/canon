@@ -1,5 +1,5 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { changeIdsOnBranches, listedOnMain } from "../session/inflight.ts";
+import { changeIdsOnBranches, listedBefore } from "../session/inflight.ts";
 import { basename, join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
@@ -250,7 +250,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   const read = readCorpus(ws.root, ws.config.types, ws.config);
   const onBranches = changeIdsOnBranches(ws);
   if (!onBranches.ok) return onBranches;
-  const onMain = listedOnMain(ws);
+  const onMain = listedBefore(ws);
   if (!onMain.ok) return onMain;
   const input = { root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config), floorSkipPaths: ws.config.floorSkipPaths, branchChanges: onBranches.value, backlogBase: onMain.value };
   const findings = check(input);

@@ -76,7 +76,7 @@ describe("backlog order", () => {
     const started = canon(root, "work", "start", id("C", 2));
     expect(started.code).toBe(0);
     const wt = started.out.match(/cd (.+)/)![1]!.trim();
-    expect(canon(root, "brief").out).toContain(`Open changes in the owner's order (canon change list); with no task, take the first unclaimed one: ${id("C", 2)} (claimed), ${id("C", 1)}, ${id("C", 3)}`);
+    expect(canon(root, "brief").out).toContain(`Open changes in the owner's order (canon change list); with no task, take the first unclaimed, not ambiguous one: ${id("C", 2)} (claimed), ${id("C", 1)}, ${id("C", 3)}`);
     expect(canon(wt, "brief").out).not.toContain("Open changes in the owner's order");
   });
 });
