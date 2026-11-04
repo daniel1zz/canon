@@ -94,7 +94,12 @@ export interface Turn {
   readonly batched?: { readonly leader: number; readonly head: string };
   /** The leader landed this entry in its batch: `sha` is the commit of this change on main (BR-2172). */
   readonly landedBy?: { readonly leader: number; readonly sha: string; readonly head: string };
+  /** The leader refused this entry in its batch: the floor failed once this change joined the chain (BR-2173). */
+  readonly refusedBy?: { readonly leader: number; readonly reason: "floor"; readonly message: string };
 }
+
+/** How a batch refusal is kept in the queue row's `result`, so the member's own lander can read it back (BR-2173). */
+const REFUSED_IN_BATCH = "refused in batch: ";
 
 /**
  * Who lands first among waiting entries (BR-2232, D-34): the change that fixes a failing main, then the changes the
@@ -138,6 +143,7 @@ export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS, 
     // reason: the state is read and set in this one write transaction, so a skipped entry cannot slip back in (BR-2144).
     const own = db.db.query<{ state: string; result: string | null; batch: number | null; head: string | null }, [number]>("SELECT state, result, batch, head FROM queue WHERE id = ?").get(entryId);
     if (own?.state === "landed" && own.batch !== null && own.result && own.head) return { mine: false, ahead: 0, landedBy: { leader: own.batch, sha: own.result, head: own.head } };
+    if (own?.state === "failed" && own.batch !== null && own.result?.startsWith(REFUSED_IN_BATCH)) return { mine: false, ahead: 0, refusedBy: { leader: own.batch, reason: "floor", message: own.result.slice(REFUSED_IN_BATCH.length) } };
     // reason: a batched entry stays 'waiting' with `batch` set, since the state column's CHECK constraint predates batches (D-26).
     // A member the leader has locked in just before moving main is 'landing' with `batch` set (BR-2172, issue #42).
     if ((own?.state === "waiting" || own?.state === "landing") && own.batch !== null && own.head) {
@@ -247,9 +253,20 @@ export function joinBatch(db: CoordDb, leader: number, entryId: number, head: st
   return db.db.query("UPDATE queue SET batch = ?, head = ? WHERE id = ? AND state = 'waiting' AND batch IS NULL").run(leader, head, entryId).changes > 0;
 }
 
-/** Sends a batched entry back to waiting; `solo` marks it to land on its own from now on (BR-2173). False when it had left meanwhile. */
-export function leaveBatch(db: CoordDb, entryId: number, solo: boolean): boolean {
-  return db.db.query("UPDATE queue SET batch = NULL, head = NULL, solo = ? WHERE id = ? AND state = 'waiting' AND batch IS NOT NULL").run(solo ? 1 : 0, entryId).changes > 0;
+/**
+ * Sends a batched entry back to waiting at its place in the queue; it may join a later batch (BR-2173). False when
+ * it had left meanwhile.
+ */
+export function leaveBatch(db: CoordDb, entryId: number): boolean {
+  return db.db.query("UPDATE queue SET batch = NULL, head = NULL WHERE id = ? AND state = 'waiting' AND batch IS NOT NULL").run(entryId).changes > 0;
+}
+
+/**
+ * Refuses a member of `leader`'s batch whose addition made the floor fail (BR-2173); its own lander reads the message
+ * back on its next try for the turn. False when it had left the batch meanwhile.
+ */
+export function refuseInBatch(db: CoordDb, leader: number, entryId: number, message: string): boolean {
+  return db.db.query("UPDATE queue SET state = 'failed', result = ? WHERE id = ? AND state = 'waiting' AND batch = ?").run(`${REFUSED_IN_BATCH}${message}`, entryId, leader).changes > 0;
 }
 
 /** Whether an entry is still in a batch (not killed or abandoned meanwhile). */
@@ -307,7 +324,3 @@ export function landBatched(db: CoordDb, entryId: number, sha: string): boolean 
   return db.db.query("UPDATE queue SET state = 'landed', result = ?, heartbeat = ? WHERE id = ? AND state = 'landing' AND batch IS NOT NULL").run(sha, iso(now()), entryId).changes > 0;
 }
 
-/** Whether this entry was marked to land on its own after a failed batch (BR-2173). */
-export function isSolo(db: CoordDb, entryId: number): boolean {
-  return (db.db.query<{ solo: number | null }, [number]>("SELECT solo FROM queue WHERE id = ?").get(entryId)?.solo ?? 0) === 1;
-}

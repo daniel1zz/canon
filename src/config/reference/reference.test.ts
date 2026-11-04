@@ -124,6 +124,8 @@ describe("the config schema", () => {
     { config: { land_timeout_minutes: 0 }, ok: false },
     { config: { land_batch_max: 1 }, ok: true },
     { config: { land_batch_max: 0 }, ok: false },
+    { config: { land_batch_max: "all" }, ok: true },
+    { config: { land_batch_max: "some" }, ok: false },
     { config: { land_batch_max: 2.5 }, ok: false },
     { config: { floor_timing: "before" }, ok: true },
     { config: { floor_timing: "after" }, ok: true },

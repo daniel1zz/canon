@@ -70,8 +70,8 @@ describe("batches", () => {
     expect(batchCandidates(d, lead, 2).map((x) => x.id)).toEqual([b, c]);
     expect(batchCandidates(d, lead, 1).map((x) => x.id)).toEqual([b]); // land_batch_max 2: the leader and one more
     expect(joinBatch(d, lead, c, "h")).toBe(true);
-    leaveBatch(d, c, true); // c lands on its own from now on (BR-2173)
-    expect(batchCandidates(d, lead, 3).map((x) => x.id)).toEqual([b]); // stops at c, never takes e ahead of it
+    expect(leaveBatch(d, c)).toBe(true); // back in the queue, and it may join a batch again (BR-2173)
+    expect(batchCandidates(d, lead, 3).map((x) => x.id)).toEqual([b, c, e]);
     expect(e).toBeGreaterThan(c);
     const silent = enqueue(d, "/wt/s", "C-5", "x"); // no lander process recorded
     expect(batchCandidates(d, e, 3)).toEqual([]); // a lander with no process recorded never joins

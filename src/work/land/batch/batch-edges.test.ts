@@ -132,7 +132,7 @@ describe("a batch's own edges", () => {
     expect(sh(root, "show", "main:b.txt")).toBe("b");
   }, TIMED);
 
-  test("BR-2172 BR-2173: a member whose lander stops before the lock voids the batch; no member is locked and the others land alone", async () => {
+  test("BR-2172 BR-2173: a member whose lander stops during the batch leaves it; the ones before it are tested again without it and land together", async () => {
     const { root, floorRuns } = batchProject("land_batch_max: 3\n", 3);
     const a = startNew(root, "Leader");
     commitFile(a.worktree, "a.txt", "a\n");
@@ -147,10 +147,8 @@ describe("a batch's own edges", () => {
     expect(code).toBe(143);
     expect([oa.kind, ob.kind]).toEqual(["landed", "landed"]);
     expect(entryOf(root, c.worktree)).toMatchObject({ state: "failed", result: "killed" });
-    const fails = events(root, "batch.fail");
-    expect(fails.length).toBe(1);
-    expect(fails[0]!["why"]).toContain("a member left the batch");
-    expect(entryOf(root, b.worktree)!.solo).toBe(1); // B landed on its own afterwards
+    expect(events(root, "batch.fail")).toEqual([]);
+    expect(events(root, "land.ok").find((o) => o["subject"] === "C-2")?.["batched_by"]).toBeDefined(); // B landed in A's batch
     expect(existsSync(join(root, "c.txt"))).toBe(false);
   }, TIMED);
 

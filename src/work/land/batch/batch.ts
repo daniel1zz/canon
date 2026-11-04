@@ -4,10 +4,10 @@ import type { Say, Workspace } from "../../workspace.ts";
 import { addWorktree, git, isClean, moveBranch, pruneWorktrees, removeWorktree } from "../../../kernel/git.ts";
 import { isGone } from "../../claims/liveness.ts";
 import { runFloor, floorSkip } from "../checks/floor.ts";
-import { verifyChange } from "../checks/steps.ts";
+import { verifyChange, type StepFailure, type Steps } from "../checks/steps.ts";
 import { afterLand, closeSubject, finishLanding, moveMain, reopen } from "../finish/finish.ts";
 import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
-import { batchCandidates, finishEntry, holdsTurn, joinBatch, landBatched, leaveBatch, lockBatch, unlockBatch } from "../queue/queue.ts";
+import { batchCandidates, finishEntry, holdsTurn, inBatch, joinBatch, landBatched, leaveBatch, lockBatch, refuseInBatch, unlockBatch } from "../queue/queue.ts";
 import { lostTurn, priorityNow } from "../queue/wait.ts";
 import { ownDiffId, rebaseInProgress } from "../worktree-state.ts";
 
@@ -28,14 +28,23 @@ interface Link {
   readonly head: string;
 }
 
+/** What a batch did for its leader (BR-2172, BR-2173). */
+export type BatchOutcome =
+  | { readonly kind: "landed" }
+  | { readonly kind: "refused"; readonly reason: Extract<LandOutcome, { kind: "refused" }>["reason"]; readonly message: string; readonly findings?: StepFailure["findings"] }
+  | { readonly kind: "lost"; readonly outcome: LandOutcome };
+
 /**
- * The batch at this lander's turn (BR-2172, D-26). Takes up to `land_batch_max - 1` entries right behind it,
- * rebases them one after another onto this landing's own rebased HEAD in a temporary worktree, runs each
- * change's own steps on its part of the chain and the floor once on the top, and moves main to the top.
- * Returns undefined when nothing joined or the batch fell back (members go back to wait and land on their own,
- * BR-2173); "landed" when main moved; a refusal only for main moving or the turn being lost meanwhile.
+ * The batch at this lander's turn (BR-2172, D-26, D-42). Takes the entries right behind it (up to `land_batch_max`
+ * in all), and in a temporary worktree builds a chain: this landing's own rebased HEAD, then each member rebased onto
+ * the one before. Each change's own steps run on its part of the chain as it is added; a member they refuse leaves
+ * the chain and goes back to the queue, so it is judged again later, on a base that may by then hold what it needs.
+ * The floor runs once on the top; when it fails, the shortest failing prefix of the chain is found by testing
+ * prefixes (BR-2173): the change whose addition makes it fail is refused, the passing prefix lands, and the ones
+ * after it go back to the queue. Returns undefined when nothing joined or the batch could not be tested at all
+ * (the leader then lands alone); "refused" when the leader itself is refused.
  */
-export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running; base: string; head: string; before: string }): Promise<{ kind: "landed" } | { kind: "refused"; reason: "main-moved" | "main-dirty" | "environment"; message: string } | { kind: "lost"; outcome: LandOutcome } | undefined> {
+export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running; base: string; head: string; before: string }): Promise<BatchOutcome | undefined> {
   const main = ws.config.main;
   const members: { id: number; subject: string | null; worktree: string; branch: string; joined: string }[] = [];
   for (const c of batchCandidates(ws.db, t.entry, ws.config.landBatchMax - 1, ws.config.landerStaleMs, priorityNow(ws))) {
@@ -47,110 +56,189 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
     members.push({ id: c.id, subject: c.subject, worktree: c.worktree, branch: branch.value, joined: head.value });
   }
   if (members.length === 0) return undefined;
-  const leave = (from: number, solo: boolean) => {
-    for (const m of members.slice(from)) leaveBatch(ws.db, m.id, solo);
+  const name = (m: { subject: string | null; entry?: number; id?: number }) => m.subject ?? `entry ${m.entry ?? m.id}`;
+  const names = (list: readonly { subject: string | null; id?: number; entry?: number }[]) => list.map(name).join(", ");
+  const sendBack = (list: readonly { id?: number; entry?: number }[]) => {
+    for (const m of list) leaveBatch(ws.db, (m.id ?? m.entry)!);
   };
-  const names = (list: readonly { subject: string | null; id: number }[]) => list.map((m) => m.subject ?? `entry ${m.id}`).join(", ");
 
   const dir = batchDir(ws, t.entry);
   rmSync(dir, { recursive: true, force: true });
   pruneWorktrees(ws.primary);
   const added = addWorktree(ws.primary, "-q", "--detach", dir, t.head);
   if (!added.ok) {
-    leave(0, false);
+    sendBack(members);
     say(`batch: could not create a worktree to test in (${added.error.message.split("\n")[0]}); landing alone`);
     return undefined;
   }
   try {
-    const links: Link[] = [{ entry: t.entry, subject: t.subject, worktree: ws.root, branch: t.branch, joined: t.head, before: t.before, base: t.base, head: t.head }];
-    for (let i = 0; i < members.length; i++) {
-      const m = members[i]!;
-      const prev = links[links.length - 1]!.head;
-      const from = git(ws.primary, "merge-base", t.base, m.joined);
-      const reb = from.ok ? git(dir, "rebase", "-q", "--onto", prev, from.value, m.joined) : from;
-      const top = reb.ok ? git(dir, "rev-parse", "HEAD") : reb;
-      if (!top.ok) {
-        // reason: a change that conflicts with the ones ahead of it in the batch is not judged here; it and the ones behind it wait for their own turn (BR-2172).
-        if (rebaseInProgress(dir)) git(dir, "rebase", "--abort");
-        say(`batch: ${names(members.slice(i))} do not rebase onto the batch; they wait for their own turn`);
-        leave(i, false);
-        members.splice(i);
-        break;
-      }
-      links.push({ entry: m.id, subject: m.subject, worktree: m.worktree, branch: m.branch, joined: m.joined, before: m.joined, base: prev, head: top.value });
-    }
-    if (members.length === 0) return undefined;
-    const tip = links[links.length - 1]!.head;
-    say(`batch: testing ${names(members)} together with ${t.subject ?? "this landing"} (floor once on ${tip.slice(0, 9)})`);
-    ws.db.event(ws.actor, "batch.start", t.subject, { entry: t.entry, members: links.slice(1).map((l) => ({ entry: l.entry, change: l.subject, head: l.head })) });
-
-    const fallBack = (why: string) => {
-      leave(0, true);
-      ws.db.event(ws.actor, "batch.fail", t.subject, { entry: t.entry, why: why.slice(0, 2000), members: links.slice(1).map((l) => l.entry) });
-      say(`batch: ${why.split("\n")[0]}; ${names(members)} go back to the queue to land on their own, and ${t.subject ?? "this landing"} goes on alone`);
+    ws.db.event(ws.actor, "batch.start", t.subject, { entry: t.entry, members: members.map((m) => ({ entry: m.id, change: m.subject })) });
+    say(`batch: testing ${names(members)} together with ${t.subject ?? "this landing"}`);
+    // The batch cannot be tested at all: every member goes back to the queue and this landing goes on alone (BR-2173).
+    const giveUp = (why: string) => {
+      sendBack(members);
+      ws.db.event(ws.actor, "batch.fail", t.subject, { entry: t.entry, why: why.slice(0, 2000), members: members.map((m) => m.id) });
+      say(`batch: ${why.split("\n")[0]}; ${names(members)} go back to the queue, and ${t.subject ?? "this landing"} goes on alone`);
       return undefined;
     };
-
     if (ws.config.setup) {
       // reason: run without blocking, so the heartbeat timer and the signal handler keep running through a slow setup (BR-2049, BR-2099, issue #60).
       const setup = Bun.spawn(["sh", "-c", ws.config.setup], { cwd: dir, stdout: "ignore", stderr: "ignore" });
       t.running.floor = setup;
       const code = await setup.exited;
       t.running.floor = undefined;
-      if (code !== 0) return fallBack(`setup exited ${code} in the batch worktree`);
-    }
-    const notes: Record<number, Awaited<ReturnType<typeof verifyChange>>> = {};
-    for (const l of links) {
-      const co = git(dir, "checkout", "-q", "--detach", l.head);
-      if (!co.ok) return fallBack(`checkout of ${l.head.slice(0, 9)} failed: ${co.error.message}`);
-      // reason: the whole batch moves main at once, so every member is compared with main, not the member before it (BR-2248)
-      const steps = await verifyChange(ws, opts, say, { wt: dir, base: l.base, main: t.base, head: l.head, before: l.before, subject: l.subject, branch: l.branch });
-      if (!steps.ok) return fallBack(`${l.subject ?? `entry ${l.entry}`} was refused in the batch (${steps.reason})`);
-      notes[l.entry] = steps;
-    }
-    const co = git(dir, "checkout", "-q", "--detach", tip);
-    if (!co.ok) return fallBack(`checkout of ${tip.slice(0, 9)} failed: ${co.error.message}`);
-    const skip = floorSkip(dir, t.base, tip);
-    if (skip) {
-      say(`floor: skipped — all ${skip.paths.length} changed path(s) of the batch are under floor_skip_paths (${skip.under.join(", ")})`);
-      ws.db.event(ws.actor, "floor.skip", t.subject, { entry: t.entry, paths: skip.paths.slice(0, 50), under: skip.under });
-    } else {
-      const floor = await runFloor(ws, say, dir, `land-${t.entry}-batch.log`, t.running);
-      if (floor.code !== 0) return fallBack(`the floor failed on the batch (exit ${floor.code}, log: ${floor.log})`);
+      if (code !== 0) return giveUp(`setup exited ${code} in the batch worktree`);
     }
 
-    // Every member's worktree is as it joined and the entry is still in this batch, and this lander still holds
-    // its turn: otherwise what was tested is not what would land (BR-2106, BR-2144).
-    for (const l of links) {
-      const now = git(l.worktree, "rev-parse", "HEAD");
-      const clean = isClean(l.worktree);
-      if (!now.ok || now.value !== l.joined || !clean.ok || !clean.value) return fallBack(`the worktree of ${l.subject ?? `entry ${l.entry}`} changed during the batch`);
+    const notes = new Map<number, Steps>();
+    const check = async (l: Link): Promise<Steps> => {
+      const co = git(dir, "checkout", "-q", "--detach", l.head);
+      if (!co.ok) return { ok: false, reason: "environment", message: `checkout of ${l.head.slice(0, 9)} failed: ${co.error.message}` };
+      // reason: the whole batch moves main at once, so every member is compared with main, not the member before it (BR-2248)
+      return verifyChange(ws, opts, say, { wt: dir, base: l.base, main: t.base, head: l.head, before: l.before, subject: l.subject, branch: l.branch });
+    };
+    // The leader's own steps first: they are exactly what it would get landing alone (BR-2173).
+    const leader: Link = { entry: t.entry, subject: t.subject, worktree: ws.root, branch: t.branch, joined: t.head, before: t.before, base: t.base, head: t.head };
+    const own = await check(leader);
+    if (!own.ok) {
+      sendBack(members);
+      say(`batch: ${name(leader)} was refused (${own.reason}); ${names(members)} go back to the queue`);
+      return { kind: "refused", reason: own.reason, message: own.message, ...(own.findings ? { findings: own.findings } : {}) };
     }
-    const memberIds = links.slice(1).map((l) => l.entry);
+    notes.set(t.entry, own);
+    const links: Link[] = [leader];
+    for (let i = 0; i < members.length; i++) {
+      const m = members[i]!;
+      const prev = links[links.length - 1]!.head;
+      const from = git(ws.primary, "merge-base", t.base, m.joined);
+      const co = git(dir, "checkout", "-q", "--detach", prev);
+      const reb = !co.ok ? co : from.ok ? git(dir, "rebase", "-q", "--onto", prev, from.value, m.joined) : from;
+      const top = reb.ok ? git(dir, "rev-parse", "HEAD") : reb;
+      if (!top.ok) {
+        // reason: a change that conflicts with the ones ahead of it in the batch is not judged here; it waits for its own turn (BR-2172).
+        if (rebaseInProgress(dir)) git(dir, "rebase", "--abort");
+        say(`batch: ${name(m)} does not rebase onto the batch; it goes back to the queue`);
+        sendBack([m]);
+        continue;
+      }
+      const link: Link = { entry: m.id, subject: m.subject, worktree: m.worktree, branch: m.branch, joined: m.joined, before: m.joined, base: prev, head: top.value };
+      const steps = await check(link);
+      if (!steps.ok) {
+        // reason: its refusal here may depend on changes ahead of it that are not on main yet, and the review is a sample;
+        // it is judged again on its own turn or in a later batch, and no other member is affected (BR-2173, D-42).
+        say(`batch: ${name(m)} was refused in the batch (${steps.reason}); it goes back to the queue, the others go on`);
+        ws.db.event(ws.actor, "batch.drop", m.subject, { entry: m.id, leader: t.entry, reason: steps.reason });
+        sendBack([m]);
+        continue;
+      }
+      notes.set(m.id, steps);
+      links.push(link);
+    }
+
+    // Settle on the longest prefix of the chain whose top passed the floor; `passed` holds the prefix lengths tested green.
+    const passed = new Set<number>();
+    let n = links.length;
+    let run = 0;
+    const floorOn = async (len: number): Promise<{ ok: boolean; log: string; skipped: boolean }> => {
+      const tip = links[len - 1]!.head;
+      const co = git(dir, "checkout", "-q", "--detach", tip);
+      if (!co.ok) return { ok: false, log: co.error.message, skipped: false };
+      const skip = floorSkip(dir, t.base, tip);
+      if (skip) {
+        say(`floor: skipped — all ${skip.paths.length} changed path(s) of the batch are under floor_skip_paths (${skip.under.join(", ")})`);
+        ws.db.event(ws.actor, "floor.skip", t.subject, { entry: t.entry, paths: skip.paths.slice(0, 50), under: skip.under });
+        return { ok: true, log: "", skipped: true };
+      }
+      run++;
+      if (len > 1) say(`batch: floor on ${names(links.slice(0, len))} (${tip.slice(0, 9)})`);
+      const floor = await runFloor(ws, say, dir, `land-${t.entry}-batch${run > 1 ? `-${run}` : ""}.log`, t.running);
+      return { ok: floor.code === 0, log: `floor exited ${floor.code} (full log: ${floor.log})\n${floor.tail}`, skipped: false };
+    };
+    let skipped = false;
+    for (;;) {
+      const top = await floorOn(n);
+      skipped = top.skipped;
+      if (!top.ok) {
+        // Binary search for the shortest failing prefix: the change at its top is the one whose addition fails (BR-2173).
+        let lo = 0;
+        let hi = n; // prefix length n fails
+        let failLog = top.log;
+        while (hi - lo > 1) {
+          const mid = Math.floor((lo + hi) / 2);
+          const r = await floorOn(mid);
+          if (r.ok) {
+            passed.add(mid);
+            lo = mid;
+          } else {
+            hi = mid;
+            failLog = r.log;
+          }
+        }
+        const culprit = links[hi - 1]!;
+        ws.db.event(ws.actor, "batch.fail", t.subject, { entry: t.entry, why: `the floor failed once ${name(culprit)} joined`, members: links.slice(1).map((l) => l.entry), culprit: culprit.entry, floors: run });
+        sendBack(links.slice(hi).map((l) => ({ entry: l.entry })));
+        if (hi === 1) {
+          sendBack(links.slice(1).map((l) => ({ entry: l.entry })));
+          return { kind: "refused", reason: "floor", message: failLog };
+        }
+        refuseInBatch(ws.db, t.entry, culprit.entry, `the floor failed once ${name(culprit)} joined the batch of ${name(leader)}:\n${failLog}`);
+        say(`batch: the floor fails once ${name(culprit)} joins; it is refused, ${links.length > hi ? `${names(links.slice(hi))} go back to the queue, ` : ""}${names(links.slice(0, hi - 1))} land`);
+        n = hi - 1;
+        if (!passed.has(n)) continue;
+      } else passed.add(n);
+
+      // Every member's worktree is as it joined and the entry is still in this batch: otherwise what was tested is
+      // not what would land (BR-2106). A member that changed goes back with the ones after it; the rest is tested again.
+      const mine = git(ws.root, "rev-parse", "HEAD");
+      const mineClean = isClean(ws.root);
+      if (!mine.ok || mine.value !== t.head || !mineClean.ok || !mineClean.value) {
+        sendBack(links.slice(1, n).map((l) => ({ entry: l.entry })));
+        return { kind: "refused", reason: "moved-during-land", message: `the worktree changed during the batch, so what was tested is not what would land; ${names(links.slice(1, n))} went back to the queue; land again` };
+      }
+      const changed = links.slice(1, n).findIndex((l) => {
+        const now = git(l.worktree, "rev-parse", "HEAD");
+        const clean = isClean(l.worktree);
+        return !now.ok || now.value !== l.joined || !clean.ok || !clean.value || !inBatch(ws.db, l.entry, t.entry);
+      });
+      if (changed === -1) break;
+      const at = changed + 1;
+      say(`batch: ${name(links[at]!)} changed or left during the batch; it ${n - at > 1 ? `and ${names(links.slice(at + 1, n))} go` : "goes"} back to the queue`);
+      sendBack(links.slice(at, n).map((l) => ({ entry: l.entry })));
+      n = at;
+      if (passed.has(n)) break;
+    }
+    const landing = links.slice(0, n);
+    const rest = links.slice(n);
+    const tip = landing[landing.length - 1]!.head;
+    const memberIds = landing.slice(1).map((l) => l.entry);
     const turn = holdsTurn(ws.db, t.entry);
     if (!turn.held) {
-      leave(0, false);
+      sendBack(landing.slice(1).map((l) => ({ entry: l.entry })));
       return { kind: "lost", outcome: lostTurn(ws, t.subject, ws.root, turn.state, "before-main") };
     }
-    const fingerprints = new Map(links.map((l) => [l.entry, ownDiffId(l.worktree, main)]));
+    const fingerprints = new Map(landing.map((l) => [l.entry, ownDiffId(l.worktree, main)]));
     // reason: all members are locked in at once, after the last check, so none can give its entry up while main moves (issue #42).
-    if (!lockBatch(ws.db, t.entry, memberIds)) return fallBack("a member left the batch (its lander stopped)");
+    if (!lockBatch(ws.db, t.entry, memberIds)) {
+      sendBack(landing.slice(1).map((l) => ({ entry: l.entry })));
+      return giveUp("a member left the batch (its lander stopped)");
+    }
     const moved = moveMain(ws, t.base, tip);
     if (moved !== "moved") {
       unlockBatch(ws.db, t.entry, memberIds);
-      for (const l of links.slice(1)) reopenForGoneLander(ws, l, say);
+      for (const l of landing.slice(1)) reopenForGoneLander(ws, l, say);
       return { kind: "refused", reason: moved.reason, message: moved.message };
     }
     // reason: members are recorded landed before the leader, so a member never sees its leader done while it is still batched (BR-2172).
-    for (const l of links.slice(1)) landBatched(ws.db, l.entry, l.head);
+    for (const l of landing.slice(1)) landBatched(ws.db, l.entry, l.head);
     finishEntry(ws.db, t.entry, "landed", t.head);
-    for (const l of links) {
-      const n = notes[l.entry];
-      const reviewNotes = n?.ok ? n.reviewNotes : undefined;
-      ws.db.event(ws.actor, "land.ok", l.subject, { sha: l.head, base: l.base, branch: l.branch, diff: fingerprints.get(l.entry) ?? null, ...(reviewNotes ?? {}), ...(skip ? { floor_skipped: true } : {}), ...(l.entry !== t.entry ? { batched_by: t.entry } : { batch: links.slice(1).map((x) => x.entry) }) });
-      say(`landed ${l.head.slice(0, 9)} (${l.subject ?? `entry ${l.entry}`}) on ${main}`);
+    for (const l of landing) {
+      const s = notes.get(l.entry);
+      const reviewNotes = s?.ok ? s.reviewNotes : undefined;
+      ws.db.event(ws.actor, "land.ok", l.subject, { sha: l.head, base: l.base, branch: l.branch, diff: fingerprints.get(l.entry) ?? null, ...(reviewNotes ?? {}), ...(skipped ? { floor_skipped: true } : {}), ...(l.entry !== t.entry ? { batched_by: t.entry } : { batch: landing.slice(1).map((x) => x.entry), floors: run }) });
+      say(`landed ${l.head.slice(0, 9)} (${name(l)}) on ${main}`);
     }
-    for (const l of links) afterLand(ws, say, { entry: l.entry, subject: l.subject, base: l.base, head: l.head, branch: l.branch });
+    if (rest.length > 0) say(`batch: ${names(rest)} were not landed with it`);
+    for (const l of landing) afterLand(ws, say, { entry: l.entry, subject: l.subject, base: l.base, head: l.head, branch: l.branch });
     return { kind: "landed" };
   } finally {
     removeWorktree(ws.primary, "--force", dir);

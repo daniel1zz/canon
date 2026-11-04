@@ -54,10 +54,11 @@ export const landKeys = {
   }),
   landBatchMax: configKey<number>({
     key: "land_batch_max",
-    doc: "At most this many landings are tested together under one floor run (D-26, BR-2172); 1 means never batch.",
+    doc: "At most this many landings are tested together under one floor run (D-26, BR-2172); 1 means never batch, `all` takes every landing waiting in the queue (D-42).",
     default: 1,
-    schema: { type: "integer", minimum: 1, default: 1 },
-    read: (v) => (typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`land_batch_max` must be a whole number of at least 1")),
+    schema: { oneOf: [{ type: "integer", minimum: 1 }, { const: "all" }], default: 1 },
+    // reason: `all` has no upper bound, so it is kept as Infinity and every comparison with a count still holds (BR-2172, D-42).
+    read: (v) => (v === "all" ? ok(Number.POSITIVE_INFINITY) : typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`land_batch_max` must be a whole number of at least 1, or `all`")),
     listed: 190,
     checked: 160,
   }),

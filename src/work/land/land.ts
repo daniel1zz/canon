@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import type { Say, Workspace } from "../workspace.ts";
 import { type Finding } from "../../knowledge/check/check.ts";
 import { bindToLander, keepClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
-import { enter, failForConflict, failIfActive, finishEntry, heartbeat, holdsTurn, isSolo, settleLocked, tryTurn } from "./queue/queue.ts";
+import { enter, failForConflict, failIfActive, finishEntry, heartbeat, holdsTurn, settleLocked, tryTurn } from "./queue/queue.ts";
 import { selfProcess, sessionProcess } from "../claims/liveness.ts";
 import { noticeOverlaps } from "../session/overlap.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
@@ -179,6 +179,11 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
     if (turn.lost !== undefined) return lostTurn(ws, subject, wt, turn.lost, "queue");
     // The lander ahead tested this change in its batch and landed it (BR-2172).
     if (turn.landedBy) return landedInBatch(ws, opts, say, { entry, subject }, turn.landedBy);
+    // The lander ahead found that the floor fails once this change joins its batch (BR-2173).
+    if (turn.refusedBy) {
+      ws.db.event(ws.actor, "land.refuse", subject, { reason: turn.refusedBy.reason, message: turn.refusedBy.message.slice(0, 2000), batched_by: turn.refusedBy.leader, diff: ownDiffId(wt, main) });
+      return { kind: "refused", reason: turn.refusedBy.reason, message: turn.refusedBy.message };
+    }
     // While another lander tests this change in its batch, it neither refuses nor times out: the batch settles it (BR-2172).
     if (turn.batched) {
       batchedSince ??= Date.now();
@@ -276,13 +281,13 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
     if (!readable.ok) return refuse("config", readable.error.message);
   }
 
-  // Landings waiting right behind this one are tested with it under one floor run (BR-2172, D-26); a batch that
-  // does not land as a whole sends them back to land on their own, and this landing goes on alone (BR-2173).
-  if (ws.config.landBatchMax > 1 && !floorDeferred && !isSolo(ws.db, entry)) {
+  // Landings waiting right behind this one are tested with it under one floor run (BR-2172, D-26); only a member that
+  // is refused or changes leaves the batch, and a failing floor is traced to the change that makes it fail (BR-2173, D-42).
+  if (ws.config.landBatchMax > 1 && !floorDeferred) {
     const batched = await landBatch(ws, opts, say, { ...t, base: base.value, head: tested.value, before: before.value });
     if (batched?.kind === "landed") return finishLanding(ws, opts, say, { entry, subject, sha: tested.value });
     if (batched?.kind === "lost") return batched.outcome;
-    if (batched) return refuse(batched.reason, batched.message);
+    if (batched) return refuse(batched.reason, batched.message, batched.findings);
   }
 
   // A landing that changes only paths the project declares no test reads has main's already-tested code tree,
