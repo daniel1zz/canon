@@ -38,8 +38,11 @@ export function parseBacklog(text: string, types: readonly DocType[] = BUILTIN_T
   return out;
 }
 
-/** Changes in the owner's order: the backlog's first, as listed, then the rest by id (BR-2148). */
-export function inBacklogOrder<T extends Pick<Change, "id">>(changes: readonly T[], backlog: readonly BacklogEntry[]): T[] {
+/**
+ * Changes in the owner's order: the backlog's first, as listed; then the unlisted ones already `started` (a handoff
+ * or a change branch: work someone began and may have left), then the rest, each by id (BR-2148, BR-2291, D-50).
+ */
+export function inBacklogOrder<T extends Pick<Change, "id">>(changes: readonly T[], backlog: readonly BacklogEntry[], started: ReadonlySet<string> = new Set()): T[] {
   const rank = new Map(backlog.map((e, i) => [e.id, i]));
   const num = (id: string) => Number(id.split("-").pop());
   return [...changes].sort((a, b) => {
@@ -48,6 +51,8 @@ export function inBacklogOrder<T extends Pick<Change, "id">>(changes: readonly T
     if (ra !== undefined && rb !== undefined) return ra - rb;
     if (ra !== undefined) return -1;
     if (rb !== undefined) return 1;
+    const sa = started.has(a.id);
+    if (sa !== started.has(b.id)) return sa ? -1 : 1;
     return num(a.id) - num(b.id);
   });
 }

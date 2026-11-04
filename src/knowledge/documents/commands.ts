@@ -1,7 +1,8 @@
 import { defineCommand } from "citty";
 import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
 import type { Doc, Kind } from "./model.ts";
-import { inBacklogOrder, readBacklog } from "./backlog.ts";
+import { readBacklog } from "./backlog.ts";
+import { listedChanges, marksOf } from "../../work/session/inflight.ts";
 import type { readCorpus } from "./read.ts";
 import { createDoc, createDomain, setMeta } from "./write.ts";
 import { findDoc } from "../query/query.ts";
@@ -50,14 +51,32 @@ function listCommand(kind: Kind, describe: string) {
         if (!type) fail({ code: "not_found", message: `no document type ${args.type} (declared types: ${declared})` });
         if (type.builtin) fail({ code: "invalid", message: `${type.name} is built in; use \`canon ${type.name} list\`` });
       }
-      const docs = corpusOf(ws).corpus.docs.filter((d) => d.kind === kind && (kind !== "extra" || (d.kind === "extra" && d.type === args.type)));
+      const { corpus } = corpusOf(ws);
+      const docs = corpus.docs.filter((d) => d.kind === kind && (kind !== "extra" || (d.kind === "extra" && d.type === args.type)));
       const live = (d: (typeof docs)[number]) => kind === "extra" || args.all || !("status" in d) || d.status === undefined || ["active", "accepted", "proposed", "open"].includes(d.status);
       const rows = docs
         .filter(live)
         .filter((d) => !args.domain || (d.kind === "rule" && (d.domain === args.domain || d.domain.startsWith(`${args.domain}/`))))
         .sort((a, b) => a.id.localeCompare(b.id, undefined, { numeric: true })); // SP-2 before SP-10 (BR-2061)
-      // Changes come in the owner's order (canon/backlog.md), unlisted ones after by id (BR-2148, D-20).
-      if (kind === "change") rows.splice(0, rows.length, ...inBacklogOrder(rows, readBacklog(ws.root, ws.config.types)));
+      if (kind === "change") {
+        // Changes come in the owner's order (canon/backlog.md), started ones next, and include those that so far exist
+        // only on their change branch, so the list the guide points to holds released work too (BR-2148, BR-2291, D-50).
+        const listed = must(listedChanges(ws, corpus, readBacklog(ws.root, ws.config.types), (c) => live(c)));
+        if (args.json) {
+          return json(listed.map(({ change: { body: _b, ...r }, onBranch, handoff, claimed }) => ({
+            ...r,
+            on_branch: onBranch,
+            handoff: handoff ? { next: handoff.next, actor: handoff.actor, updated_at: handoff.updated_at } : null,
+            claimed,
+          })));
+        }
+        for (const l of listed) {
+          const marks = marksOf(l, true);
+          say(`${l.change.id.padEnd(8)} ${l.change.status.padEnd(10)} ${l.change.title}${marks.length ? `  (${marks.join("; ")})` : ""}`);
+        }
+        if (listed.length === 0) say("(no changes)");
+        return;
+      }
       if (args.json) return json(rows.map(({ body: _b, ...r }) => r));
       for (const d of rows) say(`${d.id.padEnd(8)} ${("status" in d && d.status ? d.status : "").padEnd(10)} ${d.title}`);
       if (rows.length === 0) say(`(no ${kind}s)`);

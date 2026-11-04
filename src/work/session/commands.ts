@@ -7,15 +7,15 @@ import { noticeUpdates } from "../../cli/install/commands.ts";
 import { backgroundNotice, settleBackgroundHooks } from "../../config/hooks.ts";
 import { git } from "../../kernel/git.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
-import type { Change } from "../../knowledge/documents/model.ts";
-import { BACKLOG_FILE, inBacklogOrder, parseBacklog } from "../../knowledge/documents/backlog.ts";
+import { BACKLOG_FILE, parseBacklog } from "../../knowledge/documents/backlog.ts";
 import { findDoc, referencedIds } from "../../knowledge/query/query.ts";
 import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
-import { claimOfWorktree, claimsWithState, liveClaims, type ClaimState } from "../claims/claims.ts";
+import { claimOfWorktree, claimsWithState, type ClaimState } from "../claims/claims.ts";
 import { questions } from "../humans/questions.ts";
 import { activeQueue, keptPlaces } from "../land/queue/queue.ts";
 import { openWorkspace, type Workspace } from "../workspace.ts";
 import { handoffs } from "./handoffs.ts";
+import { listedChanges, marksOf } from "./inflight.ts";
 import { overlapsOf } from "./overlap.ts";
 import { clean, LESSON_REMINDER, mainCorpus, start, stop } from "./session.ts";
 import { redMainNotice, startFixMain } from "../watch/redmain.ts";
@@ -150,16 +150,20 @@ function briefState(ws: Workspace): Result<void> {
     if (hs.length) say(`Unfinished changes with handoffs: ${hs.map((h) => h.subject).join(", ")} (canon work status)`);
     const pending = questions(ws.db, "pending").length;
     if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
-    // The owner's order of open changes on main, so an agent without a task takes the first unclaimed one (BR-2149, D-20).
+    // The owner's order of open changes on main and on change branches main lacks yet, the same list and marks as
+    // canon change list, so an agent without a task takes the first unclaimed one (BR-2149, BR-2291, D-20, D-50).
     const onMain = mainCorpus(ws);
     if (!onMain.ok) return onMain;
-    const open = onMain.value.docs.filter((d): d is Change => d.kind === "change" && d.status === "open");
-    if (open.length) {
-      // reason: (claimed) only where `canon work start` would refuse; an expired or abandoned claim it takes over (BR-2149, BR-2100)
-      const held = new Set(liveClaims(ws.db).map((c) => c.subject));
-      const backlog = mainBacklog(ws);
-      if (!backlog.ok) return backlog;
-      const order = inBacklogOrder(open, backlog.value).map((c) => (held.has(c.id) ? `${c.id} (claimed)` : c.id));
+    const backlog = mainBacklog(ws);
+    if (!backlog.ok) return backlog;
+    // reason: (claimed) only where `canon work start` would refuse; an expired or abandoned claim it takes over (BR-2149, BR-2100)
+    const open = listedChanges(ws, onMain.value, backlog.value, (c) => c.status === "open");
+    if (!open.ok) return open;
+    if (open.value.length) {
+      const order = open.value.map((l) => {
+        const marks = marksOf(l, false);
+        return marks.length ? `${l.change.id} (${marks.join(", ")})` : l.change.id;
+      });
       say(`Open changes in the owner's order (canon change list); with no task, take the first unclaimed one: ${order.join(", ")}`);
     }
   }
