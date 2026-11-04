@@ -62,7 +62,7 @@ const status = defineCommand({
   run({ args }) {
     const ws = workspace();
     const gone = goneLanders(ws.db);
-    const data = { claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending") };
+    const data = { claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending") };
     if (args.json) return json(data);
     say("Claims:");
     // Every row is listed; one that no longer binds is marked, judged as `canon work start` judges it (BR-2192, BR-2100).
@@ -133,7 +133,7 @@ function briefState(ws: Workspace): Result<void> {
     const h = hs.find((x) => x.subject === mine.subject);
     if (h) say(`Handoff from ${h.actor} at ${h.updated_at}: next — ${h.next}${h.note ? `\n${h.note}` : ""}`);
     // The last landing from this worktree, when it was killed before it recorded a result (BR-2310).
-    const landing = attemptIn(ws.db, ws.root);
+    const landing = attemptIn(ws.db, ws.config.main, ws.root);
     if (landing?.state === "interrupted") for (const line of describeAttempt(landing)) say(line);
     const overlaps = overlapsOf(ws, ws.root);
     for (const u of overlaps.unreadable) say(`Overlap check failed: ${u}`);

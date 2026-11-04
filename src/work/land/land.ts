@@ -41,7 +41,9 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   const claim = renewed.value;
   const subject = claim?.subject ?? null;
   // A previous landing from this worktree that was killed leaves no event; it is said and cleaned up first (BR-2309, D-58).
-  settleInterrupted(ws, say);
+  const recovered = settleInterrupted(ws, say);
+  // The previous landing reached main and was killed before it recorded that: it is recorded now, and nothing lands again (BR-2309).
+  if (recovered) return finishLanding(ws, opts, say, { entry: 0, subject, sha: recovered.sha });
   // Before anything slow, so a landing killed from here on is found by its process (BR-2307, D-58).
   const lander = selfProcess();
   ws.db.event(ws.actor, "land.start", subject, { pid: lander?.pid ?? null, pid_start: lander?.start ?? null });
@@ -75,6 +77,8 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     // reason: an interruption, not a check's verdict, so it is its own event kind and no check in `canon stats` (BR-2067).
     // reason: only while this lander still owns the entry; a later landing may have taken it back as its kept place (BR-2177, issue #45).
     if (entry === undefined) {
+      // reason: BR-2307 ends a landing with land.killed; the lander never reaches this before queueing today, but an await added before enqueue would (D-58).
+      ws.db.event(ws.actor, "land.killed", subject, { signal, rebaseAborted: aborted });
       if (close) reopen(wt, close, say);
     } else if (waitWhileLocked(ws, entry, say) && failIfActive(ws.db, entry, "killed", lander ?? null)) {
       ws.db.event(ws.actor, "land.killed", subject, { signal, rebaseAborted: aborted });

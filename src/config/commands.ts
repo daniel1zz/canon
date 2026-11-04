@@ -24,7 +24,7 @@ const afterLand = defineCommand({
     if (!b) {
       const base = change ? `no landing of ${change} ran background after_land commands` : "no landing has run background after_land commands";
       // A landing killed or still running is why there is none yet (BR-2310, D-58).
-      const unfinished = change ? openAttempts(ws.db).filter((a) => a.subject === change && a.state !== "unknown") : [];
+      const unfinished = change ? openAttempts(ws.db, ws.config.main).filter((a) => a.subject === change && a.state !== "unknown") : [];
       fail({ code: "not_found", message: [base, ...unfinished.flatMap(describeAttempt)].join("\n") });
     }
     const st = batchState(b);

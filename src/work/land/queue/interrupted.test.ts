@@ -55,6 +55,23 @@ async function kill9(p: ReturnType<typeof slowProject>, lander: Proc) {
   } catch {}
 }
 
+
+/** A project whose update of main pauses once it is committed, so a landing can be killed right after main moved and before `land.ok`. */
+async function killedAfterMainMoved(finish = true) {
+  const root = project();
+  const s = startNew(root, "Killed after main moved");
+  const marker = `${root}.main.marker`;
+  mkdirSync(join(root, ".git/hooks"), { recursive: true });
+  writeFileSync(join(root, ".git/hooks/reference-transaction"), `#!/bin/sh\n[ "$1" = committed ] && grep -q ' refs/heads/main$' && { touch ${marker}; sleep 4; }\nexit 0\n`, { mode: 0o755 });
+  const lander = spawnCanon(s.worktree, ["work", "land", ...(finish ? ["--finish"] : [])]);
+  await waitFor("main to move", () => existsSync(marker));
+  lander.kill("SIGKILL");
+  await lander.exited;
+  await Bun.sleep(4500); // the git process that moved main outlives its parent
+  rmSync(join(root, ".git/hooks/reference-transaction"));
+  return { root, s, pid: lander.pid };
+}
+
 describe("land.start", () => {
   test("BR-2307: a landing records land.start with its own process before anything slow, and ends with a result event", async () => {
     const root = project();
@@ -151,6 +168,27 @@ describe("canon work status lists landings without a result", () => {
     expect(r.out).toContain("the close commit is the branch's top commit");
   }, TIMED);
 
+  test("BR-2308: a landing whose process is still alive shows as running, and status says nothing about a kill", async () => {
+    const p = slowProject();
+    const lander = await landingInFloor(p);
+    const r = await run(p.root, ["work", "status"]);
+    expect(r.out).toContain(`landing running, process ${lander.pid}`);
+    expect(r.out).not.toContain("INTERRUPTED");
+    expect(r.out).not.toContain("no landing result was recorded");
+    await kill9(p, lander);
+  }, TIMED);
+
+  test("BR-2308: a landing killed after main moved and before land.ok shows as landed, with nothing left to take back", async () => {
+    const { root, pid } = await killedAfterMainMoved();
+    const r = await run(root, ["work", "status"]);
+    expect(r.out).toContain("the landing reached main");
+    expect(r.out).toContain(`process ${pid}`);
+    expect(r.out).not.toContain("INTERRUPTED");
+    expect(r.out).not.toContain("left behind");
+    const json = JSON.parse((await run(root, ["work", "status", "--json"])).out) as { landings: { state: string }[] };
+    expect(json.landings.map((a) => a.state)).toEqual(["landed"]);
+  }, TIMED);
+
   test("BR-2308: landings that ended with any result event, or whose worktree is gone, are not listed", async () => {
     const root = project();
     const done = startNew(root, "Lands");
@@ -205,6 +243,51 @@ describe("the next landing and the other commands report a killed landing", () =
     expect(d["pid"]).toBe(killedPid);
     expect(d["close_commit_reopened"]).toBe(true);
     expect(d["queue"]).toEqual([1]);
+  }, TIMED);
+
+  test("BR-2309: a landing killed after the close commit and before it queued is reported by the next landing, which takes the close commit back", async () => {
+    const root = project();
+    const s = startNew(root, "Killed before queueing");
+    const marker = `${root}.hook.marker`;
+    mkdirSync(join(root, ".git/hooks"), { recursive: true });
+    writeFileSync(join(root, ".git/hooks/pre-commit"), `#!/bin/sh\ntouch ${marker}\nsleep 3\n`, { mode: 0o755 });
+    const lander = spawnCanon(s.worktree, ["work", "land", "--finish"]);
+    await waitFor("the close commit's hook", () => existsSync(marker));
+    lander.kill("SIGKILL");
+    await lander.exited;
+    rmSync(join(root, ".git/hooks/pre-commit"));
+    await Bun.sleep(3500); // git commit outlives its parent and finishes the close commit
+    expect(sh(s.worktree, "log", "-1", "--format=%s")).toContain(s.change);
+    const r = await run(s.worktree, ["work", "land", "--finish"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("landing INTERRUPTED");
+    expect(r.out).toContain(`process ${lander.pid}`);
+    expect(r.out).toContain("reopened");
+    expect(kinds(root, s.change)).toEqual(["land.start", "land.interrupt", "land.start", "land.turn", "land.ok"]);
+    expect(detail(root, "land.interrupt")["close_commit_reopened"]).toBe(true);
+    expect(detail(root, "land.interrupt")["queue"]).toEqual([]);
+  }, TIMED);
+
+  test("BR-2309: a landing killed after main moved and before land.ok is recorded as landed: no close commit taken back, no entry abandoned", async () => {
+    const { root, s, pid } = await killedAfterMainMoved();
+    const mainBefore = sh(root, "rev-parse", "main");
+    expect(sh(root, "log", "-1", "--format=%s", "main")).toContain(s.change); // main holds the close commit
+    expect(kinds(root, s.change)).toEqual(["land.start", "land.turn"]);
+    const r = await run(s.worktree, ["work", "land", "--finish"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("the landing reached main");
+    expect(r.out).toContain(`process ${pid}`);
+    expect(r.out).not.toContain("INTERRUPTED");
+    expect(r.out).not.toContain("reopened");
+    expect(sh(root, "rev-parse", "main")).toBe(mainBefore); // nothing landed a second time
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(mainBefore); // the branch still has the close commit
+    expect(queueRows(root).map((q) => q.state)).toEqual(["landed"]);
+    expect(kinds(root, s.change)).toEqual(["land.start", "land.turn", "land.ok"]);
+    const ok = detail(root, "land.ok");
+    expect(ok["recovered"]).toBe(true);
+    expect(ok["sha"]).toBe(mainBefore);
+    expect(await run(root, ["work", "status"])).toMatchObject({ out: expect.not.stringContaining("reached main") });
+    expect(ws(root).db.db.query("SELECT 1 FROM claims WHERE subject = ?").all(s.change)).toEqual([]); // --finish released the claim
   }, TIMED);
 
   test("BR-2309: a refusal right after the report still gave up the dead queue entry and reported once", async () => {
