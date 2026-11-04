@@ -56,7 +56,37 @@ export interface CheckInput {
   readonly floorSkipPaths?: readonly string[];
   /** Ids whose change file is on their own change branch, not yet on main: the backlog may list them (BR-2150, D-50). */
   readonly branchChanges?: ReadonlySet<string>;
+  /**
+   * Ids main's committed backlog already lists. A dangling id among them is a note (`backlogNotes`), not a finding:
+   * its branch went after it was listed, and that must not block main or landings that did not list it (BR-2150, #112).
+   */
+  readonly backlogBase?: ReadonlySet<string>;
 }
+
+/** Backlog ids that name no change in the tree and no change only on its own branch, each marked when main already lists it. */
+function backlogDangling(input: CheckInput): { finding: Finding; known: boolean }[] {
+  const out: { finding: Finding; known: boolean }[] = [];
+  for (const e of readBacklog(input.root, input.corpus.types)) {
+    const target = input.corpus.docs.find((x) => x.id === e.id);
+    // reason: the owner orders work still only on its branch too; it lands later with its file (BR-2150, D-50)
+    if (!target && input.branchChanges?.has(e.id)) continue;
+    if (target?.kind === "change") continue;
+    const known = input.backlogBase?.has(e.id) ?? false;
+    const message = known
+      ? `lists ${e.id}, which is not a change on main or on a local change branch; remove the line, or restore its branch`
+      : `lists ${e.id}, which is not a change`;
+    out.push({ finding: { path: `${BACKLOG_FILE}:${e.line}`, rule: "ref-dangling", message }, known });
+  }
+  return out;
+}
+
+/** The dangling backlog ids main already lists: said, never blocking (BR-2150, D-50). */
+export function backlogNotes(input: CheckInput): Finding[] {
+  return backlogDangling(input).filter((d) => d.known).map((d) => d.finding);
+}
+
+/** How a backlog note is printed: one line naming the place and the fix (BR-2150). */
+export const noteLine = (f: Finding): string => `note: ${f.path}: ${f.message}`;
 
 export function check(input: CheckInput): Finding[] {
   const idsIn = (text: string) => idsOf(input.corpus.types, text);
@@ -87,12 +117,7 @@ export function check(input: CheckInput): Finding[] {
     }
   }
   // The owner's order names changes only; a typo would silently drop a change from where the owner put it (BR-2150).
-  for (const e of readBacklog(input.root, input.corpus.types)) {
-    const target = input.corpus.docs.find((x) => x.id === e.id);
-    // reason: the owner orders work still only on its branch too; it lands later with its file (BR-2150, D-50)
-    if (!target && input.branchChanges?.has(e.id)) continue;
-    if (!target || target.kind !== "change") findings.push({ path: `${BACKLOG_FILE}:${e.line}`, rule: "ref-dangling", message: `lists ${e.id}, which is not a change` });
-  }
+  for (const d of backlogDangling(input)) if (!d.known) findings.push(d.finding);
   const { codeRoot } = input.corpus.layout;
   for (const dom of input.corpus.domains) {
     if (dom.declared.length > 0 && (codeRoot !== undefined || dom.parent)) {

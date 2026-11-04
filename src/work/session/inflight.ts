@@ -1,6 +1,6 @@
 import { git } from "../../kernel/git.ts";
 import { ok, type Result } from "../../kernel/result.ts";
-import { inBacklogOrder, type BacklogEntry } from "../../knowledge/documents/backlog.ts";
+import { backlogAt, inBacklogOrder, type BacklogEntry } from "../../knowledge/documents/backlog.ts";
 import { parseDocFile } from "../../knowledge/documents/docfile.ts";
 import type { Change, ChangeStatus, Corpus } from "../../knowledge/documents/model.ts";
 import { CANON_DIR } from "../../knowledge/documents/read.ts";
@@ -69,6 +69,12 @@ export function listedChanges(ws: Workspace, corpus: Corpus, backlog: readonly B
     })),
     unreadable,
   });
+}
+
+/** The ids main's committed backlog lists, for `canon check`: a dangling one among them is a note, not a finding (BR-2150, #112). */
+export function listedOnMain(ws: Workspace): Result<Set<string>> {
+  const listed = backlogAt(ws.primary, ws.config.main, ws.config.types);
+  return listed.ok ? ok(new Set(listed.value.map((e) => e.id))) : listed;
 }
 
 /** The ids whose change file is on their own change branch, for `canon check`: the owner may order them in the backlog (BR-2150). */

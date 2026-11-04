@@ -1,10 +1,10 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
-import { changeIdsOnBranches } from "../session/inflight.ts";
+import { changeIdsOnBranches, listedOnMain } from "../session/inflight.ts";
 import { basename, join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
 import { FILE_PLACEHOLDER } from "./config-keys.ts";
-import { check } from "../../knowledge/check/check.ts";
+import { backlogNotes, check, noteLine } from "../../knowledge/check/check.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { testTitles } from "../../knowledge/check/test-titles.ts";
 import { budgetHint, sessionText } from "../../knowledge/check/session-text.ts";
@@ -242,8 +242,12 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   const read = readCorpus(ws.root, ws.config.types, ws.config);
   const onBranches = changeIdsOnBranches(ws);
   if (!onBranches.ok) return onBranches;
-  const findings = check({ root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config), floorSkipPaths: ws.config.floorSkipPaths, branchChanges: onBranches.value });
+  const onMain = listedOnMain(ws);
+  if (!onMain.ok) return onMain;
+  const input = { root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config), floorSkipPaths: ws.config.floorSkipPaths, branchChanges: onBranches.value, backlogBase: onMain.value };
+  const findings = check(input);
   for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
+  for (const n of backlogNotes(input)) say(noteLine(n)); // never a failure (BR-2150, #112)
   say(findings.length === 0 ? "canon check: ok" : `canon check: ${findings.length} finding(s)`);
   // A hint on standard error, never a failure (BR-2257, D-37).
   const hint = budgetHint(sessionText(ws.root, WORKFLOW_GUIDE), ws.config.sessionTextBudget);

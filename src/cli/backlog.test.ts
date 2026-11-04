@@ -52,14 +52,20 @@ describe("backlog order", () => {
     expect((JSON.parse(canon(root, "change", "list", "--json").out) as { id: string }[]).map((c) => c.id)).toEqual([id("C", 3), id("C", 1), id("C", 2), id("C", 4)]);
   });
 
-  test("BR-2150: canon check reports a backlog id that is no change, by line; a done change and no backlog are fine", () => {
+  test("BR-2150: canon check reports a backlog id main does not list yet that is no change, by line; once main lists it, a note on stderr and exit 0", () => {
     const root = fixture();
     expect(canon(root, "check").code).toBe(0);
-    backlog(root, `- ${id("C", 5)}\n- ${id("C", 99)}\n`);
+    writeFileSync(join(root, "canon/backlog.md"), `---\ntitle: 待办顺序\n---\n# 待办顺序\n\n- ${id("C", 5)}\n- ${id("C", 99)}\n`);
     const r = canon(root, "check");
     expect(r.code).toBe(1);
     expect(r.out).toContain(`ref-dangling       canon/backlog.md:7: lists ${id("C", 99)}, which is not a change`);
     expect(r.out).not.toContain(id("C", 5));
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "backlog");
+    const listed = canon(root, "check");
+    expect(listed.code).toBe(0);
+    expect(listed.out).not.toContain("ref-dangling");
+    expect(listed.err).toContain(`note: canon/backlog.md:7: lists ${id("C", 99)}, which is not a change on main or on a local change branch; remove the line, or restore its branch`);
   });
 
   test("BR-2149: brief on the main checkout lists open changes in the owner's order and marks claimed ones; nothing when none are open", () => {

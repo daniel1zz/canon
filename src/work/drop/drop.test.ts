@@ -48,6 +48,22 @@ function ignoring(root: string) {
 }
 
 describe("dropping a change", () => {
+  test("BR-2064: dropping a change main's backlog still lists drops it and says which line to remove; one not listed says nothing of it", () => {
+    const root = project();
+    const listed = released(startNew(root, "Listed"));
+    const other = released(startNew(root, "Other"));
+    writeFileSync(join(root, "canon/backlog.md"), `---\ntitle: 待办顺序\n---\n# 待办顺序\n\n- ${listed.change}\n`);
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "backlog");
+    const r = canon(root, "agent:x", "work", "drop", listed.change);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`dropped ${listed.change}`);
+    expect(r.out).toContain(`${listed.change} is still listed in canon/backlog.md:6 on main; the owner removes that line if the work will not happen`);
+    const o = canon(root, "agent:x", "work", "drop", other.change);
+    expect(o.code).toBe(0);
+    expect(o.out).not.toContain("still listed");
+  });
+
   test("BR-2064: a fully landed change is dropped at once without an archive: worktree, branch, claim and handoff go", async () => {
     const root = project();
     const s = released(startNew(root, "Landed"));

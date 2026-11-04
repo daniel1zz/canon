@@ -1,4 +1,6 @@
 import { existsSync, readFileSync } from "node:fs";
+import { git } from "../../kernel/git.ts";
+import { err, ok, type Result } from "../../kernel/result.ts";
 import { join } from "node:path";
 import { CANON_DIR } from "./read.ts";
 import type { Change } from "./model.ts";
@@ -21,6 +23,15 @@ export interface BacklogEntry {
 export function readBacklog(root: string, types: readonly DocType[] = BUILTIN_TYPES): BacklogEntry[] {
   const full = join(root, BACKLOG_FILE);
   return existsSync(full) ? parseBacklog(readFileSync(full, "utf8"), types) : [];
+}
+
+/** The backlog as committed at `ref` (main: where the owner's order lives, D-20); empty when that commit has none. */
+export function backlogAt(cwd: string, ref: string, types: readonly DocType[] = BUILTIN_TYPES): Result<BacklogEntry[]> {
+  const at = `${ref}:${BACKLOG_FILE}`;
+  if (!git(cwd, "cat-file", "-e", at).ok) return ok([]);
+  const text = git(cwd, "show", at);
+  if (!text.ok) return err("io", `cannot read ${at}: ${text.error.message}`);
+  return ok(parseBacklog(text.value, types));
 }
 
 /** The change ids a backlog text lists, one per list item (a leading checkbox or backticks allowed), first mention only. */

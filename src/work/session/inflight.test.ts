@@ -147,7 +147,7 @@ describe("unusual change branches", () => {
     expect(canon(root, "brief").out).toContain(`${PICK}${id(9)} (on branch change/${id(9)}-x), ${id(1)}\n`);
 
     onBranch(root, `change/${id(8)}-x`, () => {});
-    backlog(root, `- ${id(8)}\n`);
+    writeFileSync(join(root, "canon/backlog.md"), `---\ntitle: 待办顺序\n---\n# 待办顺序\n\n- ${id(8)}\n`); // not on main yet: the owner's edit
     const r = canon(root, "check");
     expect(r.code).toBe(1);
     expect(r.out).toContain(`lists ${id(8)}, which is not a change`);

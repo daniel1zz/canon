@@ -7,7 +7,7 @@ import { noticeUpdates } from "../../cli/install/commands.ts";
 import { backgroundNotice, settleBackgroundHooks } from "../../config/hooks.ts";
 import { git } from "../../kernel/git.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { BACKLOG_FILE, parseBacklog } from "../../knowledge/documents/backlog.ts";
+import { backlogAt } from "../../knowledge/documents/backlog.ts";
 import { findDoc, referencedIds } from "../../knowledge/query/query.ts";
 import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
 import { claimOfWorktree, claimsWithState, type ClaimState } from "../claims/claims.ts";
@@ -116,15 +116,6 @@ const brief = defineCommand({
   },
 });
 
-/** The backlog as committed on main, which is where the owner's order lives (D-20). */
-function mainBacklog(ws: Workspace): Result<ReturnType<typeof parseBacklog>> {
-  const at = `${ws.config.main}:${BACKLOG_FILE}`;
-  if (!git(ws.primary, "cat-file", "-e", at).ok) return ok([]);
-  const text = git(ws.primary, "show", at);
-  if (!text.ok) return err("io", `cannot read ${at}: ${text.error.message}`);
-  return ok(parseBacklog(text.value, ws.config.types));
-}
-
 /** What `canon brief` says after the guide: in a claimed worktree only its own change; elsewhere the handoffs and questions; then the update notice. */
 function briefState(ws: Workspace): Result<void> {
   const mine = claimOfWorktree(ws.db, ws.root);
@@ -154,7 +145,7 @@ function briefState(ws: Workspace): Result<void> {
     // canon change list, so an agent without a task takes the first unclaimed one (BR-2149, BR-2291, D-20, D-50).
     const onMain = mainCorpus(ws);
     if (!onMain.ok) return onMain;
-    const backlog = mainBacklog(ws);
+    const backlog = backlogAt(ws.primary, ws.config.main, ws.config.types);
     if (!backlog.ok) return backlog;
     // reason: (claimed) only where `canon work start` would refuse; an expired or abandoned claim it takes over (BR-2149, BR-2100)
     const open = listedChanges(ws, onMain.value, backlog.value, (c) => c.status === "open");
