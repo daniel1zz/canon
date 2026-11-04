@@ -1,4 +1,4 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { noPort } from "./ports.ts";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -6,9 +6,6 @@ import { start } from "../work/session/session.ts";
 import { readConfig } from "./config.ts";
 import { logFile, runHooks, runHooksInBackground, runHooksSync, waitBackgroundHooks, type HookContext } from "./hooks.ts";
 import { project, quiet, sh, startNew, ws } from "../work/testkit.ts";
-
-// reason: these tests run hook commands as real shells, which is what they test (C-111).
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "..", "cli", "main.ts");
 

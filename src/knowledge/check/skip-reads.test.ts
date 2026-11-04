@@ -1,12 +1,9 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readCorpus } from "../documents/read.ts";
 import { check } from "./check.ts";
-
-// reason: the last test spawns the canon CLI, a bun start plus git calls (C-111)
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
 // reason: fixture sources are assembled from pieces, so this file does not itself read like a test that reads the

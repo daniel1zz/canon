@@ -1,4 +1,4 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -12,10 +12,6 @@ const SNAPSHOT_ENTRY = { matcher: "Bash", hooks: [{ type: "command", command: SN
 const RECORD_ENTRY = { matcher: "AskUserQuestion", hooks: [{ type: "command", command: RECORD_COMMAND }] };
 /** The worktree setting canon installs (BR-2264); a project with canon's current settings has it. */
 const WORKTREE = { baseRef: "head" };
-
-// reason: every test here drives the canon CLI through spawned processes, which is what it tests; each spawn is a bun start
-// plus the command's own git calls, and at load 20 one test took 4.2 s of the 5 s default (C-111).
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "..", "main.ts");
 

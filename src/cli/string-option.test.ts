@@ -1,12 +1,9 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { defineCommand } from "citty";
 import { argumentProblem, bindValues } from "./strict.ts";
-
-// reason: the end-to-end cases drive the real CLI through spawned processes, which is what they test.
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "main.ts");
 

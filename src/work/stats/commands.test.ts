@@ -1,11 +1,8 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
 import { project, sh } from "../testkit.ts";
-
-// reason: each case spawns canon, which spawns git; under load a spawn can take seconds (C-111)
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
 

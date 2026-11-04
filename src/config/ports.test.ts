@@ -1,4 +1,4 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claims } from "../work/claims/claims.ts";
@@ -8,9 +8,6 @@ import { readConfig } from "./config.ts";
 import { logFile, runHooksInBackground, waitBackgroundHooks } from "./hooks.ts";
 import { err } from "../kernel/result.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../work/testkit.ts";
-
-// reason: these tests start real worktrees and run setup and hooks as shells (C-111).
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "..", "cli", "main.ts");
 

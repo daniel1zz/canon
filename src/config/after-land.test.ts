@@ -1,12 +1,9 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { noPort } from "./ports.ts";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logFile, runHooksInBackground, waitBackgroundHooks } from "./hooks.ts";
 import { project, ws } from "../work/testkit.ts";
-
-// reason: these tests spawn the canon CLI and real background shells, which is what they test (C-111).
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "../cli/main.ts");
 

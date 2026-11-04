@@ -1,11 +1,8 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { project, sh } from "../../work/testkit.ts";
 import { SCHEMA_FILE } from "./reference.ts";
-
-// reason: these tests spawn the canon CLI, which is what they test.
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "../../cli/main.ts");
 

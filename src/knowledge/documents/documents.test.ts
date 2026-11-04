@@ -1,4 +1,4 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,9 +8,6 @@ import { slugify } from "./model.ts";
 import { readCorpus } from "./read.ts";
 import { createDoc, setMeta } from "./write.ts";
 import { ws } from "../../work/testkit.ts";
-
-// reason: the CLI tests spawn canon processes, each a bun start plus git calls; under load one took 4.2 s of the 5 s default (C-111).
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
 // Ids are assembled at runtime so this file does not itself name documents when canon check scans the repo.

@@ -1,13 +1,9 @@
-import { describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
 import { existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { ensureGuard, GUARD_HEADER, guardScript } from "./githook.ts";
-
-// reason: every test here drives the canon CLI through spawned processes, which is what it tests; each spawn is a bun start
-// plus the command's own git calls, and at load 20 one test took 4.2 s of the 5 s default (C-111).
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "..", "main.ts");
 

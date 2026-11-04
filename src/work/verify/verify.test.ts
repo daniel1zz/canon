@@ -1,11 +1,8 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { project, sh, startNew, ws } from "../testkit.ts";
 import { commandFor, selectTests } from "./verify.ts";
-
-// reason: the CLI cases spawn canon and then one shell per selected file; under load each spawn can take seconds (C-111)
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
 const rule = ["BR", 7].join("-");

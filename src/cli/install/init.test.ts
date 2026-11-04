@@ -1,10 +1,7 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-
-// reason: these tests drive `canon init` through the real CLI in fresh git repositories, which is what they test.
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "..", "main.ts");
 

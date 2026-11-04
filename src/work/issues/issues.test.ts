@@ -1,12 +1,9 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { project, sh } from "../testkit.ts";
 import { fixedIn } from "./issues.ts";
-
-// reason: each case spawns canon, which spawns git and the fake gh; under load a spawn can take seconds (C-111)
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
 const GIT = Bun.which("git")!;

@@ -1,7 +1,8 @@
 # yaml-language-server: $schema=../.canon/config.schema.json
 main: main
 # 必须在 main 的代码树上执行成功；floor_timing: after 下合入不跑它，main 前移后在后台跑（canon floor watch）
-floor: "bun install --frozen-lockfile && bunx tsc --noEmit -p tsconfig.json && bun test"
+# 测试经过 scripts/test.sh：统一的测试超时，git 只读脚本写的固定配置，本机 git 设置改变不了结果（C-247）
+floor: "bun install --frozen-lockfile && bunx tsc --noEmit -p tsconfig.json && sh scripts/test.sh"
 # 先合后测（D-31、BR-2218）：开发阶段合入不等 floor，main 没通过时由 canon work start --fix-main 开的变更向前修
 floor_timing: after
 # 代码目录和规则领域一一对应（D-15）：canon/rules/work/land ↔ src/work/land；src/kernel 是不属于任何业务领域的共享内核
@@ -11,8 +12,8 @@ shared:
 # 扫描规则编号的测试文件
 tests:
   - "src/**/*.test.ts"
-# canon work test 运行一个测试文件的命令，{file} 换成它的路径（D-23）
-test_command: "bun test {file}"
+# canon work test 运行一个测试文件的命令，{file} 换成它的路径（D-23）；和 floor 一样经过 scripts/test.sh（C-247）
+test_command: "sh scripts/test.sh {file}"
 # canon work test 在测试之前跑一次（BR-2226）：和 floor 的类型检查那一步相同，类型错误不用等 floor 才发现（C-163 曾因此被拒）
 typecheck_command: "bunx tsc --noEmit -p tsconfig.json"
 # 每个会话开始时都会读到的文件：改了它们，合入时评审同一条要求是否写在多处（BR-2143）；工作说明的源码也算：

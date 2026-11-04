@@ -1,4 +1,4 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { noPort } from "./ports.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -9,10 +9,6 @@ import { start, stop } from "../work/session/session.ts";
 import { land } from "../work/land/land.ts";
 import { backgroundNotice, logFile, runHooksInBackground, settleBackgroundHooks } from "./hooks.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../work/testkit.ts";
-
-// reason: these tests run hook commands as real shells and wait for background ones to finish, which is what they test;
-// under load that took up to 2.8 s of the 5 s default (C-111).
-setDefaultTimeout(30_000);
 
 function configured(hooks: string) {
   const root = project();

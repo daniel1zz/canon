@@ -1,4 +1,4 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync, readFileSync, unlinkSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { tmpdir } from "node:os";
@@ -6,9 +6,6 @@ import { join } from "node:path";
 import { git } from "../../kernel/git.ts";
 import { project, sh } from "../testkit.ts";
 import { MAX_FILE_BYTES, snapshotKey, snapshots, takeSnapshot } from "./snapshot.ts";
-
-// reason: these tests spawn the canon CLI and run real git commands, which is what they test.
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "../../cli/main.ts");
 

@@ -1,4 +1,4 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, test } from "bun:test";
 import { mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -6,9 +6,6 @@ import { Database } from "bun:sqlite";
 import { addColumns, CoordDb } from "./db.ts";
 import { questions } from "./humans/questions.ts";
 import { project, startNew, ws } from "./testkit.ts";
-
-// reason: the CLI cases spawn canon, which spawns git; under load a spawn can take seconds (C-111)
-setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "..", "cli", "main.ts");
 
