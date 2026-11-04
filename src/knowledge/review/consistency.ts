@@ -27,9 +27,10 @@ export interface Limits {
   readonly maxBytes: number;
   readonly minClosed: number;
   readonly minPrecision: number;
+  readonly maxOpen: number;
 }
 
-export const DEFAULT_LIMITS: Limits = { maxDomains: 1, maxBytes: 150_000, minClosed: 10, minPrecision: 0.5 };
+export const DEFAULT_LIMITS: Limits = { maxDomains: 1, maxBytes: 150_000, minClosed: 10, minPrecision: 0.5, maxOpen: 10 };
 
 export interface Precision {
   readonly completed: number;
@@ -93,6 +94,7 @@ function material(tree: string, files: readonly string[], domain: Domain, rules:
     `You check one business domain of a project, \`${domain.name}\`, for consistency between its rules, its tests and its code. The rules say how the product must behave; each rule's "## 例子" lists examples on both sides of a boundary.`,
     "Answer only two questions. (1) untested-side: is there an example side (one input and its result) that no test below asserts? (2) code-mismatch: does the code do something other than what a rule says (another exit code, message, condition or order)? Ignore style, naming, performance and anything else.",
     "Report a problem only when you can name the rule id, the exact file and line (for untested-side: the test file and line where the missing case belongs, or the rule file), and the concrete input and the wrong or missing result. Before reporting, try once to disprove it by reading the code and the tests again. Report only what survives.",
+    "You see only this domain's own code and the tests whose titles name these rules; the shared kernel and the scripts are not shown. Report a code-mismatch only when the code shown positively does something other than the rule says, never because behaviour the rule needs is not in the files shown.",
     "Several symptoms of one root cause are ONE finding. If an open issue below already describes the same root cause, set `existing` to its number.",
     'Answer with JSON only: {"findings":[{"kind":"untested-side"|"code-mismatch","title":"<short>","root_cause":"<one sentence>","rule":"<rule id>","file":"<path>","line":<n>,"scenario":"<input → result the rule requires, and what the code or tests do>","existing":<issue number or null>}]}',
     "",
@@ -129,6 +131,11 @@ function namingRule(text: string, ids: ReadonlySet<string>, say: (line: string) 
 export function consistencyReview(e: Env, limits: Limits): Result<void> {
   const p = precision(e);
   if (!p.ok) return p;
+  // reason: nobody is closing the findings, so the closed-issue precision would never reach its line; the open ones are the stop (BR-2273, D-43)
+  if (p.value.open >= limits.maxOpen) {
+    e.say(`off: ${p.value.open} findings are still open (--max-open ${limits.maxOpen}); triage them, then it runs again`);
+    return ok(undefined);
+  }
   // reason: the stop line of D-43: enough closed issues, and fewer than the minimum share of them were real (BR-2273)
   if (p.value.closed >= limits.minClosed && p.value.completed / p.value.closed < limits.minPrecision) {
     e.say(`off: precision ${p.value.completed}/${p.value.closed} is below ${limits.minPrecision}; remove it from hooks.after_land`);
@@ -146,16 +153,19 @@ export function consistencyReview(e: Env, limits: Limits): Result<void> {
     const config = readConfig(tree);
     if (!config.ok) return config;
     const { corpus } = readCorpus(tree, config.value.types, config.value);
-    const counts = new Map<string, number>();
+    const counts = new Map<string, { rules: number; files: number }>();
     for (const path of changed.value.split("\n").filter(Boolean)) {
       const d = domainOf(corpus.domains, path);
-      if (d) counts.set(d.name, (counts.get(d.name) ?? 0) + 1);
+      if (!d) continue;
+      const c = counts.get(d.name) ?? { rules: 0, files: 0 };
+      counts.set(d.name, { rules: c.rules + (path.startsWith("canon/rules/") ? 1 : 0), files: c.files + 1 });
     }
     if (counts.size === 0) {
       e.say("no domain's rules or code changed; nothing to check");
       return ok(undefined);
     }
-    const order = [...counts].sort((a, b) => b[1] - a[1] || (a[0] < b[0] ? -1 : 1)).map(([name]) => name);
+    // reason: a rule edit is the likeliest source of an inconsistency, so domains with edited rules go first (BR-2271)
+    const order = [...counts].sort((a, b) => b[1].rules - a[1].rules || b[1].files - a[1].files || (a[0] < b[0] ? -1 : 1)).map(([name]) => name);
     const chosen = order.slice(0, limits.maxDomains);
     if (order.length > chosen.length) e.say(`not checked (--max-domains ${limits.maxDomains}): ${order.slice(chosen.length).join(", ")}`);
     const testFiles = testFilesFor(tree, config.value);
@@ -175,7 +185,8 @@ export function consistencyReview(e: Env, limits: Limits): Result<void> {
         continue;
       }
       e.say(`checking ${name}: ${rules.length} rules, ${m.tests} tests, ${m.code} code files, ${bytes} bytes`);
-      const answer = run(e.ai, [], e.cwd, m.prompt);
+      // reason: run in the exported tree of the landed commit, so what the reviewer can read is that commit, not the primary checkout main has moved on in (BR-2271)
+      const answer = run(e.ai, [], tree, m.prompt);
       if (!answer.ok) return answer;
       const findings = namingRule(answer.value, new Set(rules.map((r) => r.id)), e.say);
       if (!findings.ok) return findings;

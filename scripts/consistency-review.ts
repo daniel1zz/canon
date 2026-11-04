@@ -9,7 +9,7 @@
  *       - "bun scripts/consistency-review.ts --max-domains 1"
  *
  * Options: --max-domains <n> (default 1), --max-bytes <n> (default 150000), --min-closed <n> (default 10),
- * --min-precision <0..1> (default 0.5), --precision (print the precision and exit).
+ * --min-precision <0..1> (default 0.5), --max-open <n> (default 10), --precision (print the precision and exit).
  * Environment: CANON_BASE and CANON_HEAD (set by canon), CANON_CHANGE (optional),
  * CANON_CONSISTENCY_AI (default `claude -p --output-format text`), CANON_GH (default `gh`).
  */
@@ -41,12 +41,13 @@ for (let i = 0; i < args.length; i++) {
   if (a === "--max-domains") limits.maxDomains = whole(a);
   else if (a === "--max-bytes") limits.maxBytes = whole(a);
   else if (a === "--min-closed") limits.minClosed = whole(a);
+  else if (a === "--max-open") limits.maxOpen = whole(a);
   else if (a === "--min-precision") {
     const n = Number(value);
     if (value === undefined || value.trim() === "" || !Number.isFinite(n) || n < 0 || n > 1) usage("--min-precision must be a number from 0 to 1");
     limits.minPrecision = n;
     i++;
-  } else usage(`unknown argument ${a} (known: --max-domains, --max-bytes, --min-closed, --min-precision, --precision)`);
+  } else usage(`unknown argument ${a} (known: --max-domains, --max-bytes, --min-closed, --min-precision, --max-open, --precision)`);
 }
 
 const env = {

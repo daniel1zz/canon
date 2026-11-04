@@ -68,7 +68,7 @@ function setup(landing: Record<string, string>, opts: { answer?: unknown; closed
   writeFileSync(join(tools, "search.json"), "[]");
   writeFileSync(
     join(tools, "ai.sh"),
-    `n=$(ls ${tools} | grep -c '^prompt-')\ncat > ${tools}/prompt-$n.txt\nif [ -e ${tools}/ai-fails ]; then echo boom >&2; exit 1; fi\ncat ${tools}/answer.json\n`,
+    `n=$(ls ${tools} | grep -c '^prompt-')\npwd > ${tools}/cwd-$n.txt\nls -A > ${tools}/ls-$n.txt\ncat > ${tools}/prompt-$n.txt\nif [ -e ${tools}/ai-fails ]; then echo boom >&2; exit 1; fi\ncat ${tools}/answer.json\n`,
   );
   writeFileSync(
     join(tools, "gh.ts"),
@@ -172,6 +172,28 @@ describe("post-land consistency check: what it reads", () => {
     two.cleanup();
   });
 
+  test("BR-2271: a domain with an edited rule goes before one with more changed code files", () => {
+    const s = setup({ [`canon/rules/orders/${R2}.md`]: rule(R2, "订单规则改了。"), "src/billing/refund.ts": "export const refund = 2;\n", "src/billing/new.ts": "export const n = 1;\n" });
+    const r = s.run();
+    expect(r.code).toBe(0);
+    expect(lines(r.out)[0]).toBe("code-review: consistency: not checked (--max-domains 1): billing");
+    expect(s.prompts()[0]).toContain("`orders`");
+    s.cleanup();
+  });
+
+  test("BR-2271: the reviewer runs in the exported tree of the landed commit, and its prompt says what is not shown", () => {
+    const s = setup({ "src/orders/o.ts": "export const o = 2;\n" });
+    expect(s.run().code).toBe(0);
+    const cwd = readFileSync(join(s.tools, "cwd-0.txt"), "utf8").trim();
+    expect(cwd).not.toBe(s.root);
+    expect(cwd).toContain("canon-consistency-");
+    const entries = readFileSync(join(s.tools, "ls-0.txt"), "utf8").split("\n");
+    expect(entries).toContain("README.md");
+    expect(entries).not.toContain(".git");
+    expect(s.prompts()[0]).toContain("the shared kernel and the scripts are not shown");
+    s.cleanup();
+  });
+
   test("BR-2271: a prompt over --max-bytes is not sent and exits 0", () => {
     const s = setup({ "src/orders/o.ts": "export const o = 2;\n" });
     const r = s.run(["--max-bytes", "10"]);
@@ -267,6 +289,22 @@ describe("post-land consistency check: precision", () => {
     }
   });
 
+  test("BR-2273: 10 open findings stop the check whatever was closed; 9 open do not", () => {
+    const open = (n: number) => Array.from({ length: n }, (_, i) => ({ number: i + 1, title: "t", body: "b" }));
+    const off = setup({ "src/orders/o.ts": "export const o = 2;\n" }, { open: open(10) });
+    const r = off.run();
+    expect([r.code, lines(r.out), off.prompts().length]).toEqual([0, ["code-review: consistency: off: 10 findings are still open (--max-open 10); triage them, then it runs again"], 0]);
+    off.cleanup();
+    const on = setup({ "src/orders/o.ts": "export const o = 2;\n" }, { open: open(9) });
+    expect(on.run().code).toBe(0);
+    expect(on.prompts()).toHaveLength(1);
+    on.cleanup();
+    const raised = setup({ "src/orders/o.ts": "export const o = 2;\n" }, { open: open(10) });
+    expect(raised.run(["--max-open", "11"]).code).toBe(0);
+    expect(raised.prompts()).toHaveLength(1);
+    raised.cleanup();
+  });
+
   test("BR-2273: --precision prints completed/closed and the open count without CANON_BASE or a reviewer call", () => {
     const s = setup({ "src/orders/o.ts": "export const o = 2;\n" }, { closed: closed(2, 1), open: [1, 2, 3, 4].map((n) => ({ number: n, title: "t", body: "b" })) });
     const r = s.run(["--precision"], { CANON_BASE: "", CANON_HEAD: "" });
@@ -282,6 +320,7 @@ describe("post-land consistency check: precision", () => {
     expect(r.err).toContain("code-review: consistency: ");
     expect(s.run(["--min-precision", "2"]).code).toBe(2);
     expect(s.run(["--min-closed", "0"]).code).toBe(2);
+    expect(s.run(["--max-open", "0"]).code).toBe(2);
     s.cleanup();
   });
 });
