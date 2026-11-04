@@ -379,3 +379,88 @@ describe("what the guard refuses", () => {
     expect(sh(root, "log", "--format=%s", "main")).toBe("adopt canon\nfirst");
   });
 });
+
+describe("what a refusal leaves in the checkout", () => {
+  /**
+   * A clone of an adopted repository, with the guard, whose origin's main is one commit ahead (it adds new.txt), and
+   * an unstaged edit and a staged new file of its own.
+   */
+  function behind() {
+    const origin = adopted();
+    const clone = mkdtempSync(join(tmpdir(), "canon-guard-clone-"));
+    expect(git(tmpdir(), ["clone", "-q", origin, clone]).code).toBe(0);
+    for (const args of [["config", "user.email", "t@t"], ["config", "user.name", "t"]]) sh(clone, ...args);
+    expect(canon(clone, "install").code).toBe(0);
+    sh(origin, "checkout", "-qb", "side");
+    writeFileSync(join(origin, "new.txt"), "remote\n");
+    sh(origin, "add", "new.txt");
+    sh(origin, "commit", "-qm", "remote work");
+    sh(origin, "checkout", "-q", "main");
+    expect(git(origin, ["merge", "-q", "--ff-only", "side"], { CANON_LAND_MAIN: sh(origin, "rev-parse", "side") }).code).toBe(0);
+    expect(git(clone, ["fetch", "-q", "origin"]).code).toBe(0);
+    writeFileSync(join(clone, "app.txt"), "local edit\n");
+    writeFileSync(join(clone, "mine.txt"), "mine\n");
+    sh(clone, "add", "mine.txt");
+    return { clone, main: sh(clone, "rev-parse", "main"), status: sh(clone, "status", "--porcelain") };
+  }
+
+  test("BR-2284 BR-2126: a refused git pull leaves main, the index and the working tree as they were, own changes kept, and names canon sync", () => {
+    const { clone, main, status } = behind();
+    const pull = git(clone, ["pull", "-q", "origin", "main"]);
+    expect(pull.code).not.toBe(0);
+    expect(pull.err).toContain("canon: refusing to move main");
+    expect(pull.err).toContain("the index and working tree are back at main");
+    expect(pull.err).toContain("to take in the remote's main, run canon sync");
+    expect(sh(clone, "rev-parse", "main")).toBe(main);
+    expect(sh(clone, "status", "--porcelain")).toBe(status);
+    expect(existsSync(join(clone, "new.txt"))).toBe(false);
+    expect(readFileSync(join(clone, "app.txt"), "utf8")).toBe("local edit\n");
+  });
+
+  test("BR-2284: a refused merge --ff-only or reset --hard onto origin/main is put back too; main stays", () => {
+    const { clone, main, status } = behind();
+    expect(git(clone, ["merge", "-q", "--ff-only", "origin/main"]).code).not.toBe(0);
+    expect(sh(clone, "status", "--porcelain")).toBe(status);
+    sh(clone, "reset", "-q", "--hard");
+    const reset = git(clone, ["reset", "-q", "--hard", "origin/main"]);
+    expect(reset.code).not.toBe(0);
+    expect(reset.err).toContain("back at main");
+    expect(sh(clone, "status", "--porcelain")).toBe("");
+    expect(existsSync(join(clone, "new.txt"))).toBe(false);
+    expect(sh(clone, "rev-parse", "main")).toBe(main);
+  });
+
+  test("BR-2284: a refused git commit keeps its changes staged and says nothing about putting them back", () => {
+    const root = adopted();
+    writeFileSync(join(root, "app.txt"), "two\n");
+    sh(root, "add", "app.txt");
+    const commit = git(root, ["commit", "-qm", "direct"]);
+    expect(commit.code).not.toBe(0);
+    expect(commit.err).not.toContain("back at main");
+    expect(commit.err).not.toContain("canon sync");
+    expect(sh(root, "status", "--porcelain")).toBe("M  app.txt");
+  });
+
+  test("BR-2284: a refused update-ref from the checkout keeps the staged change; one the two-way switch cannot keep is reported and left as it was", () => {
+    const root = adopted();
+    sh(root, "checkout", "-qb", "x");
+    writeFileSync(join(root, "x.txt"), "x\n");
+    writeFileSync(join(root, "app.txt"), "x's\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "x");
+    const x = sh(root, "rev-parse", "x");
+    sh(root, "checkout", "-q", "main");
+    writeFileSync(join(root, "mine.txt"), "mine\n");
+    sh(root, "add", "mine.txt");
+    const kept = git(root, ["update-ref", "refs/heads/main", x]);
+    expect(kept.code).not.toBe(0);
+    expect(sh(root, "status", "--porcelain")).toBe("A  mine.txt");
+    expect(existsSync(join(root, "x.txt"))).toBe(false);
+    writeFileSync(join(root, "app.txt"), "mine too\n");
+    sh(root, "add", "app.txt");
+    const failed = git(root, ["update-ref", "refs/heads/main", x]);
+    expect(failed.code).not.toBe(0);
+    expect(failed.err).toContain("could not put the index and working tree back at main");
+    expect(sh(root, "status", "--porcelain")).toBe("M  app.txt\nA  mine.txt");
+  });
+});

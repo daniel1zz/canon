@@ -41,6 +41,21 @@ while read -r old new ref; do
   [ "$new" = "\${${LAND_MARKER}:-}" ] && continue
   echo "canon: refusing to move ${name}: in this project ${name} moves only through canon work land. Do the work in a change (canon work start), commit it there, then run canon work land." >&2
   status=1
+  # git pull, merge --ff-only and reset have already put the refused commit in this checkout's index and working tree;
+  # an existing commit (another ref or FETCH_HEAD has it) is put back to main two-way, which keeps uncommitted changes.
+  # A new commit (git commit) is the user's own work and stays staged. (BR-2284)
+  remote=$(git for-each-ref --format='%(refname)' --contains "$new" refs/remotes 2>/dev/null)
+  [ "$(git rev-parse -q --verify FETCH_HEAD 2>/dev/null)" = "$new" ] && remote=FETCH_HEAD
+  if [ "$(git symbolic-ref -q HEAD 2>/dev/null)" = "$ref" ] && { [ -n "$remote" ] || git for-each-ref --format='%(refname)' --contains "$new" 2>/dev/null | grep -Fqvx "$ref"; }; then
+    if said=$(git read-tree -m -u "$new" "$cur" 2>&1); then
+      echo "canon: the index and working tree are back at ${name} ($(git rev-parse --short "$cur")); uncommitted changes are kept." >&2
+    else
+      echo "canon: could not put the index and working tree back at ${name} ($(git rev-parse --short "$cur")): $said; git status shows what is staged." >&2
+    fi
+  fi
+  if [ -n "$remote" ]; then
+    echo "canon: to take in the remote's ${name}, run canon sync." >&2
+  fi
 done
 exit $status
 `;
