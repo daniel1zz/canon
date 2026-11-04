@@ -15,6 +15,7 @@ import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, typ
 import { REVIEW_NONE, REVIEW_WAYS_OUT, reviewKeys } from "../../../knowledge/review/config-keys.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
+import { reviewTree } from "./review-tree.ts";
 import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
 import { parse } from "yaml";
 import { checksAddedAndReviewed, checksAddedAndReviewedMessage, keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
@@ -40,7 +41,24 @@ export type Steps = { readonly ok: true; readonly reviewNotes: { reviewed: strin
  * `base` below it): canon check, decision sources, the rule and duplicate reviews, before_land (BR-2016,
  * BR-2009, BR-2111, BR-2143, BR-2057). A solo landing runs them in its worktree; a batch, per change (BR-2172).
  */
-export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: { wt: string; base: string; main: string; head: string; before: string; subject: string | null; branch: string; running: Running }): Promise<Steps> {
+type ChangeInput = { wt: string; base: string; main: string; head: string; before: string; subject: string | null; branch: string; running: Running };
+export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: ChangeInput): Promise<Steps> {
+  // reason: the review commands run in one temporary worktree at main's commit, so the change cannot edit its own reviewer (BR-2216, #115);
+  // it is removed after every outcome, and a removal that fails is an environment problem, never a verdict turned ok
+  const tree = reviewTree(ws, v.running, v.main);
+  let steps: Steps;
+  try {
+    steps = await verifySteps(ws, opts, say, v, tree);
+  } catch (e) {
+    tree.release();
+    throw e;
+  }
+  const gone = tree.release();
+  if (gone.ok) return steps;
+  return steps.ok ? { ok: false, reason: "environment", message: gone.error.message } : { ...steps, message: `${steps.message}\n${gone.error.message}` };
+}
+
+async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: ChangeInput, tree: ReturnType<typeof reviewTree>): Promise<Steps> {
   const { wt, subject } = v;
   const base = { value: v.base };
   const head = { value: v.head };
@@ -132,7 +150,9 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
       ws.db.event(ws.actor, "review.skip", subject, { docs: reviewed });
     } else {
       say(`review: ${[...reviewed, ...execution.wording.map((q) => `${q.id} (wording judgement)`)].join(", ")}`);
-      const v = await runReview(reviewer, wt, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording }), limits);
+      const at = tree.get();
+      if (!at.ok) return refuse("environment", at.error.message);
+      const v = await runReview(reviewer, at.value, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording }), limits);
       if (!v.ok) return refuse("review", `the rule review could not run: ${v.error.message}`);
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings, ...(execution.wording.length > 0 ? { wording: v.value.wording ?? {} } : {}) });
       if (v.value.verdict === "block") return refuse("review", `rule review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
@@ -150,13 +170,18 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
       ws.db.event(ws.actor, "review.skip", subject, { docs: standing });
     } else {
       say(`review: standing instructions ${standing.join(", ")}`);
-      const v = await runReview(reviewer, wt, duplicatePrompt(standing, standingText(wt, onMain.instructions), opts.guide), limits);
+      const at = tree.get();
+      if (!at.ok) return refuse("environment", at.error.message);
+      const v = await runReview(reviewer, at.value, duplicatePrompt(standing, standingText(wt, onMain.instructions), opts.guide), limits);
       if (!v.ok) return refuse("review", `the duplicate review could not run: ${v.error.message}`);
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: standing, findings: v.value.findings });
       if (v.value.verdict === "block") return refuse("review", `duplicate review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
       for (const f of v.value.findings) say(`review note: ${f}`);
     }
   }
+  // reason: the review is over, so the temporary worktree goes before before_land runs, not after it (BR-2216)
+  const gone = tree.release();
+  if (!gone.ok) return refuse("environment", gone.error.message);
   // before_land: after floor, canon check and the built-in review, on the exact tree that becomes main (BR-2057).
   const hookEnv = { CANON_BASE: base.value, CANON_HEAD: head.value, CANON_BRANCH: v.branch };
   const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env: hookEnv, port: changePort(ws, subject) }, ws.config.hooks.before_land, say, true);

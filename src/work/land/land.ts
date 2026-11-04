@@ -15,6 +15,7 @@ import { missingMessage, passesMeta, planClose } from "../execution/landing.ts";
 import type { LandOptions, LandOutcome, Running } from "./outcome.ts";
 import { changesIn, ownDiffId, rebaseInProgress } from "./worktree-state.ts";
 import { keptNote, lostTurn, predictedConflicts, priorityNow, waitPollMs } from "./queue/wait.ts";
+import { removeReviewTree } from "./checks/review-tree.ts";
 import { findingDetail, verifyChange } from "./checks/steps.ts";
 import { floorSkip, runFloor } from "./checks/floor.ts";
 import { afterLand, closeLeftNote, closeSubject, finishLanding, moveMain, reopen, type CloseCommit } from "./finish/finish.ts";
@@ -62,6 +63,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     running.floor?.kill();
     running.review?.kill(); // a reviewer left running would keep spending after the landing ended (BR-2296)
     // reason: process.exit skips the batch's finally, so its temporary worktree is removed here (BR-2099, BR-2172).
+    if (running.reviewTree !== undefined) removeReviewTree(ws, running.reviewTree); // after the review's process group is stopped (BR-2216)
     if (entry !== undefined && existsSync(batchDir(ws, entry))) removeWorktree(ws.primary, "--force", batchDir(ws, entry));
     const aborted = rebaseInProgress(wt) && git(wt, "rebase", "--abort").ok;
     // A signal after main moved leaves the landed entry as it is: the landing happened.

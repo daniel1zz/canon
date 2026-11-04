@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../land.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
@@ -291,6 +291,126 @@ describe("rule review at land", () => {
     expect(out.kind === "refused" && out.reason).toBe("review");
     expect(out.kind === "refused" && out.message).toContain("duplicate review blocked");
   });
+
+  /** The review worktrees git still lists for `root`: the temporary ones sit under canon's state directory, in a `review` folder. */
+  const reviewTrees = (root: string) => sh(root, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ") && l.includes("/review/"));
+
+  test("BR-2216: the reviewer runs in one temporary worktree at main's commit for both reviews: main's script, CLAUDE.md, settings and skills, never the change's; it is gone afterwards", async () => {
+    const root = billingProject(`floor: "true"
+tests: []
+`);
+    const out = join(root, "..", `${root.split("/").pop()}-probe`);
+    mkdirSync(out, { recursive: true });
+    const body = (tag: string) => `#!/bin/sh\n{ echo "${tag}"; pwd -P; cat CLAUDE.md; cat .claude/settings.json; ls .claude/skills; } >> ${out}/seen.txt\ncat > /dev/null\necho '{"verdict":"${tag === "main-script" ? "ok" : "block"}","findings":["changed script ran"]}'\n`;
+    mkdirSync(join(root, "scripts"), { recursive: true });
+    writeFileSync(join(root, "scripts/review.sh"), body("main-script"));
+    chmodSync(join(root, "scripts/review.sh"), 0o755);
+    writeFileSync(join(root, "CLAUDE.md"), "main claude\n");
+    mkdirSync(join(root, ".claude/skills/old"), { recursive: true });
+    writeFileSync(join(root, ".claude/settings.json"), '{"main":true}\n');
+    writeFileSync(join(root, ".claude/skills/old/SKILL.md"), "---\nname: old\ndescription: Use when old.\n---\nold\n");
+    sh(root, "add", "-A");
+    configOnMain(root, `floor: "true"\ntests: []\nreview: scripts/review.sh\n`);
+    // the primary checkout is on another branch and dirty: the review runs the same
+    sh(root, "checkout", "-q", "-b", "elsewhere");
+    writeFileSync(join(root, "dirty.txt"), "uncommitted\n");
+    const s = startNew(root, "Rule and instructions");
+    const mainSha = sh(root, "rev-parse", "main");
+    writeFileSync(join(s.worktree, "scripts/review.sh"), body("changed-script"));
+    writeFileSync(join(s.worktree, "CLAUDE.md"), "changed claude\n");
+    writeFileSync(join(s.worktree, ".claude/settings.json"), '{"changed":true}\n');
+    mkdirSync(join(s.worktree, ".claude/skills/new"), { recursive: true });
+    writeFileSync(join(s.worktree, ".claude/skills/new/SKILL.md"), "---\nname: new\ndescription: Use when new.\n---\nnew\n");
+    addRule(s.worktree);
+    const out1 = await land(ws(s.worktree), FAST, quiet);
+    expect(out1.kind).toBe("landed");
+    const seen = readFileSync(join(out, "seen.txt"), "utf8");
+    expect(seen.match(/main-script/g)?.length).toBe(2); // the rule review and the duplicate review, both main's script
+    expect(seen).not.toContain("changed-script");
+    expect(seen).not.toContain("changed claude");
+    expect(seen).not.toContain('"changed"');
+    expect(seen).toContain("main claude");
+    expect(seen).toContain('{"main":true}');
+    expect(seen).toMatch(/^old$/m);
+    expect(seen).not.toMatch(/^new$/m);
+    const cwds = [...seen.matchAll(/^main-script\n(.*)$/gm)].map((m) => m[1]!);
+    expect(cwds[0]).toBe(cwds[1]); // one temporary worktree for both
+    expect(cwds[0]).toContain("/review/");
+    expect(cwds[0]).not.toBe(realpathSync(s.worktree));
+    expect(existsSync(cwds[0]!)).toBe(false);
+    expect(reviewTrees(root)).toEqual([]);
+    expect(mainSha).not.toBe(sh(root, "rev-parse", "main")); // it landed
+  });
+
+  test("BR-2216: after ok, block, a failing command, an invalid verdict and a timeout the temporary worktree is gone, and no worktree is created when nothing needs a review", async () => {
+    const cases: { name: string; body: string; config?: string; refused: boolean }[] = [
+      { name: "ok", body: `echo '{"verdict":"ok","findings":[]}'`, refused: false },
+      { name: "block", body: `echo '{"verdict":"block","findings":["no"]}'`, refused: true },
+      { name: "exit", body: "exit 3", refused: true },
+      { name: "invalid", body: "echo nothing", refused: true },
+      { name: "timeout", body: "exec sleep 60", config: "review_timeout_minutes: 0.25\n", refused: true },
+    ];
+    for (const c of cases) {
+      const root = billingProject(`floor: "true"\ntests: []\n`);
+      const where = join(root, "..", `${root.split("/").pop()}-cwd.txt`);
+      const r = reviewer(root, `pwd -P > ${where}\ncat > /dev/null\n${c.body}`, c.name);
+      configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n${c.config ?? ""}`);
+      const s = startNew(root, "New rule");
+      addRule(s.worktree);
+      const out = await land(ws(s.worktree), FAST, quiet);
+      expect(out.kind === "refused" ? `${out.reason}: ${out.message}` : out.kind).toStartWith(c.refused ? "review" : "landed");
+      expect([c.name, existsSync(where)]).toEqual([c.name, true]);
+      const dir = readFileSync(where, "utf8").trim();
+      expect(dir).toContain("/review/");
+      expect(existsSync(dir)).toBe(false);
+      expect(reviewTrees(root)).toEqual([]);
+    }
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    const r = reviewer(root);
+    configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n`);
+    const code = startNew(root, "Code only");
+    writeFileSync(join(code.worktree, "src/billing/a.ts"), "export const a = 1;\n");
+    sh(code.worktree, "add", "-A");
+    sh(code.worktree, "commit", "-qm", "code");
+    expect((await land(ws(code.worktree), FAST, quiet)).kind).toBe("landed");
+    expect(existsSync(r.promptFile)).toBe(false); // no review ran, so no worktree was made for one
+  }, 60_000);
+
+  test("BR-2216: a temporary worktree that cannot be removed is an environment refusal, not an ok verdict", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    // a locked worktree survives `git worktree remove --force`
+    const r = reviewer(root, `cat > /dev/null\ngit worktree lock .\necho '{"verdict":"ok","findings":[]}'`);
+    configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n`);
+    const before = sh(root, "rev-parse", "main");
+    const s = startNew(root, "New rule");
+    addRule(s.worktree);
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("environment");
+    expect(out.kind === "refused" && out.message).toContain("could not be removed");
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+    for (const l of reviewTrees(root)) {
+      const dir = l.slice("worktree ".length);
+      sh(root, "worktree", "unlock", dir);
+      sh(root, "worktree", "remove", "--force", dir);
+    }
+  });
+
+  test("BR-2216 BR-2099: canon work land stopped by SIGTERM while the reviewer runs leaves no temporary worktree", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    const pidFile = join(root, "..", `${root.split("/").pop()}-sig.pid`);
+    const r = reviewer(root, `pwd -P > ${pidFile}.cwd\necho $$ > ${pidFile}\nexec sleep 30`);
+    configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n`);
+    const s = startNew(root, "New rule");
+    addRule(s.worktree);
+    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    for (let i = 0; i < 200 && !existsSync(pidFile); i++) await Bun.sleep(100);
+    const dir = readFileSync(`${pidFile}.cwd`, "utf8").trim();
+    expect(existsSync(dir)).toBe(true); // while the review runs it is there
+    p.kill("SIGTERM");
+    expect(await p.exited).toBe(143);
+    expect(existsSync(dir)).toBe(false);
+    expect(reviewTrees(root)).toEqual([]);
+  }, 40_000);
 
   test("BR-2296: a reviewer past review_timeout_minutes is stopped with its children and the landing is refused with reason review", async () => {
     const root = billingProject(`floor: "true"\ntests: []\n`);

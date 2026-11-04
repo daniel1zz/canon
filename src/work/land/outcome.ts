@@ -22,4 +22,6 @@ export interface Running {
   floor?: { kill(): void } | undefined;
   /** The rule or duplicate review command's process group (BR-2296). */
   review?: { kill(): void } | undefined;
+  /** The temporary worktree the review commands run in, while it exists (BR-2216). */
+  reviewTree?: string | undefined;
 }
