@@ -1,4 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { noPort } from "./ports.ts";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logFile, runHooksInBackground, waitBackgroundHooks } from "./hooks.ts";
@@ -16,7 +17,7 @@ function afterLand(cwd: string) {
 
 async function batch(root: string, change: string, entry: number, commands: string[], settle: boolean) {
   const w = ws(root);
-  runHooksInBackground({ db: w.db, actor: "agent:a", event: "after_land", change, cwd: root, env: {} }, commands, logFile(w.db, `after-land-${entry}.log`), entry);
+  runHooksInBackground({ db: w.db, actor: "agent:a", event: "after_land", change, cwd: root, env: {}, port: noPort }, commands, logFile(w.db, `after-land-${entry}.log`), entry);
   if (settle) await waitBackgroundHooks(w.db, "agent:test", change, 10_000, 50);
 }
 

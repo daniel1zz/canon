@@ -12,7 +12,7 @@ export const DEFAULT_REGENERABLE: readonly string[] = [
 export const sessionKeys = {
   setup: configKey<string | undefined>({
     key: "setup",
-    doc: 'Shell command run once in a new worktree (e.g. "bun install").',
+    doc: 'Shell command run once in a new worktree, with CANON_PORT (BR-2267); keep it to installing dependencies: "bun install" with bun\'s defaults, or "pnpm install" with `virtualStoreType: global` in pnpm-workspace.yaml (C-103).',
     default: undefined,
     schema: optionalString,
     read: stringValue("setup"),

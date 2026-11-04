@@ -1,4 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { noPort } from "./ports.ts";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logFile, runHooksInBackground, waitBackgroundHooks } from "./hooks.ts";
@@ -24,7 +25,7 @@ async function finished(log: string, n: number) {
 
 function background(root: string, change: string, entry: number, commands: string[]) {
   const w = ws(root);
-  return runHooksInBackground({ db: w.db, actor: "agent:a", event: "after_land", change, cwd: root, env: {} }, commands, logFile(w.db, `after-land-${entry}.log`), entry);
+  return runHooksInBackground({ db: w.db, actor: "agent:a", event: "after_land", change, cwd: root, env: {}, port: noPort }, commands, logFile(w.db, `after-land-${entry}.log`), entry);
 }
 
 const exitEvents = (root: string) => ws(root).db.db.query<{ n: number }, []>("SELECT count(*) AS n FROM events WHERE kind = 'hook.exit'").get()!.n;

@@ -4,6 +4,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { templateFor } from "../knowledge/documents/templates.ts";
 import { BUILTIN_TYPES, RESERVED_DIRS, RESERVED_FIELDS, type DocType } from "../knowledge/documents/types.ts";
 import { configKey, REL_DIR, relPath, type JsonSchema } from "./key.ts";
+import { readPorts, type PortRange } from "./ports.ts";
 
 export type HookEvent = "after_start" | "before_land" | "after_land" | "after_stop" | "after_green";
 export const HOOK_EVENTS: readonly HookEvent[] = ["after_start", "before_land", "after_land", "after_stop", "after_green"];
@@ -23,6 +24,15 @@ export const hookKeys = {
     replaces: { after_land: "hooks.after_land" },
     listed: 70,
     checked: 170,
+  }),
+  ports: configKey<PortRange | undefined>({
+    key: "ports",
+    doc: "The range of ports, `<from>-<to>` such as 4100-4199, each change gets one of as CANON_PORT in setup and every hook; the same change keeps its port, two changes whose worktrees exist never share one (BR-2267, D-41). Unset means no port.",
+    default: undefined,
+    schema: { type: ["string", "null"], pattern: "^\\s*\\d+\\s*-\\s*\\d+\\s*$|^$" },
+    read: readPorts,
+    listed: 75,
+    checked: 175,
   }),
 };
 

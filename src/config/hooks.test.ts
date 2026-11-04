@@ -1,4 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { noPort } from "./ports.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -162,7 +163,7 @@ describe("background hook exit codes", () => {
   test("BR-2138: the latest batch is the latest landing's, even when an earlier landing recorded its batch after it", async () => {
     const root = project();
     const w = ws(root);
-    const ctx = (change: string) => ({ db: w.db, actor: "agent:a", event: "after_land" as const, change, cwd: root, env: {} });
+    const ctx = (change: string) => ({ db: w.db, actor: "agent:a", event: "after_land" as const, change, cwd: root, env: {}, port: noPort });
     // Landing 11 records its failing batch first; landing 10, descheduled after releasing its turn, records afterwards.
     const later = runHooksInBackground(ctx("C-11"), ["exit 1"], logFile(w.db, "after-land-11.log"), 11);
     const earlier = runHooksInBackground(ctx("C-10"), ["exit 0"], logFile(w.db, "after-land-10.log"), 10);
@@ -228,7 +229,7 @@ describe("background hook exit codes", () => {
   test("BR-2138 BR-2137: a failed command is named while the next one still runs; a missing log records no hook.exit", async () => {
     const root = project();
     const w = ws(root);
-    const ctx = { db: w.db, actor: "agent:a", event: "after_land" as const, change: "C-3", cwd: root, env: {} };
+    const ctx = { db: w.db, actor: "agent:a", event: "after_land" as const, change: "C-3", cwd: root, env: {}, port: noPort };
     const log = runHooksInBackground(ctx, ["exit 2", `while [ ! -e ${root}/go ]; do sleep 0.05; done`], logFile(w.db, "after-land-3.log"), 3);
     await finished(log, 1);
     expect(backgroundNotice(settleBackgroundHooks(w.db, "agent:test"))).toBe(`after_land after C-3 failed in the background: \`exit 2\` exited 2 (log: ${log})`);

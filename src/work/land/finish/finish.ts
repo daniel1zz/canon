@@ -1,5 +1,6 @@
 import type { Say, Workspace } from "../../workspace.ts";
 import { logFile, runHooksInBackground } from "../../../config/hooks.ts";
+import { changePort } from "../../../config/ports.ts";
 import { git, gitEnv, isClean, listWorktreesLocked, moveBranch } from "../../../kernel/git.ts";
 import { releaseOwnClaim } from "../../claims/claims.ts";
 import { dropHandoff } from "../../session/handoffs.ts";
@@ -48,7 +49,7 @@ export function reopen(wt: string, close: CloseCommit, say: Say, top = git(wt, "
 export function afterLand(ws: Workspace, say: Say, l: { entry: number; subject: string | null; base: string; head: string; branch: string }): void {
   if (ws.config.hooks.after_land.length === 0) return;
   const env = { CANON_BASE: l.base, CANON_HEAD: l.head, CANON_BRANCH: l.branch };
-  const log = runHooksInBackground({ db: ws.db, actor: ws.actor, event: "after_land", change: l.subject, cwd: ws.primary, env }, ws.config.hooks.after_land, logFile(ws.db, `after-land-${l.entry}.log`), l.entry);
+  const log = runHooksInBackground({ db: ws.db, actor: ws.actor, event: "after_land", change: l.subject, cwd: ws.primary, env, port: changePort(ws, l.subject) }, ws.config.hooks.after_land, logFile(ws.db, `after-land-${l.entry}.log`), l.entry);
   say(`after_land${l.subject ? ` for ${l.subject}` : ""} running in the background (log: ${log})`);
 }
 

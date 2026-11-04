@@ -42,7 +42,10 @@ floor_skip_paths:
   - canon/backlog.md
 # 轮到的合入者最多把几个合入一起测、只跑一次 floor（D-26、BR-2172）；floor_timing: after 下不分批
 land_batch_max: 4
-# 新 worktree 里执行一次
+# 新 worktree 里执行一次，环境里有 CANON_PORT（BR-2267）。依赖安装的推荐配置（C-103）：setup 只做依赖安装。
+# bun 用默认设置：macOS 上默认用 clonefile 装包，Linux 上用 hardlink，每个 worktree 几乎不多花时间和空间（bun.com/docs/pm/cli/install）。
+# pnpm 在 pnpm-workspace.yaml 里写 virtualStoreType: global：每个 worktree 的 node_modules 只放指向全局仓库的链接（pnpm.io/git-worktrees）。
+# 每个变更一个端口（D-41）：在这里写 ports: 4100-4199 这样的范围，setup 和 hook 命令的环境里就有 CANON_PORT；canon 自己不起本地服务，没有设。
 setup: "bun install"
 # 规则和决策文字的评审：从 stdin 读提示，在 stdout 输出 JSON 结论
 review: "scripts/review-claude.sh"

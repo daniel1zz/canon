@@ -4,6 +4,7 @@ import { check, type Finding } from "../../../knowledge/check/check.ts";
 import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../../../knowledge/check/sources.ts";
 import { testFilesFor } from "../../../knowledge/check/tests.ts";
 import { runHooks } from "../../../config/hooks.ts";
+import { changePort } from "../../../config/ports.ts";
 import { type Doc } from "../../../knowledge/documents/model.ts";
 import { findDoc } from "../../../knowledge/query/query.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
@@ -131,7 +132,7 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   }
   // before_land: after floor, canon check and the built-in review, on the exact tree that becomes main (BR-2057).
   const hookEnv = { CANON_BASE: base.value, CANON_HEAD: head.value, CANON_BRANCH: v.branch };
-  const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env: hookEnv }, ws.config.hooks.before_land, say, true);
+  const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env: hookEnv, port: changePort(ws, subject) }, ws.config.hooks.before_land, say, true);
   if (failed) return refuse("hook", `before_land \`${failed.command}\` exited ${failed.exit}\n${failed.output}`);
   return { ok: true, reviewNotes };
 }

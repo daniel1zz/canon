@@ -9,4 +9,5 @@
 - **声明的类型**：项目在 `types:` 下声明的文档类型，有自己的编号前缀、目录和状态；内置的规则、决策、变更、笔记不能删除，只能加必填字段。
 - **hook**：在 `after_start`、`before_land`、`after_land`、`after_stop`、`after_green`（BR-2222）五个事件上运行的命令；只有 `before_land` 能拒绝合入。
 - **共享代码**：`shared` 列出的、不属于任何业务领域的代码（共享内核）。
+- **变更的端口**：`ports` 配置的范围里分给每个变更的一个端口，`setup` 和 hook 命令从 `CANON_PORT` 读到；记在协调数据库里，变更的 worktree 不在之后才给别的变更（D-41、BR-2267）。
 - **模板**：`canon/templates/<类型名>.md`，新建文档时的初始正文。

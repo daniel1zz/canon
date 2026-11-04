@@ -1,4 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { noPort } from "./ports.ts";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { start } from "../work/session/session.ts";
@@ -12,7 +13,7 @@ setDefaultTimeout(30_000);
 const MAIN = join(import.meta.dir, "..", "cli", "main.ts");
 
 function ctxFor(root: string, event: HookContext["event"] = "after_start"): HookContext {
-  return { db: ws(root).db, actor: "agent:a", event, change: "C-1", cwd: root, env: {} };
+  return { db: ws(root).db, actor: "agent:a", event, change: "C-1", cwd: root, env: {}, port: noPort };
 }
 
 /** What runHooksSync prints for these commands. */

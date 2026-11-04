@@ -13,6 +13,7 @@ import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { createDoc, highestNumber } from "../../knowledge/documents/write.ts";
 import { worktreesDirOf } from "./config-keys.ts";
+import { noPort, portFor, type PortLookup } from "../../config/ports.ts";
 import { addWorktree, git, ignoredPaths, isClean, listWorktreesLocked, removeWorktree, unregenerable, type WorktreeInfo } from "../../kernel/git.ts";
 import { GENERATED_DIR } from "../../config/reference/reference.ts";
 import { processesIn, type Occupant } from "../../kernel/process.ts";
@@ -106,9 +107,21 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
       return add;
     }
     created = true;
+  }
+  // reason: the port is taken once the worktree exists and before setup, so setup sees it and a full range undoes the start (BR-2267, BR-2269, D-41)
+  const port = ws.config.ports ? portFor(ws.db, ws.actor, changeId, ws.config.ports, path) : ok(undefined);
+  if (!port.ok) {
+    if (created) undoStart(ws, changeId, path, branch, !hasBranch);
+    else releaseClaim(ws.db, changeId, ws.actor);
+    ws.db.event(ws.actor, "start.refuse", changeId, { reason: "port" });
+    return err(port.error.code, created ? `${port.error.message}; the new worktree was removed and ${changeId} released` : `${port.error.message}; ${changeId} was released`);
+  }
+  const portLookup: PortLookup = () => port;
+  if (created) {
     if (ws.config.setup) {
       say(`setup: ${ws.config.setup}`);
-      const r = Bun.spawnSync(["sh", "-c", ws.config.setup], { cwd: path, stdout: "inherit", stderr: "inherit" });
+      const env = { ...(process.env as Record<string, string>), CANON_PORT: port.value === undefined ? "" : String(port.value) };
+      const r = Bun.spawnSync(["sh", "-c", ws.config.setup], { cwd: path, env, stdout: "inherit", stderr: "inherit" });
       if (r.exitCode !== 0) {
         undoStart(ws, changeId, path, branch, !hasBranch);
         ws.db.event(ws.actor, "start.refuse", changeId, { reason: "setup", exit: r.exitCode });
@@ -137,7 +150,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   say(`${changeId} → ${path} (branch ${branch})`);
   noticeOverlaps(ws, path, changeId, "start", say);
   // after_start never changes the result (BR-2056): the worktree and claim stand whatever it exits with.
-  runHooksSync({ db: ws.db, actor: ws.actor, event: "after_start", change: changeId, cwd: path, env: { CANON_BRANCH: branch } }, ws.config.hooks.after_start, say);
+  runHooksSync({ db: ws.db, actor: ws.actor, event: "after_start", change: changeId, cwd: path, env: { CANON_BRANCH: branch }, port: portLookup }, ws.config.hooks.after_start, say);
   return ok({ change: changeId, worktree: path, branch, created });
 }
 
@@ -231,7 +244,7 @@ export function stop(ws: Workspace, next: string, note: string | undefined, rele
   writeHandoff(ws.db, { subject: claim.subject, worktree: ws.root, actor: ws.actor, next, note: note ?? null });
   if (release) releaseClaim(ws.db, claim.subject, ws.actor);
   // after_stop runs once the handoff is recorded and never changes the result (BR-2058).
-  runHooksSync({ db: ws.db, actor: ws.actor, event: "after_stop", change: claim.subject, cwd: ws.root, env: { CANON_NEXT: next } }, ws.config.hooks.after_stop, say);
+  runHooksSync({ db: ws.db, actor: ws.actor, event: "after_stop", change: claim.subject, cwd: ws.root, env: { CANON_NEXT: next }, port: ws.config.ports ? () => portFor(ws.db, ws.actor, claim.subject, ws.config.ports!, ws.root) : noPort }, ws.config.hooks.after_stop, say);
   return ok(claim.subject);
 }
 

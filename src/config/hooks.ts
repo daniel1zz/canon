@@ -2,6 +2,7 @@ import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:f
 import { dirname, join } from "node:path";
 import type { CoordDb } from "../work/db.ts";
 import type { HookEvent } from "./config-keys.ts";
+import type { PortLookup } from "./ports.ts";
 
 /**
  * Lifecycle hooks (D-2 §3, D-3): commands from `hooks.<event>` in `canon/config.yaml`, run with the event's
@@ -19,6 +20,8 @@ export interface HookContext {
   readonly cwd: string;
   /** Extra CANON_* variables for this event (CANON_BASE, CANON_HEAD, CANON_NEXT, ...). */
   readonly env: Readonly<Record<string, string>>;
+  /** The change's port for CANON_PORT (BR-2267); asked only when there is a command to run. */
+  readonly port: PortLookup;
 }
 
 export interface HookFailure {
@@ -27,16 +30,31 @@ export interface HookFailure {
   readonly output: string;
 }
 
-function envFor(ctx: HookContext): Record<string, string> {
+function envFor(ctx: HookContext, port: number | undefined): Record<string, string> {
   return {
     ...(process.env as Record<string, string>),
     CANON_EVENT: ctx.event,
     CANON_CHANGE: ctx.change ?? "",
     CANON_ACTOR: ctx.actor,
     CANON_WORKTREE: ctx.cwd,
+    CANON_PORT: port === undefined ? "" : String(port),
     ...ctx.env,
   };
 }
+
+/**
+ * The environment for this event's commands, or the failure that stands for all of them when the change gets no port:
+ * none of them runs, and the run counts as a failed hook (BR-2269).
+ */
+function prepare(ctx: HookContext, say: (line: string) => void): { env: Record<string, string> } | { failure: HookFailure } {
+  const port = ctx.port();
+  if (port.ok) return { env: envFor(ctx, port.value) };
+  say(`hook ${ctx.event}: not run: ${port.error.message}`);
+  ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command: null, exit: 1, port: port.error.message });
+  return { failure: { command: "CANON_PORT", exit: 1, output: port.error.message } };
+}
+
+const shellQuote = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`;
 
 const tail = (text: string, lines = 40) => text.trimEnd().split("\n").slice(-lines).join("\n");
 
@@ -52,10 +70,13 @@ const merged = (command: string): string[] => ["sh", "-c", `exec 2>&1\n${command
  * `stopOnFailure` is for `before_land`; the `after_*` events run every command whatever the exit codes.
  */
 export async function runHooks(ctx: HookContext, commands: readonly string[], say: (line: string) => void, stopOnFailure: boolean): Promise<HookFailure | undefined> {
+  if (commands.length === 0) return undefined;
+  const prep = prepare(ctx, say);
+  if ("failure" in prep) return prep.failure;
   let first: HookFailure | undefined;
   for (const command of commands) {
     say(`hook ${ctx.event}: ${command}`);
-    const proc = Bun.spawn(merged(command), { cwd: ctx.cwd, env: envFor(ctx), stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const proc = Bun.spawn(merged(command), { cwd: ctx.cwd, env: prep.env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const [out, errText, exit] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
     const output = `${out}${errText}`;
     if (output.trim() !== "") for (const line of tail(output).split("\n")) say(`  ${line}`);
@@ -71,10 +92,13 @@ export async function runHooks(ctx: HookContext, commands: readonly string[], sa
 
 /** The synchronous form of `runHooks` for the `after_start` and `after_stop` events, which never refuse. */
 export function runHooksSync(ctx: HookContext, commands: readonly string[], say: (line: string) => void): HookFailure | undefined {
+  if (commands.length === 0) return undefined;
+  const prep = prepare(ctx, say);
+  if ("failure" in prep) return prep.failure;
   let first: HookFailure | undefined;
   for (const command of commands) {
     say(`hook ${ctx.event}: ${command}`);
-    const r = Bun.spawnSync(merged(command), { cwd: ctx.cwd, env: envFor(ctx), stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const r = Bun.spawnSync(merged(command), { cwd: ctx.cwd, env: prep.env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const output = `${r.stdout.toString()}${r.stderr.toString()}`;
     if (output.trim() !== "") for (const line of tail(output).split("\n")) say(`  ${line}`);
     const exit = r.exitCode ?? -1;
@@ -97,16 +121,23 @@ export function runHooksInBackground(ctx: HookContext, commands: readonly string
   // Each command runs in its own subshell; its exit code is written to the log after its output.
   // reason: the exit line must start a line to be read (EXIT_LINE); output that does not end in a newline gets one
   // first, and only then, so a log of newline-ended output stays as it was (BR-2137, issue #61)
-  const quoted = `'${logPath.replaceAll("'", `'\\''`)}'`;
+  const quoted = shellQuote(logPath);
+  // reason: without a port no command runs (BR-2269); each still gets its exit line, 1, so after-land and brief report the failure as they report any
+  const port = ctx.port();
+  const noPortLine = port.ok ? "" : `echo ${shellQuote(`not run: ${port.error.message}`)}; `;
   const script = commands
-    .map((c, i) => `(\n${c}\n); __canon_exit=$?; [ -n "$(tail -c 1 ${quoted})" ] && echo; echo "[hook ${i + 1}/${commands.length} exited $__canon_exit]"`)
+    .map((c, i) =>
+      port.ok
+        ? `(\n${c}\n); __canon_exit=$?; [ -n "$(tail -c 1 ${quoted})" ] && echo; echo "[hook ${i + 1}/${commands.length} exited $__canon_exit]"`
+        : `${noPortLine}echo "[hook ${i + 1}/${commands.length} exited 1]"`,
+    )
     .join("\n");
   // reason: the whole batch is recorded in one transaction before any command can finish, so a reader never sees
   // part of a batch whose recorded commands have all exited and takes it for finished (BR-2166, issue #38)
   ctx.db.db
     .transaction(() => commands.forEach((command, i) => ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit: null, background: true, log: logPath, index: i + 1, batch })))
     .immediate();
-  const p = Bun.spawn(["sh", "-c", script], { cwd: ctx.cwd, env: envFor(ctx), stdout: fd, stderr: fd, stdin: "ignore" });
+  const p = Bun.spawn(["sh", "-c", script], { cwd: ctx.cwd, env: envFor(ctx, port.ok ? port.value : undefined), stdout: fd, stderr: fd, stdin: "ignore" });
   p.unref();
   closeSync(fd);
   return logPath;

@@ -5,6 +5,7 @@ import type { CoordDb } from "../db.ts";
 import type { Say, Workspace } from "../workspace.ts";
 import { readConfig } from "../../config/config.ts";
 import { logFile, runHooks } from "../../config/hooks.ts";
+import { noPort } from "../../config/ports.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { addWorktree, git, pruneWorktrees, removeWorktree } from "../../kernel/git.ts";
 import { isGone, selfProcess, type Proc } from "../claims/liveness.ts";
@@ -306,7 +307,7 @@ async function testCommit(ws: Workspace, say: Say, sha: string, running: Running
     if (!recorded.ok) return recorded;
     if (config.ok && config.value.floorTiming === "after" && config.value.hooks.after_green.length > 0) {
       const env = { CANON_GREEN: sha, CANON_PRIMARY: ws.primary };
-      const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "after_green", change: null, cwd: dir, env }, config.value.hooks.after_green, say, false);
+      const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "after_green", change: null, cwd: dir, env, port: noPort }, config.value.hooks.after_green, say, false);
       return ok({ sha, passed, log, rebuilt: failed === undefined });
     }
     return ok({ sha, passed, log });
