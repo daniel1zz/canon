@@ -3,8 +3,9 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
-import { answer, ask, questions, recordAsked, witnessMark } from "./questions.ts";
+import { answer, ask, parseAsked, questions, recordAsked, witnessMark, type AskedRecord, type WitnessContext } from "./questions.ts";
 import { project, sh, startNew, ws } from "../testkit.ts";
+import { RECORD_COMMAND } from "../../cli/install/hook.ts";
 
 const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
 
@@ -21,6 +22,9 @@ function canon(cwd: string, actor: string, tty: boolean, ...args: string[]) {
 const refusals = (root: string) =>
   ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'human.answer.refuse' ORDER BY id").all().map((e) => (JSON.parse(e.detail) as { reason: string }).reason);
 
+/** No session to compare with: for answers whose question-tool check is not what the test is about. */
+const NO_CTX: WitnessContext = { session: null, hookInstalled: () => true };
+
 function db(): CoordDb {
   const r = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-next-state-")), "state.db"));
   if (!r.ok) throw new Error(r.error.message);
@@ -31,13 +35,13 @@ describe("human questions", () => {
   test("BR-2021: an agent answers only as a relay of the human's words, recorded as such; a bare agent answer is refused and recorded", () => {
     const d = db();
     const q = ask(d, "agent:a", "C-1", "Ship it?", ["yes", "no"]);
-    const r = answer(d, q, "yes", "agent:x", undefined, false);
+    const r = answer(d, q, "yes", "agent:x", undefined, false, NO_CTX);
     expect(r.ok).toBe(false);
     if (!r.ok) expect(r.error.code).toBe("invalid");
     expect(questions(d, "pending").map((x) => x.id)).toEqual([q]);
     expect(d.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'human.answer.refuse'").get()?.n).toBe(1);
-    expect(answer(d, q, "yes", "human:dz", "x", true).ok).toBe(false); // a human answers directly, not as a relay
-    expect(answer(d, q, "yes", "agent:x", "  好的  ", false).ok).toBe(true);
+    expect(answer(d, q, "yes", "human:dz", "x", true, NO_CTX).ok).toBe(false); // a human answers directly, not as a relay
+    expect(answer(d, q, "yes", "agent:x", "  好的  ", false, NO_CTX).ok).toBe(true);
     const got = questions(d, "all")[0]!;
     expect([got.answer, got.answered_by, got.relayed]).toEqual(["yes", "agent:x", "好的"]);
   });
@@ -46,8 +50,8 @@ describe("human questions", () => {
     const d = db();
     const q = ask(d, "agent:a", "C-1", "Ship it?", ["yes", "no"]);
     // The first writer wins inside the transaction; the second sees the answer and is refused.
-    const first = answer(d, q, "no", "human:a", undefined, true);
-    const second = answer(d, q, "yes", "human:b", undefined, true);
+    const first = answer(d, q, "no", "human:a", undefined, true, NO_CTX);
+    const second = answer(d, q, "yes", "human:b", undefined, true, NO_CTX);
     expect([first.ok, second.ok]).toEqual([true, false]);
     if (!second.ok) expect(second.error.code).toBe("conflict");
     expect(questions(d, "all")[0]!.answer).toBe("no");
@@ -57,8 +61,8 @@ describe("human questions", () => {
     const d = db();
     const q = ask(d, "agent:a", "C-1", "Ship on Friday?", ["yes", "no"]);
     expect(questions(d, "pending").map((x) => x.id)).toEqual([q]);
-    expect(answer(d, q, "no", "human:dz", undefined, true).ok).toBe(true);
-    const again = answer(d, q, "yes", "human:dz", undefined, true);
+    expect(answer(d, q, "no", "human:dz", undefined, true, NO_CTX).ok).toBe(true);
+    const again = answer(d, q, "yes", "human:dz", undefined, true, NO_CTX);
     expect(again.ok).toBe(false);
     expect(questions(d, "pending")).toEqual([]);
     expect(questions(d, "all")[0]?.answered_by).toBe("human:dz");
@@ -150,10 +154,11 @@ describe("Claude Code's record of the question tool", () => {
   const SESSION = "3d606482-8b99-44b9-8de2-3011fd029842";
 
   /** PostToolUse data for AskUserQuestion, shaped as Claude Code's hooks and AskUserQuestionOutput document it. */
-  function asked(answers: Record<string, string>, extra: Record<string, unknown> = {}, session = SESSION) {
+  function asked(answers: Record<string, unknown>, extra: Record<string, unknown> = {}, session = SESSION) {
     const questions = Object.keys(answers).map((question) => ({ question, header: "Q", options: [{ label: "yes", description: "" }, { label: "no", description: "" }], multiSelect: false }));
     return JSON.stringify({
       session_id: session,
+      transcript_path: "/x/t.jsonl",
       hook_event_name: "PostToolUse",
       tool_name: "AskUserQuestion",
       tool_use_id: "toolu_1",
@@ -170,68 +175,183 @@ describe("Claude Code's record of the question tool", () => {
     return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
   }
 
-  const records = (root: string) =>
-    ws(root).db.db.query<{ actor: string; detail: string }, []>("SELECT actor, detail FROM events WHERE kind = 'human.asked' ORDER BY id").all().map((e): Record<string, unknown> => ({ actor: e.actor, ...(JSON.parse(e.detail) as Record<string, unknown>) }));
+  /** Runs `canon human answer --relayed` as an agent in Claude Code session `session` (none when null). */
+  function relay(cwd: string, session: string | null, actor: string, id: number, text: string, words: string) {
+    const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: actor, CLAUDECODE: "1" };
+    if (session === null) delete env["CLAUDE_CODE_SESSION_ID"];
+    else env["CLAUDE_CODE_SESSION_ID"] = session;
+    const r = Bun.spawnSync(["bun", MAIN, "human", "answer", String(id), text, "--relayed", words], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env });
+    return r.exitCode;
+  }
 
-  test("BR-2275: canon human record writes the questions and the human's answers, freeform reply and notes as a human.asked of the session's agent", () => {
+  const kind = (root: string, k: string) =>
+    ws(root).db.db.query<{ actor: string; detail: string }, [string]>("SELECT actor, detail FROM events WHERE kind = ? ORDER BY id").all(k).map((e): Record<string, unknown> => ({ actor: e.actor, ...(JSON.parse(e.detail) as Record<string, unknown>) }));
+  const records = (root: string) => kind(root, "human.asked");
+  const witnesses = (root: string) => questions(ws(root).db, "all").map((q) => q.witness);
+
+  /** A project whose primary checkout has the record hook installed (BR-2274), so "no record" is not "no hook". */
+  function hooked(): string {
     const root = project();
-    const r = record(root, asked({ "Ship it?": "yes" }, { response: "先别发", annotations: { "Ship it?": { notes: "周五再发" } } }));
+    mkdirSync(join(root, ".claude"), { recursive: true });
+    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify({ hooks: { PostToolUse: [{ matcher: "AskUserQuestion", hooks: [{ type: "command", command: RECORD_COMMAND }] }] } }));
+    return root;
+  }
+
+  const rec = (session: string, questions: AskedRecord["questions"], response: string | null = null): AskedRecord => ({ session, tool_use_id: null, transcript_path: null, questions, response, afk_timeout_ms: null });
+  const ctx = (session: string | null, hookInstalled = true): WitnessContext => ({ session, hookInstalled: () => hookInstalled });
+
+  test("BR-2275: canon human record writes each question with its answer and note, the freeform reply, transcript path and afkTimeoutMs as a human.asked of the session's agent", () => {
+    const root = project();
+    const r = record(root, asked({ "Ship it?": "yes", "Which?": ["a", "b"] }, { response: "先别发", annotations: { "Ship it?": { notes: "周五再发" } }, afkTimeoutMs: 60000 }));
     expect([r.code, r.out]).toEqual([0, ""]);
-    expect(records(root)).toEqual([{ actor: "agent:3d606482", session: SESSION, tool_use_id: "toolu_1", answers: [{ question: "Ship it?", answer: "yes" }], response: "先别发", notes: ["周五再发"] }]);
-    expect(record(root, asked({ "Which?": "a, b" })).code).toBe(0);
-    expect(records(root)[1]).toMatchObject({ answers: [{ question: "Which?", answer: "a, b" }], response: null, notes: [] });
+    expect(records(root)).toEqual([
+      {
+        actor: "agent:3d606482",
+        session: SESSION,
+        tool_use_id: "toolu_1",
+        transcript_path: "/x/t.jsonl",
+        questions: [
+          { question: "Ship it?", answer: "yes", note: "周五再发" },
+          { question: "Which?", answer: "a, b", note: null },
+        ],
+        response: "先别发",
+        afk_timeout_ms: 60000,
+      },
+    ]);
+    expect(record(root, asked({ "Ship it?": "a, b" })).code).toBe(0);
+    expect(records(root)[1]).toMatchObject({ questions: [{ question: "Ship it?", answer: "a, b", note: null }], response: null, afk_timeout_ms: null });
     expect(record(root, asked({ "Ship it?": "no" }), { CANON_ACTOR: "agent:89d45e3f:add88b47" }).code).toBe(0); // BR-2023: CANON_ACTOR first
     expect(records(root)[2]?.actor).toBe("agent:89d45e3f:add88b47");
   });
 
-  test("BR-2275: data that is not the question tool's is refused with 2 and nothing is recorded", () => {
+  test("BR-2275: data that is not a usable question-tool record exits 2, writes no human.asked and writes a human.asked.refuse with its reason and session", () => {
     const root = project();
     const bash = JSON.stringify({ session_id: SESSION, tool_name: "Bash", tool_response: { answers: {} } });
     const noAnswers = JSON.stringify({ session_id: SESSION, tool_name: "AskUserQuestion", tool_response: { questions: [] } });
-    const noSession = JSON.stringify({ tool_name: "AskUserQuestion", tool_response: { answers: { q: "a" } } });
-    const notString = JSON.stringify({ session_id: SESSION, tool_name: "AskUserQuestion", tool_response: { answers: { q: 1 } } });
+    const noQuestions = JSON.stringify({ session_id: SESSION, tool_name: "AskUserQuestion", tool_response: { answers: { q: "a" } } });
+    const noSession = JSON.stringify({ tool_name: "AskUserQuestion", tool_response: { questions: [], answers: { q: "a" } } });
+    const notString = asked({ q: 1 });
     const badResponse = asked({ q: "a" }, { response: 1 });
     const badNote = asked({ q: "a" }, { annotations: { q: { notes: true } } });
-    for (const input of [bash, noAnswers, noSession, notString, badResponse, badNote, "not json", "[]"]) expect([input, record(root, input).code]).toEqual([input, 2]);
-    expect(record(root, "not json").err).toContain("invalid JSON");
+    const badAfk = asked({ q: "a" }, { afkTimeoutMs: "soon" });
+    const cases: [string, string, string | null][] = [
+      [bash, "not-question-tool", SESSION],
+      [noAnswers, "malformed", SESSION],
+      [noQuestions, "malformed", SESSION],
+      [noSession, "no-session", null],
+      [notString, "malformed", SESSION],
+      [badResponse, "malformed", SESSION],
+      [badNote, "malformed", SESSION],
+      [badAfk, "malformed", SESSION],
+      ["not json", "invalid-json", null],
+      ["[]", "not-object", null],
+    ];
+    const parsed = cases.map(([input]) => parseAsked(input)).map((p) => (p.ok ? "recorded" : [p.failure.reason, p.failure.session]));
+    expect(parsed).toEqual(cases.map(([, reason, session]) => [reason, session]));
+    // reason: each spawn costs about half a second, so the CLI runs only one refusal with a session and one without
+    const cli = record(root, bash);
+    const json = record(root, "not json", { CLAUDECODE: "1" }); // no session in the data: BR-2023 inside Claude Code
+    expect([cli.code, json.code]).toEqual([2, 2]);
+    expect(json.err).toContain("invalid JSON");
     expect(records(root)).toEqual([]);
+    expect(kind(root, "human.asked.refuse").map((e) => [e["actor"], e["reason"], e["session"]])).toEqual([
+      ["agent:3d606482", "not-question-tool", SESSION],
+      [expect.stringMatching(/^agent:/), "invalid-json", null],
+    ]);
   });
 
-  test("BR-2276: a relayed answer is checked against the latest record of the same agent only, and pending --all shows the mark", () => {
-    const root = project();
-    for (let i = 0; i < 4; i++) expect(canon(root, "agent:x", false, "human", "ask", `Q${i}?`).code).toBe(0);
+  test("BR-2276: a relayed answer matches only a record of the same question in the same session; the same label answered to another question is not a match", () => {
+    const root = hooked();
     const d = ws(root).db;
-    expect(answer(d, 1, "yes", "agent:3d606482", "nothing yet", false).ok).toBe(true); // no record at all
+    for (const q of ["Ship it?", "Ship it?", "Delete the old data?", "Ship it?"]) ask(d, "agent:x", null, q, []);
     expect(record(root, asked({ "Ship it?": "yes" })).code).toBe(0);
-    expect(record(root, asked({ "Ship it?": "no" }, {}, "ffffffff-other")).code).toBe(0); // another session's
-    expect(answer(d, 2, "yes", "agent:3d606482", " yes ", false).ok).toBe(true);
-    expect(answer(d, 3, "yes", "agent:3d606482", "好的，发吧", false).ok).toBe(true);
-    expect(answer(d, 4, "no", "agent:3d606482", "no", false).ok).toBe(true); // "no" is only in the other session's record
-    expect(questions(d, "all").map((q) => q.witness)).toEqual(["none", "match", "none", "none"]);
-    expect(questions(d, "all")[1]?.relayed).toBe("yes"); // saved trimmed (BR-2021)
-    const witness = d.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'human.answer' ORDER BY id").all().map((e) => (JSON.parse(e.detail) as { witness: string }).witness);
-    expect(witness).toEqual(["none", "match", "none", "none"]);
+    recordAsked(d, "agent:3d606482", rec(SESSION, [{ question: "Proceed?", answer: "yes", note: null }]));
+    recordAsked(d, "agent:3d606482", rec("ffffffff-other", [{ question: "Ship it?", answer: "no", note: null }])); // another session's
+    expect(relay(root, SESSION, "agent:3d606482", 1, "yes", " yes ")).toBe(0);
+    expect(answer(d, 2, "yes", "agent:3d606482", "好的，发吧", false, ctx(SESSION)).ok).toBe(true);
+    expect(answer(d, 3, "yes", "agent:3d606482", "yes", false, ctx(SESSION)).ok).toBe(true); // "yes" was the answer to Proceed?, never to this question
+    expect(relay(root, SESSION, "agent:k", 4, "yes", "yes")).toBe(0); // another actor name, the same session
+    expect(witnesses(root)).toEqual(["match", "differs", "unasked", "match"]);
+    const witness = kind(root, "human.answer").map((e) => e["witness"]);
+    expect(witness).toEqual(["match", "differs", "unasked", "match"]);
+  });
+
+  test("BR-2276: a record of the same actor in another session does not count; without a session id the relay is marked no-session", () => {
+    const d = db();
+    const [a, b, c] = [ask(d, "agent:a", null, "Ship it?", []), ask(d, "agent:a", null, "Ship it?", []), ask(d, "agent:a", null, "Ship it?", [])];
+    recordAsked(d, "agent:x", rec("s-1", [{ question: "Ship it?", answer: "yes", note: null }]));
+    expect(answer(d, a, "yes", "agent:x", "yes", false, ctx("s-2")).ok).toBe(true);
+    expect(answer(d, b, "yes", "agent:x", "yes", false, ctx(null)).ok).toBe(true);
+    expect(answer(d, c, "yes", "agent:x", "yes", false, ctx("s-1")).ok).toBe(true);
+    expect(questions(d, "all").map((x) => x.witness)).toEqual(["no-record", "no-session", "match"]);
+  });
+
+  test("BR-2276: only this question's answer and note count, the latest record of it wins, and the call's freeform reply counts", () => {
+    const d = db();
+    const q = [1, 2, 3, 4, 5].map(() => ask(d, "agent:a", null, " Ship it? ", []));
+    recordAsked(d, "agent:x", rec("s", [{ question: "Ship it?", answer: "no", note: null }, { question: "Proceed?", answer: "yes", note: "周五" }]));
+    expect(answer(d, q[0]!, "yes", "agent:x", "yes", false, ctx("s")).ok).toBe(true); // Proceed?'s answer
+    expect(answer(d, q[1]!, "f", "agent:x", "周五", false, ctx("s")).ok).toBe(true); // Proceed?'s note
+    recordAsked(d, "agent:x", rec("s", [{ question: "Ship it?", answer: "yes", note: "周五再发" }], "先别发"));
+    expect(answer(d, q[2]!, "no", "agent:x", "no", false, ctx("s")).ok).toBe(true); // only in the older record
+    expect(answer(d, q[3]!, "f", "agent:x", "周五再发", false, ctx("s")).ok).toBe(true);
+    expect(answer(d, q[4]!, "w", "agent:x", "先别发", false, ctx("s")).ok).toBe(true);
+    expect(questions(d, "all").map((x) => x.witness)).toEqual(["differs", "differs", "differs", "match", "match"]);
+  });
+
+  test("BR-2276: with no record of the question, a failed record, other records, a missing hook and nothing at all each get their own mark", () => {
+    const d = db();
+    const q = [1, 2, 3, 4].map(() => ask(d, "agent:a", null, "Ship it?", []));
+    d.event("agent:x", "human.asked.refuse", null, { reason: "malformed", session: "failed" });
+    recordAsked(d, "agent:x", rec("failed", [{ question: "Other?", answer: "yes", note: null }]));
+    recordAsked(d, "agent:x", rec("other", [{ question: "Other?", answer: "yes", note: null }]));
+    expect(answer(d, q[0]!, "yes", "agent:x", "yes", false, ctx("failed")).ok).toBe(true);
+    expect(answer(d, q[1]!, "yes", "agent:x", "yes", false, ctx("other")).ok).toBe(true);
+    expect(answer(d, q[2]!, "yes", "agent:x", "yes", false, ctx("empty", false)).ok).toBe(true);
+    expect(answer(d, q[3]!, "yes", "agent:x", "yes", false, ctx("empty", true)).ok).toBe(true);
+    expect(answer(d, ask(d, "agent:a", null, "Q?", []), "yes", "human:dz", undefined, true, ctx("other")).ok).toBe(true);
+    expect(questions(d, "all").map((x) => x.witness)).toEqual(["record-failed", "unasked", "no-hook", "no-record", null]);
+  });
+
+  test("BR-2276: a D-45 record without questions is read by its answers, never by its notes", () => {
+    const d = db();
+    const [a, b] = [ask(d, "agent:a", null, "Ship it?", []), ask(d, "agent:a", null, "Ship it?", [])];
+    d.event("agent:x", "human.asked", null, { session: "s", tool_use_id: null, answers: [{ question: "Ship it?", answer: "yes" }], response: null, notes: ["周五再发"] });
+    expect(answer(d, a, "yes", "agent:x", "yes", false, ctx("s")).ok).toBe(true);
+    expect(answer(d, b, "f", "agent:x", "周五再发", false, ctx("s")).ok).toBe(true);
+    expect(questions(d, "all").map((x) => x.witness)).toEqual(["match", "differs"]);
+  });
+
+  test("BR-2276: through the CLI, no record hook in the primary checkout's settings is no-hook, with it no-record", () => {
+    const bare = project();
+    ask(ws(bare).db, "agent:x", null, "Ship it?", []);
+    expect(relay(bare, SESSION, "agent:3d606482", 1, "yes", "yes")).toBe(0);
+    const root = hooked();
+    ask(ws(root).db, "agent:x", null, "Ship it?", []);
+    expect(relay(root, SESSION, "agent:3d606482", 1, "yes", "yes")).toBe(0);
+    expect([witnesses(bare), witnesses(root)]).toEqual([["no-hook"], ["no-record"]]);
+  });
+
+  test("BR-2289: pending --all shows each mark's own words after a relayed answer, D-45's none its old words, and nothing after a direct answer", () => {
+    const root = hooked();
+    const d = ws(root).db;
+    for (let i = 0; i < 3; i++) ask(d, "agent:x", null, "Ship it?", []);
+    recordAsked(d, "agent:3d606482", rec(SESSION, [{ question: "Ship it?", answer: "yes", note: null }]));
+    expect(answer(d, 1, "yes", "agent:3d606482", "yes", false, ctx(SESSION)).ok).toBe(true);
+    expect(answer(d, 2, "no", "agent:3d606482", "no", false, ctx(SESSION)).ok).toBe(true);
+    expect(relay(root, null, "agent:3d606482", 3, "no", "no")).toBe(0);
     const shown = canon(root, "agent:x", false, "human", "pending", "--all").out;
     expect(shown).toContain('→ yes (agent:3d606482 relaying the human: "yes") [matches Claude Code\'s record]');
-    expect(shown).toContain('→ yes (agent:3d606482 relaying the human: "好的，发吧") [no matching Claude Code record]');
-  });
-
-  test("BR-2276: only the latest record counts; its freeform reply and notes match too; a direct human answer gets no mark", () => {
-    const d = db();
-    const q = [1, 2, 3, 4].map((i) => ask(d, "agent:a", null, `Q${i}?`, []));
-    recordAsked(d, "agent:x", { session: "x", tool_use_id: null, answers: [{ question: "Ship it?", answer: "yes" }], response: null, notes: [] });
-    recordAsked(d, "agent:x", { session: "x", tool_use_id: null, answers: [{ question: "Ship it?", answer: "no" }], response: " 先别发 ", notes: ["周五再发"] });
-    expect(answer(d, q[0]!, "yes", "agent:x", "yes", false).ok).toBe(true);
-    expect(answer(d, q[1]!, "wait", "agent:x", "先别发", false).ok).toBe(true);
-    expect(answer(d, q[2]!, "friday", "agent:x", "周五再发", false).ok).toBe(true);
-    expect(answer(d, q[3]!, "yes", "human:dz", undefined, true).ok).toBe(true);
-    const all = questions(d, "all");
-    expect(all.map((x) => x.witness)).toEqual(["none", "match", "match", null]);
-    expect(witnessMark(all[3]!)).toBe("");
-    recordAsked(d, "agent:k", { session: "x", tool_use_id: null, answers: [{ question: "Ship it?", answer: "yes" }], response: null, notes: [] });
-    const [k1, k2] = [ask(d, "agent:a", null, "Q5?", []), ask(d, "agent:a", null, "Q6?", [])];
-    expect(answer(d, k1, "yes", "agent:3d606482", "yes", false).ok).toBe(true); // recorded as agent:k, relayed as someone else
-    expect(answer(d, k2, "yes", "agent:k", "yes", false).ok).toBe(true);
-    expect(questions(d, "all").slice(4).map((x) => x.witness)).toEqual(["none", "match"]);
+    expect(shown).toContain('→ no (agent:3d606482 relaying the human: "no") [differs from Claude Code\'s record of this question]');
+    expect(shown).toContain("[no Claude Code session to check against]");
+    const marks = (["record-failed", "unasked", "no-hook", "no-record", "none"] as const).map((witness) => witnessMark({ witness }));
+    expect(marks).toEqual([
+      " [Claude Code's record failed in this session]",
+      " [this question is not in Claude Code's records of this session]",
+      " [no Claude Code record: the record hook is not installed]",
+      " [no Claude Code record in this session]",
+      " [no matching Claude Code record]",
+    ]);
+    expect(witnessMark({ witness: null })).toBe("");
   });
 });

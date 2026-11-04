@@ -5,7 +5,8 @@ import { findDoc } from "../../knowledge/query/query.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
 import { changeOffMain, mainCorpus } from "../session/session.ts";
 import type { Workspace } from "../workspace.ts";
-import { answer, answeredBy, ask, parseAsked, questions, recordAsked, witnessMark } from "./questions.ts";
+import { hookStatus } from "../../cli/install/hook.ts";
+import { answer, answeredBy, ask, parseAsked, questions, recordActor, recordAsked, refuseRecord, witnessMark } from "./questions.ts";
 
 /**
  * The change `--change` names, as its id: a change on main or on its own change branch, matched in any case as
@@ -54,9 +55,13 @@ const human = defineCommand({
       meta: { description: "Record what the human answered in Claude Code's question tool (run by the PostToolUse hook, reads its data on stdin)" },
       args: {},
       async run() {
-        const parsed = must(parseAsked(await Bun.stdin.text()));
+        const parsed = parseAsked(await Bun.stdin.text());
         const ws = workspace();
-        recordAsked(ws.db, parsed.actor, parsed.record);
+        const actor = must(recordActor(parsed.ok ? parsed.record.session : parsed.failure.session));
+        if (parsed.ok) return recordAsked(ws.db, actor, parsed.record);
+        // reason: a failed record is kept with its session, so a later relay can say the record failed instead of "no record" (BR-2275, BR-2276, D-47)
+        refuseRecord(ws.db, actor, parsed.failure);
+        fail({ code: "invalid", message: parsed.failure.message });
       },
     }),
     answer: defineCommand({
@@ -72,7 +77,10 @@ const human = defineCommand({
         if (!/^\d+$/.test(String(args.id))) fail({ code: "invalid", message: `question id must be a number, as \`canon human pending\` shows it (#<n>); got ${String(args.id)}` });
         const ws = workspace();
         // reason: the terminal check runs inside answer(), so its refusal is recorded too (BR-2026, issue #57)
-        must(answer(ws.db, Number(args.id), String(args.text), ws.actor, relayed, process.stdin.isTTY === true));
+        // reason: the relaying session, not the actor, ties a relay to the question tool's record; the hook that writes
+        // the record is looked for where Claude Code reads it, the primary checkout (BR-2276, D-47)
+        const ctx = { session: process.env["CLAUDE_CODE_SESSION_ID"]?.trim() || null, hookInstalled: () => { const h = hookStatus(ws.primary); return h.ok && h.value.record; } };
+        must(answer(ws.db, Number(args.id), String(args.text), ws.actor, relayed, process.stdin.isTTY === true, ctx));
         say(`#${args.id} answered${relayed ? ` (relayed by ${ws.actor})` : ""}`);
       },
     }),
