@@ -176,6 +176,26 @@ describe("the claim during a landing", () => {
     }
   });
 
+  test("BR-2258: when the index cannot be replaced and the files cannot be put back either, the result says so instead of saying nothing changed", () => {
+    const root = project();
+    const s = startNew(root, "Reopen undo fails");
+    const path = sh(s.worktree, "diff", "--name-only", "main", "HEAD");
+    writeFileSync(join(s.worktree, path), readFileSync(join(s.worktree, path), "utf8").replace("status: open", "status: done"));
+    sh(s.worktree, "commit", "-qam", `canon: close ${s.change}`);
+    const top = sh(s.worktree, "rev-parse", "HEAD");
+    const parent = sh(s.worktree, "rev-parse", "HEAD~1");
+    const rename = () => {
+      writeFileSync(join(s.worktree, path), readFileSync(join(s.worktree, path), "utf8") + "\nedited meanwhile\n"); // an editor, not git
+      throw new Error("EIO: i/o error");
+    };
+    const failed = moveBranch(s.worktree, top, parent, "test", 0, { copy: copyFileSync, rename });
+    expect(failed?.kind).toBe("io");
+    expect(failed?.message).toContain("the files could not be put back");
+    expect(failed?.message).not.toContain("the branch and the files were left as they were");
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(top);
+    expect(readFileSync(join(s.worktree, path), "utf8")).toContain("edited meanwhile"); // the edit is kept
+  });
+
   test("BR-2018: a --finish landing that times out in the queue takes its close commit back too", async () => {
     const root = project();
     const s = startNew(root, "Timed out finish");
