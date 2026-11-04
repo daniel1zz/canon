@@ -383,7 +383,7 @@ function alwaysFixture(globs: string, extra: Record<string, string> = {}) {
 }
 
 describe("canon work test always_tests", () => {
-  test("BR-2297: an always_tests file is selected and run when the change touches nothing related, reason always", () => {
+  test("BR-2297 BR-2157: an always_tests file is selected and run when the change touches nothing related, reason always", () => {
     const { wt } = alwaysFixture('["src/d.test.ts"]');
     write(wt, { "README.md": "changed\n" });
     expect(reasons(wt)).toEqual({ "src/d.test.ts": "always" });
@@ -404,7 +404,7 @@ describe("canon work test always_tests", () => {
     expect(reasons(wt)).toEqual({ "src/x/scan-a.test.ts": "changed; always", "src/y/scan-b.test.ts": "changed; always" });
   });
 
-  test("BR-2297: a glob that matches no test file, missing or outside tests, is printed and exits 1 while the rest still runs", () => {
+  test("BR-2297 BR-2158 BR-2227: a glob that matches no test file, missing or outside tests, is printed and exits 1 while the rest still runs", () => {
     const { wt } = alwaysFixture('["src/d.test.ts", "src/gone.test.ts", "tools/x.test.ts"]', { "tools/x.test.ts": "export {};\n" });
     const r = canon(wt, "work", "test");
     expect(r.code).toBe(1);
@@ -423,7 +423,7 @@ describe("canon work test always_tests", () => {
     expect(runs(wt)).toEqual(["src/b.test.ts", "src/c.test.ts", "src/d.test.ts", "src/e.test.ts", "src/f.test.ts"]);
   });
 
-  test("BR-2297: always_tests that is not a list of non-empty strings fails every command with exit 2", () => {
+  test("BR-2297 BR-2045: always_tests that is not a list of non-empty strings fails every command with exit 2", () => {
     const { wt } = fixture();
     for (const bad of ['"src/d.test.ts"', "[3]", '[""]']) {
       write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\nalways_tests: ${bad}\n` });
