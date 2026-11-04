@@ -622,6 +622,24 @@ describe("a passing main", () => {
     process.kill(Number(readFileSync(join(dir, "ready.pid"), "utf8").trim()), "SIGKILL"); // nothing could end it
   });
 
+  test("BR-2285: SIGKILL sent, then the process table cannot be read to the end of the 5 s: the log says whether it ended cannot be read", async () => {
+    const { out } = await termedWhile((ready) => `hooks:\n  after_green: 'touch ${ready}; while true; do sleep 0.1; done'\n`, {
+      bin: (d) => {
+        const bin = join(d, "bin");
+        mkdirSync(bin, { recursive: true });
+        // reason: a made-up group member no signal ends keeps the wait and the SIGKILL step going; from 12 s after the
+        // first listing, past the 10 s wait and the first SIGKILL, every listing fails. The wrapper's own children are left out.
+        writeFileSync(
+          join(bin, "ps"),
+          `#!/bin/sh\nif [ "$2" = "pid=,ppid=,pgid=,stat=" ]; then [ -e ${d}/t0 ] || date +%s > ${d}/t0; [ $(( $(date +%s) - $(cat ${d}/t0) )) -ge 12 ] && exit 1; /bin/ps "$@" | awk -v me=$$ '$2 != me' && echo "99999999 $PPID $PPID S"; exit; fi\nexec /bin/ps "$@"\n`,
+          { mode: 0o755 },
+        );
+        return bin;
+      },
+    });
+    expect(out).toContain("sent SIGKILL, and whether it ended cannot be read");
+  });
+
   test("BR-2285: a process still listed 5 s after SIGKILL is reported as still running, and the watcher still exits 143 and gives up its place", async () => {
     const { out, root } = await termedWhile((ready) => `hooks:\n  after_green: 'touch ${ready}; while true; do sleep 0.1; done'\n`, {
       bin: (d) => {
