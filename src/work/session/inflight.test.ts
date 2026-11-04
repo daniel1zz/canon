@@ -119,6 +119,19 @@ describe("brief's open changes", () => {
   });
 });
 
+describe("brief in a claimed worktree", () => {
+  test("BR-2024: a change only on its branch shows in the main checkout's brief, never in another change's worktree", () => {
+    const { root, wt, branch } = withBranchOnly();
+    expect(canon(wt, "work", "stop", "--release", "--next", "land it").code).toBe(0);
+    const other = canon(root, "work", "start", id(1));
+    expect(other.code).toBe(0);
+    const mine = canon(other.out.match(/cd (.+)/)![1]!.trim(), "brief").out;
+    expect(mine).toContain(`You are in ${id(1)}`);
+    expect(mine).not.toContain(id(2));
+    expect(canon(root, "brief").out).toContain(`${id(2)} (on branch ${branch}, handoff)`);
+  });
+});
+
 describe("started work in the owner's order", () => {
   test("BR-2148: unlisted changes with a handoff come before those without, each by id, after the backlog", () => {
     const root = project();
