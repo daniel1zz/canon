@@ -114,4 +114,13 @@ describe("canon init, install and update ignore Claude Code's subagent worktrees
       writeFileSync(join(src, "canon-a/SKILL.md"), "a v1\n");
     }
   });
+
+  test("BR-2084: update --check only reads: with the line missing it reports it and leaves info/exclude as it was", () => {
+    const root = repo();
+    expect(canon(root, "init", "--floor", "true").code).toBe(0);
+    writeFileSync(excludePath(root), ".env\n");
+    const check = canon(root, "update", "--check");
+    expect([check.code, check.out]).toEqual([1, expect.stringContaining(`git exclude: ${LINE}`)]);
+    expect(readFileSync(excludePath(root), "utf8")).toBe(".env\n");
+  });
 });
