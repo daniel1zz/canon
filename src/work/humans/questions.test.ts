@@ -286,17 +286,19 @@ describe("Claude Code's record of the question tool", () => {
     expect(questions(d, "all").map((x) => x.witness)).toEqual(["no-record", "no-session", "match"]);
   });
 
-  test("BR-2276: only this question's answer and note count, the latest record of it wins, and the call's freeform reply counts", () => {
+  test("BR-2276: only this question's answer and note count, the latest record of it wins, and the freeform reply counts only when the call asked just this question", () => {
     const d = db();
-    const q = [1, 2, 3, 4, 5].map(() => ask(d, "agent:a", null, " Ship it? ", []));
+    const q = [1, 2, 3, 4, 5, 6].map(() => ask(d, "agent:a", null, " Ship it? ", []));
     recordAsked(d, "agent:x", rec("s", [{ question: "Ship it?", answer: "no", note: null }, { question: "Proceed?", answer: "yes", note: "周五" }]));
     expect(answer(d, q[0]!, "yes", "agent:x", "yes", false, ctx("s")).ok).toBe(true); // Proceed?'s answer
     expect(answer(d, q[1]!, "f", "agent:x", "周五", false, ctx("s")).ok).toBe(true); // Proceed?'s note
     recordAsked(d, "agent:x", rec("s", [{ question: "Ship it?", answer: "yes", note: "周五再发" }], "先别发"));
     expect(answer(d, q[2]!, "no", "agent:x", "no", false, ctx("s")).ok).toBe(true); // only in the older record
     expect(answer(d, q[3]!, "f", "agent:x", "周五再发", false, ctx("s")).ok).toBe(true);
-    expect(answer(d, q[4]!, "w", "agent:x", "先别发", false, ctx("s")).ok).toBe(true);
-    expect(questions(d, "all").map((x) => x.witness)).toEqual(["differs", "differs", "differs", "match", "match"]);
+    expect(answer(d, q[4]!, "w", "agent:x", "先别发", false, ctx("s")).ok).toBe(true); // the reply of a one-question call
+    recordAsked(d, "agent:x", rec("s", [{ question: "Ship it?", answer: "yes", note: null }, { question: "Proceed?", answer: "yes", note: null }, { question: "Merge?", answer: "yes", note: null }], "好"));
+    expect(answer(d, q[5]!, "w", "agent:x", "好", false, ctx("s")).ok).toBe(true); // the reply of a three-question call belongs to none of them
+    expect(questions(d, "all").map((x) => x.witness)).toEqual(["differs", "differs", "differs", "match", "match", "differs"]);
   });
 
   test("BR-2276: with no record of the question, a failed record, other records, a missing hook and nothing at all each get their own mark", () => {
@@ -335,14 +337,16 @@ describe("Claude Code's record of the question tool", () => {
   test("BR-2289: pending --all shows each mark's own words after a relayed answer, D-45's none its old words, and nothing after a direct answer", () => {
     const root = hooked();
     const d = ws(root).db;
-    for (let i = 0; i < 3; i++) ask(d, "agent:x", null, "Ship it?", []);
+    for (let i = 0; i < 4; i++) ask(d, "agent:x", null, "Ship it?", []);
     recordAsked(d, "agent:3d606482", rec(SESSION, [{ question: "Ship it?", answer: "yes", note: null }]));
     expect(answer(d, 1, "yes", "agent:3d606482", "yes", false, ctx(SESSION)).ok).toBe(true);
     expect(answer(d, 2, "no", "agent:3d606482", "no", false, ctx(SESSION)).ok).toBe(true);
     expect(relay(root, null, "agent:3d606482", 3, "no", "no")).toBe(0);
+    expect(answer(d, 4, "no", "agent:3d606482", "yes", false, ctx(SESSION)).ok).toBe(true); // the words match; the answer kept is another
     const shown = canon(root, "agent:x", false, "human", "pending", "--all").out;
-    expect(shown).toContain('→ yes (agent:3d606482 relaying the human: "yes") [matches Claude Code\'s record]');
-    expect(shown).toContain('→ no (agent:3d606482 relaying the human: "no") [differs from Claude Code\'s record of this question]');
+    expect(shown).toContain('→ yes (agent:3d606482 relaying the human: "yes") [the human\'s words match Claude Code\'s record]');
+    expect(shown).toContain('→ no (agent:3d606482 relaying the human: "no") [the human\'s words differ from Claude Code\'s record of this question]');
+    expect(shown).toContain('→ no (agent:3d606482 relaying the human: "yes") [the human\'s words match Claude Code\'s record]');
     expect(shown).toContain("[no Claude Code session to check against]");
     const marks = (["record-failed", "unasked", "no-hook", "no-record", "none"] as const).map((witness) => witnessMark({ witness }));
     expect(marks).toEqual([

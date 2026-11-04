@@ -95,8 +95,8 @@ export function answeredBy(q: Pick<Question, "answered_by" | "relayed">): string
 export type Witness = "match" | "differs" | "record-failed" | "unasked" | "no-hook" | "no-record" | "no-session" | "none";
 
 const MARKS: Record<Witness, string> = {
-  match: " [matches Claude Code's record]",
-  differs: " [differs from Claude Code's record of this question]",
+  match: " [the human's words match Claude Code's record]",
+  differs: " [the human's words differ from Claude Code's record of this question]",
   "record-failed": " [Claude Code's record failed in this session]",
   unasked: " [this question is not in Claude Code's records of this session]",
   "no-hook": " [no Claude Code record: the record hook is not installed]",
@@ -242,7 +242,8 @@ export function witnessFor(db: CoordDb, text: string, quote: string, ctx: Witnes
     const r = storedQuestions(row.detail);
     const q = r.questions.find((x) => x.question.trim() === asked);
     if (!q) continue;
-    const said = [q.answer, q.note, r.response].filter((s): s is string => typeof s === "string").map((s) => s.trim());
+    // reason: the freeform reply answers the whole call, not one question, so it counts only when the call asked just this one (BR-2276, D-47)
+    const said = [q.answer, q.note, r.questions.length === 1 ? r.response : null].filter((s): s is string => typeof s === "string").map((s) => s.trim());
     return said.includes(quote) ? "match" : "differs";
   }
   if (rows.some((r) => r.kind === "human.asked.refuse")) return "record-failed";
