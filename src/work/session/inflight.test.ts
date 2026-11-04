@@ -232,6 +232,14 @@ describe("brief's open changes", () => {
   });
 });
 
+describe("brief's unfinished changes", () => {
+  test("BR-2149: brief lists a change closed only on its branch among the unfinished ones, marked", () => {
+    const root = mainWithC1();
+    onBranch(root, `change/${id(6)}-x`, () => changeFile(root, 6, "done"));
+    expect(canon(root, "brief").out).toContain(`${PICK}${id(6)} (on branch change/${id(6)}-x, closed on branch, not landed), ${id(1)}\n`);
+  });
+});
+
 describe("brief in a claimed worktree", () => {
   test("BR-2024: a change only on its branch shows in the main checkout's brief, never in another change's worktree", () => {
     const { root, wt, branch } = withBranchOnly();
