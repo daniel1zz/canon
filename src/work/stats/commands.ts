@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 import { entry, fail, json, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
 import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "./stats.ts";
-import { pendingBlocks, recordVerdict, renderPending, renderVerdictSummary, verdictSummary } from "./verdict.ts";
+import { pendingBlocks, pendingJson, recordVerdict, renderPending, renderRun, renderVerdictSummary, runVerdicts, verdictSummary } from "./verdict.ts";
 import { dirname } from "node:path";
 import { CoordDb } from "../db.ts";
 import { worktreesDir } from "../session/session.ts";
@@ -61,33 +61,50 @@ const events = defineCommand({
   },
 });
 
-/** `canon verdict`: whether a rule-review block named a real problem, judged by someone outside the change (D-35). */
+/** `canon verdict`: whether each rule-review finding was real, judged blind by a model canon runs, or self-reported by a human (D-49). */
 const verdict = defineCommand({
-  meta: { description: "Verdicts on rule-review blocks: real problem or wording changed just to pass, judged by an executor outside the change" },
+  meta: { description: "Verdicts on rule-review findings: real, spurious or unclear; model verdicts are made blind by canon, human verdicts are self-reported" },
   subCommands: {
     pending: defineCommand({
-      meta: { description: "Review blocks of landed changes your judge kind (agent or human) has not judged, with the commit blocked and the commit landed" },
+      meta: { description: "Review blocks of landed changes with a finding missing a model or human verdict, each finding's verdicts and the commit blocked" },
       args: { json: { type: "boolean" } },
       run({ args }) {
         const ws = workspace();
-        const blocks = pendingBlocks(ws.db, ws.root, ws.actor);
-        if (args.json) return json(blocks);
+        const blocks = pendingBlocks(ws.db, ws.root);
+        if (args.json) return json(pendingJson(blocks));
         say(renderPending(blocks));
       },
     }),
-    record: defineCommand({
-      meta: { description: "Record a verdict on one review block: real (the block named a real problem) or wording (only reworded to pass)" },
+    run: defineCommand({
+      meta: { description: "Judge up to --limit blocks with the project's review command, run on the blocked commit's tree alone; --dry-run shows what would be judged and the prompt sizes" },
       args: {
-        refusal: { type: "positional", required: true, description: "Event id of the land.refuse with reason review" },
-        verdict: { type: "positional", required: true, description: "real | wording" },
-        reason: { type: "string", description: "What in the code before and after the block shows it" },
+        limit: { type: "string", description: "How many blocks to judge (one judge command run each)" },
+        "dry-run": { type: "boolean", description: "Run nothing and write nothing: list the blocks and their prompt sizes" },
+      },
+      async run({ args }) {
+        const raw = args.limit === undefined ? "" : String(args.limit);
+        if (!/^[1-9]\d*$/.test(raw)) fail({ code: "invalid", message: `--limit must be how many blocks to judge (a whole number, 1 or more), got ${JSON.stringify(args.limit)}` });
+        const ws = workspace();
+        const command = ws.config.review;
+        if (!command) fail({ code: "io", message: "no judge command: canon verdict run uses the project's review command (canon/config.yaml `review`), and none is configured" });
+        const r = await runVerdicts(ws.db, ws.root, ws.actor, command, Number(raw), args["dry-run"] === true);
+        say(renderRun(r));
+        if (r.failure) fail({ code: "io", message: r.failure });
+      },
+    }),
+    record: defineCommand({
+      meta: { description: "Record a human verdict on one finding of a review block: real, spurious or unclear (not from a Claude Code session)" },
+      args: {
+        block: { type: "positional", required: true, description: "Event id of the review.block" },
+        finding: { type: "positional", required: true, description: "The finding's number in that block (1, 2, ...)" },
+        verdict: { type: "positional", required: true, description: "real | spurious | unclear" },
+        reason: { type: "string", description: "What in the blocked commit shows it" },
       },
       run({ args }) {
         const ws = workspace();
-        const id = String(args.refusal);
-        if (!/^\d+$/.test(id)) fail({ code: "invalid", message: `the refusal must be an event id (a whole number), got ${JSON.stringify(args.refusal)}` });
-        const r = must(recordVerdict(ws.db, ws.actor, Number(id), String(args.verdict), typeof args.reason === "string" ? args.reason : ""));
-        say(`recorded a ${r.judge} verdict on refusal ${id} (${r.subject}): ${String(args.verdict)}`);
+        const v = String(args.verdict);
+        const r = must(recordVerdict(ws.db, ws.root, ws.actor, String(args.block), String(args.finding), v, typeof args.reason === "string" ? args.reason : ""));
+        say(`recorded a human verdict on finding ${String(args.finding)} of block ${String(args.block)} (${r.subject}): ${v}`);
       },
     }),
   },
