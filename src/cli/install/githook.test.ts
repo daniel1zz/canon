@@ -1,4 +1,5 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, spyOn, test } from "bun:test";
+import * as fs from "node:fs";
 import { existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -152,6 +153,99 @@ describe("installing the guard", () => {
     expect(readFileSync(hookPath(root), "utf8")).toBe(guardScript("main"));
     expect(statSync(hookPath(root)).mode & 0o111).not.toBe(0);
     expect(leftovers(root)).toEqual([]);
+  });
+});
+
+describe("installing the guard while someone else writes the hook", () => {
+  const FOREIGN = "#!/bin/sh\nexit 0\n";
+  const OLD = `#!/bin/sh\n${GUARD_HEADER}\nexit 0\n`;
+  const realLink = fs.linkSync;
+  const leftovers = (root: string) => readdirSync(join(root, ".git/hooks")).filter((f) => f.includes(".canon-"));
+
+  /** A repository whose hooks directory holds `hook` (or nothing). */
+  function withHook(hook?: string): string {
+    const root = repo();
+    mkdirSync(join(root, ".git/hooks"), { recursive: true });
+    if (hook !== undefined) writeFileSync(hookPath(root), hook, { mode: 0o755 });
+    return root;
+  }
+
+  /** Runs ensureGuard with linkSync replaced by `link`, restoring it afterwards. */
+  function guarded(root: string, link: (from: string, to: string) => void, beforeReplace?: () => void) {
+    const spy = spyOn(fs, "linkSync").mockImplementation(((from: fs.PathLike, to: fs.PathLike) => link(String(from), String(to))) as typeof fs.linkSync);
+    try {
+      return ensureGuard(root, "main", beforeReplace);
+    } finally {
+      spy.mockRestore();
+    }
+  }
+
+  const noHardLinks = () => {
+    throw Object.assign(new Error("EPERM: operation not permitted, link"), { code: "EPERM" });
+  };
+
+  test("BR-2124: someone else's hook moved aside is kept beside the path when the path is taken again before it can go back", () => {
+    const root = withHook(OLD);
+    const r = guarded(
+      root,
+      (from, to) => {
+        if (from.endsWith(".old")) writeFileSync(to, "#!/bin/sh\necho B\n");
+        realLink(from, to);
+      },
+      () => writeFileSync(hookPath(root), FOREIGN),
+    );
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect([r.error.code, r.error.message]).toEqual(["conflict", expect.stringContaining(`${hookPath(root)}.canon-`)]);
+    expect(readFileSync(hookPath(root), "utf8")).toBe("#!/bin/sh\necho B\n");
+    const kept = leftovers(root);
+    expect(kept.length).toBe(1);
+    expect(readFileSync(join(root, ".git/hooks", kept[0]!), "utf8")).toBe(FOREIGN);
+  });
+
+  test("BR-2124: a hook written on the empty path after canon moved its older guard aside is kept, the older guard deleted, conflict", () => {
+    const root = withHook(OLD);
+    const r = guarded(root, (from, to) => {
+      if (from.endsWith(".tmp")) writeFileSync(to, FOREIGN);
+      realLink(from, to);
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe("conflict");
+    expect(readFileSync(hookPath(root), "utf8")).toBe(FOREIGN);
+    expect(leftovers(root)).toEqual([]);
+  });
+
+  test("BR-2124: the current guard put on the path by another canon after the older one was moved aside counts as done", () => {
+    const root = withHook(OLD);
+    const r = guarded(root, (from, to) => {
+      if (from.endsWith(".tmp")) writeFileSync(to, guardScript("main"), { mode: 0o755 });
+      realLink(from, to);
+    });
+    expect(r).toEqual({ ok: true, value: false });
+    expect(readFileSync(hookPath(root), "utf8")).toBe(guardScript("main"));
+    expect(leftovers(root)).toEqual([]);
+  });
+
+  test("BR-2124 BR-2022: a hooks directory without hard links stops the install of a missing guard with an environment error, nothing left over", () => {
+    const root = withHook();
+    const r = guarded(root, noHardLinks);
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect([r.error.code, r.error.message]).toEqual(["io", expect.stringContaining("hard links")]);
+    expect(existsSync(hookPath(root))).toBe(false);
+    expect(leftovers(root)).toEqual([]);
+  });
+
+  test("BR-2124 BR-2022: without hard links, a hook written on the empty path while the older guard is aside is kept, the older guard left beside it", () => {
+    const root = withHook(OLD);
+    const r = guarded(root, (from, to) => {
+      if (from.endsWith(".tmp")) writeFileSync(to, FOREIGN);
+      noHardLinks();
+    });
+    expect(r.ok).toBe(false);
+    const kept = leftovers(root);
+    if (!r.ok) expect([r.error.code, r.error.message]).toEqual(["io", expect.stringContaining(kept[0] ?? "<nothing kept>")]);
+    expect(readFileSync(hookPath(root), "utf8")).toBe(FOREIGN);
+    expect(kept.length).toBe(1);
+    expect(readFileSync(join(root, ".git/hooks", kept[0]!), "utf8")).toBe(OLD);
   });
 });
 

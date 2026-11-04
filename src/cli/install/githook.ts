@@ -170,9 +170,14 @@ function replaceOld(root: string, main: string, tmp: string, path: string): Resu
   }
   const placed = placeExclusive(tmp, path);
   if (!placed.ok) {
-    // reason: the old guard is canon's own, so it may go back by rename, but only onto an empty path (BR-2124)
-    if (!existsSync(path) && !isLink(path)) renameSync(aside, path);
-    return placed;
+    // reason: the old guard goes back only by the same exclusive link; checking the path is empty and then renaming
+    // would overwrite a hook written in between (BR-2124)
+    const back = placeExclusive(aside, path);
+    if (back.ok) {
+      rmSync(aside, { force: true });
+      return placed;
+    }
+    return err("io", `${placed.error.message}; canon's older guard was moved aside and could not be put back, it is kept at ${aside}`);
   }
   rmSync(aside, { force: true });
   return placed.value ? ok(true) : takenMeanwhile(root, main, path);
