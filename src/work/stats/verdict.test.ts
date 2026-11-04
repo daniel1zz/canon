@@ -125,6 +125,17 @@ describe("canon verdict record", () => {
     expect(verdicts(db)).toBe(1);
   });
 
+  test("BR-2254: checks run in order: input before the id, the author before a duplicate; judging another block of the same change is no authorship", () => {
+    const db = blocked();
+    db.event("agent:a", "land.refuse", "C-182", { reason: "review", message: "m2", diff: "d2" }); // id 4
+    expect(recordVerdict(db, "agent:b", 2, "real", "r").ok).toBe(true);
+    const code = (r: ReturnType<typeof recordVerdict>) => (r.ok ? "ok" : r.error.code);
+    expect(code(recordVerdict(db, "agent:c", 999, "maybe", "r"))).toBe("invalid");
+    expect(code(recordVerdict(db, "agent:a", 2, "real", "r"))).toBe("refused");
+    expect(code(recordVerdict(db, "agent:b", 4, "wording", "r"))).toBe("ok");
+    expect(verdicts(db)).toBe(2);
+  });
+
   test("BR-2254: through the CLI the exit codes are 0, 5, 1, 3 and 2", () => {
     const root = project();
     const db = dbOf(root);
