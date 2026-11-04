@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claims, takeClaim } from "../../claims/claims.ts";
 import { enqueue, finishEntry, tryTurn } from "../queue/queue.ts";
@@ -7,7 +7,7 @@ import { handoffs, writeHandoff } from "../../session/handoffs.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
 import { land } from "../land.ts";
 import { reopen } from "./finish.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
+import { FAST, gapCommit, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
 // under load that alone came within 0.4 s of the 5 s default (C-111), so they get room, not the rest of the file.
@@ -112,6 +112,44 @@ describe("the claim during a landing", () => {
     expect(dirty.join("\n")).toContain("was not reopened");
     expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(checked.value);
     expect(readFileSync(join(s.worktree, path), "utf8")).toContain("local note");
+  });
+
+  test("BR-2258: a commit tried right after reopen moves the branch is refused by git, so HEAD and the files agree that the change is open", () => {
+    const root = project();
+    const s = startNew(root, "Reopen gap");
+    const path = sh(s.worktree, "diff", "--name-only", "main", "HEAD");
+    writeFileSync(join(s.worktree, path), readFileSync(join(s.worktree, path), "utf8").replace("status: open", "status: done"));
+    sh(s.worktree, "commit", "-qam", `canon: close ${s.change}`);
+    const parent = sh(s.worktree, "rev-parse", "HEAD~1");
+    writeFileSync(join(s.worktree, "app.txt"), "fix\n"); // the session's fix, not committed yet
+    const tried = gapCommit(root, s.worktree, parent);
+    const lines: string[] = [];
+    const reopened = reopen(s.worktree, { subject: s.change, path }, (l) => lines.push(l));
+    expect(existsSync(tried)).toBe(true); // the commit was tried in the gap
+    expect(reopened).toBe(true);
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(parent);
+    expect(sh(s.worktree, "show", `HEAD:${path}`)).toContain("status: open");
+    expect(sh(s.worktree, "status", "--porcelain")).toBe("M app.txt"); // the change file matches HEAD; the fix is still there, uncommitted
+    expect(readFileSync(tried, "utf8")).toContain("index.lock");
+  });
+
+  test("BR-2258: while another git command holds the worktree's index lock, reopen leaves the branch, the index and the files as they are and says why", () => {
+    const root = project();
+    const s = startNew(root, "Reopen locked");
+    const path = sh(s.worktree, "diff", "--name-only", "main", "HEAD");
+    writeFileSync(join(s.worktree, path), readFileSync(join(s.worktree, path), "utf8").replace("status: open", "status: done"));
+    sh(s.worktree, "commit", "-qam", `canon: close ${s.change}`);
+    const top = sh(s.worktree, "rev-parse", "HEAD");
+    const lock = sh(s.worktree, "rev-parse", "--path-format=absolute", "--git-path", "index.lock");
+    writeFileSync(lock, ""); // a git command that is still running
+    const lines: string[] = [];
+    expect(reopen(s.worktree, { subject: s.change, path }, (l) => lines.push(l))).toBe(false);
+    expect(existsSync(lock)).toBe(true); // not ours to remove
+    rmSync(lock);
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(top);
+    expect(sh(s.worktree, "status", "--porcelain")).toBe("");
+    expect(lines.join("\n")).toContain("was not reopened");
+    expect(lines.join("\n")).toContain("index.lock");
   });
 
   test("BR-2018: a --finish landing that times out in the queue takes its close commit back too", async () => {

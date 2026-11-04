@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { dirname, join } from "node:path";
 import { enqueue, finishEntry } from "../queue/queue.ts";
 import { land } from "../land.ts";
-import { FAST, project, sh, startNew, ws } from "../../testkit.ts";
+import { FAST, gapCommit, project, sh, startNew, ws } from "../../testkit.ts";
 
 // reason: end-to-end batches run real landings through 2 s queue polls and spawned landers on purpose (C-111).
 const TIMED = 60_000;
@@ -231,6 +231,30 @@ describe("a batch's own edges", () => {
     expect(out.kind).toBe("landed");
     expect(sh(b.worktree, "rev-parse", "HEAD")).toBe(moved);
     expect(said.some((m) => m.includes("branch moved after it joined the batch") && m.includes("git rebase main"))).toBe(true);
+  }, TIMED);
+
+  test("BR-2258: a commit tried while a landed member's branch follows main is refused by git, so the member never drops what the batch brought", async () => {
+    const { root } = batchProject("land_batch_max: 2\n");
+    const b = startNew(root, "Follows");
+    commitFile(b.worktree, "b.txt", "b\n");
+    const joined = sh(b.worktree, "rev-parse", "HEAD");
+    commitFile(root, "a.txt", "a\n"); // what the leader's change brought to main
+    sh(root, "cherry-pick", `${joined}~1`, joined); // B's commits on main, above it
+    const onMain = sh(root, "rev-parse", "main");
+    const other = ws(root, "agent:b");
+    const leader = enqueue(other.db, "/leader", "C-98", "agent:b");
+    other.db.db.query("UPDATE queue SET state = 'landing' WHERE id = ?").run(leader);
+    const landing = land(ws(b.worktree), FAST, () => {});
+    await until(() => entryOf(root, b.worktree)?.state === "waiting");
+    writeFileSync(join(b.worktree, "b.txt"), "fix\n"); // the session's fix, not committed yet
+    const tried = gapCommit(root, b.worktree, onMain);
+    other.db.db.query("UPDATE queue SET state = 'landed', batch = ?, head = ?, result = ? WHERE id = ?").run(leader, joined, onMain, entryOf(root, b.worktree)!.id);
+    expect((await landing).kind).toBe("landed");
+    expect(existsSync(tried)).toBe(true); // the commit was tried in the gap
+    expect(readFileSync(tried, "utf8")).toContain("index.lock");
+    expect(sh(b.worktree, "rev-parse", "HEAD")).toBe(onMain);
+    expect(sh(b.worktree, "show", "HEAD:a.txt")).toBe("a");
+    expect(sh(b.worktree, "status", "--porcelain")).toBe("M b.txt");
   }, TIMED);
 
   test("BR-2191: a member whose files have local edits the landed commit would overwrite keeps its branch and files, with the same hint", async () => {

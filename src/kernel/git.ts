@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { mkdirSync } from "node:fs";
+import { closeSync, copyFileSync, mkdirSync, openSync, renameSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { err, ok, type Result } from "./result.ts";
 
@@ -135,4 +135,57 @@ export function removeWorktree(cwd: string, ...args: string[]): Result<string> {
 export function listWorktreesLocked(cwd: string): Result<WorktreeInfo[]> {
   const r = withWorktreeLock(cwd, "read", () => listWorktrees(cwd));
   return r.ok ? r.value : r;
+}
+
+/** How long moveBranch waits for another git command to release the worktree's index lock (BR-2258). */
+export const INDEX_LOCK_WAIT_MS = 2_000;
+
+/** Why moveBranch left the branch and the files as they were. */
+export type BranchMoveFailure =
+  | { readonly kind: "locked"; readonly message: string }
+  | { readonly kind: "moved"; readonly message: string }
+  | { readonly kind: "files"; readonly message: string };
+
+/**
+ * Moves the branch checked out in `wt` from `from` to `to`, with its index and files following, as one step against
+ * other git commands in that worktree (BR-2258, D-39): it takes git's own lock, `<index>.lock`, the way git does, so
+ * a `git commit` or `git add` started meanwhile dies on it instead of committing the old index on the new HEAD
+ * (issue #36). Under the lock the branch moves by a compare-and-swap from `from`, and `git read-tree -m -u` builds the
+ * new index in a scratch file, which then replaces the index. A HEAD that is no longer `from`, or files with local
+ * edits read-tree would overwrite, leave the branch, the index and the files as they were. Undefined when it moved.
+ */
+export function moveBranch(wt: string, from: string, to: string, message: string, waitMs: number = INDEX_LOCK_WAIT_MS): BranchMoveFailure | undefined {
+  const fail = (kind: BranchMoveFailure["kind"], text: string): BranchMoveFailure => ({ kind, message: text });
+  const index = git(wt, "rev-parse", "--path-format=absolute", "--git-path", "index");
+  if (!index.ok) return fail("locked", index.error.message);
+  const lock = `${index.value}.lock`;
+  const scratch = `${index.value}.canon-move`;
+  let fd: number | undefined;
+  for (const until = Date.now() + waitMs; ; ) {
+    try {
+      // reason: created exclusively, as git creates it; git itself never waits for it, so a short wait covers a `git status` refresh (BR-2258).
+      fd = openSync(lock, "wx");
+      break;
+    } catch (e) {
+      if ((e as NodeJS.ErrnoException).code !== "EEXIST") return fail("locked", `cannot take ${lock}: ${(e as Error).message}`);
+      if (Date.now() >= until) return fail("locked", `${lock} exists: another git command is using this worktree's index`);
+      Bun.sleepSync(25);
+    }
+  }
+  try {
+    const cas = git(wt, "update-ref", "-m", message, "HEAD", to, from);
+    if (!cas.ok) return fail("moved", `HEAD is no longer ${from.slice(0, 9)}`);
+    copyFileSync(index.value, scratch);
+    const sync = gitEnv(wt, { GIT_INDEX_FILE: scratch }, "read-tree", "-m", "-u", from, to);
+    if (!sync.ok) {
+      git(wt, "update-ref", "-m", `${message} (undone)`, "HEAD", from, to);
+      return fail("files", sync.error.message.split("\n")[0] ?? "read-tree failed");
+    }
+    renameSync(scratch, index.value);
+    return undefined;
+  } finally {
+    closeSync(fd);
+    rmSync(scratch, { force: true });
+    rmSync(lock, { force: true });
+  }
 }

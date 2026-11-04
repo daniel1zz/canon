@@ -48,3 +48,19 @@ export function startNew(root: string, title: string, actor = "agent:a") {
   return r.value;
 }
 
+
+/**
+ * A reference-transaction hook that, the first time a ref of `wt` moves to `to`, runs `git commit -qam fix` in `wt`
+ * right then, as a session committing in the worktree at that moment would; returns the file its output goes to.
+ */
+export function gapCommit(root: string, wt: string, to: string): string {
+  const hooks = join(sh(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "hooks");
+  mkdirSync(hooks, { recursive: true });
+  const out = join(root, "..", `${root.split("/").pop()}-gap-commit`);
+  writeFileSync(
+    join(hooks, "reference-transaction"),
+    `#!/bin/sh\n[ "$1" = committed ] || exit 0\ngrep -q " ${to} " || exit 0\n[ -e ${out} ] && exit 0\ncd ${wt} && env -u GIT_INDEX_FILE -u GIT_DIR -u GIT_WORK_TREE git commit -qam fix > ${out} 2>&1\necho "exit $?" >> ${out}\n`,
+    { mode: 0o755 },
+  );
+  return out;
+}

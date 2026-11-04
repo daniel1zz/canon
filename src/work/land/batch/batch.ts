@@ -1,7 +1,7 @@
 import { rmSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Say, Workspace } from "../../workspace.ts";
-import { addWorktree, git, isClean, pruneWorktrees, removeWorktree } from "../../../kernel/git.ts";
+import { addWorktree, git, isClean, moveBranch, pruneWorktrees, removeWorktree } from "../../../kernel/git.ts";
 import { isGone } from "../../claims/liveness.ts";
 import { runFloor, floorSkip } from "../checks/floor.ts";
 import { verifyChange } from "../checks/steps.ts";
@@ -173,18 +173,18 @@ export function reopenForGoneLander(ws: Workspace, l: { entry: number; subject: 
 
 /**
  * A member of another lander's batch whose change that lander landed (BR-2172): its own branch moves by a
- * compare-and-swap from the HEAD it joined with to its commit on main, and its files follow; then it finishes
+ * compare-and-swap from the HEAD it joined with to its commit on main, and its index and files follow in the same step
+ * under git's index lock (BR-2258); then it finishes
  * like any landing. A commit made in the worktree meanwhile stays, and the message says how to catch up.
  */
 export function landedInBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null }, by: { leader: number; sha: string; head: string }): LandOutcome {
   const wt = ws.root;
   const main = ws.config.main;
   say(`landed ${by.sha.slice(0, 9)} on ${main} in the batch of queue entry ${by.leader}`);
-  const cas = git(wt, "update-ref", "-m", `canon: landed in batch ${by.leader}`, "HEAD", by.sha, by.head);
-  if (!cas.ok) say(`this worktree's branch moved after it joined the batch, so it was left as it is; \`git rebase ${main}\` brings it up to date`);
-  else if (!git(wt, "read-tree", "-m", "-u", by.head, by.sha).ok) {
-    git(wt, "update-ref", "-m", "canon: keep the branch as it was", "HEAD", by.head, by.sha);
-    say(`local edits keep this worktree's files from following the landed commit; the branch was left as it is; \`git rebase ${main}\` brings it up to date`);
-  }
+  // reason: under git's index lock, so a commit tried while the branch moves is refused instead of recording the joined tree on top of main (BR-2258, issue #36).
+  const moved = moveBranch(wt, by.head, by.sha, `canon: landed in batch ${by.leader}`);
+  if (moved?.kind === "moved") say(`this worktree's branch moved after it joined the batch, so it was left as it is; \`git rebase ${main}\` brings it up to date`);
+  else if (moved?.kind === "files") say(`local edits keep this worktree's files from following the landed commit; the branch was left as it is; \`git rebase ${main}\` brings it up to date`);
+  else if (moved) say(`${moved.message}; the branch was left as it is; \`git rebase ${main}\` brings it up to date once that git command has ended`);
   return finishLanding(ws, opts, say, { entry: t.entry, subject: t.subject, sha: by.sha });
 }

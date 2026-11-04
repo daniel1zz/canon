@@ -1,6 +1,6 @@
 import type { Say, Workspace } from "../../workspace.ts";
 import { logFile, runHooksInBackground } from "../../../config/hooks.ts";
-import { git, gitEnv, isClean, listWorktreesLocked } from "../../../kernel/git.ts";
+import { git, gitEnv, isClean, listWorktreesLocked, moveBranch } from "../../../kernel/git.ts";
 import { releaseOwnClaim } from "../../claims/claims.ts";
 import { dropHandoff } from "../../session/handoffs.ts";
 import type { LandOptions, LandOutcome } from "../outcome.ts";
@@ -20,8 +20,8 @@ export const closeLeftNote = (path: string) =>
 /**
  * Takes the close commit back out after a landing that did not reach main: only while HEAD is still `top`, the
  * close commit that was checked, and it changes nothing but the change file. The branch moves by a compare-and-swap
- * on HEAD, so a commit made in the worktree meanwhile is never dropped; `git read-tree -m -u` then updates the
- * change file and refuses over local edits to it, in which case the branch is swapped back (BR-2018, issue #34).
+ * on HEAD, so a commit made in the worktree meanwhile is never dropped, and with the index and the change file in one
+ * step under git's index lock (moveBranch), which refuses over local edits to the change file (BR-2018, BR-2258).
  */
 export function reopen(wt: string, close: CloseCommit, say: Say, top = git(wt, "rev-parse", "HEAD")): boolean {
   const notReopened = (why: string) => {
@@ -36,14 +36,10 @@ export function reopen(wt: string, close: CloseCommit, say: Say, top = git(wt, "
   if (!parent.ok || !subject.ok || subject.value !== closeSubject(close.subject) || !files.ok || files.value !== close.path) {
     return notReopened("its close commit is no longer the top commit");
   }
-  // reason: compare-and-swap, so a commit made after the check above stays on the branch (issue #34).
-  const cas = git(wt, "update-ref", "-m", `canon: reopen ${close.subject}`, "HEAD", parent.value, sha);
-  if (!cas.ok) return notReopened("HEAD moved after the check");
-  const sync = git(wt, "read-tree", "-m", "-u", sha, parent.value);
-  if (!sync.ok) {
-    git(wt, "update-ref", "-m", `canon: keep ${close.subject} closed`, "HEAD", sha, parent.value);
-    return notReopened(sync.error.message.split("\n")[0] ?? "read-tree failed");
-  }
+  // reason: compare-and-swap, so a commit made after the check above stays on the branch (issue #34); under git's
+  // index lock, so a commit tried while the branch moves is refused instead of recording status: done (BR-2258, issue #36).
+  const moved = moveBranch(wt, sha, parent.value, `canon: reopen ${close.subject}`);
+  if (moved) return notReopened(moved.kind === "moved" ? "HEAD moved after the check" : moved.message);
   say(`${close.subject} reopened: the landing did not reach main, so its close commit was taken back`);
   return true;
 }
