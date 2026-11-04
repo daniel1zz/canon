@@ -196,6 +196,33 @@ describe("the claim during a landing", () => {
     expect(readFileSync(join(s.worktree, path), "utf8")).toContain("edited meanwhile"); // the edit is kept
   });
 
+  test("BR-2258 BR-2018: when local edits stop the files from following and moving HEAD back fails too, the result says where HEAD is instead of saying nothing changed", () => {
+    const root = project();
+    const s = startNew(root, "Reopen head undo fails");
+    const path = sh(s.worktree, "diff", "--name-only", "main", "HEAD");
+    writeFileSync(join(s.worktree, path), readFileSync(join(s.worktree, path), "utf8").replace("status: open", "status: done"));
+    sh(s.worktree, "commit", "-qam", `canon: close ${s.change}`);
+    const top = sh(s.worktree, "rev-parse", "HEAD");
+    const parent = sh(s.worktree, "rev-parse", "HEAD~1");
+    writeFileSync(join(s.worktree, path), readFileSync(join(s.worktree, path), "utf8") + "\nlocal edit\n"); // read-tree refuses to overwrite it
+    // A reference-transaction hook that refuses moving HEAD back to the close commit stands in for a git that cannot.
+    const hooks = sh(s.worktree, "rev-parse", "--path-format=absolute", "--git-path", "hooks");
+    const hook = join(hooks, "reference-transaction");
+    const saved = existsSync(hook) ? readFileSync(hook, "utf8") : undefined;
+    writeFileSync(hook, `#!/bin/sh\n[ "$1" = prepared ] || exit 0\nwhile read old new ref; do [ "$new" = "${top}" ] && exit 1; done\nexit 0\n`, { mode: 0o755 });
+    try {
+      const failed = moveBranch(s.worktree, top, parent, "test", 0);
+      expect(failed?.kind).toBe("undo");
+      expect(failed?.message).toContain(`HEAD could not be moved back to ${top.slice(0, 9)}`);
+      expect(failed?.message).toContain(`HEAD is ${parent.slice(0, 9)}`);
+      expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(parent);
+      expect(readFileSync(join(s.worktree, path), "utf8")).toContain("local edit"); // the edit is kept
+    } finally {
+      if (saved === undefined) rmSync(hook, { force: true });
+      else writeFileSync(hook, saved, { mode: 0o755 });
+    }
+  });
+
   test("BR-2018: a --finish landing that times out in the queue takes its close commit back too", async () => {
     const root = project();
     const s = startNew(root, "Timed out finish");

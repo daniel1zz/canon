@@ -193,8 +193,11 @@ export function moveBranch(wt: string, from: string, to: string, message: string
     moved = true;
     const sync = gitEnv(wt, { GIT_INDEX_FILE: scratch }, "read-tree", "-m", "-u", from, to);
     if (!sync.ok) {
-      git(wt, "update-ref", "-m", `${message} (undone)`, "HEAD", from, to);
-      return fail("files", sync.error.message.split("\n")[0] ?? "read-tree failed");
+      const why = sync.error.message.split("\n")[0] ?? "read-tree failed";
+      const head = git(wt, "update-ref", "-m", `${message} (undone)`, "HEAD", from, to);
+      // reason: an undo that fails is said, never reported as nothing changed (BR-2258, issue #100).
+      if (!head.ok) return fail("undo", `${why}; HEAD could not be moved back to ${from.slice(0, 9)} (${head.error.message.split("\n")[0]}): HEAD is ${to.slice(0, 9)} while the index and the files are still ${from.slice(0, 9)}'s; check git status before committing`);
+      return fail("files", why);
     }
     synced = true;
     files.rename(scratch, index.value);
