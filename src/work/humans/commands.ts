@@ -1,7 +1,26 @@
 import { defineCommand } from "citty";
-import { entry, json, list, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { err, ok, type Result } from "../../kernel/result.ts";
+import { findDoc } from "../../knowledge/query/query.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
+import { changeOffMain, mainCorpus } from "../session/session.ts";
+import type { Workspace } from "../workspace.ts";
 import { answer, answeredBy, ask, questions } from "./questions.ts";
+
+/**
+ * The change `--change` names, as its id: a change on main or on its own change branch, matched in any case as
+ * `canon work start` matches it. Not found when it is neither, so a question is never attached to nothing (BR-2075).
+ */
+function namedChange(ws: Workspace, name: string): Result<string> {
+  const onMain = mainCorpus(ws);
+  if (!onMain.ok) return onMain;
+  const doc = findDoc(onMain.value, name);
+  if (doc?.kind === "change") return ok(doc.id);
+  const off = changeOffMain(ws, name.toUpperCase());
+  if (!off.ok) return off;
+  if (off.value) return ok(off.value.doc.id);
+  return err("not_found", `${name} is not a change on ${ws.config.main} or on a change/${name.toUpperCase()} branch; the question was not recorded`);
+}
 
 /** `canon human`: questions only a human can answer. */
 
@@ -13,7 +32,10 @@ const human = defineCommand({
       args: { question: { type: "positional", required: true }, option: { type: "string", description: "Comma-separated options" }, change: { type: "string" } },
       run({ args }) {
         const ws = workspace();
-        const id = ask(ws.db, ws.actor, typeof args.change === "string" ? args.change : (claimOfWorktree(ws.db, ws.root)?.subject ?? null), String(args.question), list(args.option));
+        // reason: without --change the question goes to the change this worktree belongs to, even when its claim
+        // expired: the worktree is still that change's (BR-2075)
+        const subject = typeof args.change === "string" ? must(namedChange(ws, args.change)) : (claimOfWorktree(ws.db, ws.root)?.subject ?? null);
+        const id = ask(ws.db, ws.actor, subject, String(args.question), list(args.option));
         say(`question #${id} recorded; \`canon human pending\` shows it`);
       },
     }),
@@ -37,6 +59,8 @@ const human = defineCommand({
       },
       run({ args }) {
         const relayed = typeof args.relayed === "string" ? args.relayed : undefined;
+        // reason: an id that is not a number is a usage error, not an unknown question: exit 2, nothing recorded (BR-2040, BR-2022)
+        if (!/^\d+$/.test(String(args.id))) fail({ code: "invalid", message: `question id must be a number, as \`canon human pending\` shows it (#<n>); got ${String(args.id)}` });
         const ws = workspace();
         // reason: the terminal check runs inside answer(), so its refusal is recorded too (BR-2026, issue #57)
         must(answer(ws.db, Number(args.id), String(args.text), ws.actor, relayed, process.stdin.isTTY === true));

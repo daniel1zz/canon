@@ -160,7 +160,7 @@ export function mainCorpus(ws: Workspace): Result<Corpus> {
  * branch's worktree when it has one, else from the branch itself. Undefined when no such branch exists; more
  * than one is refused, since canon cannot tell which holds the work.
  */
-function changeOffMain(ws: Workspace, id: string): Result<{ doc: Change; branch: string; worktree: string | undefined } | undefined> {
+export function changeOffMain(ws: Workspace, id: string): Result<{ doc: Change; branch: string; worktree: string | undefined } | undefined> {
   const refs = git(ws.primary, "for-each-ref", "--format=%(refname:short)", "refs/heads/change/");
   if (!refs.ok) return refs;
   const branches = refs.value.split("\n").filter((b) => b === `change/${id}` || b.startsWith(`change/${id}-`));

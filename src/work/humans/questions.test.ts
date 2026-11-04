@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
 import { answer, ask, questions } from "./questions.ts";
-import { project, ws } from "../testkit.ts";
+import { project, sh, startNew, ws } from "../testkit.ts";
 
 const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
 
@@ -95,5 +95,53 @@ describe("human questions", () => {
     expect(canon(root, "agent:y", false, "human", "answer", "9", "no", "--relayed", "算了").code).toBe(3);
     expect(refusals(root)).toEqual(["answered", "not-found"]);
     expect(questions(ws(root).db, "all")[0]?.answer).toBe("yes");
+  });
+
+  test("BR-2040 BR-2022: an id that is not a number is a usage error: exit 2, no human.answer.refuse, the question stays unanswered", () => {
+    const root = project();
+    expect(canon(root, "agent:x", false, "human", "ask", "Ship it?").code).toBe(0);
+    for (const id of ["abc", "1.5", "-1"]) expect([id, canon(root, "agent:x", false, "human", "answer", id, "yes", "--relayed", "好").code]).toEqual([id, 2]);
+    expect(refusals(root)).toEqual([]);
+    expect(questions(ws(root).db, "pending").map((q) => q.id)).toEqual([1]);
+  });
+
+  test("BR-2021 BR-2040: a bare agent answer to an unknown or an answered question is refused for the way it answers first: exit 2, not 3 or 5", () => {
+    const root = project();
+    expect(canon(root, "agent:x", false, "human", "ask", "Ship it?").code).toBe(0);
+    expect(canon(root, "agent:x", false, "human", "answer", "9", "yes").code).toBe(2);
+    expect(canon(root, "agent:x", false, "human", "answer", "1", "yes", "--relayed", "发吧").code).toBe(0);
+    expect(canon(root, "agent:x", false, "human", "answer", "1", "no").code).toBe(2);
+    expect(refusals(root)).toEqual(["not-human-no-relay", "not-human-no-relay"]);
+    expect(questions(ws(root).db, "all")[0]?.answer).toBe("yes");
+  });
+});
+
+describe("asking with --change", () => {
+  const asked = (root: string) => ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'human.ask'").get()?.n;
+
+  test("BR-2075: --change naming no change exits 3 and records nothing; a change on main, in any case, gets the question", () => {
+    const root = project();
+    const none = canon(root, "agent:x", false, "human", "ask", "Q?", "--change", "C-999");
+    expect(none.code).toBe(3);
+    expect(none.out).toContain("C-999");
+    expect(questions(ws(root).db, "all")).toEqual([]);
+    expect(asked(root)).toBe(0);
+    const s = startNew(root, "Asked about");
+    expect(canon(root, "agent:x", false, "human", "ask", "On its branch?", "--change", s.change).code).toBe(0); // only on its change branch
+    expect(questions(ws(root).db, "all").map((q) => q.subject)).toEqual([s.change]);
+    mkdirSync(join(root, "canon/changes"), { recursive: true });
+    writeFileSync(join(root, "canon/changes/C-50.md"), "---\nid: C-50\ntitle: On main\nstatus: open\n---\n## 为什么\n\nx\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "a change on main");
+    expect(canon(root, "agent:x", false, "human", "ask", "Lower?", "--change", "c-50").code).toBe(0);
+    expect(questions(ws(root).db, "all").map((q) => q.subject)).toEqual([s.change, "C-50"]);
+  });
+
+  test("BR-2075: without --change a question in a worktree whose claim expired still goes to that worktree's change", () => {
+    const root = project();
+    const s = startNew(root, "Expired here");
+    ws(root).db.db.query("UPDATE claims SET expires_at = '2000-01-01T00:00:00.000Z'").run();
+    expect(canon(s.worktree, "agent:x", false, "human", "ask", "Still?").code).toBe(0);
+    expect(questions(ws(root).db, "all").map((q) => q.subject)).toEqual([s.change]);
   });
 });
