@@ -112,6 +112,11 @@ function lockedWorktreeChange(cwd: string, args: readonly string[]): Result<stri
   return r.ok ? r.value : r;
 }
 
+/** `git worktree prune` under the exclusive worktree lock: it deletes `.git/worktrees/<id>` entries another process may be reading (BR-2223). */
+export function pruneWorktrees(cwd: string): Result<string> {
+  return lockedWorktreeChange(cwd, ["prune"]);
+}
+
 /**
  * `git worktree add <args>` under the exclusive worktree lock. git reads every `.git/worktrees/<id>` while adding or
  * listing and dies on one another add has made but not finished (`failed to read .git/worktrees/<id>/commondir`,

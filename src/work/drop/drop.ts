@@ -5,7 +5,7 @@ import type { Workspace } from "../workspace.ts";
 import { dropHandoff } from "../session/handoffs.ts";
 import { holdClaim, unholdClaim } from "../claims/claims.ts";
 import { err, ok, type CanonError, type Result } from "../../kernel/result.ts";
-import { git, gitEnv, ignoredPaths, listWorktreesLocked, unregenerable } from "../../kernel/git.ts";
+import { git, gitEnv, ignoredPaths, listWorktreesLocked, removeWorktree, unregenerable, withWorktreeLock } from "../../kernel/git.ts";
 import { GENERATED_DIR } from "../../config/reference/reference.ts";
 import { processesIn } from "../../kernel/process.ts";
 import { clearFixChange } from "../watch/redmain.ts";
@@ -239,7 +239,7 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
   }
   if (t.worktree) {
     // reason: --force is safe here: everything it would destroy is in the archive verified above (BR-2102).
-    const rm = git(ws.primary, "worktree", "remove", "--force", t.worktree);
+    const rm = removeWorktree(ws.primary, "--force", t.worktree);
     if (!rm.ok) {
       // reason: all or nothing (BR-2064): the branch deleted just above comes back at the same tip, create-only (issue #58).
       const back = t.branch ? git(ws.primary, "update-ref", `refs/heads/${t.branch}`, tip.value, "") : ok("");
@@ -277,7 +277,8 @@ function registered(ws: Workspace, path: string): boolean {
       return p;
     }
   };
-  const list = git(ws.primary, "worktree", "list", "--porcelain");
+  const locked = withWorktreeLock(ws.primary, "read", () => git(ws.primary, "worktree", "list", "--porcelain"));
+  const list = locked.ok ? locked.value : locked;
   if (!list.ok) return false; // reason: an unreadable list proves nothing intact; the message then points to the archive
   const want = real(path);
   return list.value.split("\n").some((l) => l.startsWith("worktree ") && real(l.slice("worktree ".length)) === want) && existsSync(join(path, ".git"));

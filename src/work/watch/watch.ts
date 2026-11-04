@@ -6,7 +6,7 @@ import type { Say, Workspace } from "../workspace.ts";
 import { readConfig } from "../../config/config.ts";
 import { logFile, runHooks } from "../../config/hooks.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { git } from "../../kernel/git.ts";
+import { addWorktree, git, pruneWorktrees, removeWorktree } from "../../kernel/git.ts";
 import { isGone, selfProcess, type Proc } from "../claims/liveness.ts";
 import type { FloorTiming } from "./config-keys.ts";
 import { clearRedMain, recordFailure } from "./redmain.ts";
@@ -126,7 +126,7 @@ export async function watch(ws: Workspace, say: Say): Promise<Result<Watched>> {
   // reason: a watcher stopped by a signal removes its worktree and gives up its place at once, so the next one starts clean (BR-2219).
   const onSignal = (signal: NodeJS.Signals) => {
     running.proc?.kill();
-    if (existsSync(dir)) git(ws.primary, "worktree", "remove", "--force", dir);
+    if (existsSync(dir)) removeWorktree(ws.primary, "--force", dir);
     if (mine) releaseWatcher(ws.db, self);
     process.exit(signal === "SIGINT" ? 130 : 143);
   };
@@ -182,8 +182,8 @@ async function testCommit(ws: Workspace, say: Say, sha: string, running: Running
   const dir = watchDir(ws.db);
   const log = logFile(ws.db, `watch-${sha.slice(0, 12)}.log`);
   rmSync(dir, { recursive: true, force: true });
-  git(ws.primary, "worktree", "prune");
-  const added = git(ws.primary, "worktree", "add", "-q", "--detach", dir, sha);
+  pruneWorktrees(ws.primary);
+  const added = addWorktree(ws.primary, "-q", "--detach", dir, sha);
   if (!added.ok) return err("io", `cannot create the worktree to test ${sha.slice(0, 9)} in: ${added.error.message}`);
   try {
     say(`floor watch: testing ${ws.config.main} ${sha.slice(0, 9)} (log: ${log})`);
@@ -248,7 +248,7 @@ async function testCommit(ws: Workspace, say: Say, sha: string, running: Running
     }
     return ok({ sha, passed, log });
   } finally {
-    git(ws.primary, "worktree", "remove", "--force", dir);
+    removeWorktree(ws.primary, "--force", dir);
   }
 }
 

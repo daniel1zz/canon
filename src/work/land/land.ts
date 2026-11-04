@@ -18,7 +18,7 @@ import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { setMeta } from "../../knowledge/documents/write.ts";
 import { hasLessons, LESSONS_SECTION } from "../../knowledge/documents/templates.ts";
-import { git, gitEnv, isClean, listWorktrees } from "../../kernel/git.ts";
+import { addWorktree, git, gitEnv, isClean, listWorktreesLocked, pruneWorktrees, removeWorktree } from "../../kernel/git.ts";
 import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, type DeletedDoc } from "../../knowledge/review/review.ts";
 import { ensureWatcher, pathCanonReads, timingOf } from "../watch/watch.ts";
 import { keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
@@ -79,7 +79,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   const onSignal = (signal: NodeJS.Signals) => {
     running.floor?.kill();
     // reason: process.exit skips the batch's finally, so its temporary worktree is removed here (BR-2099, BR-2172).
-    if (entry !== undefined && existsSync(batchDir(ws, entry))) git(ws.primary, "worktree", "remove", "--force", batchDir(ws, entry));
+    if (entry !== undefined && existsSync(batchDir(ws, entry))) removeWorktree(ws.primary, "--force", batchDir(ws, entry));
     const aborted = rebaseInProgress(wt) && git(wt, "rebase", "--abort").ok;
     // A signal after main moved leaves the landed entry as it is: the landing happened.
     // reason: an interruption, not a check's verdict, so it is its own event kind and no check in `canon stats` (BR-2067).
@@ -517,8 +517,8 @@ async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry:
 
   const dir = batchDir(ws, t.entry);
   rmSync(dir, { recursive: true, force: true });
-  git(ws.primary, "worktree", "prune");
-  const added = git(ws.primary, "worktree", "add", "-q", "--detach", dir, t.head);
+  pruneWorktrees(ws.primary);
+  const added = addWorktree(ws.primary, "-q", "--detach", dir, t.head);
   if (!added.ok) {
     leave(0, false);
     say(`batch: could not create a worktree to test in (${added.error.message.split("\n")[0]}); landing alone`);
@@ -616,7 +616,7 @@ async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry:
     for (const l of links) afterLand(ws, say, { entry: l.entry, subject: l.subject, base: l.base, head: l.head, branch: l.branch });
     return { kind: "landed" };
   } finally {
-    git(ws.primary, "worktree", "remove", "--force", dir);
+    removeWorktree(ws.primary, "--force", dir);
   }
 }
 
@@ -810,7 +810,7 @@ export const LAND_MARKER = "CANON_LAND_MAIN";
 
 function moveMain(ws: Workspace, expected: string, next: string): "moved" | { reason: "main-moved" | "main-dirty" | "environment"; message: string } {
   const main = ws.config.main;
-  const wts = listWorktrees(ws.primary);
+  const wts = listWorktreesLocked(ws.primary);
   if (!wts.ok) return { reason: "environment", message: wts.error.message };
   const holder = wts.value.find((w) => w.branch === main);
   if (holder) {
