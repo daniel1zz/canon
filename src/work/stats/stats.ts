@@ -152,7 +152,7 @@ export function renderStats(stats: readonly CheckStats[]): string {
     for (const s of due) {
       const o = s.outcomes;
       const outcomes = o ? `; changed ${o.changed}, same ${o.same}, abandoned ${o.abandoned}, pending ${o.pending}, unknown ${o.unknown}` : "";
-      lines.push(`  ${s.check} (since ${s.review}): ${s.runs} runs, ${s.refused} refused${outcomes}`);
+      lines.push(`  ${s.check} (due ${s.review}): ${s.runs} runs, ${s.refused} refused${outcomes}`);
     }
   }
   const undated = stats.filter((s) => s.review === null);
@@ -172,9 +172,10 @@ export interface SharedShare {
 /**
  * Lines of tracked files under the `shared` entries against all tracked lines under the code root (BR-2121).
  * Shared code is what no domain's rules describe, so its share is how much code sits outside every
- * domain; undefined when the project sets no code root or no shared entry.
+ * domain; undefined when the project sets no code root or no shared entry. `read` reads one file; a test passes
+ * its own to make a file vanish between the lstat and the read.
  */
-export function sharedShare(root: string, layout: Layout): SharedShare | undefined {
+export function sharedShare(root: string, layout: Layout, read: (path: string) => string = (p) => readFileSync(p, "utf8")): SharedShare | undefined {
   if (layout.codeRoot === undefined || layout.shared.length === 0) return undefined;
   const files = git(root, "-c", "core.quotePath=false", "ls-files", "--", layout.codeRoot);
   if (!files.ok) return undefined;
@@ -185,7 +186,14 @@ export function sharedShare(root: string, layout: Layout): SharedShare | undefin
     // reason: only regular files hold code; a tracked symlink to a directory or a submodule made readFileSync throw EISDIR (BR-2205)
     const stat = lstatSync(full, { throwIfNoEntry: false });
     if (!stat?.isFile()) continue;
-    const text = readFileSync(full, "utf8");
+    let text: string;
+    try {
+      text = read(full);
+    } catch (e) {
+      // reason: a landing in this checkout can delete the file between lstat and the read; a file gone is not counted (BR-2205, issue #81)
+      if ((e as NodeJS.ErrnoException).code === "ENOENT") continue;
+      throw e;
+    }
     const n = text === "" ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
     totalLines += n;
     if (layout.shared.some((s) => f === s || f.startsWith(`${s}/`))) sharedLines += n;

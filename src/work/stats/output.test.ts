@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
@@ -169,6 +169,20 @@ describe("shared code files", () => {
     expect(sharedShare(root, layout)).toEqual({ codeRoot: "src", sharedLines: 3, totalLines: 5 });
     rmSync(join(root, "src/kernel/a.ts"));
     expect(sharedShare(root, layout)).toEqual({ codeRoot: "src", sharedLines: 0, totalLines: 2 });
+  });
+
+  test("BR-2205: a file that vanishes between the lstat and the read is not counted, and counting goes on (issue #81)", () => {
+    const root = codeRepo();
+    const vanishing = join(root, "src/kernel/a.ts");
+    // reason: the reader deletes the file just before reading it, as a landing in this checkout would, so the race is deterministic
+    const read = (p: string) => {
+      if (p === vanishing) rmSync(p);
+      return readFileSync(p, "utf8");
+    };
+    expect(sharedShare(root, layout, read)).toEqual({ codeRoot: "src", sharedLines: 0, totalLines: 2 });
+    // the other side: a file that stays is counted
+    const steady = codeRepo();
+    expect(sharedShare(steady, layout, (p) => readFileSync(p, "utf8"))).toEqual({ codeRoot: "src", sharedLines: 1, totalLines: 3 });
   });
 });
 

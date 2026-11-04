@@ -57,9 +57,15 @@ function gh(cwd: string, ...args: string[]): Result<string> {
   return ok(r.stdout?.toString() ?? "");
 }
 
+/** The most open issues `gh issue list` is asked for; reading exactly this many means more may be open (BR-2225). */
+export const ISSUE_LIMIT = 1000;
+
+/** Said whenever exactly ISSUE_LIMIT issues were read, so the issues past the limit are not dropped silently (BR-2225). */
+export const LIMIT_NOTE = "the most canon reads; more may be open and are not listed";
+
 /** The open issues of the repository `gh` resolves from this checkout. */
 export function openIssues(cwd: string): Result<Issue[]> {
-  const list = gh(cwd, "issue", "list", "--state", "open", "--limit", "1000", "--json", "number,title,url");
+  const list = gh(cwd, "issue", "list", "--state", "open", "--limit", String(ISSUE_LIMIT), "--json", "number,title,url");
   if (!list.ok) {
     if (list.error.message.startsWith("gh (the GitHub CLI)")) return list;
     const auth = gh(cwd, "auth", "status");
@@ -110,7 +116,7 @@ export function renderIssues(list: readonly IssueStatus[], main: string): string
     else for (const c of i.fixedBy) out.push(`    named as fixed on ${main} by ${c.sha.slice(0, 9)} ${c.subject}`);
   }
   const fixed = list.filter((i) => i.fixedBy.length > 0);
-  out.push(`${list.length} open issue(s); ${fixed.length} named as fixed by a commit on ${main}${fixed.length ? `: ${fixed.map((i) => `#${i.number}`).join(", ")}` : ""}`);
+  out.push(`${list.length} open issue(s)${list.length >= ISSUE_LIMIT ? ` (${LIMIT_NOTE})` : ""}; ${fixed.length} named as fixed by a commit on ${main}${fixed.length ? `: ${fixed.map((i) => `#${i.number}`).join(", ")}` : ""}`);
   if (fixed.length) out.push("canon does not close issues: check each fix against the issue, then gh issue close <n> --comment \"<commit>\"");
   return out;
 }

@@ -213,8 +213,10 @@ describe("canon stats", () => {
     d.event("a", "land.refuse", null, { reason: "floor", diff: "e" }); // unknown
     d.event("a", "claim.refuse", "C-1", { reason: "held" });
     const text = renderStats(computeStats(d, { floor: "2026-01-01", claim: "2026-01-01" }, "2026-11-03"));
-    expect(text).toContain("  floor (since 2026-01-01): 5 runs, 4 refused; changed 1, same 0, abandoned 1, pending 1, unknown 1");
-    expect(text).toContain("  claim (since 2026-01-01): 1 runs, 1 refused\n"); // claim has no outcomes (BR-2068)
+    expect(text).toContain("  floor (due 2026-01-01): 5 runs, 4 refused; changed 1, same 0, abandoned 1, pending 1, unknown 1");
+    expect(text).toContain("  claim (due 2026-01-01): 1 runs, 1 refused\n"); // claim has no outcomes (BR-2068)
+    // the date in brackets is when the review is due, not where the counting starts
+    expect(text).not.toContain("(since ");
   });
 
   test("BR-2069: checks whose review date has come are listed as due, undated ones are named, and an unknown check is a config error", () => {
@@ -222,10 +224,10 @@ describe("canon stats", () => {
     const s = computeStats(ws(root).db, { floor: "2026-01-01", check: "2027-02-03", review: "2026-11-03" }, "2026-11-03");
     expect([of(s, "floor").due, of(s, "check").due, of(s, "review").due]).toEqual([true, false, true]); // the day itself is due
     const text = renderStats(s);
-    expect(text).toContain("Due for review:\n  floor (since 2026-01-01)");
-    expect(text).not.toContain("  check (since");
+    expect(text).toContain("Due for review:\n  floor (due 2026-01-01)");
+    expect(text).not.toContain("  check (due");
     expect(text).toMatch(/No review date .*setup/);
-    expect(text).toContain("  review (since 2026-11-03): 0 runs, 0 refused; changed 0, same 0, abandoned 0, pending 0, unknown 0");
+    expect(text).toContain("  review (due 2026-11-03): 0 runs, 0 refused; changed 0, same 0, abandoned 0, pending 0, unknown 0");
     writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ncheck_reviews:\n  flor: "2027-01-01"\n');
     const bad = readConfig(root);
     expect(!bad.ok && bad.error.message).toContain("no such check");

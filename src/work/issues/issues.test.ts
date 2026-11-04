@@ -65,8 +65,8 @@ describe("canon issues", () => {
     expect(lines[3]).toBe("    open: no commit on main names it as fixed");
     expect(r.out).toContain("2 open issue(s); 1 named as fixed by a commit on main: #34");
     expect(r.out).toContain("gh issue close");
-    // read only: gh was asked to list, nothing else
-    expect(readFileSync(join(bin, "calls.log"), "utf8").trim().split("\n").every((c) => c.startsWith("issue list"))).toBe(true);
+    // read only: gh was asked to list, nothing else, and auth status only runs when the list fails (BR-2170)
+    expect(readFileSync(join(bin, "calls.log"), "utf8").trim().split("\n")).toEqual(["issue list --state open --limit 1000 --json number,title,url"]);
   });
 
   test("BR-2168: no open issues gives only the summary, and --json carries the same facts", () => {
@@ -80,6 +80,22 @@ describe("canon issues", () => {
     expect(parsed).toHaveLength(1);
     expect(parsed[0]!.number).toBe(28);
     expect(parsed[0]!.fixedBy.map((c) => c.subject)).toEqual(["Pick the batch by landing order"]);
+  });
+
+  test("BR-2225: reading exactly 1000 open issues says in the summary that more may be open; 999 does not", () => {
+    const root = project();
+    const many = (n: number) => Array.from({ length: n }, (_, i) => issue(i + 1, `issue ${i + 1}`));
+    const full = canon(root, fakePath({ gh: true, issues: many(1000) }), "issues");
+    expect(full.code).toBe(0);
+    expect(full.out.trimEnd().split("\n").at(-1)).toBe("1000 open issue(s) (the most canon reads; more may be open and are not listed); 0 named as fixed by a commit on main");
+    const below = canon(root, fakePath({ gh: true, issues: many(999) }), "issues");
+    expect(below.out.trimEnd().split("\n").at(-1)).toBe("999 open issue(s); 0 named as fixed by a commit on main");
+    expect(below.out + below.err).not.toContain("more may be open");
+    const j = canon(root, fakePath({ gh: true, issues: many(1000) }), "issues", "--json");
+    expect((JSON.parse(j.out) as unknown[]).length).toBe(1000);
+    expect(j.err).toContain("more may be open and are not listed");
+    const jBelow = canon(root, fakePath({ gh: true, issues: many(999) }), "issues", "--json");
+    expect(jBelow.err).not.toContain("more may be open");
   });
 
   test("BR-2169: closing keywords and change groups name a fix; the opening commit and bare mentions do not", () => {
