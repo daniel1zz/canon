@@ -587,6 +587,7 @@ describe("a passing main", () => {
     const { root, lateAtExit } = await termedWhile((ready, late) => `hooks:\n  after_green: 'trap "sleep 1; touch ${late}; exit 1" TERM; touch ${ready}; while true; do sleep 0.1; done'\n`);
     // the trap needs a second; the watcher exited only after it wrote `late`
     expect(lateAtExit).toBe(true);
+    expect(existsSync(watchDir(ws(root).db))).toBe(false); // and then removed the worktree the trap ran in
     expect(watcherRows(root)).toEqual([]);
     expect(eventsOf(root, "floor.after_green")).toEqual([]);
   });
@@ -661,6 +662,23 @@ describe("a passing main", () => {
     expect(waited).toBeGreaterThanOrEqual(9_500);
     expect(out).toContain("sent SIGKILL");
     expect(alive(pid)).toBe(false);
+  });
+
+  test("BR-2285: a watcher that does not lead its group also stops a descendant that moved to a session of its own while its parent still runs", async () => {
+    const dir = join(process.env["TMPDIR"] ?? "/tmp", `canon-setsid-child-${process.pid}-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const ready = join(dir, "ready");
+    const late = join(dir, "late");
+    writeFileSync(`${ready}.pl`, `use POSIX; POSIX::setsid(); sleep 1; open(my $f, ">", "${late}");\n`);
+    const { root } = watched(`hooks:\n  after_green: 'perl ${ready}.pl & touch ${ready}; wait'\n`);
+    const fake = fakeCanon(root);
+    // reason: not detached, so it shares this test's process group, as when run by hand from a shell without job control
+    const w = Bun.spawn(["bun", MAIN, "floor", "watch"], { cwd: root, stdout: "ignore", stderr: "ignore", stdin: "ignore", env: { ...process.env, PATH: `${fake.bin}:${process.env["PATH"]}`, CANON_ACTOR: "agent:a" } });
+    await until(() => existsSync(ready));
+    w.kill("SIGTERM");
+    expect(await w.exited).toBe(143);
+    await Bun.sleep(1500);
+    expect(existsSync(late)).toBe(false);
   });
 
   test("BR-2285: a watcher that leads its group also stops a descendant that moved to a session of its own while its parent still runs", async () => {
