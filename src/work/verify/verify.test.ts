@@ -372,3 +372,58 @@ describe("canon work test session text budget", () => {
     expect(hint(r.err)[0]).toContain("over session_text_budget 1 ");
   });
 });
+
+/** The fixture with `always_tests` set to `globs` (a YAML value), committed in the change's worktree. */
+function alwaysFixture(globs: string, extra: Record<string, string> = {}) {
+  const f = fixture();
+  write(f.wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\nalways_tests: ${globs}\n`, ...extra });
+  sh(f.wt, "add", "-A");
+  sh(f.wt, "commit", "-qm", "always_tests");
+  return f;
+}
+
+describe("canon work test always_tests", () => {
+  test("BR-2297: an always_tests file is selected and run when the change touches nothing related, reason always", () => {
+    const { wt } = alwaysFixture('["src/d.test.ts"]');
+    write(wt, { "README.md": "changed\n" });
+    expect(reasons(wt)).toEqual({ "src/d.test.ts": "always" });
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(0);
+    expect(r.out).toMatch(/src\/d\.test\.ts\s+always/);
+    expect(runs(wt)).toEqual(["src/d.test.ts"]);
+  });
+
+  test("BR-2297: without always_tests the same change selects nothing", () => {
+    const { wt } = fixture();
+    write(wt, { "README.md": "changed\n" });
+    expect(reasons(wt)).toEqual({});
+  });
+
+  test("BR-2297: a changed always_tests file lists always after changed; a glob selects every file it matches", () => {
+    const { wt } = alwaysFixture('["src/**/scan-*.test.ts"]', { "src/x/scan-a.test.ts": "export {};\n", "src/y/scan-b.test.ts": "export {};\n" });
+    expect(reasons(wt)).toEqual({ "src/x/scan-a.test.ts": "changed; always", "src/y/scan-b.test.ts": "changed; always" });
+  });
+
+  test("BR-2297: a glob that matches no test file, missing or outside tests, is printed and exits 1 while the rest still runs", () => {
+    const { wt } = alwaysFixture('["src/d.test.ts", "src/gone.test.ts", "tools/x.test.ts"]', { "tools/x.test.ts": "export {};\n" });
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('always_tests: "src/gone.test.ts" matches no test file');
+    expect(r.out).toContain('always_tests: "tools/x.test.ts" matches no test file');
+    expect(r.out).not.toContain('always_tests: "src/d.test.ts"');
+    expect(runs(wt)).toEqual(["src/d.test.ts"]);
+    expect(lastEvent(wt)).toMatchObject({ unmatched: 2 });
+  });
+
+  test("BR-2297: always_tests that is not a list of non-empty strings fails every command with exit 2", () => {
+    const { wt } = fixture();
+    for (const bad of ['"src/d.test.ts"', "[3]", '[""]']) {
+      write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\nalways_tests: ${bad}\n` });
+      const r = canon(wt, "check");
+      expect(r.code).toBe(2);
+      expect(r.err).toContain("always_tests");
+    }
+    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\nalways_tests: null\n' });
+    expect(canon(wt, "check").code).not.toBe(2);
+  });
+});

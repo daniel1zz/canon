@@ -25,7 +25,7 @@ const JS_TS = /\.[cm]?[jt]sx?$/;
 
 export interface Selected {
   readonly file: string;
-  /** Why it runs: "changed", "imports …", "names BR-n", or "--all". */
+  /** Why it runs: "changed", "imports …", "names BR-n", "always", or "--all". */
   readonly reasons: readonly string[];
 }
 
@@ -39,6 +39,8 @@ export interface Selection {
   /** Decision ids whose files changed, added or deleted ones included (BR-2249). */
   readonly decisions: readonly string[];
   readonly selected: readonly Selected[];
+  /** `always_tests` globs that match no test file `tests` finds (BR-2297). */
+  readonly unmatched: readonly string[];
 }
 
 /** NUL-separated git output, so paths with spaces or non-ASCII characters come back as written. */
@@ -91,7 +93,10 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
   if (!ch.ok) return ch;
   const { base, changed, rules, decisions } = ch.value;
   const tests = testFilesFor(ws.root, ws.config).filter((f) => isFile(join(ws.root, f)));
-  if (all) return ok({ base, changed, rules, decisions, selected: tests.map((file) => ({ file, reasons: ["--all"] })) });
+  const globs = ws.config.alwaysTests.map((g) => ({ g, glob: new Bun.Glob(g) }));
+  const always = new Set(tests.filter((f) => globs.some(({ glob }) => glob.match(f))));
+  const unmatched = globs.filter(({ glob }) => !tests.some((f) => glob.match(f))).map(({ g }) => g);
+  if (all) return ok({ base, changed, rules, decisions, unmatched, selected: tests.map((file) => ({ file, reasons: ["--all"] })) });
 
   const changedSet = new Set(changed);
   const ruleSet = new Set(rules);
@@ -140,9 +145,10 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
       for (const title of titles) for (const id of idsIn(ws.config.types, title)) if (ruleSet.has(id)) named.add(id);
       if (named.size) reasons.push(`names ${[...named].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join(", ")}`);
     }
+    if (always.has(file)) reasons.push("always");
     if (reasons.length) selected.push({ file, reasons });
   }
-  return ok({ base, changed, rules, decisions, selected });
+  return ok({ base, changed, rules, decisions, unmatched, selected });
 }
 
 export interface TestRun {
@@ -188,10 +194,12 @@ export interface WorkTestResult {
   readonly typecheck: number | null;
   /** Number of `canon check` findings in the worktree (BR-2227). */
   readonly check: number;
+  /** Number of `always_tests` globs that match no test file (BR-2297). */
+  readonly unmatched: number;
 }
 
 /** True when `canon work test` must exit 1: a test file, the type check or canon check failed. */
-export const workTestFailed = (r: WorkTestResult) => r.failed > 0 || (r.typecheck !== null && r.typecheck !== 0) || r.check > 0;
+export const workTestFailed = (r: WorkTestResult) => r.failed > 0 || (r.typecheck !== null && r.typecheck !== 0) || r.check > 0 || r.unmatched > 0;
 
 /**
  * `canon work test` end to end: select, explain, type-check (BR-2226), run, canon check (BR-2227), summarize.
@@ -204,12 +212,12 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   }
   const sel = selectTests(ws, all);
   if (!sel.ok) return sel;
-  const { base, changed, rules, decisions, selected } = sel.value;
+  const { base, changed, rules, decisions, selected, unmatched } = sel.value;
   const against = `against ${ws.config.main} at ${base.slice(0, 9)}`;
   if (all) say(`canon work test --all: every test file, ${selected.length} (${against})`);
   else {
     say(`canon work test: ${selected.length} test file(s) related to this change (${against}; ${changed.length} changed file(s)${rules.length ? `; rules ${rules.join(", ")}` : ""})`);
-    say("Selected: changed test files, test files whose relative imports reach a changed file, test files whose titles name a touched rule.");
+    say("Selected: changed test files, test files whose relative imports reach a changed file, test files whose titles name a touched rule, test files always_tests names.");
     const width = Math.max(0, ...selected.map((s) => s.file.length));
     for (const s of selected) say(`  ${s.file.padEnd(width)}  ${s.reasons.join("; ")}`);
     say("Not selected: tests that only read changed files at run time; canon work test --all runs every test file.");
@@ -261,7 +269,9 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   }
 
   const ms = Math.round(performance.now() - t0);
-  const result: WorkTestResult = { files: runs.length, failed: failed.length, typecheck, check: findings.length };
+  // reason: a glob that matches nothing stopped protecting anything, which must not pass unnoticed (BR-2297)
+  for (const g of unmatched) say(`always_tests: ${JSON.stringify(g)} matches no test file`);
+  const result: WorkTestResult = { files: runs.length, failed: failed.length, typecheck, check: findings.length, unmatched: unmatched.length };
   if (runs.length) say(`${runs.length} file(s): ${runs.length - failed.length} passed, ${failed.length} failed, ${secs(ms)}`);
   if (failed.length) say(`failed: ${failed.map((r) => r.file).join(", ")}`);
   if (typecheck !== null && typecheck !== 0) say(`typecheck failed (exit ${typecheck})`);

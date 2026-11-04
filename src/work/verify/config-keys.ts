@@ -1,4 +1,4 @@
-import { err } from "../../kernel/result.ts";
+import { err, ok } from "../../kernel/result.ts";
 import { configKey, optionalString, stringValue } from "../../config/key.ts";
 
 /** Where `test_command` takes the test file's path (BR-2160). */
@@ -31,5 +31,18 @@ export const verifyKeys = {
     commands: (v) => (v === undefined ? [] : [v]),
     listed: 45,
     checked: 65,
+  }),
+  alwaysTests: configKey<readonly string[]>({
+    key: "always_tests",
+    doc: "Globs of test files (among those `tests` finds) that `canon work test` selects on every run, reason `always`: tests a change can break without being imported by it or naming its rules, such as ones that read the whole source tree (BR-2297).",
+    default: [],
+    schema: { type: ["array", "null"], items: { type: "string", minLength: 1 }, default: [] },
+    read: (v) => {
+      if (v === null) return ok([]);
+      if (!Array.isArray(v) || v.some((g) => typeof g !== "string" || g === "")) return err("invalid", "`always_tests` must be a list of test file globs, each a non-empty string");
+      return ok(v as string[]);
+    },
+    listed: 47,
+    checked: 67,
   }),
 };
