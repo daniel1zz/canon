@@ -156,6 +156,26 @@ describe("canon uninstall", () => {
     expect(canon(other, env, "uninstall").code).toBe(5);
   });
 
+  test("BR-2280: an unclaimed worktree with a commit not on main stops the cleanup with exit 5 and is kept", () => {
+    const { root, env, remote } = project();
+    const other = mkdtempSync(join(tmpdir(), "canon-uninstall-clone-"));
+    run(other, "clone", "-q", remote, ".");
+    expect(canon(other, env, "install").code).toBe(0);
+    expect(canon(other, env, "work", "start", "--title", "wip").code).toBe(0);
+    const wt = `${other}.worktrees/C-1`;
+    writeFileSync(join(wt, "wip.txt"), "wip\n");
+    git(wt, "add", "wip.txt");
+    git(wt, "commit", "-qm", "wip");
+    expect(canon(wt, env, "work", "stop", "--next", "later", "--release").code).toBe(0);
+    expect(canon(root, env, "uninstall").code).toBe(0);
+    expect(canon(other, env, "sync").code).toBe(0);
+    const r = canon(other, env, "uninstall");
+    expect(r.code).toBe(5);
+    expect(r.err).toContain("commit(s) not on main");
+    expect(existsSync(join(wt, "wip.txt"))).toBe(true);
+    expect(existsSync(join(other, ".git", "canon"))).toBe(true);
+  });
+
   test("BR-2280: someone else's reference-transaction hook is left alone", () => {
     const { root, env } = project();
     expect(canon(root, env, "uninstall").code).toBe(0);
