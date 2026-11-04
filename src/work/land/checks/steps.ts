@@ -12,7 +12,8 @@ import { findDoc } from "../../../knowledge/query/query.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
 import { git } from "../../../kernel/git.ts";
 import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, type DeletedDoc } from "../../../knowledge/review/review.ts";
-import { readReview, REVIEW_NONE, REVIEW_WAYS_OUT } from "../../../knowledge/review/config-keys.ts";
+import { REVIEW_NONE, REVIEW_WAYS_OUT, reviewKeys } from "../../../knowledge/review/config-keys.ts";
+import { err, ok, type Result } from "../../../kernel/result.ts";
 import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
 import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
 import { parse } from "yaml";
@@ -105,22 +106,25 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   });
   const reviewed = [...changedDocs.map((d) => d.id), ...deleted.map((d) => `${d.id} (deleted)`), ...readmes.map((n) => `${n} README`), ...deletedReadmes.map((r) => `${r.path} (deleted)`)];
   let reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined;
-  // reason: the tree that becomes main decides whether and how to review, not the config this worktree read before the rebase (BR-2074)
-  const cfg = landing.value;
+  // reason: how a landing is reviewed (the command, its limit, the standing instruction list) comes from main's already-landed
+  // config, never from the change's own tree: a change that swaps the reviewer would otherwise review itself (BR-2074, #115)
+  const trusted = reviewSettingsOn(wt, v.main);
+  if (!trusted.ok) return refuse("environment", `canon/config.yaml on main cannot be read for the review settings: ${trusted.error.message}`);
+  const onMain = trusted.value;
   // reason: `review: none` turns the reviews off on purpose; unset refuses, so they are never skipped silently (BR-2074, D-51)
-  const reviewer = cfg.review === REVIEW_NONE ? undefined : cfg.review;
-  const limits = { timeoutMs: cfg.reviewTimeoutMs, track: (r: { kill(): void } | undefined) => (v.running.review = r) };
-  // Standing instructions added or edited by this landing are reviewed for requirements stated twice (BR-2143).
+  const reviewer = onMain.review === REVIEW_NONE ? undefined : onMain.review;
+  const limits = { timeoutMs: onMain.reviewTimeoutMs, track: (r: { kill(): void } | undefined) => (v.running.review = r) };
+  // Standing instructions added or edited by this landing are reviewed for requirements stated twice (BR-2143), by main's list.
   const touched = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=d", base.value, head.value);
-  const standing = (touched.ok && touched.value !== "" ? touched.value.split("\n") : []).filter((p) => cfg.instructions.includes(p) || SKILL_FILE.test(p));
+  const standing = (touched.ok && touched.value !== "" ? touched.value.split("\n") : []).filter((p) => onMain.instructions.includes(p) || SKILL_FILE.test(p));
   // reason: a wording-only record needs the review's judgement even when no rule file changed in this landing (BR-2239)
   if (execution.wording.length > 0 && !reviewer) return refuse("review", wordingMessage(execution.wording.map((q) => q.id), undefined, false));
   const needs = [...reviewed, ...standing];
   if (needs.length > 0) {
-    const before = reviewOn(wt, v.main);
     // reason: the text landing together with turning the review off is exactly what nobody would review (BR-2295)
-    if ((cfg.review === undefined || cfg.review === REVIEW_NONE) && cfg.review !== before) return refuse("review", turnedOffMessage(needs, before, cfg.review));
-    if (!cfg.review) return refuse("review", unconfiguredMessage(needs));
+    const next = landing.value.review;
+    if ((next === undefined || next === REVIEW_NONE) && next !== onMain.review) return refuse("review", turnedOffMessage(needs, onMain.review, next));
+    if (!onMain.review) return refuse("review", unconfiguredMessage(needs, next));
   }
   if (reviewed.length > 0 || execution.wording.length > 0) {
     if (!reviewer) {
@@ -146,7 +150,7 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
       ws.db.event(ws.actor, "review.skip", subject, { docs: standing });
     } else {
       say(`review: standing instructions ${standing.join(", ")}`);
-      const v = await runReview(reviewer, wt, duplicatePrompt(standing, standingText(wt, cfg.instructions), opts.guide), limits);
+      const v = await runReview(reviewer, wt, duplicatePrompt(standing, standingText(wt, onMain.instructions), opts.guide), limits);
       if (!v.ok) return refuse("review", `the duplicate review could not run: ${v.error.message}`);
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: standing, findings: v.value.findings });
       if (v.value.verdict === "block") return refuse("review", `duplicate review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
@@ -160,9 +164,13 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   return { ok: true, reviewNotes };
 }
 
-/** Why a landing that needs a review is refused while `review` is unset (BR-2074, BR-2143). */
-function unconfiguredMessage(docs: readonly string[]): string {
-  return [`review: not configured — ${docs.join(", ")} need a review and canon/config.yaml sets no \`review\``, ...REVIEW_WAYS_OUT].join("\n");
+/** Why a landing that needs a review is refused while main sets no `review`, even when this landing sets one (BR-2074, BR-2143, #115). */
+function unconfiguredMessage(docs: readonly string[], next: string | undefined): string {
+  return [
+    `review: not configured — ${docs.join(", ")} need a review and canon/config.yaml on main sets no \`review\``,
+    `  ${next ? `this landing sets \`review\`, but the reviewer comes from main: ` : ""}land a change that only sets \`review\` first, by itself, then land these changes`,
+    ...REVIEW_WAYS_OUT,
+  ].join("\n");
 }
 
 /** Why a landing that turns the review off, or removes it, may not carry text the review would read (BR-2295). */
@@ -172,18 +180,27 @@ function turnedOffMessage(docs: readonly string[], before: string | undefined, n
   return [`review: this landing ${is} (main has ${was}) and also changes ${docs.join(", ")}, which would then land unreviewed`, ...REVIEW_WAYS_OUT].join("\n");
 }
 
-/** The `review` value canon/config.yaml has at `rev`; undefined when it has none or the file is missing or unreadable. */
-function reviewOn(wt: string, rev: string): string | undefined {
+/** The review settings canon/config.yaml has at `rev` (main), each read as canon reads it; defaults when it has no config (#115). */
+function reviewSettingsOn(wt: string, rev: string): Result<{ review: string | undefined; reviewTimeoutMs: number; instructions: readonly string[] }> {
   const text = git(wt, "show", `${rev}:canon/config.yaml`);
-  if (!text.ok) return undefined;
-  try {
-    const raw = parse(text.value) as Record<string, unknown> | null;
-    const r = readReview(raw?.["review"] ?? null);
-    return r.ok ? r.value : undefined;
-  } catch {
-    // reason: main's config that does not parse sets no reviewer; the landing tree's own config was already validated
-    return undefined;
+  let raw: Record<string, unknown> = {};
+  if (text.ok) {
+    try {
+      const parsed = parse(text.value) as unknown;
+      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) raw = parsed as Record<string, unknown>;
+    } catch (e) {
+      return err("invalid", `not valid YAML: ${(e as Error).message}`);
+    }
   }
+  const ctx = { root: wt, raw };
+  const field = <T>(k: { key: string; default: T; read: (value: unknown, c: typeof ctx) => Result<T> }): Result<T> => (raw[k.key] === undefined ? ok(k.default) : k.read(raw[k.key], ctx));
+  const review = field(reviewKeys.review);
+  if (!review.ok) return review;
+  const reviewTimeoutMs = field(reviewKeys.reviewTimeoutMs);
+  if (!reviewTimeoutMs.ok) return reviewTimeoutMs;
+  const instructions = field(reviewKeys.instructions);
+  if (!instructions.ok) return instructions;
+  return ok({ review: review.value, reviewTimeoutMs: reviewTimeoutMs.value, instructions: instructions.value });
 }
 
 /** Whether two `<rev>:<path>` objects are the same blob, i.e. the same bytes. */

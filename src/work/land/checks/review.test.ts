@@ -82,8 +82,8 @@ describe("rule review at land", () => {
   };
 
   /** An executable reviewer script that saves its prompt and answers `verdict` (or runs `body` instead); returns its path and the prompt file. */
-  function reviewer(root: string, body?: string) {
-    const script = join(root, "..", `${root.split("/").pop()}-review.sh`);
+  function reviewer(root: string, body?: string, name = "review") {
+    const script = join(root, "..", `${root.split("/").pop()}-${name}.sh`);
     const promptFile = `${script}.prompt`;
     writeFileSync(script, `#!/bin/sh\n${body ?? `cat > ${promptFile}\necho '{"verdict":"ok","findings":[]}'`}\n`);
     chmodSync(script, 0o755);
@@ -221,6 +221,59 @@ describe("rule review at land", () => {
     expect(skips(root)).toBe(1);
   });
 
+  test("BR-2074: a change that swaps the reviewer for one that always answers ok is still reviewed by main's command (#115)", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    const strict = reviewer(root, `cat > /dev/null\necho '{"verdict":"block","findings":["${id} is vague"]}'`, "strict");
+    const lenient = reviewer(root, undefined, "lenient");
+    configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(strict.script)}\n`);
+    const s = startNew(root, "Swap and rule");
+    writeFileSync(join(s.worktree, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: ${JSON.stringify(lenient.script)}\n`);
+    addRule(s.worktree);
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(out.kind === "refused" && out.message).toContain("rule review blocked");
+    expect(existsSync(lenient.promptFile)).toBe(false); // the change's own reviewer never ran
+  });
+
+  test("BR-2074: with no reviewer on main, a change that sets one and changes a rule is refused; the reviewer landed alone first then reviews the rule", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    const r = reviewer(root);
+    const config = `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n`;
+    const both = startNew(root, "Reviewer and rule");
+    writeFileSync(join(both.worktree, "canon/config.yaml"), config);
+    addRule(both.worktree);
+    const refused = await land(ws(both.worktree), FAST, quiet);
+    expect(refused.kind === "refused" && refused.reason).toBe("review");
+    expect(refused.kind === "refused" && refused.message).toContain("first, by itself");
+    expect(existsSync(r.promptFile)).toBe(false);
+    const alone = startNew(root, "Reviewer alone");
+    writeFileSync(join(alone.worktree, "canon/config.yaml"), config);
+    sh(alone.worktree, "commit", "-qam", "reviewer");
+    expect((await land(ws(alone.worktree), FAST, quiet)).kind).toBe("landed");
+    const later = startNew(root, "Rule after");
+    addRule(later.worktree);
+    expect((await land(ws(later.worktree), FAST, quiet)).kind).toBe("landed");
+    expect(readFileSync(r.promptFile, "utf8")).toContain(id);
+  });
+
+  test("BR-2143: a change that edits CLAUDE.md and drops it from instructions is still reviewed by main's list (#115)", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    const strict = reviewer(root, `cat > /dev/null\necho '{"verdict":"block","findings":["stated twice"]}'`, "strict");
+    writeFileSync(join(root, "CLAUDE.md"), "# Project\n");
+    mkdirSync(join(root, "docs"), { recursive: true });
+    writeFileSync(join(root, "docs/other.md"), "# Other\n"); // on main and untouched: listing it alone reviews nothing here
+    sh(root, "add", "-A");
+    configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(strict.script)}\n`);
+    const s = startNew(root, "Drop and edit");
+    writeFileSync(join(s.worktree, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: ${JSON.stringify(strict.script)}\ninstructions: [docs/other.md]\n`);
+    writeFileSync(join(s.worktree, "CLAUDE.md"), "# Project\n\nnew\n");
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "drop and edit");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(out.kind === "refused" && out.message).toContain("duplicate review blocked");
+  });
+
   test("BR-2296: a reviewer past review_timeout_minutes is stopped with its children and the landing is refused with reason review", async () => {
     const root = billingProject(`floor: "true"\ntests: []\n`);
     const pidFile = join(root, "..", `${root.split("/").pop()}-child.pid`);
@@ -228,6 +281,8 @@ describe("rule review at land", () => {
     // reason: 15 s leaves the reviewer time to start and write its pid under parallel floor load; 6 s did not (C-293)
     configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\nreview_timeout_minutes: 0.25\n`);
     const s = startNew(root, "New rule");
+    // the change's own longer limit does not apply to its own landing: main's 6 s does (BR-2074, #115)
+    writeFileSync(join(s.worktree, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\nreview_timeout_minutes: 60\n`);
     addRule(s.worktree);
     const started = Date.now();
     const out = await land(ws(s.worktree), FAST, quiet);
