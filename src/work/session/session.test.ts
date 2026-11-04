@@ -12,6 +12,17 @@ import { addWorktree, git, listWorktreesLocked, withWorktreeLock } from "../../k
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
 describe("work start", () => {
+  test("BR-2022: start of a change that is nowhere exits 3; when git cannot read main it exits 4, naming main (issue #77)", () => {
+    const root = project();
+    const cli = () => Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "start", "C-99"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    expect(cli().exitCode).toBe(3);
+    sh(root, "checkout", "-q", "-b", "other"); // no worktree has main out, so it is read from git
+    writeFileSync(join(root, "canon/config.yaml"), "main: nope\nfloor: test ! -e FAIL\ntests: []\n");
+    const r = cli();
+    expect(r.exitCode).toBe(4);
+    expect(r.stderr.toString()).toContain("git cannot read nope");
+  });
+
   test("BR-2012: a new change gets its own worktree, branch, committed change file and claim", () => {
     const root = project();
     const s = startNew(root, "Refund window");
@@ -753,7 +764,7 @@ describe("start and clean leave nothing half made", () => {
     expect(r.value.kept).toEqual([]);
   });
 
-  test("BR-2188: clean deletes a removed worktree's branch, keeps a kept one's, and leaves a branch git will not delete", async () => {
+  test("BR-2188: clean deletes a removed worktree's branch, keeps a kept one's, and deletes a landed branch even when the primary checkout is on a branch without it", async () => {
     const root = project();
     const one = startNew(root, "One");
     expect((await land(ws(one.worktree), { ...FAST, finish: true }, quiet)).kind).toBe("landed");
@@ -764,7 +775,7 @@ describe("start and clean leave nothing half made", () => {
     expect(r.value.removed).toEqual([one.worktree]);
     expect(hasBranch(root, one.branch)).toBe(false);
     expect(hasBranch(root, busy.branch)).toBe(true);
-    // The primary checkout on a branch without the landed commits: git branch -d refuses, the branch stays.
+    // The primary checkout on a branch without the landed commits: `git branch -d` would refuse; the branch is on main, so it goes.
     sh(root, "checkout", "-q", "-b", "other", "main~2");
     const three = startNew(root, "Three");
     expect((await land(ws(three.worktree), { ...FAST, finish: true }, quiet)).kind).toBe("landed");
@@ -773,6 +784,6 @@ describe("start and clean leave nothing half made", () => {
     if (!again.ok) throw new Error(again.error.message);
     expect(again.value.removed).toEqual([three.worktree]);
     expect(lines).toEqual([`removed ${three.worktree}`]);
-    expect(hasBranch(root, three.branch)).toBe(true);
+    expect(hasBranch(root, three.branch)).toBe(false);
   });
 });

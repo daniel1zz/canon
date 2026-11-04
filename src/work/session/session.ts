@@ -183,6 +183,10 @@ function corpusOf(ws: Workspace, ref: string): Result<Corpus> {
   if (!wts.ok) return wts;
   const holder = wts.value.find((w) => w.branch === main);
   if (holder) return ok(readCorpus(holder.path, ws.config.types, ws.config).corpus);
+  // reason: a ref git cannot read (no such branch, missing objects) is an environment failure, exit 4; only a
+  // readable ref without canon/ reads as an empty corpus (BR-2022, issue #77).
+  const readable = git(ws.primary, "rev-parse", "--verify", "--quiet", `${main}^{commit}`);
+  if (!readable.ok) return err("io", `git cannot read ${main}: no such commit or branch (check \`main\` in canon/config.yaml)`);
   const dir = mkdtempSync(join(tmpdir(), "canon-main-"));
   try {
     const hasCorpus = git(ws.primary, "cat-file", "-e", `${main}:canon`).ok;
@@ -309,7 +313,7 @@ export function clean(ws: Workspace, say: Say, only?: readonly string[]): Result
         continue;
       }
       gone = true;
-      if (w.branch) git(ws.primary, "branch", "-q", "-d", w.branch);
+      if (w.branch) deleteLandedBranch(ws, w.branch);
     } finally {
       // reason: a claim that no longer bound goes with its worktree; putting it back would name a removed worktree (BR-2019)
       unholdClaim(ws.db, gone ? { ...hold.value, prior: null } : hold.value);
@@ -318,6 +322,18 @@ export function clean(ws: Workspace, say: Say, only?: readonly string[]): Result
     say(`removed ${w.path}`);
   }
   return ok({ removed, kept });
+}
+
+/**
+ * Deletes a removed worktree's branch once it is fully contained in main, whatever the primary checkout has out:
+ * `git branch -d` judges against HEAD and so kept landed branches when the primary was on another branch (BR-2188).
+ * Compare-and-delete at the tip just checked, so a commit made on it meanwhile keeps the branch. Silent either way.
+ */
+function deleteLandedBranch(ws: Workspace, branch: string): void {
+  const tip = git(ws.primary, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}^{commit}`);
+  if (!tip.ok) return;
+  if (!git(ws.primary, "merge-base", "--is-ancestor", tip.value, ws.config.main).ok) return;
+  git(ws.primary, "update-ref", "-d", `refs/heads/${branch}`, tip.value);
 }
 
 /** Why `clean` must keep a worktree, cheapest check first; undefined when only the process check remains. */
