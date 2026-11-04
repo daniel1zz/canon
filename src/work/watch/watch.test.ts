@@ -101,10 +101,10 @@ const eventsOf = (root: string, kind: string) =>
 
 /**
  * Starts `canon floor watch` as its own group leader, as canon starts it, on a project whose config is `config(ready,
- * late)`; once `ready` exists sends SIGTERM to the watcher alone, waits for it to exit 143 and then 1.5 s more, which
+ * late)`; once `ready` exists sends `signal` to the watcher alone, waits for it to exit 143 (130 for SIGINT) and then 1.5 s more, which
  * is longer than a `sleep 1; touch late` the command left behind needs to write `late`.
  */
-async function termedWhile(config: (ready: string, late: string) => string, floor?: string) {
+async function termedWhile(config: (ready: string, late: string) => string, floor?: string, signal: "SIGTERM" | "SIGINT" = "SIGTERM") {
   const dir = join(process.env["TMPDIR"] ?? "/tmp", `canon-term-${process.pid}-${Date.now()}`);
   mkdirSync(dir, { recursive: true });
   const ready = join(dir, "ready");
@@ -117,8 +117,8 @@ async function termedWhile(config: (ready: string, late: string) => string, floo
   const fake = fakeCanon(w.root);
   const p = Bun.spawn(["bun", MAIN, "floor", "watch"], { cwd: w.root, stdout: "ignore", stderr: "ignore", stdin: "ignore", detached: true, env: { ...process.env, PATH: `${fake.bin}:${process.env["PATH"]}`, CANON_ACTOR: "agent:a" } });
   await until(() => existsSync(ready));
-  p.kill("SIGTERM"); // the watcher only, not its group
-  expect(await p.exited).toBe(143);
+  p.kill(signal); // the watcher only, not its group
+  expect(await p.exited).toBe(signal === "SIGINT" ? 130 : 143);
   await Bun.sleep(1500);
   return { ...w, late };
 }
@@ -190,7 +190,7 @@ describe("canon floor watch", () => {
     await until(() => watcherRows(root).length === 0);
   });
 
-  test("BR-2219: a watcher stopped by SIGTERM while the floor runs stops the floor's processes too, those whose parent exited included, and records no result", async () => {
+  test("BR-2285 BR-2219: a watcher stopped by SIGTERM while the floor runs stops the floor's processes too, those whose parent exited included, and records no result", async () => {
     const { root, late } = await termedWhile(() => "", "( (sleep 1; touch $LATE) & ); touch $READY; sleep 30");
     expect(existsSync(late)).toBe(false);
     expect(results(root)).toEqual([]);
@@ -455,13 +455,14 @@ describe("a passing main", () => {
     expect(await withPath(fake.bin, undefined, async () => briefAfterGuide(root))).not.toContain("floor watch:");
   });
 
-  test("BR-2270: a setup that fails when after_green is run again ends it: after_green does not run and is not due any more", async () => {
-    const { root, a, ran, fake, dir } = await killedInAfterGreen(`setup: "test ! -e $DIR/nosetup"\n`);
+  test("BR-2270: a setup that fails when after_green is run again ends it: after_green does not run, is not due any more, and main's tested latest is not tested again", async () => {
+    const { root, a, ran, fake, dir, tested } = await killedInAfterGreen(`setup: "test ! -e $DIR/nosetup"\n`);
     writeFileSync(join(dir, "nosetup"), "");
     await withPath(fake.bin, undefined, async () => briefAfterGuide(root));
     await until(() => eventsOf(root, "floor.after_green").length === 1 && watcherRows(root).length === 0);
     expect(ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'floor.after_green'").get()!.detail).toContain('"setup_exit":1');
     expect(readFileSync(ran, "utf8").trim().split("\n")).toEqual([a]);
+    expect(tested()).toEqual([a]); // main's latest commit was already tested, so the floor did not run again
     expect(eventsOf(root, "floor.handoff")).toEqual([]);
     expect(await withPath(fake.bin, undefined, async () => briefAfterGuide(root))).not.toContain("floor watch:");
   });
@@ -485,7 +486,7 @@ describe("a passing main", () => {
     expect(briefAfterGuide(root)).not.toContain("floor watch:");
   });
 
-  test("BR-2270: a watcher stopped by SIGTERM while after_green runs stops that after_green too, so a rerun never runs beside it", async () => {
+  test("BR-2285 BR-2270: a watcher stopped by SIGTERM while after_green runs stops that after_green too, so a rerun never runs beside it", async () => {
     const dir = join(process.env["TMPDIR"] ?? "/tmp", `canon-ag-term-${process.pid}-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
     const pidFile = join(dir, "pid");
@@ -511,7 +512,7 @@ describe("a passing main", () => {
     expect(eventsOf(root, "floor.after_green")).toEqual([]); // still due: the next watcher runs it again, alone
   });
 
-  test("BR-2270: a watcher that does not lead its process group stops only what it started: its after_green ends, the rest of the group runs on", async () => {
+  test("BR-2285: a watcher that does not lead its process group stops only what it started: its after_green ends, the rest of the group runs on", async () => {
     const dir = join(process.env["TMPDIR"] ?? "/tmp", `canon-ag-group-${process.pid}-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
     const pidFile = join(dir, "pid");
@@ -540,8 +541,16 @@ describe("a passing main", () => {
     neighbour.kill("SIGKILL");
   });
 
-  test("BR-2270: a watcher stopped by SIGTERM also stops what after_green left running after its parent exited, so nothing of it outlives the watcher", async () => {
-    const { root, late } = await termedWhile((ready, late) => `hooks:\n  after_green: '( (sleep 1; touch ${late}) & ); touch ${ready}; while true; do sleep 0.1; done'\n`);
+  const orphaning = (ready: string, late: string) => `hooks:\n  after_green: '( (sleep 1; touch ${late}) & ); touch ${ready}; while true; do sleep 0.1; done'\n`;
+
+  test("BR-2285 BR-2270: a watcher stopped by SIGTERM also stops what after_green left running after its parent exited, so nothing of it outlives the watcher", async () => {
+    const { root, late } = await termedWhile(orphaning);
+    expect(existsSync(late)).toBe(false);
+    expect(eventsOf(root, "floor.after_green")).toEqual([]);
+  });
+
+  test("BR-2285: a watcher stopped by SIGINT exits 130 and stops what after_green left running too", async () => {
+    const { root, late } = await termedWhile(orphaning, undefined, "SIGINT");
     expect(existsSync(late)).toBe(false);
     expect(eventsOf(root, "floor.after_green")).toEqual([]);
   });

@@ -1,5 +1,5 @@
 /**
- * Stopping everything a signalled watcher started (BR-2219, BR-2270, issue #101): its setup, floor and after_green, the
+ * Stopping everything a signalled watcher started (BR-2285, issue #101): its setup, floor and after_green, the
  * processes those started, ones started meanwhile and ones whose parent already exited.
  */
 

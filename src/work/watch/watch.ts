@@ -139,7 +139,7 @@ export async function watch(ws: Workspace, say: Say): Promise<Result<Watched>> {
   let mine = false;
   let busy = false;
   // reason: a watcher stopped by a signal first stops everything it started, then removes its worktree and gives up its
-  // place, so the next one starts clean and never runs beside what this one left (BR-2219, BR-2270, issue #101).
+  // place, so the next one starts clean and never runs beside what this one left (BR-2285, issue #101).
   const onSignal = (signal: NodeJS.Signals) => {
     if (!stopStarted()) say("floor watch: cannot read the process table, so the commands this watcher started could not be stopped");
     if (existsSync(dir)) removeWorktree(ws.primary, "--force", dir);
