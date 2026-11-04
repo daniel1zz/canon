@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { project, sh, startNew, ws } from "../testkit.ts";
-import { commandFor, selectTests } from "./verify.ts";
+import { EventEmitter } from "node:events";
+import { commandFor, machineDeps, selectTests, workTest, type WorkTestDeps, type WorkTestResult } from "./verify.ts";
+import type { CpuSample } from "./pool.ts";
 
 const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
 const rule = ["BR", 7].join("-");
@@ -154,7 +156,7 @@ describe("canon work test runs", () => {
     expect(r.out).toMatch(/FAIL\s+\d+\.\ds\s+src\/c\.test\.ts \(exit 3\)/);
     const shown = r.out.split("\n").filter((l) => /^ {4}\d+$/.test(l)).map((l) => Number(l.trim()));
     expect(shown).toEqual(Array.from({ length: 40 }, (_, i) => i + 11));
-    expect(r.out).toMatch(/\n2 file\(s\): 1 passed, 1 failed, \d+\.\ds\nfailed: src\/c\.test\.ts\n/);
+    expect(r.out).toMatch(/\n2 file\(s\): 1 passed, 1 failed, \d+\.\ds, at most 1 at once\nfailed: src\/c\.test\.ts\n/);
   });
 
   test("BR-2158: a run that selects nothing runs no command and still records one work.test event", () => {
@@ -434,4 +436,381 @@ describe("canon work test always_tests", () => {
     write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\nalways_tests: null\n' });
     expect(canon(wt, "check").code).not.toBe(2);
   });
+});
+
+/** A machine whose CPU counters show `idle` of 8 CPUs idle at every look. */
+function fakeCpu(idleCpus: number) {
+  let idle = 0;
+  let total = 0;
+  return (): CpuSample => {
+    idle += idleCpus * 100;
+    total += 800;
+    return { idle, total, count: 8 };
+  };
+}
+
+/** The fixture's worktree with `n` test files `src/t<i>.test.ts` that import the changed `src/a.ts`, run by `script`. */
+function jobsFixture(n: number, script: string, testJobs: string) {
+  const { wt } = fixture("sh run.sh {file}");
+  const tests = Object.fromEntries(Array.from({ length: n }, (_, i) => [`src/t${i + 1}.test.ts`, 'import "./a.ts";\n']));
+  write(wt, { ...tests, "run.sh": script, "src/a.ts": "export const a = 2;\n", "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_jobs: ${testJobs}\n` });
+  // b.test.ts and c.test.ts import a too; only the t files are meant to run here
+  sh(wt, "rm", "-q", "src/b.test.ts", "src/c.test.ts");
+  return wt;
+}
+
+/** The deps of an idle machine whose signals and stop are fakes. */
+function fakeDeps(over: Partial<WorkTestDeps> = {}) {
+  const signals = new EventEmitter();
+  const exits: number[] = [];
+  const d: WorkTestDeps = {
+    ...machineDeps,
+    readCpu: fakeCpu(6),
+    tickMs: 40,
+    graceMs: 300,
+    parallelism: () => 8,
+    signals: { on: (s, f) => signals.on(s, f), off: (s, f) => signals.off(s, f) },
+    stop: async () => undefined,
+    exit: (c) => void exits.push(c),
+    ...over,
+  };
+  return { d, signals, exits };
+}
+
+async function runWorkTest(wt: string, d: WorkTestDeps): Promise<{ lines: string[]; result: WorkTestResult }> {
+  const lines: string[] = [];
+  const r = await workTest(ws(wt), false, (l) => lines.push(l), d);
+  if (!r.ok) throw new Error(r.error.message);
+  return { lines, result: r.value };
+}
+
+/** Each file sleeps `$SLEEP`, so files started within one window overlap; files named *slow* sleep longer. */
+const sleeper = 'echo "$1" >> runs.log\ncase "$1" in *t1*) sleep 0.6;; *) sleep 0.25;; esac\n';
+
+describe("canon work test runs several files at once", () => {
+  test("BR-2302 BR-2158: on an idle machine up to the cap run together, results print as files end, the summary says how many ran at once", async () => {
+    const wt = jobsFixture(4, sleeper, "3");
+    const { lines, result } = await runWorkTest(wt, fakeDeps().d);
+    expect(lines).toContain("test files: up to 3 at once (test_jobs 3, 8 CPUs), another one only while at least 1 CPU is idle");
+    const ended = lines.filter((l) => /^pass /.test(l)).map((l) => l.trim().split(/\s+/).at(-1));
+    expect(ended.at(-1)).toBe("src/t1.test.ts"); // t1 is the slow one, started first and printed last
+    expect(ended).toHaveLength(4);
+    expect(result).toMatchObject({ files: 4, failed: 0 });
+    expect(lines.some((l) => /^4 file\(s\): 4 passed, 0 failed, \d+\.\ds, at most 3 at once$/.test(l))).toBe(true);
+    expect(lastEvent(wt)).toMatchObject({ jobs: 3, peak: 3, cpu: "ok", rerun: 0, rerunFiles: [], passedAlone: 0, passedAloneFiles: [], rerunSkipped: 0, files: 4 });
+  });
+
+  test("BR-2302 BR-2158: a failing file's output stays under its own FAIL line when files run together", async () => {
+    const wt = jobsFixture(3, 'echo "$1" >> runs.log\nsleep 0.2\ncase "$1" in *t2*) echo "boom in $1"; exit 1;; esac\n', "1");
+    const { lines } = await runWorkTest(wt, fakeDeps().d);
+    const i = lines.findIndex((l) => l.startsWith("FAIL") && l.includes("src/t2.test.ts"));
+    expect(lines[i + 1]).toBe("    boom in src/t2.test.ts");
+  });
+
+  test("BR-2302: on a busy machine files run one at a time", async () => {
+    const wt = jobsFixture(4, sleeper, "auto");
+    const { result } = await runWorkTest(wt, fakeDeps({ readCpu: fakeCpu(0.01) }).d);
+    expect(result.failed).toBe(0);
+    expect(lastEvent(wt)).toMatchObject({ peak: 1, jobs: 4 });
+  });
+
+  test("BR-2302: test_jobs 1 runs one at a time, says so, and never reads the CPU", async () => {
+    const wt = jobsFixture(3, sleeper, "1");
+    let looks = 0;
+    const { lines } = await runWorkTest(wt, fakeDeps({ readCpu: () => (looks++, undefined) }).d);
+    expect(lines).toContain("test files: one at a time (test_jobs 1, 8 CPUs)");
+    expect(looks).toBe(0);
+    expect(lastEvent(wt)).toMatchObject({ jobs: 1, peak: 1 });
+  });
+
+  test("BR-2302: auto on 3 CPUs is one at a time", async () => {
+    const wt = jobsFixture(2, sleeper, "auto");
+    const { lines } = await runWorkTest(wt, fakeDeps({ parallelism: () => 3 }).d);
+    expect(lines).toContain("test files: one at a time (test_jobs auto, 3 CPUs)");
+  });
+
+  test("BR-2302: CPU counters that cannot be read at the start mean one at a time, said in one line", async () => {
+    const wt = jobsFixture(3, sleeper, "3");
+    const { lines } = await runWorkTest(wt, fakeDeps({ readCpu: () => undefined }).d);
+    expect(lines).toContain("test files: one at a time (CPU usage cannot be read)");
+    expect(lastEvent(wt)).toMatchObject({ peak: 1, cpu: "unreadable" });
+  });
+
+  test("BR-2302: counters that stall mid-run print one line and record cpu stalled", async () => {
+    const wt = jobsFixture(3, sleeper, "3");
+    let n = 0;
+    const live = fakeCpu(6);
+    const frozen = { idle: 1, total: 1, count: 8 };
+    const { lines } = await runWorkTest(wt, fakeDeps({ readCpu: () => (n++ < 1 ? live() : frozen) }).d);
+    expect(lines.filter((l) => l.startsWith("CPU time counters did not advance"))).toHaveLength(1);
+    expect(lastEvent(wt)).toMatchObject({ cpu: "stalled", peak: 1 });
+    expect(Number(lastEvent(wt)["stalledWindows"])).toBeGreaterThan(0);
+  });
+
+  test("BR-2302: a run that selects nothing prints no test_jobs line", async () => {
+    const wt = jobsFixture(0, sleeper, "3");
+    write(wt, { "src/a.ts": "export const a = 1;\n" });
+    sh(wt, "checkout", "--", "src/a.ts");
+    const { lines } = await runWorkTest(wt, fakeDeps().d);
+    expect(lines).toContain("nothing to run");
+    expect(lines.some((l) => l.startsWith("test files:"))).toBe(false);
+  });
+
+  test("BR-2159: --all runs the same way", async () => {
+    const wt = jobsFixture(3, sleeper, "3");
+    const lines: string[] = [];
+    const r = await workTest(ws(wt), true, (l) => lines.push(l), fakeDeps().d);
+    expect(r.ok).toBe(true);
+    expect(lines[0]).toContain("every test file");
+    expect(lines).toContain("test files: up to 3 at once (test_jobs 3, 8 CPUs), another one only while at least 1 CPU is idle");
+  });
+
+  test("BR-2045 BR-2302: test_jobs other than a whole number of at least 1 or lower-case auto fails every command with exit 2", () => {
+    const { wt } = fixture();
+    for (const bad of ['"3"', "Auto", "0", "-1", "1.5", "many"]) {
+      write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_jobs: ${bad}\n` });
+      const r = canon(wt, "check");
+      expect(r.code).toBe(2);
+      expect(r.err).toContain("test_jobs");
+    }
+    for (const good of ["auto", "3", "null"]) {
+      write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_jobs: ${good}\n` });
+      expect(canon(wt, "check").code).not.toBe(2);
+    }
+  });
+});
+
+describe("canon work test reruns alone", () => {
+  /** Fails when another file ran at the same time: every file marks itself, sleeps, and counts the marks. */
+  const clash = 'touch "running.$$"\nsleep 0.4\nn=$(ls running.* | wc -l)\nsleep 0.2\nrm "running.$$"\necho "$1" >> runs.log\nif [ "$n" -gt 1 ]; then echo "clash in $1"; exit 1; fi\n';
+
+  test("BR-2303 BR-2158: files that fail only while running together pass alone and count as passed, once each", async () => {
+    const wt = jobsFixture(2, clash, "2");
+    const { lines, result } = await runWorkTest(wt, fakeDeps().d);
+    expect(lines.filter((l) => l.startsWith("FAIL")).length).toBe(2);
+    expect(lines).toContain("rerunning alone 2 file(s) that failed while other files ran");
+    expect(lines.filter((l) => /^pass .*\(alone\)$/.test(l)).map((l) => l.trim().split(/\s+/)[2])).toEqual(["src/t1.test.ts", "src/t2.test.ts"]);
+    expect(lines).toContain("failed alongside other files, passed alone: src/t1.test.ts, src/t2.test.ts");
+    expect(lines.some((l) => /^2 file\(s\): 2 passed, 0 failed, /.test(l))).toBe(true);
+    expect(result).toMatchObject({ files: 2, failed: 0 });
+    expect(lastEvent(wt)).toMatchObject({ files: 2, failed: 0, rerun: 2, rerunFiles: ["src/t1.test.ts", "src/t2.test.ts"], passedAlone: 2, passedAloneFiles: ["src/t1.test.ts", "src/t2.test.ts"], rerunSkipped: 0 });
+  });
+
+  test("BR-2303: a file that still fails alone is a failure, shown with (alone)", async () => {
+    const wt = jobsFixture(2, 'sleep 0.3\ncase "$1" in *t2*) echo "real boom"; exit 1;; esac\n', "2");
+    const { lines, result } = await runWorkTest(wt, fakeDeps().d);
+    expect(lines.some((l) => /^FAIL .*src\/t2\.test\.ts \(alone\) \(exit 1\)$/.test(l))).toBe(true);
+    expect(lines).toContain("failed: src/t2.test.ts");
+    expect(lines.some((l) => l.startsWith("failed alongside"))).toBe(false);
+    expect(result).toMatchObject({ files: 2, failed: 1 });
+    expect(lastEvent(wt)).toMatchObject({ rerun: 1, passedAlone: 0, passedAloneFiles: [] });
+  });
+
+  test("BR-2303: more than 3 files failing together are not rerun, and all count as failed", async () => {
+    const wt = jobsFixture(5, "sleep 0.4\nexit 1\n", "5");
+    const { lines, result } = await runWorkTest(wt, fakeDeps().d);
+    expect(lines).toContain("not rerunning alone: 5 files failed while other files ran (more than 3), so they count as failed");
+    expect(lines.some((l) => l.startsWith("rerunning alone"))).toBe(false);
+    expect(result).toMatchObject({ files: 5, failed: 5 });
+    expect(lastEvent(wt)).toMatchObject({ rerun: 0, rerunFiles: [], rerunSkipped: 5 });
+  });
+
+  test("BR-2303: exactly 3 failing together are rerun", async () => {
+    const wt = jobsFixture(3, clash, "3");
+    const { lines, result } = await runWorkTest(wt, fakeDeps().d);
+    expect(lines).toContain("rerunning alone 3 file(s) that failed while other files ran");
+    expect(result).toMatchObject({ files: 3, failed: 0 });
+    expect(lastEvent(wt)).toMatchObject({ rerun: 3, passedAlone: 3, rerunSkipped: 0 });
+  });
+
+  test("BR-2303: with test_jobs 1 a failing file is not rerun", async () => {
+    const wt = jobsFixture(2, 'echo "$1" >> runs.log\ncase "$1" in *t2*) exit 1;; esac\n', "1");
+    const { lines, result } = await runWorkTest(wt, fakeDeps().d);
+    expect(lines.some((l) => l.startsWith("rerunning alone") || l.startsWith("not rerunning"))).toBe(false);
+    expect(runs(wt).filter((r) => r.includes("t2"))).toEqual(["src/t2.test.ts"]);
+    expect(result).toMatchObject({ files: 2, failed: 1 });
+    expect(lastEvent(wt)).toMatchObject({ rerun: 0 });
+  });
+
+  test("BR-2303: a file that fails while it is the only one running is not rerun", async () => {
+    const wt = jobsFixture(2, 'echo "$1" >> runs.log\ncase "$1" in *t1*) exit 1;; esac\n', "2");
+    // t1 fails at once, before the first window ends and t2 starts
+    const { lines } = await runWorkTest(wt, fakeDeps({ tickMs: 5000 }).d);
+    expect(lines.some((l) => l.startsWith("rerunning alone"))).toBe(false);
+    expect(runs(wt).filter((r) => r.includes("t1"))).toEqual(["src/t1.test.ts"]);
+  });
+});
+
+describe("canon work test stops on a signal", () => {
+  /** Waits until `file` exists in `dir`. */
+  async function until(file: string) {
+    for (let i = 0; i < 200 && !existsSync(file); i++) await Bun.sleep(25);
+    expect(existsSync(file)).toBe(true);
+  }
+
+  test("BR-2304: SIGTERM while files run stops them, counts running and not started, skips canon check and exits 143", async () => {
+    const wt = jobsFixture(4, 'touch "started.$$"\nsleep 5\n', "2");
+    const { d, signals, exits } = fakeDeps();
+    const lines: string[] = [];
+    const run = workTest(ws(wt), false, (l) => lines.push(l), d);
+    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 2) await Bun.sleep(25);
+    signals.emit("SIGTERM", "SIGTERM");
+    const r = await run;
+    expect(exits).toEqual([143]);
+    expect(lines).toContain("stopped by SIGTERM: 2 test file(s) were running, 2 not started");
+    expect(lines.some((l) => l.startsWith("canon check"))).toBe(false);
+    expect(r.ok && r.value.signal).toBe("SIGTERM");
+    expect(lastEvent(wt)).toMatchObject({ signal: "SIGTERM", files: 0, failed: 0 });
+    Bun.spawnSync(["pkill", "-f", `${wt}/run.sh`]);
+  });
+
+  test("BR-2304: SIGHUP is handled like SIGTERM and exits 129; SIGINT exits 130", async () => {
+    for (const [sig, code] of [["SIGHUP", 129], ["SIGINT", 130]] as const) {
+      const wt = jobsFixture(2, 'touch "started.$$"\nsleep 5\n', "1");
+      const { d, signals, exits } = fakeDeps();
+      const lines: string[] = [];
+      const run = workTest(ws(wt), false, (l) => lines.push(l), d);
+      while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 1) await Bun.sleep(25);
+      signals.emit(sig, sig);
+      await run;
+      expect(exits).toEqual([code]);
+      expect(lines).toContain(`stopped by ${sig}: 1 test file(s) were running, 1 not started`);
+      Bun.spawnSync(["pkill", "-f", `${wt}/run.sh`]);
+    }
+  });
+
+  test("BR-2304: a second signal while the stop waits turns the hurry flag on", async () => {
+    const wt = jobsFixture(1, 'touch "started.$$"\nsleep 5\n', "1");
+    let hurriedAtEnd = false;
+    const { d, signals } = fakeDeps({
+      stop: async (hurried) => {
+        for (let i = 0; i < 100 && !hurried(); i++) await Bun.sleep(20);
+        hurriedAtEnd = hurried();
+        return undefined;
+      },
+    });
+    const run = workTest(ws(wt), false, () => {}, d);
+    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 1) await Bun.sleep(25);
+    signals.emit("SIGTERM", "SIGTERM");
+    await Bun.sleep(60);
+    signals.emit("SIGINT", "SIGINT");
+    await run;
+    expect(hurriedAtEnd).toBe(true);
+    Bun.spawnSync(["pkill", "-f", `${wt}/run.sh`]);
+  });
+
+  test("BR-2304: a file that ends by a signal after canon was told to stop is no failure and no rerun", async () => {
+    const wt = jobsFixture(2, 'touch "started.$$"\nsleep 0.3\nkill -INT $$\n', "2");
+    const { d, signals } = fakeDeps();
+    const lines: string[] = [];
+    const run = workTest(ws(wt), false, (l) => lines.push(l), d);
+    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 1) await Bun.sleep(25);
+    signals.emit("SIGINT", "SIGINT"); // the files are killed by their own INT a moment later
+    await run;
+    await Bun.sleep(600);
+    expect(lines.some((l) => l.startsWith("FAIL") || l.startsWith("rerunning") || l.startsWith("not rerunning"))).toBe(false);
+    expect(lastEvent(wt)).toMatchObject({ signal: "SIGINT", failed: 0, files: 0 });
+  });
+
+  test("BR-2304: a file that ends by a signal just before canon gets the stop signal is not a failure either", async () => {
+    const wt = jobsFixture(1, 'touch "started.$$"\nkill -INT $$\n', "1");
+    const { d, signals } = fakeDeps({ graceMs: 400 });
+    const lines: string[] = [];
+    const run = workTest(ws(wt), false, (l) => lines.push(l), d);
+    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 1) await Bun.sleep(25);
+    await Bun.sleep(100);
+    signals.emit("SIGINT", "SIGINT");
+    await run;
+    expect(lines.some((l) => l.startsWith("FAIL"))).toBe(false);
+    expect(lastEvent(wt)).toMatchObject({ signal: "SIGINT", failed: 0, files: 0 });
+  });
+
+  test("BR-2304: a file killed by a signal while canon got none is an ordinary failure", async () => {
+    const wt = jobsFixture(1, "kill -TERM $$\n", "1");
+    const { lines, result } = await runWorkTest(wt, fakeDeps({ graceMs: 50 }).d);
+    expect(lines.some((l) => /^FAIL .*\(exit 143\)$/.test(l))).toBe(true);
+    expect(result).toMatchObject({ files: 1, failed: 1 });
+  });
+
+  test("BR-2304: signals during a run that reached the pool are on; after the files finish canon check runs with them off", async () => {
+    const wt = jobsFixture(1, "exit 0\n", "1");
+    const { d, signals } = fakeDeps();
+    await runWorkTest(wt, d);
+    expect(signals.listenerCount("SIGTERM")).toBe(0);
+    expect(signals.listenerCount("SIGINT")).toBe(0);
+    expect(signals.listenerCount("SIGHUP")).toBe(0);
+  });
+
+  test("BR-2304: during the type check a signal stops it, with 0 files running and all of them not started", async () => {
+    const wt = jobsFixture(2, "exit 0\n", "1");
+    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntypecheck_command: "sh tc.sh"\n', "tc.sh": 'touch tc.started\nsleep 5\n' });
+    const { d, signals, exits } = fakeDeps();
+    const lines: string[] = [];
+    const run = workTest(ws(wt), false, (l) => lines.push(l), d);
+    await until(join(wt, "tc.started"));
+    signals.emit("SIGTERM", "SIGTERM");
+    await run;
+    expect(exits).toEqual([143]);
+    expect(lines.some((l) => /^stopped by SIGTERM: 0 test file\(s\) were running, \d+ not started$/.test(l))).toBe(true);
+    Bun.spawnSync(["pkill", "-f", "tc.sh"]);
+  });
+
+  test("BR-2304: during the rerun, files that failed together and are not rerun yet count as not started, not failed", async () => {
+    const wt = jobsFixture(2, 'touch "started.$$"\nsleep 0.3\nif [ "$(ls started.* | wc -l)" -le 2 ]; then exit 1; fi\nsleep 5\n', "2");
+    const { d, signals } = fakeDeps();
+    const lines: string[] = [];
+    const run = workTest(ws(wt), false, (l) => lines.push(l), d);
+    for (let i = 0; i < 400 && !lines.some((l) => l.startsWith("rerunning alone")); i++) await Bun.sleep(25);
+    expect(lines.some((l) => l.startsWith("rerunning alone"))).toBe(true);
+    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 3) await Bun.sleep(25);
+    signals.emit("SIGTERM", "SIGTERM");
+    await run;
+    expect(lines).toContain("stopped by SIGTERM: 1 test file(s) were running, 1 not started");
+    expect(lastEvent(wt)).toMatchObject({ signal: "SIGTERM", files: 0, failed: 0 });
+    Bun.spawnSync(["pkill", "-f", `${wt}/run.sh`]);
+  });
+});
+
+describe("canon work test stops its process tree on a real signal", () => {
+  async function start(wt: string) {
+    const proc = Bun.spawn(["bun", MAIN, "work", "test"], { cwd: wt, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    for (let i = 0; i < 400 && !existsSync(join(wt, "child.pid")); i++) await Bun.sleep(25);
+    expect(existsSync(join(wt, "child.pid"))).toBe(true);
+    return proc;
+  }
+  const alive = (pid: number) => {
+    try {
+      process.kill(pid, 0);
+      return true;
+    } catch {
+      return false;
+    }
+  };
+
+  test("BR-2304: SIGTERM to canon alone ends the test file's whole process tree and exits 143", async () => {
+    const wt = jobsFixture(2, 'sleep 30 &\necho $! > child.pid\nwait\n', "1");
+    const proc = await start(wt);
+    const pid = Number(readFileSync(join(wt, "child.pid"), "utf8"));
+    expect(alive(pid)).toBe(true);
+    proc.kill("SIGTERM");
+    expect(await proc.exited).toBe(143);
+    expect(alive(pid)).toBe(false);
+    const out = await new Response(proc.stdout).text();
+    expect(out).toMatch(/stopped by SIGTERM: 1 test file\(s\) were running, 1 not started/);
+    expect(out).not.toContain("canon check:");
+  }, 30_000);
+
+  test("BR-2304: a second signal ends the wait at once and sends SIGKILL to a file that ignores SIGTERM", async () => {
+    const wt = jobsFixture(1, 'trap "" TERM INT\nsleep 30 &\necho $! > child.pid\nwhile true; do sleep 0.1; done\n', "1");
+    const proc = await start(wt);
+    const pid = Number(readFileSync(join(wt, "child.pid"), "utf8"));
+    const t0 = performance.now();
+    proc.kill("SIGTERM");
+    await Bun.sleep(700);
+    proc.kill("SIGINT");
+    expect(await proc.exited).toBe(143);
+    expect(performance.now() - t0).toBeLessThan(8000); // not the 10 s grace period
+    expect(alive(pid)).toBe(false);
+    Bun.spawnSync(["pkill", "-f", `${wt}/run.sh`]);
+  }, 30_000);
 });

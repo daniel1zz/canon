@@ -15,6 +15,9 @@ import { readCorpus } from "../../knowledge/documents/read.ts";
 import { idsIn } from "../../knowledge/documents/types.ts";
 import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
+import { stopAndWaitAsync } from "../watch/stop.ts";
+import { availableParallelism } from "node:os";
+import { jobCap, readCpu, startPool, type CpuSample, type CpuState, type FileResult, type Outcome } from "./pool.ts";
 import type { Workspace } from "../workspace.ts";
 
 /**
@@ -152,43 +155,30 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
   return ok({ base, changed, rules, decisions, unmatched, selected });
 }
 
-export interface TestRun {
-  readonly file: string;
-  readonly exitCode: number;
-  readonly ms: number;
-  /** Combined stdout and stderr of the run. */
-  readonly output: string;
-}
-
 /** `test_command` with `{file}` replaced by the path, quoted for sh. */
 export function commandFor(template: string, file: string): string {
   return template.replaceAll(FILE_PLACEHOLDER, `'${file.replaceAll("'", `'\\''`)}'`);
 }
 
 /** Runs one shell command in `root`, capturing its exit code, time and combined output. */
-async function runShell(root: string, command: string): Promise<{ exitCode: number; ms: number; output: string }> {
+async function runShell(root: string, command: string): Promise<Outcome> {
   const t0 = performance.now();
   const proc = Bun.spawn(["sh", "-c", command], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-  return { exitCode, ms: Math.round(performance.now() - t0), output: `${stdout}${stderr}` };
-}
-
-/** Runs one test file per invocation of `test_command` (BR-2158), reporting each as it finishes. */
-export async function runTests(root: string, template: string, files: readonly string[], each: (r: TestRun) => void): Promise<TestRun[]> {
-  const out: TestRun[] = [];
-  for (const file of files) {
-    const r = { file, ...(await runShell(root, commandFor(template, file))) };
-    out.push(r);
-    each(r);
-  }
-  return out;
+  // reason: sh reports a command killed by a signal as 128 + the signal's number (BR-2304)
+  const signalled = ["SIGHUP", "SIGINT", "SIGTERM"].includes(String(proc.signalCode)) || [129, 130, 143].includes(exitCode);
+  return { exitCode, ms: Math.round(performance.now() - t0), output: `${stdout}${stderr}`, signalled };
 }
 
 const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
 /** Lines of a failing file's output shown under it; the rest is in the run itself. */
 const TAIL_LINES = 40;
+/** The most files that failed while others ran that are run alone again; more are not (BR-2303). */
+export const RERUN_MAX = 3;
+const EXIT_OF_SIGNAL: Readonly<Record<string, number>> = { SIGHUP: 129, SIGINT: 130, SIGTERM: 143 };
 
 export interface WorkTestResult {
+  /** Files with a final result, each counted once; a rerun alone does not add one (BR-2158). */
   readonly files: number;
   readonly failed: number;
   /** Exit code of `typecheck_command`, null when the project sets none (BR-2226). */
@@ -197,17 +187,44 @@ export interface WorkTestResult {
   readonly check: number;
   /** Number of `always_tests` globs that match no test file (BR-2297). */
   readonly unmatched: number;
+  /** The signal that stopped the run, when one did (BR-2304). */
+  readonly signal?: string;
 }
 
 /** True when `canon work test` must exit 1: a test file, the type check or canon check failed. */
-export const workTestFailed = (r: WorkTestResult) => r.failed > 0 || (r.typecheck !== null && r.typecheck !== 0) || r.check > 0 || r.unmatched > 0;
+export const workTestFailed = (r: WorkTestResult) => r.signal !== undefined || r.failed > 0 || (r.typecheck !== null && r.typecheck !== 0) || r.check > 0 || r.unmatched > 0;
+
+/** What `workTest` needs from the machine, so tests can give a machine that is idle, busy or stopped (BR-2302, BR-2304). */
+export interface WorkTestDeps {
+  readonly readCpu: () => CpuSample | undefined;
+  readonly tickMs: number;
+  readonly graceMs: number;
+  readonly parallelism: () => number;
+  readonly signals: { on(s: NodeJS.Signals, f: (s: NodeJS.Signals) => void): unknown; off(s: NodeJS.Signals, f: (s: NodeJS.Signals) => void): unknown };
+  /** Stops everything this process started (BR-2304); `hurried` turns true on a second signal. */
+  readonly stop: (hurried: () => boolean) => Promise<string | undefined>;
+  readonly exit: (code: number) => void;
+}
+
+export const machineDeps: WorkTestDeps = {
+  readCpu,
+  tickMs: 2000,
+  graceMs: 500,
+  parallelism: availableParallelism,
+  signals: process,
+  // reason: only the descendants, not the rest of a process group `canon work test | tee` shares (BR-2304)
+  stop: (hurried) => stopAndWaitAsync(process.pid, false, hurried),
+  exit: (code) => process.exit(code),
+};
+
+const STOP_SIGNALS: readonly NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
 
 /**
  * `canon work test` end to end: select, explain, type-check (BR-2226), run, canon check (BR-2227), summarize.
  * The type check runs first and the corpus check last, even when nothing is selected or an earlier step failed,
  * so one run reports every problem the floor or the landing check would refuse.
  */
-export async function workTest(ws: Workspace, all: boolean, say: (line: string) => void): Promise<Result<WorkTestResult>> {
+export async function workTest(ws: Workspace, all: boolean, say: (line: string) => void, deps: WorkTestDeps = machineDeps): Promise<Result<WorkTestResult>> {
   if (!ws.config.testCommand) {
     return err("invalid", `canon/config.yaml has no \`test_command\`: set the command that runs one test file, with ${FILE_PLACEHOLDER} where its path goes (e.g. test_command: "bun test ${FILE_PLACEHOLDER}")`);
   }
@@ -228,24 +245,106 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   const tail = (output: string) => {
     for (const line of output.trimEnd().split("\n").slice(-TAIL_LINES)) say(`    ${line}`);
   };
+  const testCommand = ws.config.testCommand;
+  const files = selected.map((s) => s.file);
+  const cap = jobCap(ws.config.testJobs, deps.parallelism());
 
+  // What a stop signal needs to know (BR-2304): the files with a final result, and the ones running now.
+  const finalized = new Map<string, FileResult>();
+  let running: () => number = () => 0;
   let typecheck: number | null = null;
-  if (ws.config.typecheckCommand) {
-    const r = await runShell(ws.root, ws.config.typecheckCommand);
-    typecheck = r.exitCode;
-    say(`${r.exitCode === 0 ? "pass" : "FAIL"}  ${secs(r.ms).padStart(6)}  typecheck${r.exitCode === 0 ? "" : ` (exit ${r.exitCode})`}`);
-    if (r.exitCode !== 0) tail(r.output);
-  }
+  let jobs = { peak: 0, cpu: "ok" as CpuState, stalledWindows: 0 };
+  let signal: NodeJS.Signals | undefined;
+  let hurried = false;
+  const failedNow = () => [...finalized.values()].filter((r) => r.exitCode !== 0).length;
+  let stoppedWith: (r: WorkTestResult) => void = () => {};
+  const stoppedP = new Promise<WorkTestResult>((resolve) => {
+    stoppedWith = resolve;
+  });
+  const onSignal = (sig: NodeJS.Signals) => {
+    if (signal !== undefined) {
+      hurried = true; // a second signal ends the wait at once (BR-2304)
+      return;
+    }
+    signal = sig;
+    const were = running();
+    void (async () => {
+      const note = await deps.stop(() => hurried);
+      if (note) say(note);
+      say(`stopped by ${sig}: ${were} test file(s) were running, ${files.length - finalized.size - were} not started`);
+      const result: WorkTestResult = { files: finalized.size, failed: failedNow(), typecheck, check: 0, unmatched: unmatched.length, signal: sig };
+      ws.db.event(ws.actor, "work.test", subject, { all, ...result, jobs: cap, ...jobs, ms: Math.round(performance.now() - t0) });
+      deps.exit(EXIT_OF_SIGNAL[sig]!);
+      stoppedWith(result);
+    })();
+  };
+  for (const s of STOP_SIGNALS) deps.signals.on(s, onSignal);
 
-  let runs: TestRun[] = [];
-  if (selected.length === 0) say("nothing to run");
-  else {
-    runs = await runTests(ws.root, ws.config.testCommand, selected.map((s) => s.file), (r) => {
-      say(`${r.exitCode === 0 ? "pass" : "FAIL"}  ${secs(r.ms).padStart(6)}  ${r.file}${r.exitCode === 0 ? "" : ` (exit ${r.exitCode})`}`);
+  const rerunAlone: string[] = [];
+  const passedAlone: string[] = [];
+  let rerunSkipped = 0;
+  const show = (r: Outcome & { file: string }, alone: boolean) => {
+    const ok = r.exitCode === 0;
+    say(`${ok ? "pass" : "FAIL"}  ${secs(r.ms).padStart(6)}  ${r.file}${alone ? " (alone)" : ""}${ok ? "" : ` (exit ${r.exitCode})`}`);
+    if (!ok) tail(r.output);
+  };
+
+  const phases = async (): Promise<void> => {
+    if (ws.config.typecheckCommand) {
+      const r = await runShell(ws.root, ws.config.typecheckCommand);
+      typecheck = r.exitCode;
+      say(`${r.exitCode === 0 ? "pass" : "FAIL"}  ${secs(r.ms).padStart(6)}  typecheck${r.exitCode === 0 ? "" : ` (exit ${r.exitCode})`}`);
       if (r.exitCode !== 0) tail(r.output);
+    }
+    if (files.length === 0) {
+      say("nothing to run");
+      return;
+    }
+    const first = cap > 1 ? deps.readCpu() : undefined;
+    const setting = `test_jobs ${ws.config.testJobs}, ${deps.parallelism()} CPUs`;
+    if (cap === 1) say(`test files: one at a time (${setting})`);
+    else if (!first) say("test files: one at a time (CPU usage cannot be read)");
+    else say(`test files: up to ${cap} at once (${setting}), another one only while at least 1 CPU is idle`);
+
+    const pool = startPool({
+      files, cap, first, run: (file) => runShell(ws.root, commandFor(testCommand, file)), readCpu: deps.readCpu, tickMs: deps.tickMs, graceMs: deps.graceMs, say,
+      stopping: () => signal !== undefined,
+      onEnd: (r) => {
+        show(r, false);
+        // a file that failed while others ran waits for its rerun alone before it has a final result (BR-2303)
+        if (r.exitCode === 0 || !r.overlapped) finalized.set(r.file, r);
+      },
     });
-  }
-  const failed = runs.filter((r) => r.exitCode !== 0);
+    running = pool.running;
+    const done = await pool.done;
+    jobs = { peak: done.peak, cpu: done.cpu, stalledWindows: done.stalledWindows };
+    running = () => 0;
+
+    const pending = files.filter((f) => done.results.some((r) => r.file === f && !finalized.has(f)));
+    if (pending.length > RERUN_MAX) {
+      rerunSkipped = pending.length;
+      say(`not rerunning alone: ${pending.length} files failed while other files ran (more than ${RERUN_MAX}), so they count as failed`);
+      for (const f of pending) finalized.set(f, done.results.find((r) => r.file === f)!);
+    } else if (pending.length > 0) {
+      say(`rerunning alone ${pending.length} file(s) that failed while other files ran`);
+      for (const f of pending) {
+        if (signal !== undefined) return;
+        let busy = 1;
+        running = () => busy;
+        const r = await runShell(ws.root, commandFor(testCommand, f));
+        busy = 0;
+        if (signal !== undefined) return;
+        rerunAlone.push(f);
+        if (r.exitCode === 0) passedAlone.push(f);
+        show({ ...r, file: f }, true);
+        finalized.set(f, { ...r, file: f, overlapped: false });
+      }
+    }
+  };
+  const stopped = await Promise.race([phases().then(() => undefined), stoppedP]);
+  for (const s of STOP_SIGNALS) deps.signals.off(s, onSignal);
+  if (stopped) return ok(stopped);
+  const failed = files.filter((f) => finalized.get(f)!.exitCode !== 0);
 
   // The same check as `canon check`, on the worktree's files (BR-2227).
   const read = readCorpus(ws.root, ws.config.types, ws.config);
@@ -275,12 +374,15 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   const ms = Math.round(performance.now() - t0);
   // reason: a glob that matches nothing stopped protecting anything, which must not pass unnoticed (BR-2297)
   for (const g of unmatched) say(`always_tests: ${JSON.stringify(g)} matches no test file`);
-  const result: WorkTestResult = { files: runs.length, failed: failed.length, typecheck, check: findings.length, unmatched: unmatched.length };
-  if (runs.length) say(`${runs.length} file(s): ${runs.length - failed.length} passed, ${failed.length} failed, ${secs(ms)}`);
-  if (failed.length) say(`failed: ${failed.map((r) => r.file).join(", ")}`);
+  const result: WorkTestResult = { files: files.length, failed: failed.length, typecheck, check: findings.length, unmatched: unmatched.length };
+  if (files.length) say(`${files.length} file(s): ${files.length - failed.length} passed, ${failed.length} failed, ${secs(ms)}, at most ${jobs.peak} at once`);
+  if (passedAlone.length) say(`failed alongside other files, passed alone: ${passedAlone.join(", ")}`);
+  if (failed.length) say(`failed: ${failed.join(", ")}`);
   if (typecheck !== null && typecheck !== 0) say(`typecheck failed (exit ${typecheck})`);
   if (findings.length) say(`canon check failed: ${findings.length} finding(s)`);
   // reason: a run that selected nothing is still a run before landing, which D-23 compares with floor refusals (BR-2158)
-  ws.db.event(ws.actor, "work.test", subject, { all, ...result, ms });
+  ws.db.event(ws.actor, "work.test", subject, {
+    all, ...result, ms, jobs: cap, ...jobs, rerun: rerunAlone.length, rerunFiles: rerunAlone, passedAlone: passedAlone.length, passedAloneFiles: passedAlone, rerunSkipped,
+  });
   return ok(result);
 }

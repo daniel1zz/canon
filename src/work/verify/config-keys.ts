@@ -32,6 +32,15 @@ export const verifyKeys = {
     listed: 45,
     checked: 65,
   }),
+  testJobs: configKey<number | "auto">({
+    key: "test_jobs",
+    doc: "The most test files `canon work test` runs at once: a whole number of at least 1, or `auto` (half of the CPUs); another file is started only while a CPU is idle, so 1 means one at a time (BR-2302, D-56).",
+    default: "auto",
+    schema: { oneOf: [{ type: "integer", minimum: 1 }, { const: "auto" }, { type: "null" }], default: "auto" },
+    read: (v) => (v === null || v === "auto" ? ok("auto") : typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`test_jobs` must be a whole number of at least 1, or `auto`")),
+    listed: 46,
+    checked: 66,
+  }),
   alwaysTests: configKey<readonly string[]>({
     key: "always_tests",
     doc: "Globs of test files (among those `tests` finds) that `canon work test` selects on every run, reason `always`: tests a change can break without being imported by it or naming its rules, such as ones that read the whole source tree (BR-2297).",
