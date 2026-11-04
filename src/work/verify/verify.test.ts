@@ -22,6 +22,8 @@ function write(root: string, files: Record<string, string>) {
   }
 }
 
+const ruleText = (title: string) => `---\nid: ${rule}\ntitle: ${title}\nstatus: active\n---\n\n## 规则\n\nx\n\n## 例子\n\n- a → b\n`;
+
 /**
  * A project whose "tests" are files run by run.sh: it appends each path to runs.log and fails when the file holds FAILME.
  * a.ts ← b.ts; b.test.ts imports a directly, c.test.ts through b, d.test.ts nothing, e.test.ts names the rule, f.test.ts
@@ -41,6 +43,9 @@ function fixture(testCommand = "sh run.sh {file}") {
     "src/e.test.ts": `it("${rule}: names the rule", () => {});\n`,
     "src/f.test.ts": `it.skip("${rule}: skipped", () => {});\n`,
     "README.md": "readme\n",
+    // reason: canon work test ends with canon check (BR-2227), so the rule the tests name must exist
+    "canon/rules/core/README.md": "---\ncode: [src]\n---\n# core\n\n## 术语\n\n- **x**：y\n",
+    [`canon/rules/core/${rule}.md`]: ruleText("x"),
   });
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "fixture");
@@ -87,7 +92,7 @@ describe("canon work test selection", () => {
 
   test("BR-2157: a changed rule file selects the tests whose running titles name it, not skipped ones", () => {
     const { wt } = fixture();
-    write(wt, { [`canon/rules/core/${rule}.md`]: `---\nid: ${rule}\ntitle: x\nstatus: active\n---\n` });
+    write(wt, { [`canon/rules/core/${rule}.md`]: ruleText("y") });
     expect(reasons(wt)).toEqual({ "src/e.test.ts": `names ${rule}` });
   });
 
@@ -163,7 +168,7 @@ describe("canon work test runs", () => {
     expect(runs(wt)).toEqual([]);
     const ev = ws(wt).db.db.query<{ subject: string | null; detail: string }, []>("SELECT subject, detail FROM events WHERE kind = 'work.test' ORDER BY id").all();
     expect(ev.length).toBe(1);
-    expect(JSON.parse(ev[0]!.detail)).toMatchObject({ all: false, files: 0, failed: 0 });
+    expect(JSON.parse(ev[0]!.detail)).toMatchObject({ all: false, files: 0, failed: 0, typecheck: null, check: 0 });
     expect(ev[0]!.subject).toBe("C-1");
   });
 
@@ -210,5 +215,104 @@ describe("canon work test runs", () => {
     expect(r.code).toBe(2);
     expect(r.err).toContain('test_command: "bun test {file}"');
     expect(canon(wt, "check").code).not.toBe(2);
+  });
+});
+
+/** The fixture with `typecheck_command: "sh tc.sh"`; tc.sh logs its run and fails with exit 2 while TYPEFAIL exists. */
+function typecheckFixture() {
+  const f = fixture();
+  write(f.wt, {
+    "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntypecheck_command: "sh tc.sh"\n',
+    "tc.sh": 'echo typecheck >> runs.log\nif [ -e TYPEFAIL ]; then echo "type error in src/a.ts"; exit 2; fi\n',
+  });
+  sh(f.wt, "add", "-A");
+  sh(f.wt, "commit", "-qm", "typecheck");
+  return f;
+}
+
+const lastEvent = (wt: string) => {
+  const ev = ws(wt).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'work.test' ORDER BY id").all();
+  return JSON.parse(ev.at(-1)!.detail) as Record<string, unknown>;
+};
+
+describe("canon work test type check and canon check", () => {
+  test("BR-2226: typecheck_command runs once before the selected tests, and passing it exits 0", () => {
+    const { wt } = typecheckFixture();
+    write(wt, { "src/a.ts": "export const a = 2;\n" });
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(0);
+    expect(runs(wt)).toEqual(["typecheck", "src/b.test.ts", "src/c.test.ts"]);
+    expect(r.out).toMatch(/pass\s+\d+\.\ds\s+typecheck\n/);
+    expect(lastEvent(wt)).toMatchObject({ typecheck: 0, failed: 0, check: 0 });
+  });
+
+  test("BR-2226: a failing type check still runs the tests, shows its output and exits 1", () => {
+    const { wt } = typecheckFixture();
+    write(wt, { "src/a.ts": "export const a = 2;\n", TYPEFAIL: "" });
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(1);
+    expect(r.out).toMatch(/FAIL\s+\d+\.\ds\s+typecheck \(exit 2\)/);
+    expect(r.out).toContain("    type error in src/a.ts");
+    expect(runs(wt)).toEqual(["typecheck", "src/b.test.ts", "src/c.test.ts"]);
+    expect(r.out).toContain("2 file(s): 2 passed, 0 failed");
+    expect(r.out).toContain("typecheck failed (exit 2)");
+    expect(lastEvent(wt)).toMatchObject({ files: 2, failed: 0, typecheck: 2 });
+  });
+
+  test("BR-2226: the type check runs when nothing is selected and with --all, and its failure still exits 1", () => {
+    const { wt } = typecheckFixture();
+    write(wt, { TYPEFAIL: "" });
+    const r = canon(wt, "work", "test");
+    expect(r.out).toContain("nothing to run");
+    expect(runs(wt)).toEqual(["typecheck"]);
+    expect(r.code).toBe(1);
+    writeFileSync(join(wt, "runs.log"), "");
+    expect(canon(wt, "work", "test", "--all").code).toBe(1);
+    expect(runs(wt)[0]).toBe("typecheck");
+  });
+
+  test("BR-2226: without typecheck_command no type check runs or is printed; a non-string value is a config error", () => {
+    const { wt } = fixture();
+    write(wt, { "src/a.ts": "export const a = 2;\n" });
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain("typecheck");
+    expect(lastEvent(wt)).toMatchObject({ typecheck: null });
+    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntypecheck_command: 3\n' });
+    const bad = canon(wt, "work", "test");
+    expect(bad.code).toBe(2);
+    expect(bad.err).toContain("typecheck_command");
+  });
+
+  test("BR-2227: canon check findings are listed after passing tests and exit 1; none prints ok", () => {
+    const { wt } = fixture();
+    write(wt, { "src/a.ts": "export const a = 2;\n" });
+    const clean = canon(wt, "work", "test");
+    expect(clean.code).toBe(0);
+    expect(clean.out).toContain("canon check: ok");
+    write(wt, { [`canon/rules/core/${rule}.md`]: ruleText("x").replace("- a → b", "- a → b, see BR-999") });
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("3 file(s): 3 passed, 0 failed");
+    expect(r.out).toMatch(/ref-dangling\s+canon\/rules\/core\/BR-7\.md: names BR-999, which does not exist/);
+    expect(r.out).toContain("canon check: 1 finding(s)");
+    expect(r.out.indexOf("canon check: 1 finding(s)")).toBeGreaterThan(r.out.lastIndexOf("pass "));
+    expect(lastEvent(wt)).toMatchObject({ failed: 0, check: 1 });
+  });
+
+  test("BR-2227: canon check runs when nothing is selected, and failing tests and findings are both reported", () => {
+    const { wt } = fixture();
+    write(wt, { "canon/notes/N-1.md": "---\nid: N-1\ntitle: n\n---\n\nBR-999\n" });
+    const none = canon(wt, "work", "test");
+    expect(none.out).toContain("nothing to run");
+    expect(none.out).toContain("canon check: 1 finding(s)");
+    expect(none.code).toBe(1);
+    expect(lastEvent(wt)).toMatchObject({ files: 0, check: 1 });
+
+    write(wt, { "src/a.ts": "export const a = 2;\n", "src/c.test.ts": 'import { b } from "./b.ts";\n// FAILME\n' });
+    const both = canon(wt, "work", "test");
+    expect(both.code).toBe(1);
+    expect(both.out).toContain("failed: src/c.test.ts");
+    expect(both.out).toContain("canon check: 1 finding(s)");
   });
 });

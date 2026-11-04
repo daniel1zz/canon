@@ -1,6 +1,6 @@
 import { defineCommand } from "citty";
 import { entry, EXIT, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
-import { workTest } from "./verify.ts";
+import { workTest, workTestFailed } from "./verify.ts";
 
 /** `canon work test`. */
 
@@ -10,7 +10,7 @@ const test = defineCommand({
   async run({ args }) {
     const ws = workspace();
     const r = must(await workTest(ws, Boolean(args.all), say));
-    if (r.failed > 0) process.exit(EXIT.refused);
+    if (workTestFailed(r)) process.exit(EXIT.refused);
   },
 });
 

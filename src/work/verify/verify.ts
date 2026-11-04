@@ -3,6 +3,7 @@ import { basename, join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
 import { FILE_PLACEHOLDER } from "./config-keys.ts";
+import { check } from "../../knowledge/check/check.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { testTitles } from "../../knowledge/check/test-titles.ts";
 import { importedPaths } from "../../knowledge/query/query.ts";
@@ -147,14 +148,19 @@ export function commandFor(template: string, file: string): string {
   return template.replaceAll(FILE_PLACEHOLDER, `'${file.replaceAll("'", `'\\''`)}'`);
 }
 
+/** Runs one shell command in `root`, capturing its exit code, time and combined output. */
+async function runShell(root: string, command: string): Promise<{ exitCode: number; ms: number; output: string }> {
+  const t0 = performance.now();
+  const proc = Bun.spawn(["sh", "-c", command], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+  const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  return { exitCode, ms: Math.round(performance.now() - t0), output: `${stdout}${stderr}` };
+}
+
 /** Runs one test file per invocation of `test_command` (BR-2158), reporting each as it finishes. */
 export async function runTests(root: string, template: string, files: readonly string[], each: (r: TestRun) => void): Promise<TestRun[]> {
   const out: TestRun[] = [];
   for (const file of files) {
-    const t0 = performance.now();
-    const proc = Bun.spawn(["sh", "-c", commandFor(template, file)], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
-    const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-    const r = { file, exitCode, ms: Math.round(performance.now() - t0), output: `${stdout}${stderr}` };
+    const r = { file, ...(await runShell(root, commandFor(template, file))) };
     out.push(r);
     each(r);
   }
@@ -165,8 +171,24 @@ const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
 /** Lines of a failing file's output shown under it; the rest is in the run itself. */
 const TAIL_LINES = 40;
 
-/** `canon work test` end to end: select, explain, run, summarize. Returns the number of failed files. */
-export async function workTest(ws: Workspace, all: boolean, say: (line: string) => void): Promise<Result<{ files: number; failed: number }>> {
+export interface WorkTestResult {
+  readonly files: number;
+  readonly failed: number;
+  /** Exit code of `typecheck_command`, null when the project sets none (BR-2226). */
+  readonly typecheck: number | null;
+  /** Number of `canon check` findings in the worktree (BR-2227). */
+  readonly check: number;
+}
+
+/** True when `canon work test` must exit 1: a test file, the type check or canon check failed. */
+export const workTestFailed = (r: WorkTestResult) => r.failed > 0 || (r.typecheck !== null && r.typecheck !== 0) || r.check > 0;
+
+/**
+ * `canon work test` end to end: select, explain, type-check (BR-2226), run, canon check (BR-2227), summarize.
+ * The type check runs first and the corpus check last, even when nothing is selected or an earlier step failed,
+ * so one run reports every problem the floor or the landing check would refuse.
+ */
+export async function workTest(ws: Workspace, all: boolean, say: (line: string) => void): Promise<Result<WorkTestResult>> {
   if (!ws.config.testCommand) {
     return err("invalid", `canon/config.yaml has no \`test_command\`: set the command that runs one test file, with ${FILE_PLACEHOLDER} where its path goes (e.g. test_command: "bun test ${FILE_PLACEHOLDER}")`);
   }
@@ -183,21 +205,42 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
     say("Not selected: tests that only read changed files at run time; canon work test --all runs every test file.");
   }
   const subject = claimOfWorktree(ws.db, ws.root)?.subject ?? null;
-  if (selected.length === 0) {
-    say("nothing to run");
-    // reason: a run that selected nothing is still a run before landing, which D-23 compares with floor refusals (BR-2158)
-    ws.db.event(ws.actor, "work.test", subject, { all, files: 0, failed: 0, ms: 0 });
-    return ok({ files: 0, failed: 0 });
-  }
   const t0 = performance.now();
-  const runs = await runTests(ws.root, ws.config.testCommand, selected.map((s) => s.file), (r) => {
-    say(`${r.exitCode === 0 ? "pass" : "FAIL"}  ${secs(r.ms).padStart(6)}  ${r.file}${r.exitCode === 0 ? "" : ` (exit ${r.exitCode})`}`);
-    if (r.exitCode !== 0) for (const line of r.output.trimEnd().split("\n").slice(-TAIL_LINES)) say(`    ${line}`);
-  });
+  const tail = (output: string) => {
+    for (const line of output.trimEnd().split("\n").slice(-TAIL_LINES)) say(`    ${line}`);
+  };
+
+  let typecheck: number | null = null;
+  if (ws.config.typecheckCommand) {
+    const r = await runShell(ws.root, ws.config.typecheckCommand);
+    typecheck = r.exitCode;
+    say(`${r.exitCode === 0 ? "pass" : "FAIL"}  ${secs(r.ms).padStart(6)}  typecheck${r.exitCode === 0 ? "" : ` (exit ${r.exitCode})`}`);
+    if (r.exitCode !== 0) tail(r.output);
+  }
+
+  let runs: TestRun[] = [];
+  if (selected.length === 0) say("nothing to run");
+  else {
+    runs = await runTests(ws.root, ws.config.testCommand, selected.map((s) => s.file), (r) => {
+      say(`${r.exitCode === 0 ? "pass" : "FAIL"}  ${secs(r.ms).padStart(6)}  ${r.file}${r.exitCode === 0 ? "" : ` (exit ${r.exitCode})`}`);
+      if (r.exitCode !== 0) tail(r.output);
+    });
+  }
   const failed = runs.filter((r) => r.exitCode !== 0);
+
+  // The same check as `canon check`, on the worktree's files (BR-2227).
+  const read = readCorpus(ws.root, ws.config.types, ws.config);
+  const findings = check({ root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config), floorSkipPaths: ws.config.floorSkipPaths });
+  for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
+  say(findings.length === 0 ? "canon check: ok" : `canon check: ${findings.length} finding(s)`);
+
   const ms = Math.round(performance.now() - t0);
-  say(`${runs.length} file(s): ${runs.length - failed.length} passed, ${failed.length} failed, ${secs(ms)}`);
+  const result: WorkTestResult = { files: runs.length, failed: failed.length, typecheck, check: findings.length };
+  if (runs.length) say(`${runs.length} file(s): ${runs.length - failed.length} passed, ${failed.length} failed, ${secs(ms)}`);
   if (failed.length) say(`failed: ${failed.map((r) => r.file).join(", ")}`);
-  ws.db.event(ws.actor, "work.test", subject, { all, files: runs.length, failed: failed.length, ms });
-  return ok({ files: runs.length, failed: failed.length });
+  if (typecheck !== null && typecheck !== 0) say(`typecheck failed (exit ${typecheck})`);
+  if (findings.length) say(`canon check failed: ${findings.length} finding(s)`);
+  // reason: a run that selected nothing is still a run before landing, which D-23 compares with floor refusals (BR-2158)
+  ws.db.event(ws.actor, "work.test", subject, { all, ...result, ms });
+  return ok(result);
 }

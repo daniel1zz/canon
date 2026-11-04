@@ -1,5 +1,5 @@
 import { err } from "../../kernel/result.ts";
-import { configKey, stringValue } from "../../config/key.ts";
+import { configKey, optionalString, stringValue } from "../../config/key.ts";
 
 /** Where `test_command` takes the test file's path (BR-2160). */
 export const FILE_PLACEHOLDER = "{file}";
@@ -21,5 +21,15 @@ export const verifyKeys = {
     commands: (v) => (v === undefined ? [] : [v]),
     listed: 40,
     checked: 60,
+  }),
+  typecheckCommand: configKey<string | undefined>({
+    key: "typecheck_command",
+    doc: "Shell command `canon work test` runs once before the selected test files, such as the floor's type-check step; unset runs none (BR-2226).",
+    default: undefined,
+    schema: optionalString,
+    read: stringValue("typecheck_command"),
+    commands: (v) => (v === undefined ? [] : [v]),
+    listed: 45,
+    checked: 65,
   }),
 };
