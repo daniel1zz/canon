@@ -1,5 +1,6 @@
 import { defineCommand } from "citty";
 import { entry, EXIT, fail, json, say, workspace, type DomainCommands } from "../cli/command.ts";
+import { describeAttempt, openAttempts } from "../work/land/queue/interrupted.ts";
 import { AFTER_LAND_WAIT_MS, batchState, renderAfterLand, settleBackgroundHooks, waitBackgroundHooks } from "./hooks.ts";
 
 /** `canon work after-land`: the background after_land commands of a landing (BR-2166). */
@@ -20,7 +21,12 @@ const afterLand = defineCommand({
     const change = typeof args.change === "string" && args.change ? args.change : undefined;
     const timeoutMs = minutes === undefined ? AFTER_LAND_WAIT_MS : minutes * 60_000;
     const b = args.wait ? await waitBackgroundHooks(ws.db, ws.actor, change, timeoutMs) : settleBackgroundHooks(ws.db, ws.actor, change);
-    if (!b) fail({ code: "not_found", message: change ? `no landing of ${change} ran background after_land commands` : "no landing has run background after_land commands" });
+    if (!b) {
+      const base = change ? `no landing of ${change} ran background after_land commands` : "no landing has run background after_land commands";
+      // A landing killed or still running is why there is none yet (BR-2310, D-58).
+      const unfinished = change ? openAttempts(ws.db).filter((a) => a.subject === change && a.state !== "unknown") : [];
+      fail({ code: "not_found", message: [base, ...unfinished.flatMap(describeAttempt)].join("\n") });
+    }
     const st = batchState(b);
     if (args.json) json({ ...b, state: st });
     else {

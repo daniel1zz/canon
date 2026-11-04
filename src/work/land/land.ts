@@ -21,6 +21,7 @@ import { floorSkip, runFloor } from "./checks/floor.ts";
 import { afterLand, closeLeftNote, closeSubject, finishLanding, moveMain, reopen, type CloseCommit } from "./finish/finish.ts";
 import { batchDir, landBatch, landedInBatch } from "./batch/batch.ts";
 import { pushMain } from "../remote/remote.ts";
+import { settleInterrupted } from "./queue/interrupted.ts";
 
 /**
  * Landing (design §6): queue → rebase onto main → floor → canon check → sources → review → before_land →
@@ -39,6 +40,11 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   if (!renewed.ok) return { kind: "refused", reason: "claimed", message: renewed.error.message };
   const claim = renewed.value;
   const subject = claim?.subject ?? null;
+  // A previous landing from this worktree that was killed leaves no event; it is said and cleaned up first (BR-2309, D-58).
+  settleInterrupted(ws, say);
+  // Before anything slow, so a landing killed from here on is found by its process (BR-2307, D-58).
+  const lander = selfProcess();
+  ws.db.event(ws.actor, "land.start", subject, { pid: lander?.pid ?? null, pid_start: lander?.start ?? null });
   // Every refusal, early or late, is recorded with its reason so a check's precision can be measured (P6, BR-2026).
   const early = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], message: string): LandOutcome => {
     ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main) });
@@ -55,7 +61,6 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   let close: CloseCommit | undefined;
   let entry: number | undefined;
   let bound: ReturnType<typeof bindToLander> | undefined;
-  const lander = selfProcess();
   const running: Running = {};
   // A lander killed by a signal (a tool timeout, Ctrl-C) gives its turn up at once and leaves no rebase half done (BR-2099).
   // reason: registered before the close commit, so a signal while it is made or before the landing queues still takes it back (BR-2018).

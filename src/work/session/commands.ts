@@ -13,6 +13,7 @@ import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
 import { claimOfWorktree, claimsWithState, type ClaimState } from "../claims/claims.ts";
 import { questions } from "../humans/questions.ts";
 import { activeQueue, keptPlaces } from "../land/queue/queue.ts";
+import { attemptIn, describeAttempt, goneLanders, openAttempts } from "../land/queue/interrupted.ts";
 import { openWorkspace, type Workspace } from "../workspace.ts";
 import { handoffs } from "./handoffs.ts";
 import { listedChanges, marksOf } from "./inflight.ts";
@@ -60,15 +61,19 @@ const status = defineCommand({
   args: { json: { type: "boolean" } },
   run({ args }) {
     const ws = workspace();
-    const data = { claims: claimsWithState(ws.db), queue: activeQueue(ws.db), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending") };
+    const gone = goneLanders(ws.db);
+    const data = { claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending") };
     if (args.json) return json(data);
     say("Claims:");
     // Every row is listed; one that no longer binds is marked, judged as `canon work start` judges it (BR-2192, BR-2100).
     for (const c of data.claims) say(`  ${c.subject.padEnd(8)} ${c.actor}  ${c.holder}  until ${c.expires_at}${STALE[c.state]}`);
     say("Landing queue:");
-    for (const q of data.queue) say(`  #${q.id} ${q.state.padEnd(8)} ${q.subject ?? "-"}  ${q.worktree}`);
+    for (const q of data.queue) say(`  #${q.id} ${q.state.padEnd(8)} ${q.subject ?? "-"}  ${q.worktree}${q.lander_gone ? "  (lander process gone)" : ""}`);
     // Refused for a conflict, keeping its place while its lander resolves it; the entries behind it land meanwhile (BR-2177).
     for (const q of data.resolving) say(`  #${q.id} resolving ${q.subject ?? "-"}  ${q.worktree}  keeps its place until ${q.keep_until}`);
+    // Landings with no recorded result: still running, or killed where no signal handler could run (BR-2308, D-58).
+    say("Landings with no result yet:");
+    for (const a of data.landings) for (const line of describeAttempt(a)) say(`  ${line}`);
     say("Handoffs:");
     for (const h of data.handoffs) say(`  ${h.subject.padEnd(8)} next: ${h.next}  (${h.actor}, ${h.updated_at})`);
     say(`Questions waiting for a human: ${data.questions.length}`);
@@ -127,6 +132,9 @@ function briefState(ws: Workspace): Result<void> {
     say(`You are in ${mine.subject} (${ws.root}). Read it: canon show ${mine.subject}; context: canon context ${mine.subject}`);
     const h = hs.find((x) => x.subject === mine.subject);
     if (h) say(`Handoff from ${h.actor} at ${h.updated_at}: next — ${h.next}${h.note ? `\n${h.note}` : ""}`);
+    // The last landing from this worktree, when it was killed before it recorded a result (BR-2310).
+    const landing = attemptIn(ws.db, ws.root);
+    if (landing?.state === "interrupted") for (const line of describeAttempt(landing)) say(line);
     const overlaps = overlapsOf(ws, ws.root);
     for (const u of overlaps.unreadable) say(`Overlap check failed: ${u}`);
     for (const o of overlaps.found) say(`Overlap: ${o.change} also changes ${o.files.join(", ")}`);
