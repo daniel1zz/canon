@@ -109,6 +109,16 @@ describe("changes that so far exist only on their branch", () => {
   });
 });
 
+describe("brief's open changes", () => {
+  test("BR-2149: with no open change on main, brief still lists a change only on its branch, unclaimed", () => {
+    const root = project();
+    expect(canon(root, "brief").out).not.toContain("Open changes in the owner's order");
+    expect(canon(root, "work", "start", "--title", "X").code).toBe(0);
+    ws(root).db.db.query("DELETE FROM claims").run();
+    expect(canon(root, "brief").out).toContain(`${PICK}${id(1)} (on branch change/${id(1)}-x)\n`);
+  });
+});
+
 describe("started work in the owner's order", () => {
   test("BR-2148: unlisted changes with a handoff come before those without, each by id, after the backlog", () => {
     const root = project();
