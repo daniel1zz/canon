@@ -60,13 +60,18 @@ function send(pid: number, signal: NodeJS.Signals): void {
  * Sends SIGTERM to every process this process started (startedBy). They are first stopped with SIGSTOP, listing again
  * until no new one shows up, so none can start another between the listing and the signal; then each gets SIGTERM and
  * SIGCONT. What a TERM handler starts after that is its cleanup and is left to run. False when the process table cannot
- * be read, so nothing could be stopped.
+ * be read at some point: what was stopped by then still gets SIGTERM and SIGCONT, but more may have been missed.
  */
 export function stopStarted(self = process.pid): boolean {
   const stopped = new Set<number>();
+  let read = true;
   for (;;) {
     const rows = table();
-    if (!rows) return false;
+    // reason: a listing that fails after some were stopped must not leave them stopped for good (BR-2285, issue #106)
+    if (!rows) {
+      read = false;
+      break;
+    }
     const fresh = startedBy(rows, self).filter((p) => !stopped.has(p));
     if (fresh.length === 0) break;
     for (const p of fresh) {
@@ -76,7 +81,7 @@ export function stopStarted(self = process.pid): boolean {
   }
   for (const p of stopped) send(p, "SIGTERM");
   for (const p of stopped) send(p, "SIGCONT");
-  return true;
+  return read;
 }
 
 /** How long a signalled watcher waits for what it started to end after SIGTERM before it sends SIGKILL (BR-2285). */
@@ -118,7 +123,7 @@ export function killStarted(ms: number, self = process.pid): boolean {
  * Returns what to say, or undefined when everything ended.
  */
 export function stopAndWait(self = process.pid): string | undefined {
-  if (!stopStarted(self)) return "cannot read the process table, so the commands this watcher started could not be stopped";
+  if (!stopStarted(self)) return "cannot read the process table, so the commands this watcher started may not all have been stopped";
   if (waitStarted(STOP_GRACE_MS, self)) return undefined;
   const killed = killStarted(5_000, self);
   return `what this watcher started was still running ${STOP_GRACE_MS / 1000} s after SIGTERM; sent SIGKILL${killed ? "" : ", and some of it is still running"}`;

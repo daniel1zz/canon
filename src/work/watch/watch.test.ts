@@ -607,6 +607,29 @@ describe("a passing main", () => {
     expect(existsSync(late)).toBe(true);
   });
 
+  test("BR-2285: when the process table can be read once and then not, what was already stopped still gets SIGTERM and SIGCONT and ends", async () => {
+    const dir = join(process.env["TMPDIR"] ?? "/tmp", `canon-ps-once-${process.pid}-${Date.now()}`);
+    const bin = join(dir, "bin");
+    mkdirSync(bin, { recursive: true });
+    const ready = join(dir, "ready");
+    // reason: the second listing fails, after the first has stopped the hook (issue #106)
+    writeFileSync(join(bin, "ps"), `#!/bin/sh\nif [ "$2" = "pid=,ppid=,pgid=,stat=" ]; then echo x >> ${dir}/n; [ "$(wc -l < ${dir}/n)" -eq 2 ] && exit 1; fi\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+    const { root } = watched(`hooks:\n  after_green: 'echo $$ > ${ready}.pid; touch ${ready}; while true; do sleep 0.1; done'\n`);
+    const fake = fakeCanon(root);
+    // reason: not detached: in a group that does not become orphaned, a process left stopped stays stopped
+    const w = Bun.spawn(["bun", MAIN, "floor", "watch"], { cwd: root, stdout: "pipe", stderr: "ignore", stdin: "ignore", env: { ...process.env, PATH: `${bin}:${fake.bin}:${process.env["PATH"]}`, CANON_ACTOR: "agent:a" } });
+    const out = new Response(w.stdout).text();
+    await until(() => existsSync(ready));
+    const pid = Number(readFileSync(`${ready}.pid`, "utf8").trim());
+    w.kill("SIGTERM");
+    expect(await w.exited).toBe(143);
+    await until(() => !alive(pid), 5_000).catch(() => {});
+    const still = alive(pid);
+    if (still) process.kill(pid, "SIGKILL");
+    expect(still).toBe(false);
+    expect(await out).toContain("may not all have been stopped");
+  });
+
   test("BR-2285: when the process table cannot be read the watcher says so and still exits 143", async () => {
     const { out, dir } = await termedWhile((ready) => `hooks:\n  after_green: 'echo $$ > ${ready}.pid; touch ${ready}; while true; do sleep 0.1; done'\n`, {
       bin: (d) => {
@@ -618,6 +641,7 @@ describe("a passing main", () => {
       },
     });
     expect(out).toContain("cannot read the process table");
+    expect(out).toContain("may not all have been stopped");
     const pid = Number(readFileSync(join(dir, "ready.pid"), "utf8").trim());
     expect(alive(pid)).toBe(true); // nothing could stop it
     process.kill(pid, "SIGKILL");
