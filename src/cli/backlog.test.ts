@@ -1,7 +1,11 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { project, sh, ws } from "../work/testkit.ts";
+
+// reason: the cases spawn canon several times each (work start, brief); under a loaded machine one spawn takes seconds,
+// so bun's 5 s default failed the background floor on 6695d9187 (C-238), as it did drop.test.ts (#97)
+setDefaultTimeout(30_000);
 
 const MAIN = join(import.meta.dir, "main.ts");
 const id = (prefix: string, n: number) => [prefix, n].join("-");
