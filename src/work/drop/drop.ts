@@ -4,8 +4,8 @@ import { join } from "node:path";
 import type { Workspace } from "../workspace.ts";
 import { dropHandoff } from "../session/handoffs.ts";
 import { holdClaim, unholdClaim } from "../claims/claims.ts";
-import { err, ok, type Result } from "../../kernel/result.ts";
-import { git, gitEnv, ignoredPaths, unregenerable } from "../../kernel/git.ts";
+import { err, ok, type CanonError, type Result } from "../../kernel/result.ts";
+import { git, gitEnv, ignoredPaths, listWorktreesLocked, unregenerable } from "../../kernel/git.ts";
 import { GENERATED_DIR } from "../../config/reference/reference.ts";
 import { processesIn } from "../../kernel/process.ts";
 import { clearFixChange } from "../watch/redmain.ts";
@@ -35,8 +35,26 @@ interface Target {
   readonly branch: string | null;
 }
 
+/** Whether a branch name is one of this change's branches: `change/C-n` or `change/C-n-<slug>`. */
+const ofChange = (branch: string | undefined, change: string) => branch === `change/${change}` || branch?.startsWith(`change/${change}-`) === true;
+
+/**
+ * Finds what there is to drop. Usage errors (exit 2) and a change with nothing to drop (exit 3) are not boundary
+ * refusals and are not recorded (BR-2026); only refusals past this point are.
+ */
 function locate(ws: Workspace, change: string): Result<Target> {
   const path = join(worktreesDir(ws), change);
+  // reason: drop deletes only a worktree under the worktree directory; one of the change's branches checked out
+  // anywhere else (old layout, `git worktree move`) would lose its branch under it, so the drop stops (BR-2233).
+  const wts = listWorktreesLocked(ws.primary);
+  if (!wts.ok) return wts;
+  const astray = wts.value.find((w) => w.path !== path && ofChange(w.branch, change));
+  if (astray) {
+    return err(
+      "invalid",
+      `${change}'s branch ${astray.branch} is checked out in ${astray.path}, which is not under the worktree directory ${worktreesDir(ws)}; nothing was deleted. Move it with \`git worktree move ${astray.path} ${path}\` and drop again`,
+    );
+  }
   const worktree = existsSync(path) ? path : null;
   let branch: string | null = null;
   if (worktree) {
@@ -146,6 +164,12 @@ function archive(ws: Workspace, t: Target, ignored: readonly string[]): Result<{
   }
 }
 
+/**
+ * The reasons a drop refuses at its boundary (BR-2026): each is recorded as a `drop.refuse` event. `git` is a git
+ * command failing while drop reads the branch or what it would lose (exit 4).
+ */
+export type DropRefusal = "claimed" | "in-use" | "no-process-list" | "git" | "archive" | "remove";
+
 export function drop(ws: Workspace, change: string, say: (line: string) => void): Result<Dropped> {
   const located = locate(ws, change.toUpperCase());
   if (!located.ok) return located;
@@ -154,32 +178,34 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
   // Someone else still at work there is not something an archive can save: refuse before looking at losses.
   // The hold is atomic and lasts until the end, so no `canon work start` can take the change over while the
   // archive is written and the worktree removed (issue #13).
+  // reason: every boundary refusal goes through refuse, which writes the drop.refuse event with its reason, so a
+  // refusal without an event cannot be written (BR-2026; the lesson of C-155).
+  const refuse = (reason: DropRefusal, detail: Record<string, unknown>, e: CanonError): Result<never> => {
+    ws.db.event(ws.actor, "drop.refuse", t.change, { reason, ...detail });
+    return { ok: false, error: e };
+  };
   const holder = t.worktree ?? `branch:${t.branch}`;
   const hold = holdClaim(ws.db, t.change, holder, ws.actor, ws.config.claimLeaseMs);
-  if (!hold.ok) {
-    ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "claimed" });
-    return hold;
-  }
-  const giveUp = <T>(r: Result<T>): Result<T> => {
+  if (!hold.ok) return refuse("claimed", {}, hold.error);
+  /** A refusal once the hold is taken: the hold is let go (putting back the claim it replaced), then the refusal is recorded. */
+  const giveUp = (reason: DropRefusal, detail: Record<string, unknown>, e: CanonError): Result<never> => {
     unholdClaim(ws.db, hold.value);
-    return r;
+    return refuse(reason, detail, e);
   };
   if (t.worktree) {
     const occupied = processesIn([t.worktree]);
     if (!occupied.ok) {
-      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "no-process-list", message: occupied.error.message.slice(0, 2000) });
-      return giveUp(err("io", `cannot tell whether a process is inside ${t.worktree}, so nothing was deleted: ${occupied.error.message}`));
+      return giveUp("no-process-list", { message: occupied.error.message.slice(0, 2000) }, { code: "io", message: `cannot tell whether a process is inside ${t.worktree}, so nothing was deleted: ${occupied.error.message}` });
     }
     const inside = occupied.value.get(t.worktree) ?? [];
     if (inside.length > 0) {
-      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "in-use", pids: inside.map((o) => o.pid) });
-      return giveUp(err("conflict", `${t.worktree} is in use by ${describeOccupants(inside)}; nothing was deleted. Run this again once that process has left it`));
+      return giveUp("in-use", { pids: inside.map((o) => o.pid) }, { code: "conflict", message: `${t.worktree} is in use by ${describeOccupants(inside)}; nothing was deleted. Run this again once that process has left it` });
     }
   }
   const tip = t.branch ? git(ws.primary, "rev-parse", "--verify", `refs/heads/${t.branch}`) : ok("");
-  if (!tip.ok) return giveUp(tip);
+  if (!tip.ok) return giveUp("git", { message: tip.error.message.slice(0, 2000) }, { code: "io", message: `cannot read ${t.branch}, so nothing was deleted: ${tip.error.message}` });
   const lost = losses(ws, t);
-  if (!lost.ok) return giveUp(lost);
+  if (!lost.ok) return giveUp("git", { message: lost.error.message.slice(0, 2000) }, { code: "io", message: `cannot list what dropping ${t.change} would lose, so nothing was deleted: ${lost.error.message}` });
 
   let archived: { ref: string; tip: string; commit: string } | null = null;
   const restore: string[] = [];
@@ -190,8 +216,7 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
     const failure = !a.ok ? a.error.message : !again.ok ? again.error.message : again.value.lines.join("\n") !== lost.value.lines.join("\n") ? `${t.change} changed while it was archived` : null;
     if (failure !== null || !a.ok) {
       const message = failure ?? "archive failed";
-      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "archive", message: message.slice(0, 2000), losses: lost.value.lines });
-      return giveUp(err("io", `archiving ${t.change} failed, so nothing was deleted: ${message}`));
+      return giveUp("archive", { message: message.slice(0, 2000), losses: lost.value.lines }, { code: "io", message: `archiving ${t.change} failed, so nothing was deleted: ${message}` });
     }
     archived = a.value;
     const branch = t.branch ?? `change/${t.change}`;
@@ -209,8 +234,7 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
     const del = git(ws.primary, "update-ref", "-d", `refs/heads/${t.branch}`, tip.value);
     if (!del.ok) {
       const message = `${t.branch} moved while ${t.change} was being dropped: ${del.error.message}`;
-      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "archive", message: message.slice(0, 2000), losses: lost.value.lines, archive: archived?.ref ?? null });
-      return giveUp(err("io", `${message}; nothing was deleted${kept}`));
+      return giveUp("archive", { message: message.slice(0, 2000), losses: lost.value.lines, archive: archived?.ref ?? null }, { code: "io", message: `${message}; nothing was deleted${kept}` });
     }
   }
   if (t.worktree) {
@@ -222,13 +246,13 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
       // reason: git deletes the files before its admin dir and drops the admin dir even when the files fail, so a
       // failure can leave the worktree partly deleted and unregistered (issue #78); say so instead of "nothing was deleted".
       const intact = registered(ws, t.worktree);
-      ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "remove", message: rm.error.message.slice(0, 2000), losses: lost.value.lines, archive: archived?.ref ?? null, branch_restored: back.ok, worktree_intact: intact });
+      const detail = { message: rm.error.message.slice(0, 2000), losses: lost.value.lines, archive: archived?.ref ?? null, branch_restored: back.ok, worktree_intact: intact };
       const branchNote = back.ok ? (intact ? "nothing was deleted" : t.branch ? `the branch ${t.branch} is back` : "no branch was touched") : `the branch ${t.branch} was deleted and could not be put back (${back.error.message}); restore it with \`git branch ${t.branch} ${tip.value}\``;
       const partial = intact
         ? ""
         : `; ${t.worktree} was partly deleted and is no longer a git worktree${archived ? `: what it held when it was archived is in ${archived.ref}; once what is left is moved aside, restore with:\n${restore.map((c) => `  ${c}`).join("\n")}` : " (it held nothing that is not on the branch)"}`;
-      if (!intact) return giveUp(err("io", `removing ${t.worktree} failed partway, so ${branchNote}${partial}\n${rm.error.message}`));
-      return giveUp(err("io", `removing ${t.worktree} failed, so ${branchNote}${kept}: ${rm.error.message}`));
+      if (!intact) return giveUp("remove", detail, { code: "io", message: `removing ${t.worktree} failed partway, so ${branchNote}${partial}\n${rm.error.message}` });
+      return giveUp("remove", detail, { code: "io", message: `removing ${t.worktree} failed, so ${branchNote}${kept}: ${rm.error.message}` });
     }
   }
   // reason: only this drop's own hold goes; a claim anyone took since is not this drop's to delete (issue #18).

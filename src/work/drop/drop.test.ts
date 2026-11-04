@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { processOf } from "../claims/liveness.ts";
@@ -407,3 +407,91 @@ describe("dropping a change", () => {
   });
 });
 
+describe("every refusal of drop is recorded", () => {
+  test("BR-2026: each boundary refusal of drop (claimed, in-use, no-process-list, git, archive, remove) writes one drop.refuse with its reason; not-found and usage errors write none", async () => {
+    const cases: { reason: string; skip?: boolean; arrange: (root: string) => { change: string; actor?: string; cleanup?: () => Promise<void> | void } }[] = [
+      { reason: "claimed", arrange: (root) => ({ change: withCommit(root, "Theirs", "agent:b").change }) },
+      {
+        reason: "in-use",
+        arrange: (root) => {
+          const s = released(withCommit(root, "Busy"));
+          const proc = Bun.spawn(["sleep", "30"], { cwd: s.worktree });
+          return { change: s.change, cleanup: async () => { proc.kill(); await proc.exited; } };
+        },
+      },
+      {
+        reason: "no-process-list",
+        skip: process.platform === "linux",
+        arrange: (root) => {
+          const s = released(withCommit(root, "No lsof"));
+          const bin = mkdtempSync(join(tmpdir(), "canon-nolsof-"));
+          writeFileSync(join(bin, "lsof"), "#!/bin/sh\nexit 1\n", { mode: 0o755 });
+          const path = process.env["PATH"];
+          process.env["PATH"] = `${bin}:${path}`;
+          return { change: s.change, cleanup: () => { process.env["PATH"] = path; } };
+        },
+      },
+      {
+        reason: "git",
+        arrange: (root) => {
+          const s = released(withCommit(root, "Main unreadable"));
+          // main names a branch git cannot read, so what dropping would lose cannot be listed
+          writeFileSync(join(root, "canon/config.yaml"), "main: nope\nfloor: test ! -e FAIL\ntests: []\n");
+          return { change: s.change };
+        },
+      },
+      {
+        reason: "archive",
+        arrange: (root) => {
+          const s = released(withCommit(root, "Blocked"));
+          sh(root, "update-ref", `refs/canon/archive/${s.change}`, "HEAD");
+          return { change: s.change };
+        },
+      },
+      {
+        reason: "remove",
+        arrange: (root) => {
+          const s = released(withCommit(root, "Locked"));
+          sh(root, "worktree", "lock", s.worktree);
+          return { change: s.change, cleanup: () => { sh(root, "worktree", "unlock", s.worktree); } };
+        },
+      },
+    ];
+    for (const c of cases.filter((x) => !x.skip)) {
+      const root = project();
+      const a = c.arrange(root);
+      try {
+        const r = drop(ws(root, a.actor ?? "agent:a"), a.change, quiet);
+        expect([c.reason, !r.ok && r.error.code]).toEqual([c.reason, c.reason === "claimed" || c.reason === "in-use" ? "conflict" : "io"]);
+        expect([c.reason, events(root, "drop.refuse").map((e) => e.reason)]).toEqual([c.reason, [c.reason]]);
+      } finally {
+        await a.cleanup?.();
+      }
+    }
+    const root = project();
+    const s = released(startNew(root, "Here"));
+    expect(drop(ws(root), "C-99", quiet).ok).toBe(false); // not found: exit 3
+    const inside = drop(ws(s.worktree), s.change, quiet); // usage: exit 2
+    expect(!inside.ok && inside.error.code).toBe("invalid");
+    expect(events(root, "drop.refuse")).toEqual([]);
+  });
+
+  test("BR-2233: a change whose branch is checked out outside the worktree directory is not dropped: exit 2 naming that worktree, nothing deleted, no event", () => {
+    const root = project();
+    const s = released(withCommit(root, "Moved away"));
+    const elsewhere = join(realpathSync(mkdtempSync(join(tmpdir(), "canon-old-layout-"))), s.change);
+    sh(root, "worktree", "move", s.worktree, elsewhere);
+    const r = canon(root, "agent:a", "work", "drop", s.change);
+    expect(r.code).toBe(2);
+    expect(r.out).toContain(elsewhere);
+    expect(r.out).toContain("git worktree move");
+    expect(existsSync(join(elsewhere, "wip.txt"))).toBe(true);
+    expect(branches(root)).toContain(s.branch);
+    expect(archives(root)).toBe("");
+    expect(events(root, "drop.refuse")).toEqual([]);
+    // moved back under the worktree directory, the same drop goes ahead
+    sh(root, "worktree", "move", elsewhere, s.worktree);
+    expect(canon(root, "agent:a", "work", "drop", s.change).code).toBe(0);
+    expect(branches(root)).toBe("");
+  });
+});
