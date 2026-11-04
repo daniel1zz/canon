@@ -184,6 +184,27 @@ describe("a failed push", () => {
     expect(String(events(root, "push.fail").at(-1)!["reason"])).toContain("1 s");
     expect(bareMain(bare)).toBe(before);
   });
+
+  test("BR-2260: a failed push and the fetch after it together wait at most remote_timeout_seconds, not twice that", () => {
+    const { root, bare } = withRemote("remote: origin\nremote_timeout_seconds: 3\n");
+    seed(root);
+    const gitDir = sh(root, "rev-parse", "--absolute-git-dir");
+    // The push fails after 2 s; the fetch that follows would hang (a remote that answers nothing).
+    const hook = join(gitDir, "hooks", "pre-push");
+    writeFileSync(hook, "#!/bin/sh\nsleep 2\nexit 1\n");
+    chmodSync(hook, 0o755);
+    const stall = join(gitDir, "stall.sh");
+    writeFileSync(stall, "#!/bin/sh\nsleep 30\n");
+    chmodSync(stall, 0o755);
+    sh(root, "config", "remote.origin.uploadpack", stall);
+    const before = bareMain(bare);
+    const t = Date.now();
+    const r = pushMain(ws(root), quiet);
+    expect(Date.now() - t).toBeLessThan(4500);
+    expect(r?.ok).toBe(false);
+    expect(events(root, "push.fail")).toHaveLength(1);
+    expect(bareMain(bare)).toBe(before);
+  });
 });
 
 describe("canon brief and unpushed commits", () => {

@@ -63,9 +63,9 @@ function gitRemote(cwd: string, ms: number, args: readonly string[]): Timed {
 const trackingRef = (s: RemoteSettings, main: string) => `refs/remotes/${s.remote}/${main}`;
 
 /** Fetches only the remote's main into its remote-tracking ref, no tags. */
-function fetchMain(ws: Workspace, s: RemoteSettings): Timed {
+function fetchMain(ws: Workspace, s: RemoteSettings, ms: number = s.timeoutMs): Timed {
   const main = ws.config.main;
-  return gitRemote(ws.primary, s.timeoutMs, ["fetch", "--no-tags", s.remote, `+refs/heads/${main}:${trackingRef(s, main)}`]);
+  return gitRemote(ws.primary, ms, ["fetch", "--no-tags", s.remote, `+refs/heads/${main}:${trackingRef(s, main)}`]);
 }
 
 const isAncestor = (ws: Workspace, a: string, b: string) => git(ws.primary, "merge-base", "--is-ancestor", a, b).ok;
@@ -101,13 +101,16 @@ function push(ws: Workspace, say: Say): Pushed | undefined {
   const tip = git(ws.primary, "rev-parse", "--verify", `refs/heads/${main}`);
   if (!tip.ok) return failed(s.remote, null, tip.error.message);
   const sha = tip.value;
+  const startedAt = Date.now();
   const pushed = gitRemote(ws.primary, s.timeoutMs, ["push", "--porcelain", "--no-follow-tags", s.remote, `${sha}:refs/heads/${main}`]);
   let already = false;
   if (!pushed.ok) {
     // reason: a push that read main earlier can arrive after one that read it later and be refused; the remote then
     // already has this commit, which is pushed, not failed, so concurrent landings need no lock (BR-2259)
-    const fetched = fetchMain(ws, s);
-    already = fetched.ok && isAncestor(ws, sha, trackingRef(s, main));
+    // reason: the push and this fetch share one remote_timeout_seconds, so a hanging remote holds the lander for that long, not twice (BR-2260)
+    const left = s.timeoutMs - (Date.now() - startedAt);
+    const fetched = left > 0 ? fetchMain(ws, s, left) : undefined;
+    already = fetched?.ok === true && isAncestor(ws, sha, trackingRef(s, main));
     if (!already) return failed(s.remote, sha, pushed.reason);
   }
   ws.db.event(ws.actor, "push.ok", null, { remote: s.remote, sha, ...(already ? { already: true } : {}) });
