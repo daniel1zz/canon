@@ -426,7 +426,7 @@ describe("what a refusal leaves in the checkout", () => {
     expect(sh(clone, "rev-parse", "main")).toBe(main);
   });
 
-  test("BR-2284 BR-2286: a refused git pull that would make a merge commit, main and origin having moved apart, is put back too and names canon sync", () => {
+  test("BR-2284 BR-2286 BR-2298: a refused git pull that would make a merge commit, main and origin having moved apart, is put back too and names canon sync", () => {
     const { clone } = behind();
     sh(clone, "reset", "-q", "mine.txt"); // a merge needs an index without staged changes
     const status = sh(clone, "status", "--porcelain");
@@ -443,12 +443,58 @@ describe("what a refusal leaves in the checkout", () => {
     expect(pull.code).not.toBe(0);
     expect(pull.err).toContain("the index and working tree are back at main");
     expect(pull.err).toContain("to take in the remote's main, run canon sync");
+    expect(pull.err).not.toContain("rebase --abort");
     expect(sh(clone, "rev-parse", "main")).toBe(own);
     expect(sh(clone, "status", "--porcelain")).toBe(status);
     expect(existsSync(join(clone, "new.txt"))).toBe(false);
   });
 
-  test("BR-2284 BR-2286: a refused git commit keeps its changes staged and says nothing about putting them back or canon sync", () => {
+  /** `behind()` with main and origin having moved apart (main has a landed commit origin lacks) and a clean checkout. */
+  function apart() {
+    const { clone } = behind();
+    sh(clone, "reset", "-q", "--hard");
+    rmSync(join(clone, "mine.txt"), { force: true }); // reset --hard already dropped the staged new file
+    writeFileSync(join(clone, "local.txt"), "landed here\n");
+    sh(clone, "add", "local.txt");
+    const own = sh(clone, "commit-tree", sh(clone, "write-tree"), "-p", "main", "-m", "landed here");
+    expect(git(clone, ["update-ref", "refs/heads/main", own], { CANON_LAND_MAIN: own }).code).toBe(0);
+    sh(clone, "reset", "-q", "--hard");
+    expect(sh(clone, "status", "--porcelain")).toBe("");
+    return { clone, own };
+  }
+
+  test("BR-2298: a git pull --rebase stopped by the guard names git rebase --abort, then canon sync; the abort puts main's checkout back", () => {
+    const { clone, own } = apart();
+    const pull = git(clone, ["-c", "rebase.backend=merge", "-c", "rebase.autoStash=false", "pull", "-q", "--rebase", "origin", "main"]);
+    expect(pull.code).not.toBe(0);
+    expect(pull.err).toContain("canon: refusing to move main");
+    expect(pull.err).toContain("first run git rebase --abort, then canon sync");
+    expect(sh(clone, "rev-parse", "main")).toBe(own);
+    expect(git(clone, ["symbolic-ref", "-q", "HEAD"]).code).not.toBe(0); // git stopped mid-rebase, HEAD detached
+    expect(git(clone, ["rebase", "--abort"]).code).toBe(0);
+    expect(sh(clone, "symbolic-ref", "HEAD")).toBe("refs/heads/main");
+    expect(sh(clone, "rev-parse", "HEAD")).toBe(own);
+    expect(sh(clone, "status", "--porcelain")).toBe("");
+    expect(existsSync(join(clone, "new.txt"))).toBe(false);
+  });
+
+  test("BR-2298: a refused rebase of main onto a local branch, or one by the apply backend, does not name git rebase --abort", () => {
+    const { clone } = apart();
+    // x has a commit of its own that no remote-tracking branch has
+    const x = sh(clone, "commit-tree", sh(clone, "rev-parse", "main^{tree}"), "-p", "main~1", "-m", "only on x");
+    sh(clone, "branch", "x", x);
+    const local = git(clone, ["-c", "rebase.backend=merge", "rebase", "-q", "x"]);
+    expect(local.code).not.toBe(0);
+    expect(local.err).toContain("canon: refusing to move main");
+    expect(local.err).not.toContain("rebase --abort");
+    expect(git(clone, ["rebase", "--abort"]).code).toBe(0);
+    const apply = git(clone, ["-c", "rebase.backend=apply", "-c", "rebase.autoStash=false", "pull", "-q", "--rebase", "origin", "main"]);
+    expect(apply.code).not.toBe(0);
+    expect(apply.err).toContain("canon: refusing to move main");
+    expect(apply.err).not.toContain("rebase --abort"); // reason: the apply backend has dropped its state by then; git rebase --abort fails there
+  });
+
+  test("BR-2284 BR-2286 BR-2298: a refused git commit keeps its changes staged and says nothing about putting them back or canon sync", () => {
     const root = adopted();
     writeFileSync(join(root, "app.txt"), "two\n");
     sh(root, "add", "app.txt");
@@ -456,6 +502,7 @@ describe("what a refusal leaves in the checkout", () => {
     expect(commit.code).not.toBe(0);
     expect(commit.err).not.toContain("back at main");
     expect(commit.err).not.toContain("canon sync");
+    expect(commit.err).not.toContain("rebase --abort");
     expect(sh(root, "status", "--porcelain")).toBe("M  app.txt");
   });
 

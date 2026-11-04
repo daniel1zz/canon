@@ -58,6 +58,15 @@ while read -r old new ref; do
   if [ -n "$remote" ]; then
     echo "canon: to take in the remote's ${name}, run canon sync." >&2
   fi
+  # git pull --rebase, main and the remote having moved apart, stops here with HEAD detached and its rebase state in this
+  # checkout's git dir naming main; git rebase --abort undoes it. Only the merge backend: the apply backend has already
+  # dropped head-name, and git rebase --abort fails there. (BR-2298)
+  rb=$(git rev-parse --git-path rebase-merge 2>/dev/null)
+  if [ -n "$rb" ] && [ "$(cat "$rb/head-name" 2>/dev/null)" = "$ref" ] && onto=$(cat "$rb/onto" 2>/dev/null) && [ -n "$onto" ]; then
+    if [ "$(git rev-parse -q --verify FETCH_HEAD 2>/dev/null)" = "$onto" ] || [ -n "$(git for-each-ref --format='%(refname)' --contains "$onto" refs/remotes 2>/dev/null)" ]; then
+      echo "canon: git rebase stopped with ${name} unmoved; to take in the remote's ${name}, first run git rebase --abort, then canon sync." >&2
+    fi
+  fi
 done
 exit $status
 `;
