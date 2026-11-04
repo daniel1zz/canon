@@ -76,14 +76,8 @@ export function reviewPrompt(diff: string, files: readonly { path: string; text:
   ].join("\n");
 }
 
-/** Where findings go: the issue label, and how an issue names the review that filed it (BR-2210). */
-export interface Filing {
-  readonly label: string;
-  /** E.g. "post-land code review", used as "found by the <who> of C-5". */
-  readonly who: string;
-}
-
-export const CODE_REVIEW: Filing = { label: LABEL, who: "post-land code review" };
+/** How an issue names the review that filed it, as "found by the <WHO> of C-5" (BR-2210). */
+const WHO = "post-land code review";
 const CODE_KINDS = ["security", "concurrency"] as const;
 
 /** Parses the AI's answer; findings missing a file, a line or a scenario, or of another kind, are dropped (BR-2071). */
@@ -171,18 +165,18 @@ export function codeReview(e: Env): Result<ReviewReport> {
   if (!answer.ok) return answer;
   const findings = parseFindings(answer.value, e.say);
   if (!findings.ok) return findings;
-  return fileFindings(e, findings.value, open.value, CODE_REVIEW);
+  return fileFindings(e, findings.value, open.value);
 }
 
 /**
- * Files kept findings, one issue per root cause (BR-2072): a comment on an open issue of `filing.label` with the same
+ * Files kept findings, one issue per root cause (BR-2072): a comment on an open issue labelled LABEL with the same
  * root cause, else a new issue with that label; prints "no findings" when there is nothing to file (BR-2070).
  */
-export function fileFindings(e: Env, findings: readonly Finding[], open: readonly OpenIssue[], filing: Filing): Result<ReviewReport> {
+function fileFindings(e: Env, findings: readonly Finding[], open: readonly OpenIssue[]): Result<ReviewReport> {
   // One root cause, one issue: findings of this run that share a root cause or an existing issue are grouped.
   const groups = new Map<string, Finding[]>();
   for (const f of findings) {
-    const same = sameRootCause(e, f, open, filing.label);
+    const same = sameRootCause(e, f, open, LABEL);
     if (!same.ok) return same;
     const target = same.value;
     const key = target !== null ? `#${target}` : f.root_cause.toLowerCase().replace(/\s+/g, " ");
@@ -193,12 +187,12 @@ export function fileFindings(e: Env, findings: readonly Finding[], open: readonl
   for (const group of groups.values()) {
     const f = group[0]!;
     if (f.existing !== null) {
-      const r = run(e.gh, ["issue", "comment", String(f.existing), "--body", body(e, group, filing.who)], e.cwd);
+      const r = run(e.gh, ["issue", "comment", String(f.existing), "--body", body(e, group, WHO)], e.cwd);
       if (!r.ok) return r;
       commented.push(f.existing);
       e.say(`commented on #${f.existing}: ${f.title}`);
     } else {
-      const r = run(e.gh, ["issue", "create", "--title", f.title, "--label", filing.label, "--body", body(e, group, filing.who)], e.cwd);
+      const r = run(e.gh, ["issue", "create", "--title", f.title, "--label", LABEL, "--body", body(e, group, WHO)], e.cwd);
       if (!r.ok) return r;
       created.push(r.value.trim());
       e.say(`created ${r.value.trim()}: ${f.title}`);
