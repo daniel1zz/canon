@@ -64,7 +64,7 @@ afterAll(() => {
 
 describe("landing with floor_timing: after", () => {
   test("BR-2218: a floor that fails does not stop the landing: main moves, land.ok says floor_deferred, the floor is not run, and the background floor starts on the new main", async () => {
-    const root = configured("floor: exit 1\nfloor_timing: after\n");
+    const root = configured("floor: exit 1\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
     const s = startNew(root, "Deferred");
     commitFile(s.worktree, "new.txt", "x\n");
     const said: string[] = [];
@@ -82,7 +82,7 @@ describe("landing with floor_timing: after", () => {
   });
 
   test("BR-2218: in after mode the change's own steps still refuse: a canon check finding keeps main where it was", async () => {
-    const root = configured("floor: exit 1\nfloor_timing: after\n");
+    const root = configured("floor: exit 1\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
     const before = sh(root, "rev-parse", "main");
     const s = startNew(root, "Bad ref");
     writeFileSync(join(s.worktree, "canon/changes/C-1-bad-ref.md"), "---\nid: C-1\ntitle: Bad ref\n---\n## 为什么\n\nSee D-99.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n");
@@ -116,7 +116,7 @@ describe("landing with floor_timing: after", () => {
   });
 
   test("BR-2218: three landings waiting in after mode land one by one; no batch is formed", async () => {
-    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\nland_batch_max: 4\n");
+    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\nfloor_quiet_minutes: 0\nland_batch_max: 4\n");
     const wts = ["A", "B", "C"].map((t) => {
       const s = startNew(root, t);
       commitFile(s.worktree, `${t}.txt`, `${t}\n`);
@@ -145,7 +145,7 @@ describe("landing with floor_timing: after", () => {
 
 describe("the canon on PATH reads the landing's config in after mode", () => {
   test("BR-2224: a PATH canon that cannot read the config refuses the landing with reason config, naming its path, exit code and error; main stays", async () => {
-    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\n");
+    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
     const before = sh(root, "rev-parse", "main");
     const s = startNew(root, "New key");
     commitFile(s.worktree, "new.txt", "x\n");
@@ -165,7 +165,7 @@ describe("the canon on PATH reads the landing's config in after mode", () => {
   });
 
   test("BR-2224: a PATH canon that reads the config lets the landing go ahead", async () => {
-    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\n");
+    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
     const s = startNew(root, "Fine");
     commitFile(s.worktree, "new.txt", "x\n");
     const out = await land(ws(s.worktree), FAST, quiet);
@@ -173,7 +173,7 @@ describe("the canon on PATH reads the landing's config in after mode", () => {
   });
 
   test("BR-2224: no canon on PATH refuses the landing with reason config", async () => {
-    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\n");
+    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
     const before = sh(root, "rev-parse", "main");
     const s = startNew(root, "No canon");
     commitFile(s.worktree, "new.txt", "x\n");
@@ -207,7 +207,7 @@ describe("the canon on PATH reads the landing's config in after mode", () => {
 describe("landing while main is failing", () => {
   /** A project in after mode whose main fails its floor, with the failure recorded by a background run. */
   async function redProject() {
-    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\n");
+    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
     writeFileSync(join(root, "FAIL"), "x\n");
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "broken");
@@ -261,7 +261,7 @@ describe("landing while main is failing", () => {
   });
 
   test("BR-2306: when main is not failing nothing is added", async () => {
-    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\n");
+    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
     const s = startNew(root, "Lands on green");
     commitFile(s.worktree, "new.txt", "x\n");
     const r = canon(s.worktree, "work", "land");

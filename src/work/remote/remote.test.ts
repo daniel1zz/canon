@@ -103,7 +103,7 @@ describe("push after landing", () => {
     // reason: an after-mode landing asks PATH's canon to read the config (BR-2224); a stub keeps the test off the machine's canon
     process.env["PATH"] = `${fakeBin}:${path}`;
     try {
-      const { root, bare } = withRemote("remote: origin\nfloor_timing: after\nfloor: exit 1\n");
+      const { root, bare } = withRemote("remote: origin\nfloor_timing: after\nfloor_quiet_minutes: 0\nfloor: exit 1\n");
       seed(root);
       const s = startNew(root, "After");
       commitFile(s.worktree, "a.txt");

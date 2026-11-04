@@ -27,7 +27,7 @@ function watched(extra = "") {
   const runs = join(dir, "runs");
   const hold = join(dir, "hold");
   writeFileSync(join(dir, "floor.sh"), `git rev-parse HEAD >> ${runs}\nwhile [ -e ${hold} ]; do sleep 0.1; done\ntest ! -e FAIL\n`);
-  writeFileSync(join(root, "canon/config.yaml"), `floor: "sh ${join(dir, "floor.sh")}"\ntests: []\nfloor_timing: after\n${extra}`);
+  writeFileSync(join(root, "canon/config.yaml"), `floor: "sh ${join(dir, "floor.sh")}"\ntests: []\nfloor_timing: after\nfloor_quiet_minutes: 0\n${extra}`);
   sh(root, "commit", "-qam", "config");
   const tested = () => (existsSync(runs) ? readFileSync(runs, "utf8").trim().split("\n") : []);
   return { root, hold, tested };
@@ -111,7 +111,7 @@ async function termedWhile(config: (ready: string, late: string) => string, opts
   const late = join(dir, "late");
   const w = watched(config(ready, late));
   if (opts.floor !== undefined) {
-    writeFileSync(join(w.root, "canon/config.yaml"), `floor: '${opts.floor.replaceAll("$READY", ready).replaceAll("$LATE", late)}'\ntests: []\nfloor_timing: after\n`);
+    writeFileSync(join(w.root, "canon/config.yaml"), `floor: '${opts.floor.replaceAll("$READY", ready).replaceAll("$LATE", late)}'\ntests: []\nfloor_timing: after\nfloor_quiet_minutes: 0\n`);
     sh(w.root, "commit", "-qam", "floor");
   }
   const fake = fakeCanon(w.root);
@@ -193,7 +193,7 @@ describe("canon floor watch", () => {
     rmSync(hold);
     expect(watcherRows(root).map((w) => w.pid)).toEqual([killed.pid]);
     expect(results(root)).toEqual([]);
-    expect(briefAfterGuide(root)).toContain(`floor watch: testing main ${a.slice(0, 9)} in the background`);
+    expect(briefAfterGuide(root)).toContain(`floor watch: watching main ${a.slice(0, 9)} in the background`);
     await until(() => results(root).length === 1);
     expect(results(root).map((x) => [x.kind, x.sha])).toEqual([["floor.pass", a]]);
     await until(() => watcherRows(root).length === 0);

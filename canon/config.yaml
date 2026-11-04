@@ -5,6 +5,12 @@ main: main
 floor: "bun install --frozen-lockfile && bunx tsc --noEmit -p tsconfig.json && sh scripts/test.sh --parallel=4"
 # 先合后测（D-31、BR-2218）：开发阶段合入不等 floor，main 没通过时由 canon work start --fix-main 开的变更向前修
 floor_timing: after
+# floor_timing: after 下后台全量测试按批运行（D-59、BR-2311）：main 安静 floor_quiet_minutes 分钟、没测过的合入达到 floor_max_untested 个、
+# 或最老的没测过的移动已过 floor_max_age_minutes 分钟，三者任一满足就测最新提交；main 没通过时不等。立即测：canon floor watch --now
+# 下面三项是默认值，先只写成注释：PATH 上的 canon 只从通过的提交构建，认得新键之前写进配置会被 BR-2224 拒绝；认得之后的下一次合入取消注释
+# floor_quiet_minutes: 20
+# floor_max_untested: 10
+# floor_max_age_minutes: 60
 # 代码目录和规则领域一一对应（D-15）：canon/rules/work/land ↔ src/work/land；src/kernel 是不属于任何业务领域的共享内核
 code_root: src
 shared:

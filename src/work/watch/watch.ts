@@ -6,10 +6,12 @@ import type { Say, Workspace } from "../workspace.ts";
 import { readConfig } from "../../config/config.ts";
 import { logFile, runHooks } from "../../config/hooks.ts";
 import { noPort } from "../../config/ports.ts";
+import { nowMs } from "../../kernel/clock.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { addWorktree, git, pruneWorktrees, removeWorktree } from "../../kernel/git.ts";
 import { isGone, selfProcess, type Proc } from "../claims/liveness.ts";
 import type { FloorTiming } from "./config-keys.ts";
+import { plan, untestedLine } from "./batch.ts";
 import { clearRedMain, fixLandedIn, recordFailure } from "./redmain.ts";
 import { stopStarted } from "./stop.ts";
 
@@ -67,9 +69,12 @@ function pathCanon(): string | null {
   return Bun.which("canon", { PATH: process.env["PATH"] ?? "" });
 }
 
-/** Whether the background floor already ran on `sha` (BR-2219): a pass or a failure, either way it is not run again. */
+/**
+ * Whether the background floor already covered `sha` (BR-2219): a pass or a failure, either way it is not run again;
+ * a floor.skip is main marked tested because only floor_skip_paths changed since a tested commit (BR-2312).
+ */
 export function tested(db: CoordDb, sha: string): boolean {
-  return db.db.query("SELECT 1 FROM events WHERE kind IN ('floor.pass', 'floor.fail') AND json_extract(detail, '$.sha') = ? LIMIT 1").get(sha) !== null;
+  return db.db.query("SELECT 1 FROM events WHERE kind IN ('floor.pass', 'floor.fail', 'floor.skip') AND json_extract(detail, '$.sha') = ? LIMIT 1").get(sha) !== null;
 }
 
 interface WatcherRow {
@@ -118,10 +123,11 @@ type Tested = { readonly sha: string; readonly passed: boolean; readonly log: st
 type TestedHere = Tested & { readonly rebuilt?: boolean };
 
 /**
- * `canon floor watch` (BR-2219): unless another watcher is alive, tests main's latest commit, then the latest again
- * while main moved meanwhile, until the latest is tested; commits in between are skipped.
+ * `canon floor watch` (BR-2219): unless another watcher is alive, tests main's latest commit once the untested
+ * commits are due (BR-2311, waiting until then), then the latest again while main moved meanwhile, until the latest is
+ * tested; commits in between are skipped. `now` ignores the thresholds and takes the place of a watcher that is only waiting.
  */
-export async function watch(ws: Workspace, say: Say): Promise<Result<Watched>> {
+export async function watch(ws: Workspace, say: Say, opts: { readonly now?: boolean } = {}): Promise<Result<Watched>> {
   if (timingOnMain(ws) !== "after") {
     say(`floor_timing on ${ws.config.main} is not \`after\`: main is tested before it moves, so there is nothing to watch`);
     return ok({ ran: false, tested: [] });
@@ -148,17 +154,43 @@ export async function watch(ws: Workspace, say: Say): Promise<Result<Watched>> {
   process.on("SIGINT", onSignal);
   try {
     for (;;) {
-      if (!claimWatcher(ws.db, self)) {
+      let claimed = claimWatcher(ws.db, self);
+      if (!claimed && opts.now) {
+        const freed = await freeWatcher(ws, say);
+        claimed = freed && claimWatcher(ws.db, self);
+      }
+      if (!claimed) {
         busy = true;
         break;
       }
       mine = true;
+      let announced = "";
       for (;;) {
         const tip = git(ws.primary, "rev-parse", "--verify", `refs/heads/${ws.config.main}`);
         if (!tip.ok) return err("io", tip.error.message);
-        if (tested(ws.db, tip.value)) break;
+        const p = plan(ws, tip.value, opts.now === true);
+        if (!p.ok) return p;
+        const todo = p.value;
+        if (todo.kind === "idle") break;
+        if (todo.kind === "skip") {
+          const marked = markSkipped(ws, say, tip.value, todo.base, todo.paths, todo.under);
+          if (!marked.ok) return marked;
+          continue;
+        }
+        if (todo.kind === "wait") {
+          const key = `${tip.value}@${todo.at}`;
+          if (announced !== key) {
+            announced = key;
+            say(`floor watch: ${todo.backlog.landings} landing(s) on ${ws.config.main} ${tip.value.slice(0, 9)} are not tested yet; waiting until ${new Date(todo.at).toISOString()} (${todo.why}) or until more landings make it due, and main moving restarts the wait (BR-2311)`);
+          }
+          // reason: main moving changes when the test is due, so the wait is cut short and everything is read again (BR-2311).
+          await Bun.sleep(Math.max(50, Math.min(todo.at - nowMs(), pollMs())));
+          continue;
+        }
+        say(`floor watch: ${ws.config.main} ${tip.value.slice(0, 9)} is due: ${todo.why}`);
         ws.db.db.query("UPDATE watcher SET sha = ? WHERE id = 1 AND pid = ?").run(tip.value, self.pid);
         const r = await testCommit(ws, say, tip.value);
+        ws.db.db.query("UPDATE watcher SET sha = NULL WHERE id = 1 AND pid = ?").run(self.pid);
         if (!r.ok) return r;
         results.push({ sha: r.value.sha, passed: r.value.passed, log: r.value.log });
         if (!r.value.rebuilt) continue;
@@ -182,6 +214,55 @@ export async function watch(ws: Workspace, say: Say): Promise<Result<Watched>> {
     if (mine) releaseWatcher(ws.db, self);
     process.off("SIGTERM", onSignal);
     process.off("SIGINT", onSignal);
+  }
+}
+
+/**
+ * The line `canon work status` and `canon brief` print while landings of a watched main are not tested yet (BR-2313);
+ * empty otherwise, and when the thresholds cannot be read (the commands that start the watcher report that).
+ */
+export function untestedNotice(ws: Workspace): string[] {
+  if (timingOnMain(ws) !== "after") return [];
+  const tip = git(ws.primary, "rev-parse", "--verify", `refs/heads/${ws.config.main}`);
+  if (!tip.ok) return [];
+  const p = plan(ws, tip.value, false);
+  return p.ok ? untestedLine(ws, p.value) : [];
+}
+
+/** How often a waiting watcher reads main again, in milliseconds; `CANON_WATCH_POLL_MS` shortens it for tests. */
+function pollMs(): number {
+  const v = Number(process.env["CANON_WATCH_POLL_MS"]);
+  return Number.isFinite(v) && v > 0 ? v : 15_000;
+}
+
+/** Marks `sha` tested without a run, because only floor_skip_paths changed since `base` (BR-2312). */
+function markSkipped(ws: Workspace, say: Say, sha: string, base: string, paths: readonly string[], under: readonly string[]): Result<void> {
+  try {
+    ws.db.event(ws.actor, "floor.skip", null, { sha, base, paths, under });
+  } catch (e) {
+    return err("io", `cannot record that ${sha.slice(0, 9)} needs no floor (${(e as Error).message}); it is looked at again next time`);
+  }
+  say(`floor watch: ${ws.config.main} ${sha.slice(0, 9)} marked tested without a run: since ${base.slice(0, 9)} only ${under.join(", ")} changed (floor_skip_paths, BR-2164, BR-2312)`);
+  return ok(undefined);
+}
+
+/**
+ * For `canon floor watch --now` while another watcher holds the place (BR-2311): one that is only waiting for its
+ * thresholds is stopped, as it would not test now; one that is testing is waited for. True when the place is free.
+ */
+async function freeWatcher(ws: Workspace, say: Say): Promise<boolean> {
+  for (;;) {
+    const row = liveWatcher(ws.db);
+    if (!row) return true;
+    if (row.sha === null) {
+      say(`floor watch: stopping the watcher (pid ${row.pid}) that is waiting for its thresholds, to test now`);
+      try {
+        process.kill(row.pid, "SIGTERM");
+      } catch {
+        // reason: it ended on its own between the check and the signal; the loop sees the place free (BR-2311).
+      }
+    }
+    await Bun.sleep(row.sha === null ? 100 : 1000);
   }
 }
 
@@ -326,7 +407,7 @@ export function ensureWatcher(ws: Workspace, say: Say): string | undefined {
   const started = spawnWatcher(ws, [...canonCommand(), "floor", "watch"]);
   // reason: a watcher that cannot be started fails the command that starts it.
   if (!started.ok) throw new Error(started.error.message);
-  say(`floor watch: testing ${ws.config.main} ${tip.value.slice(0, 9)} in the background (log: ${started.value})`);
+  say(`floor watch: watching ${ws.config.main} ${tip.value.slice(0, 9)} in the background; it tests once the untested landings are due (log: ${started.value})`);
   return started.value;
 }
 

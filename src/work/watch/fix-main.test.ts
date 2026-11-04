@@ -20,7 +20,7 @@ function canon(cwd: string, ...args: string[]) {
 /** A project in after mode whose main fails its floor, with the failure recorded by a background run. */
 async function failingMain() {
   const root = project();
-  writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\nfloor_timing: after\n");
+  writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
   writeFileSync(join(root, "FAIL"), "x\n");
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "broken");

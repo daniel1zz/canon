@@ -65,6 +65,7 @@ A subagent's report is a claim; the coordination database recorded what happened
 5. `canon check` on main, and `canon work status`: no leftover claims or queued entries from the run.
 6. Spot-check the key points of each report against the code: a test named in the report exists and proves what it says.
 7. Find the hotspots for the next run: group `canon events --since <start> --kind overlap.notice --json` by the files in each notice, and read the conflict refusals in `canon events --since <start> --kind land.refuse` for the files they name. A file that keeps showing up is worth splitting, or worth keeping to one agent per round.
+8. With `floor_timing: after` (check `canon work status`: it shows `main: N landings not yet tested`), the background floor waits for a quiet period or a backlog before it tests main. Once the batch is verified and nothing more is about to land, run `canon floor watch --now`: it tests main's latest commit at once, waits for a test in progress and returns when main's latest commit is tested; exit 1 means that commit failed, and `canon work start --fix-main` opens the fix.
 
 Where `canon stats --since` or `canon events` does not exist yet, use `canon stats` (totals only), `canon work status` and `git log` on main, and say in your summary that the run was checked without the event window.
 
