@@ -87,32 +87,40 @@ export function stopStarted(self = process.pid): boolean {
 /** How long a signalled watcher waits for what it started to end after SIGTERM before it sends SIGKILL (BR-2285). */
 export const STOP_GRACE_MS = 10_000;
 
+/** Where a wait ended: nothing left, something still listed, or the last listing failed so it is not known. */
+type Left = "none" | "running" | "unread";
+
 /**
- * Waits, blocking, until nothing this process started still runs, or `ms` passes. True when nothing is left; false when
- * something still runs, or the process table could not be read, when `ms` is over. It blocks on purpose: while it waits,
+ * Waits, blocking, until nothing this process started still runs, or `ms` passes. A listing that fails proves nothing
+ * has ended, so the wait goes on; at the end it says how the last listing went. It blocks on purpose: while it waits,
  * the watcher's own code must not go on to record a result or start the next command (#102).
  */
-export function waitStarted(ms: number, self = process.pid): boolean {
+export function waitStarted(ms: number, self = process.pid): Left {
   const end = Date.now() + ms;
   for (;;) {
     const rows = table();
     // reason: one listing that fails proves nothing has ended; the wait goes on to its end, so a TERM handler keeps its time (BR-2285, issue #108)
-    if (rows && startedBy(rows, self).length === 0) return true;
-    if (Date.now() >= end) return false;
+    const left: Left = !rows ? "unread" : startedBy(rows, self).length === 0 ? "none" : "running";
+    if (left === "none" || Date.now() >= end) return left;
     Bun.sleepSync(50);
   }
 }
 
-/** Sends SIGKILL to everything this process started, again for any that shows up meanwhile, until a listing finds none or `ms` passes. */
-export function killStarted(ms: number, self = process.pid): boolean {
+/**
+ * Sends SIGKILL to everything this process started, again to any that shows up meanwhile, until a listing finds none
+ * or `ms` passes; a failed listing is tried again like in waitStarted. Says how the last listing went and whether
+ * SIGKILL was sent at all.
+ */
+export function killStarted(ms: number, self = process.pid): { left: Left; sent: boolean } {
   const end = Date.now() + ms;
+  let sent = false;
   for (;;) {
     const rows = table();
-    if (!rows) return false;
-    const left = startedBy(rows, self);
-    if (left.length === 0) return true;
-    if (Date.now() >= end) return false;
-    for (const p of left) send(p, "SIGKILL");
+    const found = rows ? startedBy(rows, self) : [];
+    const left: Left = !rows ? "unread" : found.length === 0 ? "none" : "running";
+    if (left === "none" || Date.now() >= end) return { left, sent };
+    for (const p of found) send(p, "SIGKILL");
+    sent ||= found.length > 0;
     Bun.sleepSync(50);
   }
 }
@@ -124,7 +132,11 @@ export function killStarted(ms: number, self = process.pid): boolean {
  */
 export function stopAndWait(self = process.pid): string | undefined {
   if (!stopStarted(self)) return "cannot read the process table, so the commands this watcher started may not all have been stopped";
-  if (waitStarted(STOP_GRACE_MS, self)) return undefined;
+  const waited = waitStarted(STOP_GRACE_MS, self);
+  if (waited === "none") return undefined;
+  const s = STOP_GRACE_MS / 1000;
+  const head = waited === "running" ? `what this watcher started was still running ${s} s after SIGTERM` : `${s} s after SIGTERM the process table cannot be read to see whether what this watcher started has ended`;
   const killed = killStarted(5_000, self);
-  return `what this watcher started was still running ${STOP_GRACE_MS / 1000} s after SIGTERM; sent SIGKILL${killed ? "" : ", and some of it is still running"}`;
+  const tail = !killed.sent && killed.left === "unread" ? "cannot read the process table to send SIGKILL" : `sent SIGKILL${killed.left === "running" ? ", and some of it is still running" : killed.left === "unread" ? ", and whether it ended cannot be read" : ""}`;
+  return `${head}; ${tail}`;
 }

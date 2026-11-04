@@ -606,6 +606,22 @@ describe("a passing main", () => {
     expect(out).not.toContain("may not all have been stopped"); // the listings that stop and signal all worked
   });
 
+  test("BR-2285: a process table that cannot be read at all while waiting: SIGKILL after 10 s cannot be sent either, the log says both, the watcher exits 143", async () => {
+    const { out, waited, dir } = await termedWhile((ready) => `hooks:\n  after_green: 'trap "" TERM; echo $$ > ${ready}.pid; touch ${ready}; while true; do sleep 0.1; done'\n`, {
+      bin: (d) => {
+        const bin = join(d, "bin");
+        mkdirSync(bin, { recursive: true });
+        // reason: the two listings that stop and signal work; every later one fails
+        writeFileSync(join(bin, "ps"), `#!/bin/sh\nif [ "$2" = "pid=,ppid=,pgid=,stat=" ]; then echo x >> ${d}/n; [ "$(wc -l < ${d}/n)" -ge 3 ] && exit 1; fi\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+        return bin;
+      },
+    });
+    expect(waited).toBeGreaterThanOrEqual(14_500);
+    expect(out).toContain("10 s after SIGTERM the process table cannot be read");
+    expect(out).toContain("cannot read the process table to send SIGKILL");
+    process.kill(Number(readFileSync(join(dir, "ready.pid"), "utf8").trim()), "SIGKILL"); // nothing could end it
+  });
+
   test("BR-2285: a process still listed 5 s after SIGKILL is reported as still running, and the watcher still exits 143 and gives up its place", async () => {
     const { out, root } = await termedWhile((ready) => `hooks:\n  after_green: 'touch ${ready}; while true; do sleep 0.1; done'\n`, {
       bin: (d) => {
