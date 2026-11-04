@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claims, takeClaim } from "../../claims/claims.ts";
 import { enqueue, finishEntry, tryTurn } from "../queue/queue.ts";
@@ -7,6 +7,7 @@ import { handoffs, writeHandoff } from "../../session/handoffs.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
 import { land } from "../land.ts";
 import { reopen } from "./finish.ts";
+import { moveBranch } from "../../../kernel/git.ts";
 import { FAST, gapCommit, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
@@ -150,6 +151,29 @@ describe("the claim during a landing", () => {
     expect(sh(s.worktree, "status", "--porcelain")).toBe("");
     expect(lines.join("\n")).toContain("was not reopened");
     expect(lines.join("\n")).toContain("index.lock");
+  });
+
+  test("BR-2258: when the index cannot be copied or replaced (a full disk), the branch, the index and the files are left as they were", () => {
+    const root = project();
+    const s = startNew(root, "Reopen disk full");
+    const path = sh(s.worktree, "diff", "--name-only", "main", "HEAD");
+    writeFileSync(join(s.worktree, path), readFileSync(join(s.worktree, path), "utf8").replace("status: open", "status: done"));
+    sh(s.worktree, "commit", "-qam", `canon: close ${s.change}`);
+    const top = sh(s.worktree, "rev-parse", "HEAD");
+    const parent = sh(s.worktree, "rev-parse", "HEAD~1");
+    const lock = sh(s.worktree, "rev-parse", "--path-format=absolute", "--git-path", "index.lock");
+    const full = () => {
+      throw new Error("ENOSPC: no space left on device");
+    };
+    for (const files of [{ copy: full, rename: renameSync }, { copy: copyFileSync, rename: full }]) {
+      const failed = moveBranch(s.worktree, top, parent, "test", 0, files);
+      expect(failed?.kind).toBe("io");
+      expect(failed?.message).toContain("ENOSPC");
+      expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(top);
+      expect(sh(s.worktree, "status", "--porcelain")).toBe("");
+      expect(readFileSync(join(s.worktree, path), "utf8")).toContain("status: done");
+      expect(existsSync(lock)).toBe(false);
+    }
   });
 
   test("BR-2018: a --finish landing that times out in the queue takes its close commit back too", async () => {

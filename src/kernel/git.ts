@@ -144,7 +144,16 @@ export const INDEX_LOCK_WAIT_MS = 2_000;
 export type BranchMoveFailure =
   | { readonly kind: "locked"; readonly message: string }
   | { readonly kind: "moved"; readonly message: string }
-  | { readonly kind: "files"; readonly message: string };
+  | { readonly kind: "files"; readonly message: string }
+  | { readonly kind: "io"; readonly message: string };
+
+/** The file operations moveBranch uses on the index; tests pass ones that fail, as a full disk would. */
+export interface IndexFiles {
+  readonly copy: (from: string, to: string) => void;
+  readonly rename: (from: string, to: string) => void;
+}
+
+const INDEX_FILES: IndexFiles = { copy: copyFileSync, rename: renameSync };
 
 /**
  * Moves the branch checked out in `wt` from `from` to `to`, with its index and files following, as one step against
@@ -154,7 +163,7 @@ export type BranchMoveFailure =
  * new index in a scratch file, which then replaces the index. A HEAD that is no longer `from`, or files with local
  * edits read-tree would overwrite, leave the branch, the index and the files as they were. Undefined when it moved.
  */
-export function moveBranch(wt: string, from: string, to: string, message: string, waitMs: number = INDEX_LOCK_WAIT_MS): BranchMoveFailure | undefined {
+export function moveBranch(wt: string, from: string, to: string, message: string, waitMs: number = INDEX_LOCK_WAIT_MS, files: IndexFiles = INDEX_FILES): BranchMoveFailure | undefined {
   const fail = (kind: BranchMoveFailure["kind"], text: string): BranchMoveFailure => ({ kind, message: text });
   const index = git(wt, "rev-parse", "--path-format=absolute", "--git-path", "index");
   if (!index.ok) return fail("locked", index.error.message);
@@ -172,17 +181,27 @@ export function moveBranch(wt: string, from: string, to: string, message: string
       Bun.sleepSync(25);
     }
   }
+  let moved = false;
+  let synced = false;
   try {
+    // reason: copied before HEAD moves, so a copy that fails (a full disk) leaves nothing to undo (issue #95).
+    files.copy(index.value, scratch);
     const cas = git(wt, "update-ref", "-m", message, "HEAD", to, from);
     if (!cas.ok) return fail("moved", `HEAD is no longer ${from.slice(0, 9)}`);
-    copyFileSync(index.value, scratch);
+    moved = true;
     const sync = gitEnv(wt, { GIT_INDEX_FILE: scratch }, "read-tree", "-m", "-u", from, to);
     if (!sync.ok) {
       git(wt, "update-ref", "-m", `${message} (undone)`, "HEAD", from, to);
       return fail("files", sync.error.message.split("\n")[0] ?? "read-tree failed");
     }
-    renameSync(scratch, index.value);
+    synced = true;
+    files.rename(scratch, index.value);
     return undefined;
+  } catch (e) {
+    // reason: HEAD and the files go back to `from`, where the index still is, so no commit records one tree on top of the other (BR-2258, issue #95).
+    if (synced) gitEnv(wt, { GIT_INDEX_FILE: scratch }, "read-tree", "-m", "-u", to, from);
+    if (moved) git(wt, "update-ref", "-m", `${message} (undone)`, "HEAD", from, to);
+    return fail("io", `the index could not be replaced (${(e as Error).message}); the branch and the files were left as they were`);
   } finally {
     closeSync(fd);
     rmSync(scratch, { force: true });

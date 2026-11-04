@@ -231,7 +231,7 @@ describe("a batch's own edges", () => {
     expect(said.some((m) => m.includes("branch moved after it joined the batch") && m.includes("git rebase main"))).toBe(true);
   }, TIMED);
 
-  test("BR-2258: a commit tried while a landed member's branch follows main is refused by git, so the member never drops what the batch brought", async () => {
+  test("BR-2258 BR-2191: a commit tried while a landed member's branch follows main is refused by git, so the member never drops what the batch brought", async () => {
     const { root } = batchProject("land_batch_max: 2\n");
     const b = startNew(root, "Follows");
     commitFile(b.worktree, "b.txt", "b\n");
