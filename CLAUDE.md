@@ -2,16 +2,15 @@
 
 Canon：为多个 AI 会话同时开发的项目提供共享记忆和协作协调。先读一遍 `canon/product.md`，里面的七条承诺（P1 到 P7）是这里所有东西存在的理由。
 
+`canon brief` 输出的工作说明是通用流程的唯一来源，这里只写 canon 自己仓库另外的约定。
+
 ## 东西在哪
 
-- `canon/rules/<领域>/BR-n.md`：产品现在必须怎么工作，一条规则一个文件。`canon/rules/<领域>/README.md` 写明这一块业务管什么、现在的结构和术语。子领域（`canon/rules/<领域>/<子领域>/`）只写业务，不写代码位置；一个领域直接的规则超过 25 条时拆分。代码位置：配置了 `code_root` 时代码目录和领域一一对应（`<code_root>/<领域>/<子领域>`，不属于任何领域的放在 `shared`），否则由顶层领域 README 的 `code:` 给出（D-15）。
-- `canon/decisions/D-n.md`：为什么这么定。`canon/changes/C-n.md`：要做的工作。`canon/notes/`：调研和复盘。
-- `.claude/skills/canon-*`：canon 自带的 Claude Code skill，项目级别，`canon init` 时装进每个用 canon 的项目；canon 更新后，`canon brief` 会提示；要改就在这里改（D-8、D-9、D-10）：`canon-design`（设计，结果落到决策和规则）、`canon-diagnose`（调试）、`canon-test`（写测试）、`canon-uat`（验收）、`canon-rules`（写规则）、`canon-triage`（分流 issue）、`canon-product`（该做什么）、`canon-prototype`（原型）、`canon-context-optimizer`（压缩常驻说明）、`canon-parallel`（派并发子 agent）。
-- `src/`：canon 的实现，目录和规则领域一一对应（`code_root: src`）：`src/work/land/` 是 `work/land` 的代码，`src/kernel/` 是不属于任何领域的共享代码；测试放在它测的代码旁边。`canon check` 报出没有领域的目录。
+- `canon/notes/`：调研和复盘。
+- `.claude/skills/canon-*`：canon 自带的 skill，`canon init` 时装进每个用 canon 的项目；要改就在这里改（D-8、D-9、D-10）。
+- `src/`：canon 的实现，`code_root: src`：`src/work/land/` 是 `work/land` 的代码，`src/kernel/` 是不属于任何领域的共享代码；测试放在它测的代码旁边。
 
 ## 怎么干活
-
-会话开始时 `canon brief` 输出的工作说明是通用流程的唯一来源（读上下文、开变更、改规则、合入和停下、问人、放弃变更、提 issue），这里不重复，只写本项目另外的要求。
 
 ```
 canon update [--check]            # 更新 canon 装进项目的 skill 和 hook（用户要求时）

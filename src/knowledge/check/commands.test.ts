@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
 import { project } from "../../work/testkit.ts";
 
 const MAIN = join(import.meta.dir, "../../cli/main.ts");
@@ -111,5 +112,70 @@ describe("canon check output", () => {
     ]);
     expect(run("[docs]", { "docs/agent.md": "y" })[0]).toBe(1);
     expect(run(undefined, {})).toEqual([0, []]);
+  });
+});
+
+describe("canon check session text sizes", () => {
+  const guideBytes = Buffer.byteLength(WORKFLOW_GUIDE, "utf8");
+  const sizeLines = (err: string) => err.split("\n").filter((l) => l.startsWith("session-text "));
+  const hintLines = (err: string) => err.split("\n").filter((l) => l.startsWith("hint session-text:"));
+  const skill = (description?: string) => `---\nname: x\n${description === undefined ? "" : `description: ${description}\n`}---\n# x\n`;
+
+  test("BR-2256: --sizes writes CLAUDE.md, the work guide, each skill description and the total to stderr; stdout and exit code unchanged", () => {
+    const root = clean();
+    write(root, { "CLAUDE.md": "x".repeat(2063), ".claude/skills/a/SKILL.md": skill("做 A"), ".claude/skills/b/SKILL.md": skill() });
+    const r = canon(root, "check", "--sizes");
+    expect([r.code, r.out]).toEqual([0, "ok: 1 documents, 1 domains\n"]);
+    expect(sizeLines(r.err)).toEqual([
+      "session-text CLAUDE.md: 2063 bytes",
+      `session-text work guide: ${guideBytes} bytes`,
+      "session-text .claude/skills/a/SKILL.md description: 5 bytes",
+      "session-text .claude/skills/b/SKILL.md description: 0 bytes (no description)",
+      `session-text total: ${2063 + guideBytes + 5} bytes, no budget (session_text_budget)`,
+    ]);
+    expect(sizeLines(canon(root, "check").err)).toEqual([]);
+  });
+
+  test("BR-2256: no CLAUDE.md has no line; a linked CLAUDE.md is not read; a budget is named; --json keeps stdout to the array", () => {
+    const root = clean();
+    write(root, { "AGENTS.md": "y".repeat(500), "canon/config.yaml": "session_text_budget: 12000\n" });
+    const none = canon(root, "check", "--sizes");
+    expect(sizeLines(none.err)).toEqual([`session-text work guide: ${guideBytes} bytes`, `session-text total: ${guideBytes} bytes, budget 12000`]);
+    symlinkSync("AGENTS.md", join(root, "CLAUDE.md"));
+    write(root, { "canon/backlog.md": `---\ntitle: 待办顺序\n---\n- ${id("C", 99)}\n` });
+    const linked = canon(root, "check", "--sizes", "--json");
+    expect(linked.code).toBe(1);
+    expect((JSON.parse(linked.out) as unknown[]).length).toBe(1);
+    expect(sizeLines(linked.err)[0]).toBe("session-text CLAUDE.md: 0 bytes (symbolic link, not read)");
+  });
+
+  test("BR-2257: a total over session_text_budget prints one hint on stderr; stdout, --json and the exit code stay as without it", () => {
+    const root = clean();
+    write(root, { "CLAUDE.md": "x".repeat(150), ".claude/skills/a/SKILL.md": skill("做 A"), "canon/config.yaml": `session_text_budget: ${guideBytes + 100}\n` });
+    const r = canon(root, "check");
+    expect([r.code, r.out]).toEqual([0, "ok: 1 documents, 1 domains\n"]);
+    expect(hintLines(r.err)).toEqual([
+      `hint session-text: ${guideBytes + 155} bytes loaded every session, over session_text_budget ${guideBytes + 100} (CLAUDE.md 150, work guide ${guideBytes}, skill descriptions 5); canon check --sizes lists each part`,
+    ]);
+    const j = canon(root, "check", "--json");
+    expect([j.code, JSON.parse(j.out), hintLines(j.err).length]).toEqual([0, [], 1]);
+  });
+
+  test("BR-2257: a total equal to the budget, or no budget, prints no hint", () => {
+    const root = clean();
+    write(root, { "CLAUDE.md": "x".repeat(150), "canon/config.yaml": `session_text_budget: ${guideBytes + 150}\n` });
+    expect(hintLines(canon(root, "check").err)).toEqual([]);
+    write(root, { "CLAUDE.md": "x".repeat(100_000), "canon/config.yaml": "session_text_budget: null\n" });
+    expect(hintLines(canon(root, "check").err)).toEqual([]);
+  });
+
+  test("BR-2257: session_text_budget of 0, 1.5 or a string is a config error, exit 2, naming the key", () => {
+    for (const v of ["0", "1.5", '"8KB"', "-3"]) {
+      const root = clean();
+      write(root, { "canon/config.yaml": `session_text_budget: ${v}\n` });
+      const r = canon(root, "check");
+      expect([v, r.code]).toEqual([v, 2]);
+      expect(r.out + r.err).toContain("session_text_budget");
+    }
   });
 });

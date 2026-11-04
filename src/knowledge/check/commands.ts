@@ -1,13 +1,15 @@
 import { defineCommand } from "citty";
 import { corpusOf, entry, EXIT, json, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
 import { check } from "./check.ts";
+import { budgetHint, sessionText, sizeLines } from "./session-text.ts";
 import { testFilesFor } from "./tests.ts";
 
 /** `canon check`: corpus integrity. */
 
 const checkCmd = defineCommand({
   meta: { description: "Corpus integrity: files valid, ids unique, references resolve, rules and tests name each other" },
-  args: { json: { type: "boolean" } },
+  args: { json: { type: "boolean" }, sizes: { type: "boolean", description: "Also write, on standard error, the bytes of text every session loads (BR-2256)" } },
   run({ args }) {
     const ws = workspace();
     const read = corpusOf(ws);
@@ -15,6 +17,11 @@ const checkCmd = defineCommand({
     if (args.json) json(findings);
     else for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
     if (!args.json) say(findings.length === 0 ? `ok: ${read.corpus.docs.length} documents, ${read.corpus.domains.length} domains` : `${findings.length} finding(s)`);
+    // reason: sizes and the budget hint go to standard error so stdout and the exit code stay as BR-2189 says (BR-2256, BR-2257)
+    const parts = sessionText(ws.root, WORKFLOW_GUIDE);
+    if (args.sizes) for (const line of sizeLines(parts, ws.config.sessionTextBudget)) console.error(line);
+    const hint = budgetHint(parts, ws.config.sessionTextBudget);
+    if (hint) console.error(hint);
     process.exit(findings.length === 0 ? EXIT.ok : EXIT.refused);
   },
 });

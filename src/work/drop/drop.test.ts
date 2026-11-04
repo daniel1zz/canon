@@ -474,7 +474,8 @@ describe("every refusal of drop is recorded", () => {
     const inside = drop(ws(s.worktree), s.change, quiet); // usage: exit 2
     expect(!inside.ok && inside.error.code).toBe("invalid");
     expect(events(root, "drop.refuse")).toEqual([]);
-  });
+    // reason: seven temporary repositories with commits and worktrees; under a loaded machine that takes well over the default 5 s (C-59)
+  }, 60_000);
 
   test("BR-2233: a change whose branch is checked out outside the worktree directory is not dropped: exit 2 naming that worktree, nothing deleted, no event", () => {
     const root = project();

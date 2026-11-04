@@ -360,3 +360,18 @@ describe("canon work test review notes", () => {
     expect(noteLines(failing.out)).toHaveLength(1);
   });
 });
+
+describe("canon work test session text budget", () => {
+  const hint = (err: string) => err.split("\n").filter((l) => l.startsWith("hint session-text:"));
+
+  test("BR-2257: canon work test prints the over-budget hint on stderr and exits as it would without it", () => {
+    const { wt } = fixture();
+    const quiet = canon(wt, "work", "test");
+    expect([quiet.code, hint(quiet.err)]).toEqual([0, []]);
+    write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\nsession_text_budget: 1\n` });
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(0);
+    expect(hint(r.err)).toHaveLength(1);
+    expect(hint(r.err)[0]).toContain("over session_text_budget 1 ");
+  });
+});

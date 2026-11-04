@@ -6,6 +6,8 @@ import { FILE_PLACEHOLDER } from "./config-keys.ts";
 import { check } from "../../knowledge/check/check.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { testTitles } from "../../knowledge/check/test-titles.ts";
+import { budgetHint, sessionText } from "../../knowledge/check/session-text.ts";
+import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
 import { importedPaths } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { idsIn } from "../../knowledge/documents/types.ts";
@@ -240,6 +242,9 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   const findings = check({ root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config), floorSkipPaths: ws.config.floorSkipPaths });
   for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
   say(findings.length === 0 ? "canon check: ok" : `canon check: ${findings.length} finding(s)`);
+  // A hint on standard error, never a failure (BR-2257, D-37).
+  const hint = budgetHint(sessionText(ws.root, WORKFLOW_GUIDE), ws.config.sessionTextBudget);
+  if (hint) console.error(hint);
 
   // Open review notes on what this change touches, the ones canon context shows; a hint, never a failure (BR-2249, D-21).
   const notes = openNotes(ws.db, [...rules, ...decisions]);
