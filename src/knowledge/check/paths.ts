@@ -1,6 +1,6 @@
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
-import type { Corpus } from "../documents/model.ts";
+import { fencedLines as inFence, type Corpus } from "../documents/model.ts";
 import { git } from "../../kernel/git.ts";
 
 /**
@@ -21,23 +21,6 @@ export const ROOT_DOCS = ["CLAUDE.md", "README.md"] as const;
 const EXT = /^[A-Za-z0-9_][\w.-]*\.(?:ts|tsx|js|jsx|mjs|cjs|md|yaml|yml|json|sh|toml|lock|txt)$/;
 const NOT_A_PATH = /[\s<>*?{}$…|]|\b[A-Z]+-n\b|:\/\//;
 const SKIP_DIRS = new Set([".git", "node_modules", "dist", ".cache"]);
-
-/**
- * For each line, whether it belongs to a fenced code block (BR-2171): a fence is three or more backticks or
- * tildes, indented at most three spaces; it closes at a line of the same character at least as long, or at the end.
- */
-function inFence(lines: readonly string[]): boolean[] {
-  let open: { char: string; length: number } | undefined;
-  return lines.map((line) => {
-    const f = line.match(/^ {0,3}(`{3,}|~{3,})(.*)$/);
-    if (open === undefined) {
-      if (f && !(f[1]![0] === "`" && f[2]!.includes("`"))) open = { char: f[1]![0]!, length: f[1]!.length };
-      return open !== undefined;
-    }
-    if (f && f[1]![0] === open.char && f[1]!.length >= open.length && f[2]!.trim() === "") open = undefined;
-    return true;
-  });
-}
 
 /** The text without its fenced code blocks (BR-2171). */
 function prose(text: string): string {

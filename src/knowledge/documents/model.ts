@@ -131,7 +131,39 @@ export function slugify(title: string): string {
     .slice(0, 60);
 }
 
+/**
+ * For each line, whether it belongs to a fenced code block (CommonMark): a fence is three or more backticks or tildes;
+ * it closes at a line of the same character at least as long, or at the end. A backtick fence whose info string holds
+ * a backtick is no fence. Any indentation counts: a fence indented four spaces or more is an indented code block,
+ * code either way (BR-2004, BR-2035, BR-2171).
+ */
+export function fencedLines(lines: readonly string[]): boolean[] {
+  let open: { char: string; length: number } | undefined;
+  return lines.map((line) => {
+    const f = line.match(/^\s*(`{3,}|~{3,})(.*)$/);
+    if (open === undefined) {
+      if (f && !(f[1]![0] === "`" && f[2]!.includes("`"))) open = { char: f[1]![0]!, length: f[1]!.length };
+      return open !== undefined;
+    }
+    if (f && f[1]![0] === open.char && f[1]!.length >= open.length && f[2]!.trim() === "") open = undefined;
+    return true;
+  });
+}
+
+/** The text with its fenced code blocks removed, one empty line per removed line. */
+export function withoutFences(text: string): string {
+  const lines = text.split("\n");
+  const fenced = fencedLines(lines);
+  return lines.map((l, i) => (fenced[i] ? "" : l)).join("\n");
+}
+
+/**
+ * A code span (CommonMark): a run of backticks, then text on the same line, then a run of exactly as many; so
+ * `` a`b` `` is one span (BR-2004).
+ */
+const CODE_SPAN = /(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g;
+
 /** Ids written as code (`BR-12`, or inside a fenced block) are examples, not references; this blanks them out. */
 export function stripCode(markdown: string): string {
-  return markdown.replace(/```[\s\S]*?```/g, " ").replace(/`[^`\n]*`/g, " ");
+  return withoutFences(markdown).replace(CODE_SPAN, " ");
 }

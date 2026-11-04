@@ -3,7 +3,10 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { CoordDb } from "../../work/db.ts";
+import { stripCode } from "./model.ts";
 import { readCorpus } from "./read.ts";
+import { hasPlaceholderLine } from "./templates.ts";
+import { check } from "../check/check.ts";
 import { createDoc } from "./write.ts";
 
 // Ids are assembled at runtime so this file does not itself name rules when canon check scans the repo.
@@ -66,5 +69,37 @@ describe("id allocation from the files", () => {
     const d = db(root);
     expect(create(root, d, "rule", "New", "billing")).toBe(`canon/rules/billing/${id("BR", 6)}.md`);
     d.close();
+  });
+});
+
+describe("code is not prose", () => {
+  const ref = id("BR", 77);
+
+  test("BR-2004: a code span opened with two backticks holds backticks, and its id is blanked with it", () => {
+    expect(stripCode(`x \`\` a\`b\`(${ref}) \`\` y`)).not.toContain(ref);
+    expect(stripCode(`x \`${ref}\` y`)).not.toContain(ref);
+    expect(stripCode(`x ${ref} y`)).toContain(ref);
+    // a run of two backticks is closed only by a run of two, not by single ones
+    expect(stripCode(`\`\`a\` ${ref}`)).toContain(ref);
+  });
+
+  test("BR-2004 BR-2035: ids and placeholder lines inside a ~~~ fence are code; the same lines outside it are checked", () => {
+    for (const fence of ["~~~", "\`\`\`", "~~~~"]) {
+      const text = `a\n${fence}\n${ref}\n<占位>\n${fence}\nb\n`;
+      expect([fence, stripCode(text).includes(ref), hasPlaceholderLine(text)]).toEqual([fence, false, false]);
+    }
+    expect(hasPlaceholderLine(`a\n<占位>\n`)).toBe(true);
+    // a fence is closed only by the same character: ``` inside ~~~ does not end it
+    expect(stripCode(`~~~\n\`\`\`\n${ref}\n~~~\n`)).not.toContain(ref);
+    expect(stripCode(`~~~\n${ref}\n\`\`\`\n${ref.replace("77", "78")}\n`)).not.toContain(ref.replace("77", "78"));
+  });
+
+  test("BR-2004 BR-2035: canon check reports nothing for an id and a placeholder line inside a ~~~ block of a domain README (#76)", () => {
+    const run = (body: string) => {
+      const root = repo({ "canon/rules/billing/README.md": `---\ncode: [src/billing]\n---\n# B\n\n${body}\n## 术语\n\n- **a**：b\n`, "src/billing/.keep": "" });
+      return check({ root, ...readCorpus(root), testFiles: [] }).map((f) => f.rule).sort();
+    };
+    expect(run(`~~~\n${ref}\n<占位>\n~~~\n`)).toEqual([]);
+    expect(run(`${ref}\n<占位>\n`)).toEqual(["ref-dangling", "template-unfilled"]);
   });
 });

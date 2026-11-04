@@ -1,3 +1,4 @@
+import { withoutFences } from "./model.ts";
 
 /**
  * Built-in document templates. canon/ documents are written in Chinese (product.md, "语言"), so the
@@ -42,7 +43,7 @@ export function isPlaceholderLine(line: string): boolean {
 
 /** Whether any line outside fenced code blocks is a placeholder line. */
 export function hasPlaceholderLine(markdown: string): boolean {
-  return markdown.replace(/```[\s\S]*?```/g, "").split("\n").some(isPlaceholderLine);
+  return withoutFences(markdown).split("\n").some(isPlaceholderLine);
 }
 
 /**
