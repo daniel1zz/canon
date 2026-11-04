@@ -121,6 +121,21 @@ function withoutRetired(settings: Settings): Settings {
   return out;
 }
 
+/**
+ * Claude Code builds a subagent's worktree from origin's default branch unless `worktree.baseRef` is "head"; origin can be
+ * far behind local main (C-60), so canon owns that one key and sets it (BR-2264). Everything else under `worktree` stays.
+ */
+type BaseRef = "head" | "other" | "invalid";
+
+function baseRefState(settings: Settings | undefined): BaseRef {
+  const w = settings?.["worktree"];
+  if (w === undefined) return "other";
+  if (!isObject(w)) return "invalid";
+  return w["baseRef"] === "head" ? "head" : "other";
+}
+
+const NOT_OBJECT = err("invalid", `\`worktree\` in ${SETTINGS} must be a JSON object; fix it and run again`);
+
 export interface SettingsState {
   /** The SessionStart `canon brief` entry (BR-2087). */
   readonly brief: HookState;
@@ -128,17 +143,21 @@ export interface SettingsState {
   readonly snapshot: boolean;
   /** Withdrawn canon entries still in the file; each is out of date until removed (BR-2087, D-18). */
   readonly retired: readonly Retired[];
+  /** Whether `worktree.baseRef` is "head" (BR-2264). */
+  readonly baseRef: boolean;
 }
 
 /** Which of canon's entries the project's settings have: `canon brief` in the current form, an older one or none, and any withdrawn ones. Reads only. */
 export function hookStatus(root: string): Result<SettingsState> {
   const s = read(root);
   if (!s.ok) return s;
-  return ok({ brief: briefState(s.value), snapshot: hasSnapshot(s.value), retired: retiredIn(s.value) });
+  const base = baseRefState(s.value);
+  if (base === "invalid") return NOT_OBJECT;
+  return ok({ brief: briefState(s.value), snapshot: hasSnapshot(s.value), retired: retiredIn(s.value), baseRef: base === "head" });
 }
 
 /**
- * The settings with the SessionStart entry and the Bash snapshot entry (BR-2185) added when missing, or the old form's command rewritten in place, so a
+ * The settings with the SessionStart entry and the Bash snapshot entry (BR-2185) added when missing, `worktree.baseRef` set to "head" (BR-2264), or the old form's command rewritten in place, so a
  * project never ends up with two, and canon's withdrawn entries removed; everything else is kept as it was. Reads only:
  * undefined when nothing needs writing, an error (exit 2) for a file canon will not edit (BR-2087).
  */
@@ -148,7 +167,9 @@ export function planHook(root: string): Result<Settings | undefined> {
   const state = briefState(s.value);
   const retired = retiredIn(s.value);
   const snapshot = hasSnapshot(s.value);
-  if (state === "present" && snapshot && retired.length === 0) return ok(undefined);
+  const base = baseRefState(s.value);
+  if (base === "invalid") return NOT_OBJECT;
+  if (state === "present" && snapshot && retired.length === 0 && base === "head") return ok(undefined);
   const settings = retired.length > 0 ? withoutRetired(s.value ?? {}) : { ...(s.value ?? {}) };
   if (state !== "present") {
     const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
@@ -164,6 +185,7 @@ export function planHook(root: string): Result<Settings | undefined> {
     hooks["PreToolUse"] = [...preToolUse(settings), { matcher: "Bash", hooks: [{ type: "command", command: SNAPSHOT_COMMAND }] }];
     settings["hooks"] = hooks;
   }
+  if (base !== "head") settings["worktree"] = { ...((settings["worktree"] as Settings | undefined) ?? {}), baseRef: "head" };
   return ok(settings);
 }
 
