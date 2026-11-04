@@ -454,6 +454,32 @@ describe("a passing main", () => {
     expect(briefAfterGuide(root)).not.toContain("floor watch:");
   });
 
+  test("BR-2270: a watcher stopped by SIGTERM while after_green runs stops that after_green too, so a rerun never runs beside it", async () => {
+    const dir = join(process.env["TMPDIR"] ?? "/tmp", `canon-ag-term-${process.pid}-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const pidFile = join(dir, "pid");
+    const { root } = watched(`hooks:\n  after_green: 'echo $$ > ${pidFile}; while true; do sleep 0.1; done'\n`);
+    const fake = fakeCanon(root);
+    const w = Bun.spawn(["bun", MAIN, "floor", "watch"], { cwd: root, stdout: "ignore", stderr: "ignore", stdin: "ignore", detached: true, env: { ...process.env, PATH: `${fake.bin}:${process.env["PATH"]}`, CANON_ACTOR: "agent:a" } });
+    await until(() => existsSync(pidFile) && readFileSync(pidFile, "utf8").trim() !== "");
+    const hook = Number(readFileSync(pidFile, "utf8").trim());
+    w.kill("SIGTERM"); // the watcher only, not its group
+    expect(await w.exited).toBe(143);
+    const alive = () => {
+      try {
+        process.kill(hook, 0);
+        return true;
+      } catch {
+        return false;
+      }
+    };
+    await until(() => !alive(), 5_000).catch(() => {});
+    const still = alive();
+    if (still) process.kill(hook, "SIGKILL");
+    expect(still).toBe(false);
+    expect(eventsOf(root, "floor.after_green")).toEqual([]); // still due: the next watcher runs it again, alone
+  });
+
   test("BR-2270: an after_green that ran to the end, even exiting 1, is not run again by the next canon brief", async () => {
     const { root } = watched(`hooks:\n  after_green: exit 1\n`);
     const a = sh(root, "rev-parse", "main");

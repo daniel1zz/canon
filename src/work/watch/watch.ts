@@ -333,7 +333,7 @@ async function testCommit(ws: Workspace, say: Say, sha: string, running: Running
     const recorded = record(() => clearRedMain(ws.db));
     if (!recorded.ok) return recorded;
     if (due && config.ok) {
-      const done = await afterGreen(ws, say, sha, dir, config.value.hooks.after_green);
+      const done = await afterGreen(ws, say, sha, dir, config.value.hooks.after_green, running);
       return done.ok ? ok({ sha, passed, log, rebuilt: done.value }) : done;
     }
     return ok({ sha, passed, log });
@@ -346,9 +346,10 @@ async function testCommit(ws: Workspace, say: Say, sha: string, running: Running
  * Runs after_green for the passed commit `sha` checked out in `dir`, then records `floor.after_green`: from then on
  * it is not due (BR-2222, BR-2270). True when every command exited 0, so PATH's canon counts as rebuilt (BR-2251).
  */
-async function afterGreen(ws: Workspace, say: Say, sha: string, dir: string, commands: readonly string[], rerun = false): Promise<Result<boolean>> {
+async function afterGreen(ws: Workspace, say: Say, sha: string, dir: string, commands: readonly string[], running: Running, rerun = false): Promise<Result<boolean>> {
   const env = { CANON_GREEN: sha, CANON_PRIMARY: ws.primary };
-  const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "after_green", change: null, cwd: dir, env, port: noPort }, commands, say, false);
+  // reason: registered in `running`, so a signal that ends this watcher stops after_green too and a rerun never runs beside it (BR-2270, issue #99).
+  const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "after_green", change: null, cwd: dir, env, port: noPort, running }, commands, say, false);
   return endAfterGreen(ws, sha, { failed: failed ? failed.command : null, ...(rerun ? { rerun } : {}) }) ?? ok(failed === undefined);
 }
 
@@ -408,7 +409,7 @@ async function rerunAfterGreen(ws: Workspace, say: Say, sha: string, running: Ru
         return endAfterGreen(ws, sha, { rerun: true, setup_exit: code }) ?? ok(false);
       }
     }
-    return await afterGreen(ws, say, sha, dir, config.value.hooks.after_green, true);
+    return await afterGreen(ws, say, sha, dir, config.value.hooks.after_green, running, true);
   } finally {
     removeWorktree(ws.primary, "--force", dir);
   }
