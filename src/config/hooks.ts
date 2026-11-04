@@ -41,6 +41,13 @@ function envFor(ctx: HookContext): Record<string, string> {
 const tail = (text: string, lines = 40) => text.trimEnd().split("\n").slice(-lines).join("\n");
 
 /**
+ * The shell line for one foreground command: its stderr goes into the same pipe as its stdout, so the lines keep the
+ * order they were written in (BR-2200). sh reads the command after the redirection, so a syntax error in it lands in
+ * that pipe too; the process's own stderr is still read and appended, for anything sh says before that.
+ */
+const merged = (command: string): string[] => ["sh", "-c", `exec 2>&1\n${command}`];
+
+/**
  * Runs the commands in order and waits for each. Returns the first failure, or undefined when all exit 0.
  * `stopOnFailure` is for `before_land`; the `after_*` events run every command whatever the exit codes.
  */
@@ -48,7 +55,7 @@ export async function runHooks(ctx: HookContext, commands: readonly string[], sa
   let first: HookFailure | undefined;
   for (const command of commands) {
     say(`hook ${ctx.event}: ${command}`);
-    const proc = Bun.spawn(["sh", "-c", command], { cwd: ctx.cwd, env: envFor(ctx), stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const proc = Bun.spawn(merged(command), { cwd: ctx.cwd, env: envFor(ctx), stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const [out, errText, exit] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
     const output = `${out}${errText}`;
     if (output.trim() !== "") for (const line of tail(output).split("\n")) say(`  ${line}`);
@@ -67,7 +74,7 @@ export function runHooksSync(ctx: HookContext, commands: readonly string[], say:
   let first: HookFailure | undefined;
   for (const command of commands) {
     say(`hook ${ctx.event}: ${command}`);
-    const r = Bun.spawnSync(["sh", "-c", command], { cwd: ctx.cwd, env: envFor(ctx), stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const r = Bun.spawnSync(merged(command), { cwd: ctx.cwd, env: envFor(ctx), stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     const output = `${r.stdout.toString()}${r.stderr.toString()}`;
     if (output.trim() !== "") for (const line of tail(output).split("\n")) say(`  ${line}`);
     const exit = r.exitCode ?? -1;

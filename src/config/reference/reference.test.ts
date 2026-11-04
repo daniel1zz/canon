@@ -187,6 +187,15 @@ describe("the config schema", () => {
     }
   });
 
+  // reason: null is written per key by hand above only where someone thought of it; generated for every key, a key added
+  // later is compared too, and a null canon accepts can never be marked by the editor (BR-2175)
+  test("BR-2175: for every key, null alone is accepted or refused by the schema and by canon alike", () => {
+    for (const [, k] of CONFIG_KEYS) {
+      const config = { [k.key]: null };
+      expect([k.key, validate(config)]).toEqual([k.key, canonAccepts(config)]);
+    }
+  });
+
   test("BR-2175: this repository's own canon/config.yaml passes the schema", () => {
     const own = Bun.YAML.parse(readFileSync(join(import.meta.dir, "../../../canon/config.yaml"), "utf8"));
     expect(validate(own)).toBe(true);
@@ -202,6 +211,17 @@ describe("the config schema", () => {
       const r = k.read(k.schema["default"], { root: "/nowhere", raw });
       expect([k.key, r.ok ? r.value : r.error.message]).toEqual([k.key, k.default]);
     }
+  });
+
+  test("BR-2175 BR-2045: --schema does not read the config: an invalid one, or none outside a repository, still prints it with 0", () => {
+    const invalid = withConfig("floor: test ! -e FAIL\nbogus: 1\n");
+    const r = canon(invalid, "config", "--schema");
+    expect(r.code).toBe(0);
+    expect(r.out).toBe(schemaText());
+    expect(canon(invalid, "config").code).toBe(2);
+    const outside = canon(mkdtempSync(join(tmpdir(), "canon-no-repo-")), "config", "--schema");
+    expect(outside.code).toBe(0);
+    expect(outside.out).toBe(schemaText());
   });
 
   test("BR-2175: canon config --schema prints the schema", () => {

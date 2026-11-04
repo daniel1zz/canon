@@ -3,7 +3,7 @@ import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { start } from "../work/session/session.ts";
 import { readConfig } from "./config.ts";
-import { logFile, runHooksInBackground, runHooksSync, waitBackgroundHooks, type HookContext } from "./hooks.ts";
+import { logFile, runHooks, runHooksInBackground, runHooksSync, waitBackgroundHooks, type HookContext } from "./hooks.ts";
 import { project, quiet, sh, startNew, ws } from "../work/testkit.ts";
 
 // reason: these tests run hook commands as real shells, which is what they test (C-111).
@@ -120,6 +120,16 @@ describe("what a foreground hook prints", () => {
     expect(many.slice(1)).toEqual(Array.from({ length: 40 }, (_, i) => `  ${i + 6}`));
     const forty = printed(root, ["seq 1 40"]);
     expect(forty.slice(1)).toEqual(Array.from({ length: 40 }, (_, i) => `  ${i + 1}`));
+  });
+
+  test("BR-2200: stdout and stderr lines are printed in the order the command wrote them, by both runners", async () => {
+    const root = project();
+    const command = "echo a; echo b >&2; echo c";
+    const expected = [`hook after_start: ${command}`, "  a", "  b", "  c"];
+    expect(printed(root, [command])).toEqual(expected);
+    const lines: string[] = [];
+    await runHooks(ctxFor(root, "before_land"), [command], (l) => lines.push(l), true);
+    expect(lines).toEqual([`hook before_land: ${command}`, "  a", "  b", "  c"]);
   });
 
   test("BR-2200: a non-zero exit of after_stop is said and changes nothing", () => {
