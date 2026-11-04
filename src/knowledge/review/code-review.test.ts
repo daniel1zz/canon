@@ -90,13 +90,15 @@ describe("post-land code review", () => {
     expect(p).not.toContain("## canon/rules/x.md"); // documents are not code
   });
 
-  test("BR-2070: the reviewer is asked only for problems hit in normal use, naming who hits them in which operation, except data loss and security", () => {
+  test("BR-2070: the reviewer is asked only for problems that normal operations lead to, whatever a test needs to force them, except data loss, security and broken promises", () => {
     const t = setup({ findings: [] });
     expect(codeReview(t.env).ok).toBe(true);
     const p = t.prompt();
-    expect(p).toContain("Report only problems hit in normal use: the scenario must say who hits it in which normal operation.");
-    expect(p).toContain("Do not report rare interleavings, unusual platform setups");
-    expect(p).toContain("unless the problem loses data or is a security problem");
+    expect(p).toContain("Report only problems that normal operations lead to: the scenario must say who hits it in which normal operation.");
+    expect(p).toContain("How a test could reproduce it does not decide: a race between two normal operations is real even when a test needs a barrier to force it.");
+    expect(p).toContain("Do not report situations that need an abnormal setup or action");
+    expect(p).toContain("unless the problem loses data, is a security problem, or breaks what the project promises");
+    expect(p).toContain("P1 to P7 in canon/product.md");
   });
 
   test("BR-2070: binary files are not given as full text, deleted files appear only in the diff", () => {
