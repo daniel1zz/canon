@@ -155,7 +155,7 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
   // The hold is atomic and lasts until the end, so no `canon work start` can take the change over while the
   // archive is written and the worktree removed (issue #13).
   const holder = t.worktree ?? `branch:${t.branch}`;
-  const hold = holdClaim(ws.db, t.change, holder, ws.actor, false, ws.config.claimLeaseMs);
+  const hold = holdClaim(ws.db, t.change, holder, ws.actor, ws.config.claimLeaseMs);
   if (!hold.ok) {
     ws.db.event(ws.actor, "drop.refuse", t.change, { reason: "claimed" });
     return hold;

@@ -374,6 +374,28 @@ describe("clean keeps what git does not show", () => {
     }
   });
 
+  test("BR-2019: a landed worktree whose claim expired or whose session process exited is removed with that claim; one with a live claim is kept", async () => {
+    const root = project();
+    const expired = await landed(root, "Expired");
+    const gone = await landed(root, "Gone");
+    const live = await landed(root, "Live");
+    const db = ws(root).db;
+    const dead = Bun.spawn(["sleep", "30"]);
+    const proc = processOf(dead.pid);
+    if (!proc) throw new Error("no start time for a live child");
+    dead.kill("SIGKILL");
+    await dead.exited;
+    const put = db.db.query("INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start) VALUES (?, 'agent:b', ?, ?, ?, ?)");
+    put.run(expired.change, expired.worktree, "2000-01-01T00:00:00.000Z", null, null);
+    put.run(gone.change, gone.worktree, "2999-01-01T00:00:00.000Z", proc.pid, proc.start);
+    put.run(live.change, live.worktree, "2999-01-01T00:00:00.000Z", null, null);
+    const r = clean(ws(root), quiet);
+    if (!r.ok) throw new Error(r.error.message);
+    expect(r.value.removed.sort()).toEqual([expired.worktree, gone.worktree].sort());
+    expect(r.value.kept).toContain(`${live.worktree}: claimed`);
+    expect(claims(ws(root).db).map((c) => c.subject)).toEqual([live.change]);
+  });
+
   test("BR-2019: a landed worktree that another process has as its current directory is kept, naming the pid", async () => {
     const root = project();
     const s = await landed(root, "Busy");
@@ -708,7 +730,7 @@ describe("start and clean leave nothing half made", () => {
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
     stop(ws(s.worktree), "done for now", undefined, true);
     const w = ws(root);
-    if (!holdClaim(w.db, s.change, s.worktree, "agent:a", true).ok) throw new Error("hold refused");
+    if (!holdClaim(w.db, s.change, s.worktree, "agent:a").ok) throw new Error("hold refused");
     const p = Bun.spawn(["sleep", "30"]);
     const dead = processOf(p.pid);
     if (!dead) throw new Error("no start time for a live child");

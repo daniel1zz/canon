@@ -1,7 +1,8 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { takeClaim } from "../claims/claims.ts";
+import { holdClaim, takeClaim } from "../claims/claims.ts";
+import { processOf, type Proc } from "../claims/liveness.ts";
 import { ask } from "../humans/questions.ts";
 import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
 import { noticeOverlaps } from "./overlap.ts";
@@ -55,6 +56,74 @@ describe("canon work status", () => {
     expect([data.queue, data.resolving]).toEqual([[], []]);
     ws(root).db.db.query("UPDATE claims SET expires_at = '2000-01-01T00:00:00.000Z'").run();
     expect(canon(root, "work", "status").out).toContain(`  ${s.change}`);
+  });
+});
+
+/** A process that existed and is gone now: a claim naming it no longer binds (BR-2100). */
+async function deadProcess(): Promise<Proc> {
+  const p = Bun.spawn(["sleep", "30"]);
+  const proc = processOf(p.pid);
+  if (!proc) throw new Error("no start time for a live child");
+  p.kill("SIGKILL");
+  await p.exited;
+  return proc;
+}
+
+const planned = (root: string, ...ids: string[]) => {
+  mkdirSync(join(root, "canon/changes"), { recursive: true });
+  for (const id of ids) writeFileSync(join(root, `canon/changes/${id}.md`), `---\nid: ${id}\ntitle: Planned ${id}\nstatus: open\n---\n## 为什么\n\nx\n`);
+  writeFileSync(join(root, "canon/backlog.md"), ids.map((id) => `- ${id}`).reverse().join("\n") + "\n");
+  sh(root, "add", "-A");
+  sh(root, "commit", "-qm", "planned changes");
+};
+
+describe("claims that no longer bind", () => {
+  test("BR-2192: status lists an expired claim and one whose session process exited, each marked, and --json gives each state", async () => {
+    const root = project();
+    planned(root, "C-1", "C-2", "C-3");
+    const db = ws(root).db;
+    for (const id of ["C-1", "C-2", "C-3"]) if (!takeClaim(db, id, `/wt/${id}`, "agent:b").ok) throw new Error("claim refused");
+    db.db.query("UPDATE claims SET expires_at = '2000-01-01T00:00:00.000Z' WHERE subject = 'C-1'").run();
+    const dead = await deadProcess();
+    db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = 'C-2'").run(dead.pid, dead.start);
+    const lines = canon(root, "work", "status").out.split("\n");
+    expect(lines.find((l) => l.startsWith("  C-1"))).toEndWith("until 2000-01-01T00:00:00.000Z  (expired: lease ended)");
+    expect(lines.find((l) => l.startsWith("  C-2"))).toEndWith("(expired: session process exited)");
+    expect(lines.find((l) => l.startsWith("  C-3"))).not.toContain("expired");
+    const data = JSON.parse(canon(root, "work", "status", "--json").out);
+    expect(data.claims.map((c: { subject: string; state: string }) => [c.subject, c.state])).toEqual([["C-1", "expired"], ["C-2", "holder-gone"], ["C-3", "live"]]);
+  });
+
+  test("BR-2149: brief marks (claimed) only on a claim that still binds, not on an expired one or one whose session process exited", async () => {
+    const root = project();
+    planned(root, "C-1", "C-2", "C-3");
+    const db = ws(root).db;
+    for (const id of ["C-1", "C-2", "C-3"]) if (!takeClaim(db, id, `/wt/${id}`, "agent:b").ok) throw new Error("claim refused");
+    db.db.query("UPDATE claims SET expires_at = '2000-01-01T00:00:00.000Z' WHERE subject = 'C-1'").run();
+    const dead = await deadProcess();
+    db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = 'C-2'").run(dead.pid, dead.start);
+    const r = canon(root, "brief");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("with no task, take the first unclaimed one: C-3 (claimed), C-2, C-1\n");
+  });
+});
+
+describe("stop while the worktree is being deleted", () => {
+  test("BR-2025: stop in a worktree a clean or drop is removing right now exits 5, saying so, and records no handoff; once that hold is dead it exits 3", async () => {
+    const root = project();
+    const s = startNew(root, "Going");
+    stop(ws(s.worktree), "release it", undefined, true);
+    const db = ws(root).db;
+    db.db.query("DELETE FROM handoffs").run();
+    const hold = holdClaim(db, s.change, s.worktree, "human:x");
+    if (!hold.ok) throw new Error(hold.error.message);
+    const r = canon(s.worktree, "work", "stop", "--next", "x");
+    expect(r.code).toBe(5);
+    expect(r.err).toContain("being deleted");
+    expect(db.db.query("SELECT 1 FROM handoffs").all()).toEqual([]);
+    const dead = await deadProcess();
+    db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(dead.pid, dead.start, s.change);
+    expect(canon(s.worktree, "work", "stop", "--next", "x").code).toBe(3);
   });
 });
 

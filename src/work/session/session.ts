@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Say, Workspace } from "../workspace.ts";
-import { holdClaim, unholdClaim, releaseClaim, releaseOwnClaim, renewClaim, takeClaim } from "../claims/claims.ts";
+import { deletionOf, holdClaim, liveClaims, unholdClaim, releaseClaim, releaseOwnClaim, renewClaim, takeClaim } from "../claims/claims.ts";
 import { writeHandoff } from "./handoffs.ts";
 import { sessionProcess } from "../claims/liveness.ts";
 import { runHooksSync } from "../../config/hooks.ts";
@@ -217,7 +217,12 @@ export function stop(ws: Workspace, next: string, note: string | undefined, rele
   const renewed = renewClaim(ws.db, ws.root, ws.actor, ws.config.claimLeaseMs, sessionProcess());
   if (!renewed.ok) return renewed;
   const claim = renewed.value;
-  if (!claim) return err("not_found", "this worktree holds no change; nothing to hand off");
+  if (!claim) {
+    // reason: a clean or drop removing this worktree replaced its claim with a hold; say so instead of "no change" (BR-2025)
+    const going = deletionOf(ws.db, ws.root);
+    if (going) return err("conflict", `${going.subject}'s worktree ${ws.root} is being deleted by \`canon work clean\` or \`canon work drop\` right now; nothing was recorded`);
+    return err("not_found", "this worktree holds no change; nothing to hand off");
+  }
   writeHandoff(ws.db, { subject: claim.subject, worktree: ws.root, actor: ws.actor, next, note: note ?? null });
   if (release) releaseClaim(ws.db, claim.subject, ws.actor);
   // after_stop runs once the handoff is recorded and never changes the result (BR-2058).
@@ -265,7 +270,9 @@ export function clean(ws: Workspace, say: Say, only?: readonly string[]): Result
       kept.push(`${id}: no worktree`);
     }
   }
-  const held = new Set(ws.db.db.query<{ worktree: string }, []>("SELECT worktree FROM claims").all().map((r) => r.worktree));
+  // reason: only a claim that still binds keeps a worktree, judged as `canon work start` judges it; an expired or
+  // abandoned claim is one start would take over (BR-2019, BR-2100).
+  const held = new Set(liveClaims(ws.db).map((c) => c.holder));
   const candidates: WorktreeInfo[] = [];
   for (const w of ours) {
     if (named && !named.has(basename(w.path))) continue;
@@ -288,11 +295,12 @@ export function clean(ws: Workspace, say: Say, only?: readonly string[]): Result
     // reason: the claims were read before the checks and lsof; a start may have claimed it since (issue #12).
     // Holding the claim row atomically until the removal is done closes that window (BR-2019).
     const subject = basename(w.path);
-    const hold = holdClaim(ws.db, subject, w.path, ws.actor, true, ws.config.claimLeaseMs);
+    const hold = holdClaim(ws.db, subject, w.path, ws.actor, ws.config.claimLeaseMs);
     if (!hold.ok) {
       kept.push(`${w.path}: claimed`);
       continue;
     }
+    let gone = false;
     try {
       // reason: without --force, so git itself still refuses if the worktree changed since the checks above.
       const rm = removeWorktree(ws.primary, w.path);
@@ -300,9 +308,11 @@ export function clean(ws: Workspace, say: Say, only?: readonly string[]): Result
         kept.push(`${w.path}: ${rm.error.message}`);
         continue;
       }
+      gone = true;
       if (w.branch) git(ws.primary, "branch", "-q", "-d", w.branch);
     } finally {
-      unholdClaim(ws.db, hold.value);
+      // reason: a claim that no longer bound goes with its worktree; putting it back would name a removed worktree (BR-2019)
+      unholdClaim(ws.db, gone ? { ...hold.value, prior: null } : hold.value);
     }
     removed.push(w.path);
     say(`removed ${w.path}`);

@@ -11,7 +11,7 @@ import type { Change } from "../../knowledge/documents/model.ts";
 import { BACKLOG_FILE, inBacklogOrder, parseBacklog } from "../../knowledge/documents/backlog.ts";
 import { findDoc, referencedIds } from "../../knowledge/query/query.ts";
 import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
-import { claimOfWorktree, claims } from "../claims/claims.ts";
+import { claimOfWorktree, claimsWithState, liveClaims, type ClaimState } from "../claims/claims.ts";
 import { questions } from "../humans/questions.ts";
 import { activeQueue, keptPlaces } from "../land/queue.ts";
 import { openWorkspace, type Workspace } from "../workspace.ts";
@@ -59,10 +59,11 @@ const status = defineCommand({
   args: { json: { type: "boolean" } },
   run({ args }) {
     const ws = workspace();
-    const data = { claims: claims(ws.db), queue: activeQueue(ws.db), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending") };
+    const data = { claims: claimsWithState(ws.db), queue: activeQueue(ws.db), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending") };
     if (args.json) return json(data);
     say("Claims:");
-    for (const c of data.claims) say(`  ${c.subject.padEnd(8)} ${c.actor}  ${c.holder}  until ${c.expires_at}`);
+    // Every row is listed; one that no longer binds is marked, judged as `canon work start` judges it (BR-2192, BR-2100).
+    for (const c of data.claims) say(`  ${c.subject.padEnd(8)} ${c.actor}  ${c.holder}  until ${c.expires_at}${STALE[c.state]}`);
     say("Landing queue:");
     for (const q of data.queue) say(`  #${q.id} ${q.state.padEnd(8)} ${q.subject ?? "-"}  ${q.worktree}`);
     // Refused for a conflict, keeping its place while its lander resolves it; the entries behind it land meanwhile (BR-2177).
@@ -72,6 +73,9 @@ const status = defineCommand({
     say(`Questions waiting for a human: ${data.questions.length}`);
   },
 });
+
+/** How `canon work status` marks a claim that no longer binds (BR-2192). */
+const STALE: Record<ClaimState, string> = { live: "", expired: "  (expired: lease ended)", "holder-gone": "  (expired: session process exited)" };
 
 const cleanCmd = takesMany(defineCommand({
   meta: { description: "Remove worktrees that are clean and fully landed; list the rest with the reason they stay. Name changes to remove only theirs" },
@@ -148,7 +152,8 @@ function briefState(ws: Workspace): Result<void> {
     if (!onMain.ok) return onMain;
     const open = onMain.value.docs.filter((d): d is Change => d.kind === "change" && d.status === "open");
     if (open.length) {
-      const held = new Set(claims(ws.db).map((c) => c.subject));
+      // reason: (claimed) only where `canon work start` would refuse; an expired or abandoned claim it takes over (BR-2149, BR-2100)
+      const held = new Set(liveClaims(ws.db).map((c) => c.subject));
       const backlog = mainBacklog(ws);
       if (!backlog.ok) return backlog;
       const order = inBacklogOrder(open, backlog.value).map((c) => (held.has(c.id) ? `${c.id} (claimed)` : c.id));

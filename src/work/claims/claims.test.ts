@@ -119,7 +119,7 @@ describe("process liveness", () => {
 describe("holds while a worktree is removed", () => {
   test("BR-2019: a hold refuses a start of the same change even by the same actor at the same path, and unhold removes only the hold", () => {
     const d = db();
-    const h = holdClaim(d, "C-1", "/wt/C-1", "human:x", true);
+    const h = holdClaim(d, "C-1", "/wt/C-1", "human:x");
     if (!h.ok) throw new Error(h.error.message);
     const same = takeClaim(d, "C-1", "/wt/C-1", "human:x");
     expect(!same.ok && same.error.code).toBe("conflict");
@@ -132,18 +132,18 @@ describe("holds while a worktree is removed", () => {
 
   test("BR-2064: a hold cannot be taken over by another clean or drop of the same actor, so ending one never ends the other", () => {
     const d = db();
-    const cleaning = holdClaim(d, "C-1", "/wt/C-1", "human:x", true);
+    const cleaning = holdClaim(d, "C-1", "/wt/C-1", "human:x");
     if (!cleaning.ok) throw new Error(cleaning.error.message);
-    const dropping = holdClaim(d, "C-1", "/wt/C-1", "human:x", false);
+    const dropping = holdClaim(d, "C-1", "/wt/C-1", "human:x");
     expect(!dropping.ok && dropping.error.code).toBe("conflict");
-    expect(holdClaim(d, "C-1", "/wt/C-1", "human:x", true).ok).toBe(false);
+    expect(holdClaim(d, "C-1", "/wt/C-1", "human:x").ok).toBe(false);
     unholdClaim(d, { ...cleaning.value, mark: `${cleaning.value.mark}x` }); // some other hold's end
     expect(claims(d).length).toBe(1);
   });
 
   test("BR-2100: a hold left by a clean or drop that was killed frees as soon as its process is gone", async () => {
     const d = db();
-    expect(holdClaim(d, "C-1", "/wt/C-1", "agent:a", false).ok).toBe(true);
+    expect(holdClaim(d, "C-1", "/wt/C-1", "agent:a").ok).toBe(true);
     expect(d.db.query<{ pid: number }, []>("SELECT pid FROM claims").get()?.pid).toBe(process.pid);
     const dead = await deadProcess();
     d.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = 'C-1'").run(dead.pid, dead.start);

@@ -107,25 +107,25 @@ interface ClaimRow {
 /**
  * Holds a change for a moment while `canon work clean` or `canon work drop` removes its worktree, so a
  * `canon work start` that arrives meanwhile is refused instead of getting a worktree that is about to vanish
- * (BR-2019, BR-2064). `onlyIfUnclaimed` (clean) fails on any claim row; otherwise (drop) it fails only on a
- * claim of another actor that still binds (BR-2100) and takes over any other. Returns the row it replaced, so
- * a caller that gives up can put it back. Writes no claim events: it is not work, and `canon stats` counts
- * claim events (BR-2067).
+ * (BR-2019, BR-2064). It fails on a claim that still binds (BR-2100), the same actor's included, and on a row
+ * that changed since it was probed; it takes over any other. Clean and drop judge a claim exactly as start does
+ * (`liveClaim`). Returns the row it replaced, so a caller that gives up can put it back. Writes no claim events:
+ * it is not work, and `canon stats` counts claim events (BR-2067).
  */
-export function holdClaim(db: CoordDb, subject: string, worktree: string, actor: string, onlyIfUnclaimed: boolean, leaseMs = CLAIM_LEASE_MS): Result<Hold> {
+export function holdClaim(db: CoordDb, subject: string, worktree: string, actor: string, leaseMs = CLAIM_LEASE_MS): Result<Hold> {
   const read = () => db.db.query<ClaimRow, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims WHERE subject = ?").get(subject) ?? null;
   // reason: the process probe runs outside the write transaction (as in tryTurn); the transaction re-reads and
   // only proceeds when the row is still the one probed.
   const seen = read();
   // reason: any live claim or hold binds, the same actor included: subagents of one session share the actor,
-  // so a drop must not archive away a sibling's worktree while it works there (BR-2064, issue #18).
+  // so a clean or drop must not delete a sibling's worktree while it works there (BR-2019, BR-2064, issue #18).
   const binds = seen !== null && bindsStill(seen);
   const self = selfProcess();
   const mark = holdMark(worktree);
   const tx = db.db.transaction((): Result<Hold> => {
     const cur = read();
     const same = JSON.stringify(cur) === JSON.stringify(seen);
-    if (cur && (onlyIfUnclaimed || !same || binds)) {
+    if (cur && (!same || binds)) {
       return err("conflict", `${subject} is claimed by ${cur.holder} in ${cur.worktree} until ${cur.expires_at}; nothing was deleted (the holder frees it with \`canon work stop --release\` in that worktree)`);
     }
     // The hold names this process, so it frees as soon as a killed clean or drop is gone (BR-2100, issue #16).
@@ -231,23 +231,67 @@ export function claims(db: CoordDb): Claim[] {
 }
 
 /**
+ * Whether a claim still binds (BR-2011, BR-2100): `live`, or why not: its lease ended (`expired`) or the session
+ * process it names is provably gone (`holder-gone`). The one judgement start, clean, drop, brief and status share.
+ */
+export type ClaimState = "live" | "expired" | "holder-gone";
+
+export interface ClaimWithState extends Claim {
+  readonly state: ClaimState;
+}
+
+/** Every claim row with its state, as `canon work status` lists them (BR-2192). */
+export function claimsWithState(db: CoordDb): ClaimWithState[] {
+  return db.db
+    .query<ClaimRow, []>("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims ORDER BY subject")
+    .all()
+    .map((r) => ({ subject: r.subject, holder: r.worktree ?? "", actor: r.holder, expires_at: r.expires_at, state: stateOf(r) }));
+}
+
+/** The claims that still bind anyone; an expired or abandoned row is not one (BR-2100). */
+export function liveClaims(db: CoordDb): Claim[] {
+  return claimsWithState(db)
+    .filter((c) => c.state === "live")
+    .map(({ state: _state, ...c }) => c);
+}
+
+/**
  * The claim on a change while it still binds: its lease has not expired and its session process is not provably
  * gone (BR-2011, BR-2100). Undefined when there is no claim or it no longer binds anyone.
  */
 export function liveClaim(db: CoordDb, subject: string): Claim | undefined {
-  const r = db.db
-    .query<{ subject: string; holder: string; worktree: string; expires_at: string; pid: number | null; pid_start: string | null }, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims WHERE subject = ?")
-    .get(subject);
+  const r = db.db.query<ClaimRow, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims WHERE subject = ?").get(subject);
   if (!r || !bindsStill(r)) return undefined;
-  return { subject: r.subject, holder: r.worktree, actor: r.holder, expires_at: r.expires_at };
+  return { subject: r.subject, holder: r.worktree ?? "", actor: r.holder, expires_at: r.expires_at };
+}
+
+/**
+ * The change whose worktree a `canon work clean` or `canon work drop` is removing right now: a hold on it that
+ * still binds (BR-2025). Undefined when none is; a hold whose clean or drop was killed no longer binds (BR-2100).
+ */
+export function deletionOf(db: CoordDb, worktree: string): { subject: string } | undefined {
+  const prefix = `hold:${worktree}#`;
+  const rows = db.db
+    .query<ClaimRow, [number, string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims WHERE substr(worktree, 1, ?) = ?")
+    .all(prefix.length, prefix);
+  const r = rows.find((x) => bindsStill(x));
+  return r ? { subject: r.subject } : undefined;
+}
+
+function stateOf(r: { expires_at: string; pid: number | null; pid_start: string | null }): ClaimState {
+  if (new Date(r.expires_at) <= now()) return "expired";
+  // An unreadable process table keeps the lease (D-11).
+  return r.pid !== null && r.pid_start !== null && isGone({ pid: r.pid, start: r.pid_start }) === true ? "holder-gone" : "live";
 }
 
 function bindsStill(r: { expires_at: string; pid: number | null; pid_start: string | null }): boolean {
-  if (new Date(r.expires_at) <= now()) return false;
-  // An unreadable process table keeps the lease (D-11).
-  return !(r.pid !== null && r.pid_start !== null && isGone({ pid: r.pid, start: r.pid_start }) === true);
+  return stateOf(r) === "live";
 }
 
+/**
+ * The claim this worktree holds, live or not: the worktree belongs to that change whatever its lease, so
+ * `canon brief` and `canon human ask` name it (BR-2024, BR-2075); who may act in it is decided by renewClaim.
+ */
 export function claimOfWorktree(db: CoordDb, worktree: string): Claim | undefined {
   return claims(db).find((c) => c.holder === worktree);
 }
