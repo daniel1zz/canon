@@ -163,8 +163,9 @@ describe("Claude Code's record of the question tool", () => {
   }
 
   /** Runs `canon human record` with `input` on stdin, as the hook does. */
-  function record(cwd: string, input: string) {
-    const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: "agent:hook" };
+  function record(cwd: string, input: string, extraEnv: Record<string, string> = {}) {
+    const env: Record<string, string | undefined> = { ...process.env, ...extraEnv };
+    if (!extraEnv["CANON_ACTOR"]) delete env["CANON_ACTOR"];
     const r = Bun.spawnSync(["bun", MAIN, "human", "record"], { cwd, stdout: "pipe", stderr: "pipe", stdin: new TextEncoder().encode(input), env });
     return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
   }
@@ -179,6 +180,8 @@ describe("Claude Code's record of the question tool", () => {
     expect(records(root)).toEqual([{ actor: "agent:3d606482", session: SESSION, tool_use_id: "toolu_1", answers: [{ question: "Ship it?", answer: "yes" }], response: "先别发", notes: ["周五再发"] }]);
     expect(record(root, asked({ "Which?": "a, b" })).code).toBe(0);
     expect(records(root)[1]).toMatchObject({ answers: [{ question: "Which?", answer: "a, b" }], response: null, notes: [] });
+    expect(record(root, asked({ "Ship it?": "no" }), { CANON_ACTOR: "agent:89d45e3f:add88b47" }).code).toBe(0); // BR-2023: CANON_ACTOR first
+    expect(records(root)[2]?.actor).toBe("agent:89d45e3f:add88b47");
   });
 
   test("BR-2275: data that is not the question tool's is refused with 2 and nothing is recorded", () => {
@@ -187,7 +190,9 @@ describe("Claude Code's record of the question tool", () => {
     const noAnswers = JSON.stringify({ session_id: SESSION, tool_name: "AskUserQuestion", tool_response: { questions: [] } });
     const noSession = JSON.stringify({ tool_name: "AskUserQuestion", tool_response: { answers: { q: "a" } } });
     const notString = JSON.stringify({ session_id: SESSION, tool_name: "AskUserQuestion", tool_response: { answers: { q: 1 } } });
-    for (const input of [bash, noAnswers, noSession, notString, "not json", "[]"]) expect([input, record(root, input).code]).toEqual([input, 2]);
+    const badResponse = asked({ q: "a" }, { response: 1 });
+    const badNote = asked({ q: "a" }, { annotations: { q: { notes: true } } });
+    for (const input of [bash, noAnswers, noSession, notString, badResponse, badNote, "not json", "[]"]) expect([input, record(root, input).code]).toEqual([input, 2]);
     expect(record(root, "not json").err).toContain("invalid JSON");
     expect(records(root)).toEqual([]);
   });
@@ -203,6 +208,7 @@ describe("Claude Code's record of the question tool", () => {
     expect(answer(d, 3, "yes", "agent:3d606482", "好的，发吧", false).ok).toBe(true);
     expect(answer(d, 4, "no", "agent:3d606482", "no", false).ok).toBe(true); // "no" is only in the other session's record
     expect(questions(d, "all").map((q) => q.witness)).toEqual(["none", "match", "none", "none"]);
+    expect(questions(d, "all")[1]?.relayed).toBe("yes"); // saved trimmed (BR-2021)
     const witness = d.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'human.answer' ORDER BY id").all().map((e) => (JSON.parse(e.detail) as { witness: string }).witness);
     expect(witness).toEqual(["none", "match", "none", "none"]);
     const shown = canon(root, "agent:x", false, "human", "pending", "--all").out;
@@ -222,5 +228,10 @@ describe("Claude Code's record of the question tool", () => {
     const all = questions(d, "all");
     expect(all.map((x) => x.witness)).toEqual(["none", "match", "match", null]);
     expect(witnessMark(all[3]!)).toBe("");
+    recordAsked(d, "agent:k", { session: "x", tool_use_id: null, answers: [{ question: "Ship it?", answer: "yes" }], response: null, notes: [] });
+    const [k1, k2] = [ask(d, "agent:a", null, "Q5?", []), ask(d, "agent:a", null, "Q6?", [])];
+    expect(answer(d, k1, "yes", "agent:3d606482", "yes", false).ok).toBe(true); // recorded as agent:k, relayed as someone else
+    expect(answer(d, k2, "yes", "agent:k", "yes", false).ok).toBe(true);
+    expect(questions(d, "all").slice(4).map((x) => x.witness)).toEqual(["none", "match"]);
   });
 });

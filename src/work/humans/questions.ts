@@ -1,3 +1,4 @@
+import { currentActor } from "../workspace.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import type { CoordDb } from "../db.ts";
 
@@ -116,7 +117,7 @@ const isObject = (v: unknown): v is Record<string, unknown> => typeof v === "obj
  * `answers` maps each question's text to the chosen label (labels joined by commas for multi-select), `response` is a
  * freeform reply and `annotations[q].notes` a note. Anything else is invalid: nothing is recorded from a guess.
  */
-export function parseAsked(input: string): Result<{ actor: string; record: AskedRecord }> {
+export function parseAsked(input: string, env: Record<string, string | undefined> = process.env): Result<{ actor: string; record: AskedRecord }> {
   let data: unknown;
   try {
     data = JSON.parse(input);
@@ -134,13 +135,20 @@ export function parseAsked(input: string): Result<{ actor: string; record: Asked
     if (typeof answer !== "string") return err("invalid", `canon human record: the answer to ${JSON.stringify(question)} is not a string`);
     answers.push({ question, answer });
   }
+  if (out["response"] !== undefined && out["response"] !== null && typeof out["response"] !== "string") return err("invalid", "canon human record: tool_response.response is not a string");
   const response = typeof out["response"] === "string" ? out["response"] : null;
-  const notes = isObject(out["annotations"])
-    ? Object.values(out["annotations"]).flatMap((a) => (isObject(a) && typeof a["notes"] === "string" ? [a["notes"]] : []))
-    : [];
+  const notes: string[] = [];
+  for (const a of isObject(out["annotations"]) ? Object.values(out["annotations"]) : []) {
+    if (!isObject(a) || a["notes"] === undefined) continue;
+    if (typeof a["notes"] !== "string") return err("invalid", "canon human record: a note in tool_response.annotations is not a string");
+    notes.push(a["notes"]);
+  }
   const tool_use_id = typeof data["tool_use_id"] === "string" ? data["tool_use_id"] : null;
-  // reason: the same form currentActor gives a Claude Code session, so the relay from that session finds this record (BR-2023, D-18)
-  return ok({ actor: `agent:${session.slice(0, 8)}`, record: { session, tool_use_id, answers, response, notes } });
+  // reason: BR-2023's order, with the session id taken from the data: a hook's environment may lack CLAUDE_CODE_SESSION_ID,
+  // so the relay from the same session finds this record (BR-2275, D-18)
+  const actor = env["CANON_ACTOR"]?.trim() ? currentActor(env) : ok(`agent:${session.slice(0, 8)}`);
+  if (!actor.ok) return actor;
+  return ok({ actor: actor.value, record: { session, tool_use_id, answers, response, notes } });
 }
 
 /** Writes one `human.asked` event: what the human answered in Claude Code's question tool (BR-2275). */
