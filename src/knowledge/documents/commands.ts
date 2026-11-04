@@ -79,7 +79,7 @@ function setStatus(id: string, kind: Kind, status: string, validate?: (corpus: R
     say(`${doc.id} already ${status}`);
     return { ws, corpus, doc };
   }
-  must(setMeta(ws.root, doc, { status }));
+  must(setMeta(ws.root, doc, { status }, "status" in doc ? doc.status : undefined));
   ws.db.event(ws.actor, `${kind}.status`, doc.id, { status });
   say(`${doc.id} → ${status} (${doc.path}; commit it with your change)`);
   return { ws, corpus, doc };

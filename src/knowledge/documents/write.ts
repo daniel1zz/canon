@@ -103,11 +103,18 @@ export function createDomain(root: string, name: string, code: readonly string[]
   return ok(codeRoot !== undefined ? `${path}\ncode: ${codeRoot}/${name} (create it; canon check reports a domain without its directory)` : path);
 }
 
-/** Sets front-matter fields of an existing document, leaving the body untouched. */
-export function setMeta(root: string, doc: Doc, patch: Record<string, unknown>): Result<void> {
+/**
+ * Sets front-matter fields of an existing document, leaving the body untouched. With `expectStatus`, the file's
+ * status is compared again right before writing: a status changed since the caller read it (a landing closing the
+ * change meanwhile) is a conflict and nothing is written, so a check made on the old status cannot be overridden (BR-2041).
+ */
+export function setMeta(root: string, doc: Doc, patch: Record<string, unknown>, expectStatus?: string): Result<void> {
   const full = join(root, doc.path);
   const parsed = parseDocFile(readFileSync(full, "utf8"), doc.path);
   if (!parsed.ok) return parsed;
+  const now = parsed.value.meta["status"];
+  // reason: a file without `status` has its type's default, which is what the caller read
+  if (expectStatus !== undefined && now !== undefined && now !== expectStatus) return err("conflict", `${doc.id} is now ${String(now)}, not ${expectStatus} as read; nothing written, run the command again`);
   writeFileSync(full, renderDocFile({ ...parsed.value.meta, ...patch }, parsed.value.body));
   return ok(undefined);
 }

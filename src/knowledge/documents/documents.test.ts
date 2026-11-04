@@ -6,7 +6,7 @@ import { CoordDb } from "../../work/db.ts";
 import { check } from "../check/check.ts";
 import { slugify } from "./model.ts";
 import { readCorpus } from "./read.ts";
-import { createDoc } from "./write.ts";
+import { createDoc, setMeta } from "./write.ts";
 import { ws } from "../../work/testkit.ts";
 
 // reason: the CLI tests spawn canon processes, each a bun start plus git calls; under load one took 4.2 s of the 5 s default (C-111).
@@ -220,5 +220,21 @@ describe("status changes", () => {
     expect([again.code, again.out.trim()]).toEqual([0, `${id("BR", 1)} already retired`]);
     expect(readFileSync(path, "utf8")).toBe(text);
     expect(statusEvents(root)).toBe(before + 1);
+  });
+});
+
+describe("writing a status", () => {
+  test("BR-2041: a status changed on disk after it was read is a conflict, and the file keeps what the other writer put there", () => {
+    const root = project();
+    expect(canon(root, "change", "new", "--title", "Racing").code).toBe(0);
+    const doc = readCorpus(root).corpus.docs.find((d) => d.id === id("C", 1))!;
+    const path = join(root, doc.path);
+    // a landing closes the change between drop's read and its write
+    writeFileSync(path, readFileSync(path, "utf8").replace("status: open", "status: done"));
+    const r = setMeta(root, doc, { status: "dropped" }, "open");
+    expect(r.ok ? "" : r.error.code).toBe("conflict"); // exit 5 (BR-2022)
+    expect(readFileSync(path, "utf8")).toContain("status: done");
+    expect(setMeta(root, doc, { status: "dropped" }, "done").ok).toBe(true);
+    expect(readFileSync(path, "utf8")).toContain("status: dropped");
   });
 });
