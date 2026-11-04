@@ -90,24 +90,30 @@ describe("a config key added and used in one landing", () => {
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
   });
 
-  test("BR-2248: in a batch a member is compared with main, not with the member before it: it goes back to the queue, the one before it lands, then it lands", async () => {
+  test("BR-2248 BR-2020: in a batch a member is compared with main, not with the member before it: it goes back to the queue, the ones around it land, then it lands after them", async () => {
     const root = canonLike("land_batch_max: 3\n");
     const a = startNew(root, "Adds the key");
     commit(a.worktree, { [KEYS]: declarations("floor", "tests", "floor_timing", "typecheck_command") });
     const b = startNew(root, "Uses the key");
     commit(b.worktree, { "canon/config.yaml": withKey(b.worktree) });
+    const c = startNew(root, "Behind it");
+    commit(c.worktree, { "c.txt": "c\n" });
     const other = ws(root, "agent:b");
     const blocker = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
-    const said: string[][] = [[], []];
+    const said: string[][] = [[], [], []];
     const runs: ReturnType<typeof land>[] = [];
-    for (const [i, wt] of [a.worktree, b.worktree].entries()) {
+    for (const [i, wt] of [a.worktree, b.worktree, c.worktree].entries()) {
       runs.push(land(ws(wt), FAST, (m) => said[i]!.push(m)));
       for (let n = 0; n < 200 && !other.db.db.query("SELECT 1 FROM queue WHERE worktree = ? AND state = 'waiting'").get(wt); n++) await Bun.sleep(10);
     }
     finishEntry(other.db, blocker, "landed", "x");
     const out = await Promise.all(runs);
     expect(said[0]!.some((m) => m.includes(`${b.change} was refused in the batch (config-key)`))).toBe(true);
-    expect(out.map((o) => o.kind)).toEqual(["landed", "landed"]);
+    expect(out.map((o) => o.kind)).toEqual(["landed", "landed", "landed"]);
+    // B left the batch, so C, queued after it, is on main below it (BR-2020)
+    const cOnMain = sh(root, "log", "-1", "--format=%H", "main", "--", "c.txt");
+    const bOnMain = sh(root, "log", "-1", "--format=%H", "main", "--", "canon/config.yaml");
+    expect(Bun.spawnSync(["git", "merge-base", "--is-ancestor", cOnMain, bOnMain], { cwd: root }).exitCode).toBe(0);
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'batch.drop'").get()?.n).toBe(1);
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'batch.fail'").get()?.n).toBe(0);
     expect(sh(root, "show", "main:canon/config.yaml")).toContain("typecheck_command");

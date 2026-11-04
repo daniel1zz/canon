@@ -85,6 +85,11 @@ describe("config validation", () => {
       const r = canon(repo({ "canon/config.yaml": `${key}: 0\n` }), "show", ["C", 1].join("-"));
       expect([key, r.code, r.err.includes(key)]).toEqual([key, 2, true]);
     }
+    // land_batch_max also takes the word all, and no other word (BR-2172, D-42)
+    const all = readConfig(repo({ "canon/config.yaml": "land_batch_max: all\n" }));
+    expect(all.ok && all.value.landBatchMax).toBe(Number.POSITIVE_INFINITY);
+    const some = canon(repo({ "canon/config.yaml": "land_batch_max: some\n" }), "show", ["C", 1].join("-"));
+    expect([some.code, some.err.includes("or `all`")]).toEqual([2, true]);
   });
 
   test("BR-2045: a template for a type that is not declared is a config error", () => {

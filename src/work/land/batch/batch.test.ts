@@ -165,7 +165,7 @@ describe("batched landings", () => {
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'batch.drop'").get()?.n).toBe(1);
   }, TIMED);
 
-  test("BR-2173: a member whose worktree changes during the batch goes back to the queue; the leader is tested again without it and lands", async () => {
+  test("BR-2173 BR-2106: a member whose worktree changes during the batch goes back to the queue; the leader is tested again without it and lands", async () => {
     const { root, floorRuns, sneak } = batchProject();
     const a = startNew(root, "A");
     commitFile(a.worktree, "a.txt", "a\n");

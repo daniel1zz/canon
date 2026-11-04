@@ -57,6 +57,14 @@ describe("canon stats", () => {
     const df = computeStats(deferred.value, {}, "2026-11-03");
     expect([of(df, "floor").runs, of(df, "floor").refused, of(df, "check").runs, of(df, "check").refused]).toEqual([2, 0, 3, 1]); // BR-2218: the background floor's runs
 
+    const bisected = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
+    if (!bisected.ok) throw new Error(bisected.error.message);
+    bisected.value.event("agent:a", "land.ok", "C-1", { batch: [2] });
+    bisected.value.event("agent:a", "land.refuse", "C-2", { reason: "floor", batched_by: 1 });
+    bisected.value.event("agent:a", "batch.fail", "C-1", { floors: 2, culprit: 2 });
+    const bs = computeStats(bisected.value, {}, "2026-11-03");
+    expect([of(bs, "floor").runs, of(bs, "floor").refused]).toEqual([1, 1]); // BR-2173: the member found by bisecting is refused, its floor was the leader's
+
     const cfg = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
     if (!cfg.ok) throw new Error(cfg.error.message);
     for (let i = 0; i < 2; i++) cfg.value.event("agent:a", "land.ok", `C-${i + 1}`, { floor_deferred: true });
