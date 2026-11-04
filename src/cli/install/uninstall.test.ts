@@ -71,7 +71,7 @@ describe("canon uninstall", () => {
     expect(existsSync(join(root, ".git", "canon"))).toBe(true);
   });
 
-  test("BR-2277: a change still in flight refuses with exit 5 and lists it, changing nothing", () => {
+  test("BR-2277, BR-2022: a change still in flight refuses with exit 5 and lists it, changing nothing", () => {
     const { root, env } = project();
     expect(canon(root, env, "work", "start", "--title", "wip").code).toBe(0);
     const head = git(root, "rev-parse", "main");
@@ -183,7 +183,7 @@ describe("canon uninstall", () => {
     expect(onMain(root, "canon/notes-kept.md")).toBe(true);
   });
 
-  test("BR-2283: while the landing's after_land commands run, the cleanup waits with exit 75; later it finishes", async () => {
+  test("BR-2283, BR-2022: while the landing's after_land commands run, the cleanup waits with exit 75; later it finishes", async () => {
     const { root, env } = project('floor: "true"\ntests: []\nhooks:\n  after_land:\n    - "sleep 4"\n');
     const r = canon(root, env, "uninstall");
     expect(r.code).toBe(75);
