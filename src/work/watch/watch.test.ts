@@ -409,7 +409,7 @@ describe("a passing main", () => {
     return { ...w, a, ran, fake, dir };
   }
 
-  test("BR-2270: a watcher killed while after_green runs leaves it due; the next canon brief starts a watcher that runs it again on the green commit, once", async () => {
+  test("BR-2270 BR-2219: a watcher killed while after_green runs leaves it due; the next canon brief starts a watcher that runs it again on the green commit, once", async () => {
     const { root, tested, a, ran, fake } = await killedInAfterGreen();
     expect(results(root).map((x) => [x.kind, x.sha])).toEqual([["floor.pass", a]]);
     expect(sh(root, "rev-parse", GREEN_REF)).toBe(a);
