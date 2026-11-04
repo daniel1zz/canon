@@ -258,6 +258,9 @@ describe("judged against main, not the current checkout", () => {
     expect(r.code).toBe(0);
     expect(r.out).not.toContain("ref-dangling");
     expect(r.err).toContain(`note: canon/backlog.md:6: lists ${stale}, which is not a change on main or on a local change branch`);
+    // the base lists it, main's tip does not: only a note; a line neither lists, added here, is a finding
+    writeFileSync(join(s.worktree, "canon/backlog.md"), `---\ntitle: 待办顺序\n---\n# 待办顺序\n\n- ${id(1)}\n- ${id(99)}\n`);
+    expect(canon(s.worktree, "check").out).toContain(`lists ${id(99)}, which is not a change`);
   });
 });
 
