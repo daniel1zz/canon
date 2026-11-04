@@ -123,4 +123,19 @@ describe("canon init, install and update ignore Claude Code's subagent worktrees
     expect([check.code, check.out]).toEqual([1, expect.stringContaining(`git exclude: ${LINE}`)]);
     expect(readFileSync(excludePath(root), "utf8")).toBe(".env\n");
   });
+
+  test("BR-2123: with the hook and the exclude line both missing, update restores both in place, without a change", () => {
+    const root = repo();
+    expect(canon(root, "init", "--floor", "true").code).toBe(0);
+    writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ntests: []\nreview: none\n');
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "init");
+    const head = git(root, "rev-parse", "HEAD");
+    rmSync(join(root, ".git/hooks/reference-transaction"));
+    writeFileSync(excludePath(root), "");
+    expect(canon(root, "update").code).toBe(0);
+    expect(existsSync(join(root, ".git/hooks/reference-transaction"))).toBe(true);
+    expect(linesOf(root)).toHaveLength(1);
+    expect(git(root, "rev-parse", "HEAD")).toBe(head);
+  });
 });
