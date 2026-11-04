@@ -2,6 +2,10 @@ import { defineCommand } from "citty";
 import { entry, fail, json, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
 import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "./stats.ts";
 import { pendingBlocks, recordVerdict, renderPending, renderVerdictSummary, verdictSummary } from "./verdict.ts";
+import { dirname } from "node:path";
+import { CoordDb } from "../db.ts";
+import { worktreesDir } from "../session/session.ts";
+import { DEFAULT_DAYS, projectsDir, renderUsage, usageReport } from "./usage.ts";
 import { eventsSince, lastEventId, parseSince, renderEvents, renderWindow, windowSummary } from "./window.ts";
 
 /** `canon stats` and `canon events`: what the event table recorded. */
@@ -89,4 +93,19 @@ const verdict = defineCommand({
   },
 });
 
-export const statsCommands: DomainCommands = { commands: [entry("stats", 140, stats), entry("events", 150, events), entry("verdict", 152, verdict)] };
+/** `canon usage`: what the injected skills, MCP servers and subagent types are used for (C-34, D-40). Read only. */
+const usage = defineCommand({
+  meta: { description: "Skill, MCP server and subagent type uses from this project's Claude Code session records, and the available ones unused for --days days with their injected size; read only" },
+  args: { days: { type: "string", description: `Unused means not used in this many days (default ${DEFAULT_DAYS})` }, json: { type: "boolean" } },
+  run({ args }) {
+    const raw = args.days === undefined ? String(DEFAULT_DAYS) : String(args.days);
+    if (!/^[1-9]\d*$/.test(raw)) fail({ code: "invalid", message: `--days must be a whole number of days, 1 or more, got ${JSON.stringify(args.days)}` });
+    const ws = workspace();
+    const at = { primary: ws.primary, worktrees: worktreesDir(ws), canonDir: dirname(must(CoordDb.pathFor(ws.root))) };
+    const r = must(usageReport(projectsDir(), at, Number(raw), new Date()));
+    if (args.json) return json(r);
+    say(renderUsage(r));
+  },
+});
+
+export const statsCommands: DomainCommands = { commands: [entry("stats", 140, stats), entry("events", 150, events), entry("verdict", 152, verdict), entry("usage", 153, usage)] };
