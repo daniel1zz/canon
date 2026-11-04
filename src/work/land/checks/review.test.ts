@@ -75,6 +75,7 @@ describe("rule review at land", () => {
     expect(out.kind === "refused" && out.message).toContain("could not run");
     expect(out.kind === "refused" && out.message).toContain("git-ignored files such as node_modules");
     expect(out.kind === "refused" && out.message).toMatch(/temporary worktree at main's commit [0-9a-f]{9}/);
+    expect(out.kind === "refused" && out.message).toContain(`${sh(root, "rev-parse", "--path-format=absolute", "--git-common-dir").trim()}/canon/review/`);
   });
 
   /** A project with the billing domain on main and canon/config.yaml set to `config` (no review key when it has none). */
