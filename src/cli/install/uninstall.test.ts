@@ -141,6 +141,21 @@ describe("canon uninstall", () => {
     expect(existsSync(guard(other))).toBe(false);
   });
 
+  test("BR-2280: work still claimed in a clone that synced past the uninstall stops the cleanup with exit 5 and keeps canon's state (#105)", () => {
+    const { root, env, remote } = project();
+    const other = mkdtempSync(join(tmpdir(), "canon-uninstall-clone-"));
+    run(other, "clone", "-q", remote, ".");
+    expect(canon(other, env, "install").code).toBe(0);
+    expect(canon(other, env, "work", "start", "--title", "wip").code).toBe(0);
+    expect(canon(root, env, "uninstall").code).toBe(0);
+    expect(canon(other, env, "sync").code).toBe(0);
+    const r = canon(other, env, "uninstall");
+    expect(r.code).toBe(5);
+    expect(r.err).toContain("C-1");
+    expect(existsSync(join(other, ".git", "canon", "state.db"))).toBe(true);
+    expect(canon(other, env, "uninstall").code).toBe(5);
+  });
+
   test("BR-2280: someone else's reference-transaction hook is left alone", () => {
     const { root, env } = project();
     expect(canon(root, env, "uninstall").code).toBe(0);

@@ -266,6 +266,14 @@ function cleanUp(root: string, config: Config | undefined, opts: UninstallOption
       did = true;
       say(`deleted branch ${b} (on ${main})`);
     }
+    // A claim on a worktree outside the worktrees directory is live work too.
+    for (const c of liveClaims(db)) if (!kept.some((k) => k.startsWith(`${c.holder}:`))) kept.push(`${c.subject}: claimed (${c.holder})`);
+  }
+  // reason: a session still working needs its claim, port and handoff rows; the state and refs stay until it is done, so
+  // the next run still sees it (BR-2280, #105)
+  if (kept.length > 0) {
+    db?.db.close();
+    return err("conflict", `work is still in this clone; land it, or archive it with \`canon work drop <C-n>\`, then run canon uninstall again (canon's state was left in place):\n${kept.map((k) => `  ${k}`).join("\n")}`);
   }
 
   const refs = git(root, "for-each-ref", "--format=%(refname)", "refs/canon/");
@@ -306,9 +314,6 @@ function cleanUp(root: string, config: Config | undefined, opts: UninstallOption
   if (!knowledge.ok) return knowledge;
   if (knowledge.value) did = true;
 
-  if (kept.length > 0) {
-    return err("conflict", `kept what would lose work; land or remove it yourself, then run canon uninstall again:\n${kept.map((k) => `  ${k}`).join("\n")}`);
-  }
   if (!did) return ok({ kind: "not-installed" });
   return ok({ kind: "done" });
 }
