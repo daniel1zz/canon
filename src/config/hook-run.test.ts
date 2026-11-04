@@ -88,12 +88,12 @@ describe("how a hook command runs", () => {
     expect(readFileSync(join(r.value.worktree, "who.txt"), "utf8").trim()).toBe(`agent:a ${r.value.worktree}`);
   });
 
-  test("BR-2199: every event sets CANON_EVENT and CANON_CHANGE, keeps the caller's environment, and canon's values win", () => {
+  test("BR-2199: every event sets CANON_EVENT, CANON_CHANGE and CANON_PORT, keeps the caller's environment, and canon's values win", () => {
     const root = project();
-    withEnv({ CANON_HOOK_TEST_FOO: "1", CANON_EVENT: "x" }, () =>
-      printed(root, ['echo "$CANON_EVENT" > e.txt', 'echo "$CANON_HOOK_TEST_FOO" > foo.txt', 'echo "$CANON_CHANGE" > c.txt'], "after_stop"),
+    withEnv({ CANON_HOOK_TEST_FOO: "1", CANON_EVENT: "x", CANON_PORT: "9999" }, () =>
+      printed(root, ['echo "$CANON_EVENT" > e.txt', 'echo "$CANON_HOOK_TEST_FOO" > foo.txt', 'echo "$CANON_CHANGE" > c.txt', 'printf "[%s]" "$CANON_PORT" > p.txt'], "after_stop"),
     );
-    expect(["e.txt", "foo.txt", "c.txt"].map((f) => readFileSync(join(root, f), "utf8").trim())).toEqual(["after_stop", "1", "C-1"]);
+    expect(["e.txt", "foo.txt", "c.txt", "p.txt"].map((f) => readFileSync(join(root, f), "utf8").trim())).toEqual(["after_stop", "1", "C-1", "[]"]);
     runHooksSync({ ...ctxFor(root), change: null }, ['printf "[%s]" "$CANON_CHANGE" > none.txt'], quiet);
     expect(readFileSync(join(root, "none.txt"), "utf8")).toBe("[]");
   });
