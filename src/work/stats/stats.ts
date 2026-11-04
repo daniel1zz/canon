@@ -1,4 +1,4 @@
-import { lstatSync, readFileSync } from "node:fs";
+import { closeSync, constants, fstatSync, openSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { CoordDb } from "../db.ts";
 import type { Layout } from "../../knowledge/documents/model.ts";
@@ -171,35 +171,46 @@ export interface SharedShare {
   readonly totalLines: number;
 }
 
+/** Open errors that mean the path is no longer a regular file (BR-2205): deleted, under what is now a file, or a symlink (O_NOFOLLOW). */
+const NOT_A_FILE = new Set(["ENOENT", "ENOTDIR", "ELOOP"]);
+
+/**
+ * The text of `path` when it is a regular file, else undefined. The check and the read use one descriptor opened
+ * without following a final symlink, so nothing can swap the path between them (BR-2205, issue #81).
+ */
+export function readRegularFile(path: string): string | undefined {
+  let fd: number;
+  try {
+    // reason: O_NONBLOCK so a path swapped for a FIFO cannot hang canon stats; it is no regular file and is skipped below
+    fd = openSync(path, constants.O_RDONLY | constants.O_NOFOLLOW | constants.O_NONBLOCK);
+  } catch (e) {
+    if (NOT_A_FILE.has((e as NodeJS.ErrnoException).code ?? "")) return undefined;
+    throw e;
+  }
+  try {
+    return fstatSync(fd).isFile() ? readFileSync(fd, "utf8") : undefined;
+  } finally {
+    closeSync(fd);
+  }
+}
+
 /**
  * Lines of tracked files under the `shared` entries against all tracked lines under the code root (BR-2121).
  * Shared code is what no domain's rules describe, so its share is how much code sits outside every
- * domain; undefined when the project sets no code root or no shared entry. `read` reads one file; a test passes
- * its own to make a file vanish between the lstat and the read.
+ * domain; undefined when the project sets no code root or no shared entry. `read` gives a path's text, or
+ * undefined when it is not a regular file; a test passes its own to change the path just before it is read.
  */
-/** Read errors that mean the path stopped being a regular file after the lstat (BR-2205): deleted, now a directory, or under what is now a file. */
-const NOT_A_FILE_NOW = new Set(["ENOENT", "EISDIR", "ENOTDIR"]);
-
-export function sharedShare(root: string, layout: Layout, read: (path: string) => string = (p) => readFileSync(p, "utf8")): SharedShare | undefined {
+export function sharedShare(root: string, layout: Layout, read: (path: string) => string | undefined = readRegularFile): SharedShare | undefined {
   if (layout.codeRoot === undefined || layout.shared.length === 0) return undefined;
   const files = git(root, "-c", "core.quotePath=false", "ls-files", "--", layout.codeRoot);
   if (!files.ok) return undefined;
   let sharedLines = 0;
   let totalLines = 0;
   for (const f of files.value.split("\n").filter(Boolean)) {
-    const full = join(root, f);
-    // reason: only regular files hold code; a tracked symlink to a directory or a submodule made readFileSync throw EISDIR (BR-2205)
-    const stat = lstatSync(full, { throwIfNoEntry: false });
-    if (!stat?.isFile()) continue;
-    let text: string;
-    try {
-      text = read(full);
-    } catch (e) {
-      // reason: a landing in this checkout can delete the file, or replace it or a parent directory by a directory or a file,
-      // between lstat and the read; a path that is no longer a regular file is not counted (BR-2205, issue #81)
-      if (NOT_A_FILE_NOW.has((e as NodeJS.ErrnoException).code ?? "")) continue;
-      throw e;
-    }
+    // reason: only regular files hold code: a tracked symlink, a submodule, or a path a landing in this checkout
+    // deleted or replaced while canon counts is skipped, never a crash (BR-2205, issue #81)
+    const text = read(join(root, f));
+    if (text === undefined) continue;
     const n = text === "" ? 0 : text.split("\n").length - (text.endsWith("\n") ? 1 : 0);
     totalLines += n;
     if (layout.shared.some((s) => f === s || f.startsWith(`${s}/`))) sharedLines += n;

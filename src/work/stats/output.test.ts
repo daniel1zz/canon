@@ -1,10 +1,10 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
 import { project, sh } from "../testkit.ts";
-import { computeStats, renderStats, sharedShare } from "./stats.ts";
+import { computeStats, readRegularFile, renderStats, sharedShare } from "./stats.ts";
 import { renderWindow, windowSummary } from "./window.ts";
 
 // reason: the CLI cases spawn canon, which spawns git; under load a spawn can take seconds (C-111)
@@ -171,28 +171,26 @@ describe("shared code files", () => {
     expect(sharedShare(root, layout)).toEqual({ codeRoot: "src", sharedLines: 0, totalLines: 2 });
   });
 
-  test("BR-2205: a file that vanishes or stops being a regular file between the lstat and the read is not counted, and counting goes on (issue #81)", () => {
-    const root = codeRepo();
-    const vanishing = join(root, "src/kernel/a.ts");
-    // reason: the reader deletes the file just before reading it, as a landing in this checkout would, so the race is deterministic
-    const read = (p: string) => {
-      if (p === vanishing) rmSync(p);
-      return readFileSync(p, "utf8");
+  test("BR-2205: a path deleted or replaced just before it is read is not counted, and counting goes on (issue #81)", () => {
+    // reason: the reader changes the path right before canon reads it, as a landing in this checkout would, so each race is deterministic
+    const swaps: Record<string, (p: string) => void> = {
+      deleted: (p) => rmSync(p),
+      "now a directory": (p) => (rmSync(p), mkdirSync(p)),
+      "its directory now a file": (p) => (rmSync(join(p, ".."), { recursive: true }), writeFileSync(join(p, ".."), "x\n")),
+      "now a symlink loop": (p) => (rmSync(p), symlinkSync(p, p)),
+      "now a symlink to a file": (p) => (rmSync(p), symlinkSync("../b.ts", p)),
     };
-    expect(sharedShare(root, layout, read)).toEqual({ codeRoot: "src", sharedLines: 0, totalLines: 2 });
-    // replaced by a directory (EISDIR), or its directory replaced by a file (ENOTDIR), after the lstat
-    for (const swap of [(p: string) => (rmSync(p), mkdirSync(p)), (p: string) => (rmSync(join(p, ".."), { recursive: true }), writeFileSync(join(p, ".."), "x\n"))]) {
-      const r = codeRepo();
-      const target = join(r, "src/kernel/a.ts");
-      const replacing = (p: string) => {
+    for (const [what, swap] of Object.entries(swaps)) {
+      const root = codeRepo();
+      const target = join(root, "src/kernel/a.ts");
+      const read = (p: string) => {
         if (p === target) swap(p);
-        return readFileSync(p, "utf8");
+        return readRegularFile(p);
       };
-      expect(sharedShare(r, layout, replacing)).toEqual({ codeRoot: "src", sharedLines: 0, totalLines: 2 });
+      expect([what, sharedShare(root, layout, read)]).toEqual([what, { codeRoot: "src", sharedLines: 0, totalLines: 2 }]);
     }
     // the other side: a file that stays is counted
-    const steady = codeRepo();
-    expect(sharedShare(steady, layout, (p) => readFileSync(p, "utf8"))).toEqual({ codeRoot: "src", sharedLines: 1, totalLines: 3 });
+    expect(sharedShare(codeRepo(), layout)).toEqual({ codeRoot: "src", sharedLines: 1, totalLines: 3 });
   });
 });
 
