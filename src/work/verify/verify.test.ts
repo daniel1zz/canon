@@ -316,3 +316,47 @@ describe("canon work test type check and canon check", () => {
     expect(both.out).toContain("canon check: 1 finding(s)");
   });
 });
+
+describe("canon work test review notes", () => {
+  const decision = ["D", 1].join("-");
+  const other = ["BR", 8].join("-");
+  const decisionText = `---\nid: ${decision}\ntitle: d\nstatus: proposed\n---\n\n## 背景\n\nx\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\nA\n\n## 后果\n\nx\n`;
+  /** Records the notes a landing's review left on the given documents, as land.ok stores them (BR-2145). */
+  const leaveNotes = (root: string, reviewed: string[], notes: string[]) => ws(root).db.event("agent:x", "land.ok", ["C", 90].join("-"), { reviewed, notes });
+  const noteLines = (out: string) => out.split("\n").filter((l) => l.startsWith("Open review note on "));
+
+  test("BR-2249: notes on a changed rule and on a changed decision are listed after canon check, and the run still exits 0", () => {
+    const { root, wt } = fixture();
+    leaveNotes(root, [rule, decision], [`${rule}: 例子缺少边界另一侧`, `${decision}: 方案缺少来源`]);
+    write(wt, { [`canon/rules/core/${rule}.md`]: ruleText("y"), [`canon/decisions/${decision}.md`]: decisionText });
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(0);
+    const today = new Date().toISOString().slice(0, 10);
+    expect(noteLines(r.out)).toEqual([`Open review note on ${rule}: ${rule}: 例子缺少边界另一侧 (C-90, ${today})`, `Open review note on ${decision}: ${decision}: 方案缺少来源 (C-90, ${today})`]);
+    expect(r.out.indexOf("Open review note on")).toBeGreaterThan(r.out.indexOf("canon check: ok"));
+    expect(r.out).toContain("a hint, not a failure");
+  });
+
+  test("BR-2249: a rule only listed in the change's rules: counts; a rule the change does not touch is not listed", () => {
+    const { root, wt } = fixture();
+    leaveNotes(root, [rule, other], [`${rule}: 例子缺少边界另一侧`, `${other}: 标题太长`]);
+    const changes = join(wt, "canon/changes");
+    const file = join(changes, readdirSync(changes)[0]!);
+    writeFileSync(file, readFileSync(file, "utf8").replace("rules: []", `rules:\n  - ${rule}`));
+    const r = canon(wt, "work", "test");
+    expect(noteLines(r.out).map((l) => l.split(":")[0])).toEqual([`Open review note on ${rule}`]);
+  });
+
+  test("BR-2249: no open note on what the change touches prints nothing; a failing test still exits 1 with the notes listed", () => {
+    const { root, wt } = fixture();
+    write(wt, { "src/a.ts": "export const a = 2;\n" });
+    const quiet = canon(wt, "work", "test");
+    expect(quiet.code).toBe(0);
+    expect(quiet.out).not.toContain("Open review note");
+    leaveNotes(root, [rule], [`${rule}: 例子缺少边界另一侧`]);
+    write(wt, { [`canon/rules/core/${rule}.md`]: ruleText("y"), "src/e.test.ts": `it("${rule}: names the rule", () => {});\n// FAILME\n` });
+    const failing = canon(wt, "work", "test");
+    expect(failing.code).toBe(1);
+    expect(noteLines(failing.out)).toHaveLength(1);
+  });
+});

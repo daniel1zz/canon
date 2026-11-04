@@ -9,6 +9,7 @@ import { testTitles } from "../../knowledge/check/test-titles.ts";
 import { importedPaths } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { idsIn } from "../../knowledge/documents/types.ts";
+import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
 import type { Workspace } from "../workspace.ts";
 
@@ -32,6 +33,8 @@ export interface Selection {
   readonly changed: readonly string[];
   /** Rule ids whose files changed, plus the `rules:` of changed change files. */
   readonly rules: readonly string[];
+  /** Decision ids whose files changed, added or deleted ones included (BR-2249). */
+  readonly decisions: readonly string[];
   readonly selected: readonly Selected[];
 }
 
@@ -46,7 +49,7 @@ function isFile(full: string): boolean {
 }
 
 /** The files this worktree changed against main and the rules it touched. */
-function changesOf(ws: Workspace): Result<{ base: string; changed: string[]; rules: string[] }> {
+function changesOf(ws: Workspace): Result<{ base: string; changed: string[]; rules: string[]; decisions: string[] }> {
   const base = git(ws.root, "merge-base", "HEAD", ws.config.main);
   if (!base.ok) return err("io", `cannot compare with ${ws.config.main}: ${base.error.message}`);
   const diff = paths(ws.root, "diff", "--name-only", "--no-renames", base.value);
@@ -58,17 +61,21 @@ function changesOf(ws: Workspace): Result<{ base: string; changed: string[]; rul
   const { corpus } = readCorpus(ws.root, ws.config.types, ws.config);
   const ruleType = ws.config.types.find((t) => t.name === "rule")!;
   const rulePrefix = `${ruleType.prefix}-`;
+  const decisionType = ws.config.types.find((t) => t.name === "decision")!;
   const touched = new Set(changed);
   const rules = new Set<string>();
+  const decisions = new Set<string>();
   for (const path of changed) {
-    // A deleted rule file is no longer in the corpus; its file name is its id.
+    // A deleted rule or decision file is no longer in the corpus; its file name is its id.
     const stem = basename(path).replace(/\.md$/, "");
     if (path.startsWith(`canon/${ruleType.dir}/`) && path.endsWith(".md") && stem.startsWith(rulePrefix)) rules.add(stem);
+    if (path.startsWith(`canon/${decisionType.dir}/`) && path.endsWith(".md") && stem.startsWith(`${decisionType.prefix}-`)) decisions.add(stem);
   }
   for (const d of corpus.docs) {
     if (d.kind === "change" && touched.has(d.path)) for (const r of d.rules) rules.add(r);
   }
-  return ok({ base: base.value, changed, rules: [...rules].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })) });
+  const sorted = (ids: Set<string>) => [...ids].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  return ok({ base: base.value, changed, rules: sorted(rules), decisions: sorted(decisions) });
 }
 
 /**
@@ -79,9 +86,9 @@ function changesOf(ws: Workspace): Result<{ base: string; changed: string[]; rul
 export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
   const ch = changesOf(ws);
   if (!ch.ok) return ch;
-  const { base, changed, rules } = ch.value;
+  const { base, changed, rules, decisions } = ch.value;
   const tests = testFilesFor(ws.root, ws.config).filter((f) => isFile(join(ws.root, f)));
-  if (all) return ok({ base, changed, rules, selected: tests.map((file) => ({ file, reasons: ["--all"] })) });
+  if (all) return ok({ base, changed, rules, decisions, selected: tests.map((file) => ({ file, reasons: ["--all"] })) });
 
   const changedSet = new Set(changed);
   const ruleSet = new Set(rules);
@@ -132,7 +139,7 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
     }
     if (reasons.length) selected.push({ file, reasons });
   }
-  return ok({ base, changed, rules, selected });
+  return ok({ base, changed, rules, decisions, selected });
 }
 
 export interface TestRun {
@@ -194,7 +201,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   }
   const sel = selectTests(ws, all);
   if (!sel.ok) return sel;
-  const { base, changed, rules, selected } = sel.value;
+  const { base, changed, rules, decisions, selected } = sel.value;
   const against = `against ${ws.config.main} at ${base.slice(0, 9)}`;
   if (all) say(`canon work test --all: every test file, ${selected.length} (${against})`);
   else {
@@ -233,6 +240,13 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   const findings = check({ root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config), floorSkipPaths: ws.config.floorSkipPaths });
   for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
   say(findings.length === 0 ? "canon check: ok" : `canon check: ${findings.length} finding(s)`);
+
+  // Open review notes on what this change touches, the ones canon context shows; a hint, never a failure (BR-2249, D-21).
+  const notes = openNotes(ws.db, [...rules, ...decisions]);
+  if (notes.length) {
+    say("Open review notes on the rules and decisions this change touches (a hint, not a failure; handle them in this change):");
+    for (const n of notes) say(`Open review note on ${renderNote(n)}`);
+  }
 
   const ms = Math.round(performance.now() - t0);
   const result: WorkTestResult = { files: runs.length, failed: failed.length, typecheck, check: findings.length };

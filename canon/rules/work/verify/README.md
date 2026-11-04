@@ -1,6 +1,6 @@
 # 合入前的验证（work/verify）
 
-合入前在变更的 worktree 里验证改动：`canon work test` 先跑项目配置的类型检查，再挑出和本变更相关的测试文件、一个文件一次地运行，最后跑 `canon check`，把要等 floor 或合入时的检查才发现的失败提前到合入之前。
+合入前在变更的 worktree 里验证改动：`canon work test` 先跑项目配置的类型检查，再挑出和本变更相关的测试文件、一个文件一次地运行，最后跑 `canon check`，把要等 floor 或合入时的检查才发现的失败提前到合入之前；它还提示本变更改到的规则和决策上未处理的评审建议（BR-2249），只作提示。
 
 不管：合入时的 floor 和检查（`work/land`），规则和测试名的对应（`knowledge/check`）。
 
