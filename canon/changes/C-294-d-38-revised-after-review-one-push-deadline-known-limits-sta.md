@@ -1,8 +1,13 @@
 ---
 id: C-294
 title: "D-38 revised after review: one push deadline, known limits stated"
-status: open
-rules: [BR-2259, BR-2260]
+status: done
+rules:
+  - BR-2259
+  - BR-2260
+passes:
+  BR-2259: 18b60c5c182cdffc test
+  BR-2260: 796010602e08b567 test
 ---
 
 ## 为什么
