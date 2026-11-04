@@ -45,6 +45,8 @@ export interface Selection {
   readonly selected: readonly Selected[];
   /** `always_tests` globs that match no test file `tests` finds (BR-2297). */
   readonly unmatched: readonly string[];
+  /** How many test files spawn the CLI and how many distinct commands its table registers (BR-2157); 0 and 0 with `--all`. */
+  readonly cli: { readonly files: number; readonly commands: number };
 }
 
 /** NUL-separated git output, so paths with spaces or non-ASCII characters come back as written. */
@@ -55,6 +57,57 @@ function paths(root: string, ...args: string[]): Result<string[]> {
 
 function isFile(full: string): boolean {
   return existsSync(full) && statSync(full).isFile();
+}
+
+/**
+ * Finds the CLI each test spawns and the commands its table registers (D-60). Reads a test's own text and, from the entry
+ * file, every file it imports. `problems` lists the tests that point at a `main.ts` that gives no usable table.
+ */
+export function cliReader(root: string, importsFrom: (file: string) => string[]) {
+  const tables = new Map<string, RegisteredCommand[]>();
+  const bad: string[] = [];
+  let spawning = 0;
+  const tableOf = (entry: string): RegisteredCommand[] => {
+    let t = tables.get(entry);
+    if (!t) {
+      t = [];
+      const seen = new Set([entry]);
+      const queue = [entry];
+      while (queue.length) {
+        const cur = queue.shift()!;
+        if (JS_TS.test(cur) && isFile(join(root, cur))) t.push(...commandsRegisteredIn(cur, readFileSync(join(root, cur), "utf8")));
+        for (const next of importsFrom(cur)) {
+          if (seen.has(next)) continue;
+          seen.add(next);
+          queue.push(next);
+        }
+      }
+      tables.set(entry, t);
+    }
+    return t;
+  };
+  const cliOf = (file: string, text: string): CliDrive | null => {
+    for (const entry of pathsBuiltFromDir(file, text)) {
+      const isMain = basename(entry) === "main.ts";
+      if (!JS_TS.test(entry) || !isFile(join(root, entry))) {
+        if (isMain) bad.push(`${file} spawns ${entry}, which is not a file in the project: no CLI entry found`);
+        continue;
+      }
+      const table = tableOf(entry);
+      if (table.length) {
+        spawning++;
+        return { entry, driven: table.filter((c) => namesCommand(text, c.words)) };
+      }
+      if (isMain) bad.push(`${file} spawns ${entry}, but neither it nor the files it imports register a command with entry("name", rank, command): the command table is empty`);
+    }
+    return null;
+  };
+  return {
+    tableOf,
+    cliOf,
+    problems: () => [...bad],
+    counts: () => ({ files: spawning, commands: new Set([...tables.values()].flat().map((c) => c.words.join(" "))).size }),
+  };
 }
 
 /** The files this worktree changed against main and the rules it touched. */
@@ -101,7 +154,7 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
   const globs = ws.config.alwaysTests.map((g) => ({ g, glob: new Bun.Glob(g) }));
   const always = new Set(tests.filter((f) => globs.some(({ glob }) => glob.match(f))));
   const unmatched = globs.filter(({ glob }) => !tests.some((f) => glob.match(f))).map(({ g }) => g);
-  if (all) return ok({ base, changed, rules, decisions, unmatched, selected: tests.map((file) => ({ file, reasons: ["--all"] })) });
+  if (all) return ok({ base, changed, rules, decisions, unmatched, selected: tests.map((file) => ({ file, reasons: ["--all"] })), cli: { files: 0, commands: 0 } });
 
   const changedSet = new Set(changed);
   const ruleSet = new Set(rules);
@@ -118,35 +171,8 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
     return v;
   };
 
-  // The CLI a test spawns, found from the test's own text and the command table (D-60, BR-2157).
-  const tables = new Map<string, RegisteredCommand[]>();
-  const tableOf = (entry: string): RegisteredCommand[] => {
-    let t = tables.get(entry);
-    if (!t) {
-      t = [];
-      const seen = new Set([entry]);
-      const queue = [entry];
-      while (queue.length) {
-        const cur = queue.shift()!;
-        if (JS_TS.test(cur) && isFile(join(ws.root, cur))) t.push(...commandsRegisteredIn(cur, readFileSync(join(ws.root, cur), "utf8")));
-        for (const next of importsFrom(cur)) {
-          if (seen.has(next)) continue;
-          seen.add(next);
-          queue.push(next);
-        }
-      }
-      tables.set(entry, t);
-    }
-    return t;
-  };
-  const cliOf = (file: string, text: string): CliDrive | null => {
-    for (const entry of pathsBuiltFromDir(file, text)) {
-      if (!JS_TS.test(entry) || !isFile(join(ws.root, entry))) continue;
-      const table = tableOf(entry);
-      if (table.length) return { entry, driven: table.filter((c) => namesCommand(text, c.words)) };
-    }
-    return null;
-  };
+  const reader = cliReader(ws.root, importsFrom);
+  const { tableOf, cliOf } = reader;
   /** The changed files a spawned CLI runs: from its entry file, and from the module of each command the test names. */
   const cliReasons = (cli: CliDrive): string[] => {
     const modules = new Set(tableOf(cli.entry).map((c) => c.module));
@@ -218,7 +244,10 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
     if (always.has(file)) reasons.push("always");
     if (reasons.length) selected.push({ file, reasons });
   }
-  return ok({ base, changed, rules, decisions, unmatched, selected });
+  const problems = reader.problems();
+  // reason: a CLI whose entry or command table cannot be read would silently bring back the selection that missed C-309; refuse instead (BR-2157, D-60)
+  if (problems.length) return err("io", `canon work test cannot tell which tests spawn the CLI and what they drive:\n${problems.map((p) => `  ${p}`).join("\n")}\nThe CLI's entry file or its \`entry(...)\` command registrations changed shape (D-15, D-60); fix src/work/verify/cli-tests.ts or the tests' path, or run canon work test --all`);
+  return ok({ base, changed, rules, decisions, unmatched, selected, cli: reader.counts() });
 }
 
 /** `test_command` with `{file}` replaced by the path, quoted for sh. */
@@ -306,6 +335,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   if (all) say(`canon work test --all: every test file, ${selected.length} (${against})`);
   else {
     say(`canon work test: ${selected.length} test file(s) related to this change (${against}; ${changed.length} changed file(s)${rules.length ? `; rules ${rules.join(", ")}` : ""})`);
+    say(`CLI tests: ${sel.value.cli.files} file(s) spawn the CLI, ${sel.value.cli.commands} command(s) known`);
     say("Selected: changed test files, test files whose relative imports reach a changed file, test files that spawn the CLI and drive a command whose code changed, test files whose titles name a touched rule, test files always_tests names.");
     const width = Math.max(0, ...selected.map((s) => s.file.length));
     for (const s of selected) say(`  ${s.file.padEnd(width)}  ${s.reasons.join("; ")}`);

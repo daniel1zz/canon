@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
+import { importedPaths } from "../../knowledge/query/query.ts";
 import { project, sh, startNew, ws } from "../testkit.ts";
 import { EventEmitter } from "node:events";
-import { commandFor, machineDeps, selectTests, workTest, type WorkTestDeps, type WorkTestResult } from "./verify.ts";
+import { cliReader, commandFor, machineDeps, selectTests, workTest, type WorkTestDeps, type WorkTestResult } from "./verify.ts";
 import type { CpuSample } from "./pool.ts";
 
 const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
@@ -131,7 +132,7 @@ describe("canon work test selection", () => {
  * it: src/a/a.test.ts names `work one`, src/a/spaced.test.ts names it in one literal, src/b/b.test.ts names `two`,
  * src/c/c.test.ts names no command. src/d/d.test.ts has a "two" literal but never builds the CLI's path.
  */
-function cliFixture() {
+function cliFixture(extra: Record<string, string> = {}) {
   const spawn = (dir: string, words: string) => `const MAIN = join(import.meta.dir, "..", "cli", "main.ts");\nBun.spawnSync(["bun", MAIN, ${words}]);\n`;
   return fixture("sh run.sh {file}", {
     "src/cli/main.ts": 'import "./tree.ts";\nimport "./strict.ts";\n',
@@ -145,6 +146,7 @@ function cliFixture() {
     "src/b/b.test.ts": spawn("b", '"two"'),
     "src/c/c.test.ts": spawn("c", '...process.argv'),
     "src/d/d.test.ts": 'const args = ["two"];\n',
+    ...extra,
   });
 }
 
@@ -967,4 +969,75 @@ describe("canon work test stops its process tree on a real signal", () => {
     expect(performance.now() - t0).toBeLessThan(8000); // not the 10 s grace period
     expect(alive(pid)).toBe(false);
   }, 30_000);
+});
+
+const spawnWords = (words: string, extra = "") => `const MAIN = join(import.meta.dir, "..", "cli", "main.ts");\n${extra}Bun.spawnSync(["bun", MAIN, ${words}]);\n`;
+
+describe("canon work test selection: command modules, strings and a CLI that cannot be read", () => {
+  test("BR-2157: a command module that imports another command module is followed: a change to the imported one selects the tests naming the importing command", () => {
+    const { wt } = cliFixture({
+      "src/cli/tree.ts": 'import "../a/commands.ts";\nimport "../b/commands.ts";\nimport "../g/commands.ts";\nimport "../h/commands.ts";\n',
+      "src/g/commands.ts": 'import "../h/commands.ts";\nexport const gCommands = { commands: [entry("three", 30, three)] };\n',
+      "src/h/commands.ts": 'export const hCommands = { commands: [entry("four", 40, four)] };\n',
+      "src/g/g.test.ts": spawnWords('"three"'),
+      "src/h/h.test.ts": spawnWords('"four"'),
+    });
+    write(wt, { "src/h/commands.ts": 'export const hCommands = { commands: [entry("four", 40, four)] }; // changed\n' });
+    expect(reasons(wt)).toEqual({
+      "src/g/g.test.ts": "drives canon three (src/h/commands.ts changed, through src/g/commands.ts)",
+      "src/h/h.test.ts": "drives canon four (src/h/commands.ts changed)",
+    });
+  });
+
+  test("BR-2157: a one-word command counts only as an argument, not inside JSON or YAML text or at the start of a longer string", () => {
+    const { wt } = cliFixture({
+      "src/e/e.test.ts": spawnWords('..."two --json".split(" ")'),
+      "src/f/f.test.ts": spawnWords('"unrelated"', 'const cfg = `{"two":"ok","list":["a"]}`;\n'),
+    });
+    write(wt, { "src/b/commands.ts": "export const bCommands = { commands: [entry(\"two\", 20, two)] }; // changed\n" });
+    expect(reasons(wt)).toEqual({ "src/b/b.test.ts": "drives canon two (src/b/commands.ts changed)" });
+  });
+
+  test("BR-2157: a test whose command words are built at run time is selected by a change on the entry side only", () => {
+    const { wt } = cliFixture();
+    write(wt, { "src/a/commands.ts": 'import "./a.ts";\nexport const aCommands = { commands: [entry("one", 10, one, "work")] }; // changed\n' });
+    expect(reasons(wt)["src/c/c.test.ts"]).toBeUndefined();
+    write(wt, { "src/cli/strict.ts": "export const strict = 2;\n" });
+    expect(reasons(wt)["src/c/c.test.ts"]).toBe("runs the CLI (src/cli/strict.ts changed, through src/cli/main.ts)");
+  });
+
+  test("BR-2157: the selection output says how many tests spawn the CLI and how many commands are known", () => {
+    const { wt } = cliFixture();
+    write(wt, { "src/b/commands.ts": "export const bCommands = { commands: [entry(\"two\", 20, two)] }; // changed\n" });
+    expect(canon(wt, "work", "test").out).toContain("CLI tests: 4 file(s) spawn the CLI, 2 command(s) known");
+  });
+
+  test("BR-2157: a test that points at a main.ts whose command table is empty fails canon work test with exit 4", () => {
+    const { wt } = cliFixture({ "src/cli/tree.ts": 'import "../a/commands.ts";\n// registrations are written another way now\n', "src/a/commands.ts": "export const aCommands = {};\n" });
+    write(wt, { "README.md": "changed\n" });
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(4);
+    expect(r.err).toContain("src/a/a.test.ts spawns src/cli/main.ts");
+    expect(r.err).toContain("the command table is empty");
+    expect(runs(wt)).toEqual([]);
+  });
+
+  test("BR-2157: a test that points at a main.ts that is not in the project fails canon work test with exit 4 naming the path", () => {
+    const { wt } = fixture("sh run.sh {file}", { "src/x.test.ts": spawnWords('"two"').replace('"cli", "main.ts"', '"gone", "main.ts"') });
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(4);
+    expect(r.err).toContain("src/x.test.ts spawns gone/main.ts, which is not a file in the project: no CLI entry found");
+  });
+
+  test("BR-2157: the real tree is read: at least 50 tests that spawn the CLI and 30 commands are recognised", () => {
+    const root = join(import.meta.dir, "..", "..", "..");
+    const exists = (p: string) => existsSync(join(root, p));
+    const reader = cliReader(root, (f) => importedPaths(root, f, exists));
+    const tests = [...new Bun.Glob("src/**/*.test.ts").scanSync({ cwd: root })];
+    for (const f of tests) reader.cliOf(f, readFileSync(join(root, f), "utf8"));
+    expect(reader.problems()).toEqual([]);
+    const { files, commands } = reader.counts();
+    expect(files).toBeGreaterThanOrEqual(50);
+    expect(commands).toBeGreaterThanOrEqual(30);
+  });
 });

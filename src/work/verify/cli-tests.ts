@@ -45,11 +45,14 @@ const escape = (s: string) => s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 
 /**
  * True when the test text names the command: its words as consecutive string literals (`"work", "status"`), or written
- * together in one literal (`"work status --json"`). A one-word command counts only when it is a whole literal.
+ * together in one literal (`"work status --json"`). A one-word command counts only as an argument, a literal between
+ * `(`, `[` or `,` and `,`, `)` or `]`: not as a whole literal inside JSON or YAML (`{"verdict":"ok"}`), and not at the
+ * start of a longer one (`"brief --json"`).
  */
 export function namesCommand(text: string, words: readonly string[]): boolean {
   const w = words.map(escape);
+  if (words.length === 1) return new RegExp(`(?<=[(\\[,?]\\s*)${QUOTE}${w[0]}${QUOTE}(?=\\s*[,)\\]])`).test(text);
   const separate = new RegExp(`${QUOTE}${w.join(`${QUOTE}\\s*,\\s*${QUOTE}`)}${QUOTE}`);
   if (separate.test(text)) return true;
-  return words.length > 1 && new RegExp(`${QUOTE}${w.join("\\s+")}(?:\\s[^"'\`]*)?${QUOTE}`).test(text);
+  return new RegExp(`${QUOTE}${w.join("\\s+")}(?:\\s[^"'\`]*)?${QUOTE}`).test(text);
 }
