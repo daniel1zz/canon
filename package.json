@@ -7,7 +7,7 @@
     "canon": "dist/canon"
   },
   "scripts": {
-    "test": "bun test",
+    "test": "sh scripts/test.sh",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "build": "bun build --compile src/cli/main.ts --outfile dist/canon"
   },

@@ -69,12 +69,15 @@ False-green patterns to scan for before committing, with grep commands: [referen
 
 ## 6. Running tests in a worktree
 
-The floor runs the full suite at `canon work land`. Inside a worktree run **only the tests relevant to the change**:
+The floor runs the full suite at `canon work land`. Inside a worktree run **only the tests relevant to the change**, the way the project runs them:
 
 ```
-bun test src/work/land/land.test.ts         # the files you touched
-bun test -t "BR-2022"                    # the rules you touched
+canon work test                  # picks the related test files, runs each through the project's test_command
+sh scripts/test.sh src/a.test.ts # one file yourself, when test_command is "sh scripts/test.sh {file}"
+bun test src/a.test.ts           # the same, when test_command is "bun test {file}"
 ```
+
+Use the command `test_command` in `canon/config.yaml` names, not the bare test runner: a project may wrap the runner to set the test timeout or the environment, and a bare run then gives results the floor does not.
 
 Many worktrees running full suites at once once drove load to 150 and produced 70+ phantom failures. A failure seen only under load is not evidence about your change; re-run that one test alone before acting on it.
 

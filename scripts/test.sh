@@ -23,4 +23,5 @@ EOF
 
 # reason: Bun.spawn children get the environment bun started with, not later process.env edits,
 # so the variables are set here, before bun starts (C-247)
-GIT_CONFIG_GLOBAL="$dir/gitconfig" GIT_CONFIG_NOSYSTEM=1 bun test --timeout "$TIMEOUT_MS" "$@"
+# CANON_TEST_SCRIPT tells scripts/test-guard.ts (preloaded by bunfig.toml) that this script started bun test (C-271)
+CANON_TEST_SCRIPT=1 GIT_CONFIG_GLOBAL="$dir/gitconfig" GIT_CONFIG_NOSYSTEM=1 bun test --timeout "$TIMEOUT_MS" "$@"
