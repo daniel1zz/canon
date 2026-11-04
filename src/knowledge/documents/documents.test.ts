@@ -7,6 +7,7 @@ import { check } from "../check/check.ts";
 import { slugify } from "./model.ts";
 import { readCorpus } from "./read.ts";
 import { createDoc } from "./write.ts";
+import { ws } from "../../work/testkit.ts";
 
 // reason: the CLI tests spawn canon processes, each a bun start plus git calls; under load one took 4.2 s of the 5 s default (C-111).
 setDefaultTimeout(30_000);
@@ -174,5 +175,50 @@ describe("statuses and domains from the CLI", () => {
     const out = canon(root, "rule", "domains").out;
     expect(out).toMatch(/billing\s+25 rules/);
     expect(out).not.toContain("consider subdomains");
+  });
+});
+
+describe("status changes", () => {
+  const statusEvents = (root: string) => {
+    const w = ws(root);
+    const n = w.db.db.query<{ n: number }, []>("SELECT count(*) AS n FROM events WHERE kind IN ('change.status', 'rule.status')").get()!.n;
+    w.db.close();
+    return n;
+  };
+
+  test("BR-2041: dropping an open change records it; dropping a done or dropped change exits 2, names its status and writes nothing", () => {
+    const root = project();
+    for (const t of ["Open", "Finished", "Gone"]) expect(canon(root, "change", "new", "--title", t).code).toBe(0);
+    const path = (n: number) => join(root, "canon/changes", readdirSync(join(root, "canon/changes")).find((f) => f.startsWith(`${id("C", n)}-`))!);
+    writeFileSync(path(2), readFileSync(path(2), "utf8").replace("status: open", "status: done"));
+    writeFileSync(path(3), readFileSync(path(3), "utf8").replace("status: open", "status: dropped"));
+    const before = statusEvents(root);
+    expect(canon(root, "change", "drop", id("C", 1)).code).toBe(0);
+    expect(readFileSync(path(1), "utf8")).toContain("status: dropped");
+    expect(statusEvents(root)).toBe(before + 1);
+    for (const [n, status] of [[2, "done"], [3, "dropped"]] as const) {
+      const text = readFileSync(path(n), "utf8");
+      const r = canon(root, "change", "drop", id("C", n));
+      expect([r.code, r.err.includes(status)]).toEqual([2, true]);
+      expect(readFileSync(path(n), "utf8")).toBe(text);
+    }
+    expect(statusEvents(root)).toBe(before + 1);
+  });
+
+  test("BR-2028: retiring an active rule records it; retiring a retired rule prints already retired, exits 0 and writes nothing", () => {
+    const root = project();
+    canon(root, "rule", "domain", "billing", "--code", "src/billing");
+    const rule = (status: string) => `---\nid: ${id("BR", 1)}\ntitle: R\nstatus: ${status}\nuntested: fixture\n---\n## 规则\n\nX.\n`;
+    const path = join(root, `canon/rules/billing/${id("BR", 1)}.md`);
+    writeFileSync(path, rule("active"));
+    const before = statusEvents(root);
+    expect(canon(root, "rule", "retire", id("BR", 1)).code).toBe(0);
+    expect(readFileSync(path, "utf8")).toContain("status: retired");
+    expect(statusEvents(root)).toBe(before + 1);
+    const text = readFileSync(path, "utf8");
+    const again = canon(root, "rule", "retire", id("BR", 1));
+    expect([again.code, again.out.trim()]).toEqual([0, `${id("BR", 1)} already retired`]);
+    expect(readFileSync(path, "utf8")).toBe(text);
+    expect(statusEvents(root)).toBe(before + 1);
   });
 });

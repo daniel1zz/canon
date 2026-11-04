@@ -65,13 +65,20 @@ function listCommand(kind: Kind, describe: string) {
   });
 }
 
-/** Sets a document's status. `validate` runs before anything is written, so a refused change leaves no trace. */
-function setStatus(id: string, kind: Kind, status: string, validate?: (corpus: ReturnType<typeof readCorpus>["corpus"], doc: Doc) => void) {
+/**
+ * Sets a document's status. `validate` runs before anything is written, so a refused change leaves no trace. With
+ * `idempotent`, a document already in `status` is left alone: nothing written, no event, `<id> already <status>`.
+ */
+function setStatus(id: string, kind: Kind, status: string, validate?: (corpus: ReturnType<typeof readCorpus>["corpus"], doc: Doc) => void, opts: { idempotent?: boolean } = {}) {
   const ws = workspace();
   const { corpus } = corpusOf(ws);
   const doc = findDoc(corpus, id);
   if (!doc || doc.kind !== kind) fail({ code: "not_found", message: `${id} is not a ${kind}` });
   validate?.(corpus, doc);
+  if (opts.idempotent && "status" in doc && doc.status === status) {
+    say(`${doc.id} already ${status}`);
+    return { ws, corpus, doc };
+  }
   must(setMeta(ws.root, doc, { status }));
   ws.db.event(ws.actor, `${kind}.status`, doc.id, { status });
   say(`${doc.id} → ${status} (${doc.path}; commit it with your change)`);
@@ -92,7 +99,8 @@ const rule = defineCommand({
     retire: defineCommand({
       meta: { description: "Retire a rule; its id is never reused" },
       args: { id: { type: "positional", required: true } },
-      run: ({ args }) => void setStatus(String(args.id), "rule", "retired"),
+      // reason: retiring twice changes nothing, so it writes nothing and records no second event (BR-2028)
+      run: ({ args }) => void setStatus(String(args.id), "rule", "retired", undefined, { idempotent: true }),
     }),
     domain: defineCommand({
       meta: { description: "Create a domain (canon/rules/<name>/README.md) or a subdomain (<domain>/<name>); only a top-level domain without code_root names its code (--code)" },
@@ -155,7 +163,11 @@ const change = defineCommand({
     drop: defineCommand({
       meta: { description: "Mark a change dropped (work will not happen)" },
       args: { id: { type: "positional", required: true } },
-      run: ({ args }) => void setStatus(String(args.id), "change", "dropped"),
+      run: ({ args }) =>
+        void setStatus(String(args.id), "change", "dropped", (_c, d) => {
+          // reason: a done change's work happened; marking it dropped would rewrite that fact (BR-2041)
+          if (d.kind === "change" && d.status !== "open") fail({ code: "invalid", message: `${d.id} is ${d.status}, not open; only an open change can be dropped` });
+        }),
     }),
   },
 });
