@@ -1,8 +1,9 @@
 import { describe, expect, it, setDefaultTimeout } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git } from "../../kernel/git.ts";
+import { processOf } from "../../work/claims/liveness.ts";
 import { ws } from "../../work/testkit.ts";
 
 setDefaultTimeout(60_000);
@@ -224,5 +225,112 @@ describe("canon work status and canon brief about unreviewed landings", () => {
     review(r, land(r, "a.ts"), { CANON_NOW: minutesFromNow(61) });
     expect(canon(r.root, "work", "status")).not.toContain("code-reviewed");
     expect(canon(r.root, "brief")).not.toContain("code-reviewed");
+  });
+});
+
+describe("one code review at a time, through the coordination database", () => {
+  const FINDING = { findings: [{ kind: "concurrency", title: "race", root_cause: "no lock", file: "a.ts", line: 1, scenario: "two at once", existing: null }] };
+  const spawnReview = (r: Repo, l: { base: string; head: string; change: string }, env: Record<string, string> = {}) =>
+    Bun.spawn(["bun", SCRIPT], {
+      cwd: r.root,
+      stdout: "pipe",
+      stderr: "pipe",
+      stdin: "ignore",
+      env: { ...process.env, CANON_ACTOR: "agent:a", CANON_BASE: l.base, CANON_HEAD: l.head, CANON_CHANGE: l.change, CANON_CODE_REVIEW_AI: `sh ${r.tools}/ai.sh`, CANON_GH: `bun ${r.tools}/gh.ts`, ...env },
+    });
+  const finish = async (p: ReturnType<typeof spawnReview>) => ({ code: await p.exited, out: await new Response(p.stdout).text() });
+  /** A review whose AI takes a while, so that a second one started with it overlaps. */
+  const slowAi = (r: Repo) => writeFileSync(join(r.tools, "ai.sh"), `echo x >> ${r.tools}/ai-calls\ncat > ${r.tools}/prompt.txt\nsleep 3\ncat ${r.tools}/answer.json\n`);
+  const holders = (r: Repo) => ws(r.root).db.db.query<{ pid: number; pid_start: string }, []>("SELECT pid, pid_start FROM code_reviewer").all();
+  const hold = (r: Repo, pid: number, start: string) => ws(r.root).db.db.query("INSERT OR REPLACE INTO code_reviewer(id, pid, pid_start, started_at) VALUES (1, ?, ?, ?)").run(pid, start, new Date().toISOString());
+
+  it("BR-2314: three reviews started together run the AI once and file one issue; the others wait and find nothing left", async () => {
+    const r = setup("review_max_unreviewed: 1\n", FINDING);
+    slowAi(r);
+    const l = land(r, "a.ts");
+    const runs = [spawnReview(r, l), spawnReview(r, l), spawnReview(r, l)];
+    const results = await Promise.all(runs.map(finish));
+    console.log(`concurrency: AI invoked ${r.aiCalls()} time(s), gh issue create ${r.issues().length} time(s)`);
+    expect(results.map((x) => x.code)).toEqual([0, 0, 0]);
+    expect(r.aiCalls()).toBe(1);
+    expect(r.issues()).toHaveLength(1);
+    expect(results.filter((x) => x.out.includes("reviewed 1 landing(s) in one batch"))).toHaveLength(1);
+    expect(results.filter((x) => x.out.includes("already reviewed in a batch; nothing to review"))).toHaveLength(2);
+    expect(reviewed(r)).toBe(l.head);
+    expect(holders(r)).toEqual([]);
+  });
+
+  it("BR-2314: with a live holder, a review with CANON_CODE_REVIEW_NOWAIT=1 reports it is busy and does not call the AI", async () => {
+    const r = setup("review_max_unreviewed: 1\n", FINDING);
+    const l = land(r, "a.ts");
+    const holder = Bun.spawn(["sleep", "60"]);
+    try {
+      const me = processOf(holder.pid)!;
+      hold(r, me.pid, me.start);
+      const done = await finish(spawnReview(r, l, { CANON_CODE_REVIEW_NOWAIT: "1" }));
+      expect(done.code).toBe(0);
+      expect(done.out).toContain("another code review is running; it covers this range");
+      expect(r.aiCalls()).toBe(0);
+      expect(holders(r)).toEqual([{ pid: me.pid, pid_start: me.start }]);
+    } finally {
+      holder.kill("SIGKILL");
+    }
+  });
+
+  it("BR-2314: a holder killed with SIGKILL is taken over by the next review, which reviews and clears the row", async () => {
+    const r = setup("review_max_unreviewed: 1\n", FINDING);
+    const l = land(r, "a.ts");
+    const holder = Bun.spawn(["sleep", "60"]);
+    const me = processOf(holder.pid)!;
+    hold(r, me.pid, me.start);
+    holder.kill("SIGKILL");
+    await holder.exited;
+    const done = await finish(spawnReview(r, l, { CANON_CODE_REVIEW_NOWAIT: "1" }));
+    expect(done.code).toBe(0);
+    expect(done.out).toContain("reviewed 1 landing(s) in one batch");
+    expect(r.aiCalls()).toBe(1);
+    expect(holders(r)).toEqual([]);
+  });
+
+  it("BR-2314: a live holder is not taken over when the process table cannot be read", async () => {
+    const r = setup("review_max_unreviewed: 1\n", FINDING);
+    const l = land(r, "a.ts");
+    const holder = Bun.spawn(["sleep", "60"]);
+    try {
+      const me = processOf(holder.pid)!;
+      // a stale start: with a readable table this holder would be provably gone
+      hold(r, me.pid, "Thu Jan  1 00:00:00 1970");
+      const bin = mkdtempSync(join(tmpdir(), "canon-batch-review-bin-"));
+      symlinkSync(process.execPath, join(bin, "bun"));
+      symlinkSync(Bun.which("git")!, join(bin, "git"));
+      const done = await finish(spawnReview(r, l, { CANON_CODE_REVIEW_NOWAIT: "1", PATH: bin }));
+      expect(done.out).toContain("another code review is running; it covers this range");
+      expect(r.aiCalls()).toBe(0);
+      expect(holders(r)).toEqual([{ pid: me.pid, pid_start: "Thu Jan  1 00:00:00 1970" }]);
+      // with a readable table the same row is provably gone and is taken over
+      const again = await finish(spawnReview(r, l, { CANON_CODE_REVIEW_NOWAIT: "1" }));
+      expect(again.out).toContain("reviewed 1 landing(s) in one batch");
+    } finally {
+      holder.kill("SIGKILL");
+    }
+  });
+
+  it("BR-2314: a review whose row was taken over meanwhile does not delete the new holder's row", async () => {
+    const r = setup("review_max_unreviewed: 1\n", FINDING);
+    const l = land(r, "a.ts");
+    const other = Bun.spawn(["sleep", "60"]);
+    try {
+      const me = processOf(other.pid)!;
+      writeFileSync(
+        join(r.tools, "steal.ts"),
+        `import { Database } from "bun:sqlite";\nnew Database(${JSON.stringify(ws(r.root).db.db.filename)}).query("UPDATE code_reviewer SET pid = ?, pid_start = ?").run(${me.pid}, ${JSON.stringify(me.start)});\n`,
+      );
+      writeFileSync(join(r.tools, "ai.sh"), `echo x >> ${r.tools}/ai-calls\ncat > ${r.tools}/prompt.txt\nbun ${r.tools}/steal.ts\ncat ${r.tools}/answer.json\n`);
+      const done = await finish(spawnReview(r, l));
+      expect(done.code).toBe(0);
+      expect(holders(r)).toEqual([{ pid: me.pid, pid_start: me.start }]);
+    } finally {
+      other.kill("SIGKILL");
+    }
   });
 });

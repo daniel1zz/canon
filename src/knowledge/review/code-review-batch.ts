@@ -1,8 +1,8 @@
-import { closeSync, mkdirSync, openSync, readFileSync, rmSync, writeSync } from "node:fs";
+import { closeSync, mkdirSync, openSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CoordDb } from "../../work/db.ts";
 import type { Say, Workspace } from "../../work/workspace.ts";
-import { isGone, selfProcess } from "../../work/claims/liveness.ts";
+import { isGone, selfProcess, type Proc } from "../../work/claims/liveness.ts";
 import { nowMs } from "../../kernel/clock.ts";
 import { git } from "../../kernel/git.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
@@ -89,51 +89,52 @@ export function advanceReviewed(cwd: string, to: string, from: string | null): R
   return r.ok ? ok(undefined) : err("conflict", `${REVIEWED_REF} moved meanwhile and was left as it is (${r.error.message})`);
 }
 
-/** The lock that keeps two reviews from reviewing one range: a file in the git common dir naming its process. */
-function lockPath(cwd: string): string {
-  const dir = git(cwd, "rev-parse", "--path-format=absolute", "--git-common-dir");
-  return join(dir.ok ? dir.value : join(cwd, ".git"), "canon", "code-review.lock");
+interface ReviewerRow {
+  readonly pid: number;
+  readonly pid_start: string;
 }
 
-/** The process holding the review lock, when it is alive. */
-export function reviewRunning(cwd: string): boolean {
-  try {
-    const held = JSON.parse(readFileSync(lockPath(cwd), "utf8")) as { pid: number; start: string };
-    return isGone({ pid: held.pid, start: held.start }) !== true;
-  } catch {
-    return false;
-  }
+/** Whether a review is running: a holder is recorded in the coordination database and its process is not provably gone (an unreadable process table counts as alive, D-11). */
+export function reviewRunning(db: CoordDb): boolean {
+  const row = db.db.query<ReviewerRow, []>("SELECT pid, pid_start FROM code_reviewer WHERE id = 1").get();
+  return row !== null && isGone({ pid: row.pid, start: row.pid_start }) !== true;
+}
+
+/** Becomes the one review, taking over from a holder whose process is gone; false while another is alive (BR-2314). */
+function claimReviewer(db: CoordDb, self: Proc): boolean {
+  return db.db
+    .transaction(() => {
+      const row = db.db.query<ReviewerRow, []>("SELECT pid, pid_start FROM code_reviewer WHERE id = 1").get();
+      if (row && !(row.pid === self.pid && row.pid_start === self.start) && isGone({ pid: row.pid, start: row.pid_start }) !== true) return false;
+      db.db.query("INSERT OR REPLACE INTO code_reviewer(id, pid, pid_start, started_at) VALUES (1, ?, ?, ?)").run(self.pid, self.start, new Date().toISOString());
+      return true;
+    })
+    .immediate();
+}
+
+/** Deletes the row only while it is mine: a review whose row was taken over must not delete the new holder's. */
+function releaseReviewer(db: CoordDb, self: Proc): void {
+  db.db.query("DELETE FROM code_reviewer WHERE id = 1 AND pid = ? AND pid_start = ?").run(self.pid, self.start);
 }
 
 const LOCK_WAIT_MS = 30 * 60_000;
 
-/** Takes the review lock, waiting for a live holder up to 30 minutes (or not at all with `wait` false); a dead holder's lock is taken over. */
-async function takeLock(cwd: string, wait: boolean): Promise<(() => void) | "busy"> {
-  const path = lockPath(cwd);
-  mkdirSync(dirname(path), { recursive: true });
-  const me = selfProcess();
+/** Takes the review slot, waiting for a live holder up to 30 minutes (or not at all with `wait` false); a dead holder's slot is taken over. */
+async function takeLock(db: CoordDb, wait: boolean): Promise<(() => void) | "busy"> {
+  const me: Proc = selfProcess() ?? { pid: process.pid, start: "" };
   const deadline = Date.now() + LOCK_WAIT_MS;
   for (;;) {
-    try {
-      const fd = openSync(path, "wx");
-      writeSync(fd, JSON.stringify(me ?? { pid: process.pid, start: "" }));
-      closeSync(fd);
-      return () => rmSync(path, { force: true });
-    } catch (e) {
-      if ((e as NodeJS.ErrnoException).code !== "EEXIST") throw e;
-    }
-    if (!reviewRunning(cwd)) {
-      rmSync(path, { force: true });
-      continue;
-    }
+    if (claimReviewer(db, me)) return () => releaseReviewer(db, me);
     if (!wait) return "busy";
-    if (Date.now() > deadline) throw new Error(`another code review has held ${path} for more than 30 minutes`);
+    if (Date.now() > deadline) throw new Error("another code review has been running for more than 30 minutes");
     await Bun.sleep(2000);
   }
 }
 
 export interface BatchInput {
   readonly cwd: string;
+  /** The coordination database that holds the one-review-at-a-time slot. */
+  readonly db: CoordDb;
   /** The landing's base: where the reviewed ref starts when it is missing. */
   readonly base: string | undefined;
   readonly head: string;
@@ -152,7 +153,7 @@ export interface BatchInput {
  * from the reviewed ref to `head` and moves the ref after the findings are filed.
  */
 export async function reviewBatch(i: BatchInput): Promise<Result<void>> {
-  const lock = await takeLock(i.cwd, !i.noWait);
+  const lock = await takeLock(i.db, !i.noWait);
   if (lock === "busy") {
     i.say("another code review is running; it covers this range");
     return ok(undefined);
@@ -230,7 +231,7 @@ export function startTrailingReview(ws: Workspace, say: Say): string | undefined
   const commands = ws.config.hooks.after_land.filter((c) => c.includes("scripts/code-review.ts"));
   if (commands.length === 0) return undefined;
   const u = unreviewed(ws);
-  if (!u || !u.due || reviewRunning(ws.primary)) return undefined;
+  if (!u || !u.due || reviewRunning(ws.db)) return undefined;
   const log = join(dirname(ws.db.db.filename), "logs", "code-review-trailing.log");
   mkdirSync(dirname(log), { recursive: true });
   const fd = openSync(log, "a");

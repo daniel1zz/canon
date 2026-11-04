@@ -35,6 +35,7 @@ if (!head || (!base && !force)) {
 }
 const r = await reviewBatch({
   cwd: ws.value.primary,
+  db: ws.value.db,
   base,
   head,
   ai: process.env["CANON_CODE_REVIEW_AI"] || "claude -p --output-format text",

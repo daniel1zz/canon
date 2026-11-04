@@ -65,6 +65,13 @@ CREATE TABLE IF NOT EXISTS watcher (
   sha        TEXT,                     -- the commit it is testing
   started_at TEXT NOT NULL
 );
+-- The one post-land code review running for this repository, by pid and process start (BR-2314, D-11).
+CREATE TABLE IF NOT EXISTS code_reviewer (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  pid        INTEGER NOT NULL,
+  pid_start  TEXT NOT NULL,
+  started_at TEXT NOT NULL
+);
 -- "main is failing": at most one row, from the background floor's last failure until it passes (BR-2220, BR-2221).
 CREATE TABLE IF NOT EXISTS red_main (
   id         INTEGER PRIMARY KEY CHECK (id = 1),
