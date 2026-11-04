@@ -10,7 +10,7 @@ export const DEFAULT_REVIEW = "claude -p --model sonnet --output-format text";
 /** How to set a reviewer, first; then that turning the review off is the owner's call, landed by itself (BR-2074, BR-2295, D-51). */
 export const REVIEW_WAYS_OUT = [
   `  set a reviewer in canon/config.yaml, a command that reads the review prompt on stdin and prints the verdict JSON on stdout: review: "${DEFAULT_REVIEW}"`,
-  `  review: ${REVIEW_NONE} turns the review off: that is the owner's decision, not an agent's; ask with canon human ask, and with their yes land that canon/config.yaml change as a change of its own`,
+  `  review: ${REVIEW_NONE} turns the review off: ask the owner first with canon human ask (canon does not check who sets it), and with their yes land that canon/config.yaml change as a change of its own`,
 ];
 
 /**

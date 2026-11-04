@@ -622,6 +622,7 @@ describe("duplicate review of standing instructions at land", () => {
         expect(out.kind === "refused" && out.message).toContain("CLAUDE.md");
         expect(out.kind === "refused" && out.message).toContain("review: none");
         expect(out.kind === "refused" && out.message).toContain("canon human ask");
+        expect(out.kind === "refused" && out.message).toContain("canon does not check");
         expect(skipped).toBe(0);
       } else {
         expect(out.kind).toBe("landed");
