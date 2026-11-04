@@ -6,7 +6,7 @@ import type { Change, Corpus, PassRecord, Rule } from "../../knowledge/documents
 import { EXAMPLE_SECTION, RULE_SECTION, section } from "../../knowledge/documents/templates.ts";
 import type { WordingQuestion } from "../../knowledge/review/review.ts";
 import type { CoordDb } from "../db.ts";
-import { earlierLandings, hasPassesAt, passedVersion, plan, recordsOf, type Missing, type Plan } from "./evidence.ts";
+import { earlierLandings, hasPassesAt, passedVersion, plan, recordsOf, rulesAt, type Missing, type Plan } from "./evidence.ts";
 
 /** The execution checks a landing runs (D-32): before the close commit (BR-2241) and on the tree that becomes main (BR-2240, BR-2242, BR-2244). */
 
@@ -30,7 +30,7 @@ export function missingMessage(change: string, missing: readonly Missing[]): str
   const lines = missing.map((m) =>
     `  - ${m.id}: change a line in a running test whose title names ${m.id}${m.untested ? `, or, as it has untested:, add a line "- ${m.id}：<怎么验的> → <看到了什么>" under ## 验收 in ${change}` : ""}`,
   );
-  return `${change} executes ${missing.length} rule(s) with no evidence of this execution (BR-2241, D-32): each rule in its rules: that is active and has no pass record of its current text needs one:\n${lines.join("\n")}\nA rule that only changed wording since it last passed needs no evidence when its ## 例子 is unchanged (BR-2243). Commit, then land --finish again.`;
+  return `${change} executes ${missing.length} rule(s) with no evidence of this execution (BR-2241, D-32): each rule it executes, the ones in its rules: and every one its landings changed the ## 规则 or ## 例子 of, that is active and has no pass record of its current text needs one:\n${lines.join("\n")}\nA rule that only changed wording since it last passed needs no evidence when its ## 例子 is unchanged (BR-2243). Commit, then land --finish again.`;
 }
 
 export type LandingExecution =
@@ -143,22 +143,6 @@ export function landingExecution(i: Input): LandingExecution {
     wording.push({ id, title: rule.title, before: before ? (section(before.body, RULE_SECTION) ?? "") : "", after: section(rule.body, RULE_SECTION) ?? "", examples: section(rule.body, EXAMPLE_SECTION) ?? "" });
   }
   return { ok: true, wording };
-}
-
-/** Status and behaviour hash of the rules `ids` in the tree at `ref`, by id, wherever under canon/rules their files are. */
-function rulesAt(wt: string, ref: string, ids: ReadonlySet<string>): Map<string, { status: string; hash: string }> {
-  const out = new Map<string, { status: string; hash: string }>();
-  const files = git(wt, "-c", "core.quotePath=false", "ls-tree", "-r", "--name-only", ref, "--", "canon/rules");
-  if (!files.ok) return out;
-  for (const path of files.value.split("\n")) {
-    const id = path.split("/").pop()?.replace(/\.md$/, "");
-    if (!id || !ids.has(id)) continue;
-    const text = git(wt, "show", `${ref}:${path}`);
-    const parsed = text.ok ? parseDocFile(text.value, path) : undefined;
-    if (!parsed?.ok) continue;
-    out.set(id, { status: String(parsed.value.meta["status"] ?? "active"), hash: behaviourHash(parsed.value.body) });
-  }
-  return out;
 }
 
 /** BR-2239: the rules the review did not judge as wording-only edits; empty when every one is "wording". */

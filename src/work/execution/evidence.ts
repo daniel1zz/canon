@@ -65,9 +65,10 @@ export function plan(input: PlanInput): Plan {
   const others = recordsOf(corpus, change.id);
   const rules = new Map(corpus.docs.filter((d): d is Rule => d.kind === "rule").map((r) => [r.id, r]));
   const touched = touchedRules(input);
+  const executed = executedRules(input);
   const records: Record<string, PassRecord> = {};
   const missing: Missing[] = [];
-  for (const id of [...new Set(change.rules)]) {
+  for (const id of executed) {
     const rule = rules.get(id);
     if (!rule || rule.status !== "active") continue;
     const hash = behaviourHash(rule.body);
@@ -82,14 +83,49 @@ export function plan(input: PlanInput): Plan {
     }
   }
   if (!input.mainHasPasses) {
-    const listed = new Set(change.rules);
     const tested = testedRules(input.root, input.config, corpus);
     for (const rule of rules.values()) {
-      if (rule.status !== "active" || listed.has(rule.id) || !tested.has(rule.id)) continue;
+      // reason: a rule the change edits is executed by it, so it is never migrated as if no one had touched it (BR-2245, issue #104)
+      if (rule.status !== "active" || executed.has(rule.id) || !tested.has(rule.id)) continue;
       records[rule.id] = { hash: behaviourHash(rule.body), method: "migration", wording: false };
     }
   }
   return { records: sorted(records), missing };
+}
+
+/**
+ * BR-2241: the rules this execution covers, the change's `rules:` and every rule one of its landings changed the
+ * behaviour hash of, compared by id between each range's base and head; a pure move keeps its hash and stays out.
+ */
+export function executedRules(input: Pick<PlanInput, "root" | "change" | "ranges" | "corpus">): Set<string> {
+  const out = new Set(input.change.rules);
+  const prefix = `${input.corpus.types.find((t) => t.name === "rule")!.prefix}-`;
+  for (const r of input.ranges) {
+    const diff = git(input.root, "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", r.base, r.head, "--", "canon/rules");
+    if (!diff.ok) continue;
+    const ids = new Set(diff.value.split("\n").map((p) => p.split("/").pop()?.replace(/\.md$/, "") ?? "").filter((id) => id.startsWith(prefix)));
+    if (ids.size === 0) continue;
+    const before = rulesAt(input.root, r.base, ids);
+    const after = rulesAt(input.root, r.head, ids);
+    for (const id of ids) if (before.get(id)?.hash !== after.get(id)?.hash) out.add(id);
+  }
+  return out;
+}
+
+/** Status and behaviour hash of the rules `ids` in the tree at `ref`, by id, wherever under canon/rules their files are. */
+export function rulesAt(root: string, ref: string, ids: ReadonlySet<string>): Map<string, { status: string; hash: string }> {
+  const out = new Map<string, { status: string; hash: string }>();
+  const files = git(root, "-c", "core.quotePath=false", "ls-tree", "-r", "--name-only", ref, "--", "canon/rules");
+  if (!files.ok) return out;
+  for (const path of files.value.split("\n")) {
+    const id = path.split("/").pop()?.replace(/\.md$/, "");
+    if (!id || !ids.has(id)) continue;
+    const text = git(root, "show", `${ref}:${path}`);
+    const parsed = text.ok ? parseDocFile(text.value, path) : undefined;
+    if (!parsed?.ok) continue;
+    out.set(id, { status: String(parsed.value.meta["status"] ?? "active"), hash: behaviourHash(parsed.value.body) });
+  }
+  return out;
 }
 
 function sorted(records: Record<string, PassRecord>): Record<string, PassRecord> {

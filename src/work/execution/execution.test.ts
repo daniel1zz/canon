@@ -155,6 +155,77 @@ describe("evidence at --finish (BR-2241)", () => {
     expect(changeOn(root, "main", s.change).passes).toEqual({});
     expect(readFileSync(changePath(root, s.change), "utf8")).not.toContain("passes:");
   }, TIMED);
+
+  test("BR-2241: a line deleted inside the running test that names the rule is evidence", async () => {
+    const root = fixture({ files: { "src/billing/a.test.ts": `it("${br(1)}: case", () => {\n  expect(1).toBe(1);\n  expect(0).toBe(0);\n});\n${testFile([2])}` } });
+    await migrated(root);
+    const s = startNew(root, "Delete a line");
+    setChange(s.worktree, s.change, [br(1)]);
+    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { examples: "- input 1 → output 10" }), "src/billing/a.test.ts": `it("${br(1)}: case", () => {\n  expect(1).toBe(1);\n});\n${testFile([2])}` });
+    const out = await land(ws(s.worktree), FINISH, quiet);
+    expect(out.kind).toBe("landed");
+    expect(changeOn(root, "main", s.change).passes[br(1)]).toMatchObject({ method: "test" });
+  }, TIMED);
+});
+
+describe("rules a change edits without listing them (BR-2241, issue #104)", () => {
+  test("BR-2241: an example edit to a rule left out of rules: needs evidence like a listed one; with its test changed it gets a record", async () => {
+    const root = fixture();
+    await migrated(root);
+    const s = startNew(root, "Unlisted edit");
+    setChange(s.worktree, s.change, []);
+    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { examples: "- input 1 → output 10" }) });
+    const head = sh(s.worktree, "rev-parse", "HEAD");
+    const refused = await land(ws(s.worktree), FINISH, quiet);
+    expect(refused.kind === "refused" && refused.reason).toBe("evidence");
+    expect(refused.kind === "refused" && refused.message).toContain(br(1));
+    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(head);
+    write(s.worktree, { "src/billing/a.test.ts": testFile([1, 2]).replace("toBe(1)", "toBe(1); // output 10") });
+    const out = await land(ws(s.worktree), FINISH, quiet);
+    expect(out.kind).toBe("landed");
+    expect(changeOn(root, "main", s.change).passes).toEqual({ [br(1)]: { hash: hashOf(root, 1), method: "test", wording: false } });
+  }, TIMED * 2);
+
+  test("BR-2241 BR-2243: a statement-only edit to a rule left out of rules: goes to the review as a wording judgement", async () => {
+    const root = fixture();
+    const prompt = join(root, "..", `${root.split("/").pop()}-prompt.txt`);
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: ["src/**/*.test.ts"]\nreview: ${JSON.stringify(`cat > ${prompt}; echo '{"verdict":"ok","findings":[],"wording":{"${br(2)}":"wording"}}'`)}\n`);
+    sh(root, "commit", "-qam", "review");
+    await migrated(root);
+    const s = startNew(root, "Unlisted reword");
+    setChange(s.worktree, s.change, []);
+    write(s.worktree, { [`canon/rules/billing/${br(2)}.md`]: ruleText(2, { statement: "Statement two, reworded." }) });
+    const out = await land(ws(s.worktree), FINISH, quiet);
+    expect(out.kind).toBe("landed");
+    expect(changeOn(root, "main", s.change).passes).toEqual({ [br(2)]: { hash: hashOf(root, 2), method: "migration", wording: true } });
+    expect(readFileSync(prompt, "utf8")).toContain("# Wording judgements");
+  }, TIMED);
+
+  test("BR-2241: a rule only moved, a title-only edit, and a rule retired, none listed, need no evidence and get no record", async () => {
+    const root = fixture({ files: { [`canon/rules/billing/${br(3)}.md`]: ruleText(3), "src/billing/c.test.ts": testFile([3]) } });
+    await migrated(root);
+    const s = startNew(root, "Move only");
+    setChange(s.worktree, s.change, []);
+    mkdirSync(join(s.worktree, "canon/rules/billing/refunds"), { recursive: true });
+    writeFileSync(join(s.worktree, "canon/rules/billing/refunds/README.md"), "# billing/refunds\n\n## 术语\n\n- **退款**：钱退回\n");
+    renameSync(join(s.worktree, `canon/rules/billing/${br(1)}.md`), join(s.worktree, `canon/rules/billing/refunds/${br(1)}.md`));
+    sh(s.worktree, "rm", "-q", "src/billing/c.test.ts");
+    write(s.worktree, { [`canon/rules/billing/${br(2)}.md`]: ruleText(2, { title: "Retitled" }), [`canon/rules/billing/${br(3)}.md`]: ruleText(3, { status: "retired", examples: "- gone → yes" }) });
+    const out = await land(ws(s.worktree), FINISH, quiet);
+    expect(out.kind).toBe("landed");
+    expect(changeOn(root, "main", s.change).passes).toEqual({});
+  }, TIMED);
+
+  test("BR-2241: a new active rule left out of rules: needs evidence", async () => {
+    const root = fixture();
+    await migrated(root);
+    const s = startNew(root, "New rule");
+    setChange(s.worktree, s.change, []);
+    write(s.worktree, { [`canon/rules/billing/${br(6)}.md`]: ruleText(6, { untested: "provider" }) });
+    const out = await land(ws(s.worktree), FINISH, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("evidence");
+    expect(out.kind === "refused" && out.message).toContain(br(6));
+  }, TIMED);
 });
 
 describe("the close commit's records (BR-2242)", () => {
@@ -377,9 +448,19 @@ describe("migration (BR-2245)", () => {
     // reason: the first close migrates BR-2 and BR-3; rule 3 then changes, so a second migration would show
     expect((await land(ws(first.worktree), FINISH, quiet)).kind).toBe("landed");
     const s = startNew(root, "Second");
-    write(s.worktree, { [`canon/rules/billing/${br(3)}.md`]: ruleText(3, { examples: "- changed → yes" }) });
+    write(s.worktree, { [`canon/rules/billing/${br(3)}.md`]: ruleText(3, { examples: "- changed → yes" }), "src/billing/b.test.ts": testFile([3]).replace("toBe(3)", "toBe(3); // changed") });
     expect((await land(ws(s.worktree), FINISH, quiet)).kind).toBe("landed");
-    expect(changeOn(root, "main", s.change).passes).toEqual({});
+    expect(changeOn(root, "main", s.change).passes).toEqual({ [br(3)]: { hash: hashOf(root, 3), method: "test", wording: false } });
+  }, TIMED);
+
+  test("BR-2245: in the first close, a tested rule the change edits without listing it is executed, not migrated", async () => {
+    const root = fixture();
+    const s = startNew(root, "First, unlisted edit");
+    setChange(s.worktree, s.change, []);
+    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { examples: "- input 1 → output 10" }) });
+    const out = await land(ws(s.worktree), FINISH, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("evidence");
+    expect(out.kind === "refused" && out.message).toContain(br(1));
   }, TIMED);
 
   test("BR-2245: a hand-written migration record in a landing after main holds records is refused with reason passes", async () => {

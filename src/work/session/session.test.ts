@@ -463,6 +463,22 @@ describe("same-file overlap", () => {
     expect(notices(root)).toEqual([]);
   });
 
+  test("BR-2062 BR-2241: a --finish landing refused for missing evidence prints no overlap notice", async () => {
+    const root = project();
+    const a = startNew(root, "A");
+    const b = startNew(root, "B");
+    commitFile(b.worktree, "shared.txt", "b\n");
+    mkdirSync(join(a.worktree, "canon/rules/billing"), { recursive: true });
+    const id = ["BR", 1].join("-");
+    commitFile(a.worktree, `canon/rules/billing/${id}.md`, `---\nid: ${id}\ntitle: Refund\nuntested: provider\n---\n## 规则\n\nRefunds go back.\n\n## 例子\n\n- refund → shown\n`);
+    commitFile(a.worktree, "shared.txt", "a\n");
+    const lines: string[] = [];
+    const out = await land(ws(a.worktree), { ...FAST, finish: true }, (l) => lines.push(l));
+    expect(out.kind === "refused" && out.reason).toBe("evidence");
+    expect(lines.some((l) => l.startsWith("overlap:"))).toBe(false);
+    expect(notices(root)).toEqual([]);
+  });
+
   test("BR-2062: restarting a change whose branch already overlaps another prints the notice; a fresh change does not", () => {
     const root = project();
     mkdirSync(join(root, "canon/changes"), { recursive: true });
