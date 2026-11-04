@@ -84,17 +84,15 @@ describe("canon verdict pending", () => {
   test("BR-2253: existing verdicts show per finding; fully judged, unlanded and finding-less refusals are not listed; the author still sees it", () => {
     const root = project();
     const db = dbOf(root);
-    const { block } = blocked(root, db, "C-1", ["first", "second"]);
+    const { block } = blocked(root, db, "C-1", ["first", "second", "third"]);
     db.event("agent:j", "review.verdict", "C-1", { block, finding: 1, verdict: "real", judge: "model", reason: "r" });
     db.event("human:h", "review.verdict", "C-1", { block, finding: 2, verdict: "spurious", judge: "human", reason: "r" });
-    expect(renderPending(pendingBlocks(db))).toContain("  1. model real · human - · first\n  2. model - · human spurious · second");
-    db.event("agent:z", "review.block", "C-2", { docs: [], findings: ["never landed"] });
+    expect(renderPending(pendingBlocks(db))).toContain("  1. model real · human - · first\n  2. model - · human spurious · second\n  3. model - · human - · third");
+    db.event("agent:z", "review.block", "C-2", { docs: [], findings: ["never landed"], commit: "c" });
     db.event("agent:z", "land.refuse", "C-2", { reason: "review", message: "m", diff: "d" });
     db.event("agent:z", "land.refuse", "C-3", { reason: "review", message: "the rule review could not run", diff: "d" });
     db.event("agent:z", "land.ok", "C-3", { sha: "s3", diff: "e" });
     expect(pendingBlocks(db).map((b) => b.subject)).toEqual(["C-1"]);
-    db.event("human:h", "review.verdict", "C-1", { block, finding: 1, verdict: "real", judge: "human", reason: "r" });
-    db.event("agent:j", "review.verdict", "C-1", { block, finding: 2, verdict: "real", judge: "model", reason: "r" });
     expect(renderPending([])).toBe("(nothing to judge)");
   });
 
@@ -203,7 +201,7 @@ describe("canon stats review finding verdicts", () => {
     for (const [judge, counts] of [["model", model], ["human", human]] as const) {
       let n = 0; // each judge judges findings from the first block's first finding on
       for (const [verdict, k] of Object.entries(counts))
-        for (let i = 0; i < k; i++, n++) db.event(`${judge === "model" ? "agent" : "human"}:j`, "review.verdict", "C-x", { block: 1 + Math.floor(n / perBlock), finding: 1 + (n % perBlock), verdict, judge, reason: "r" });
+        for (let i = 0; i < k; i++, n++) db.event(`${judge === "model" ? "agent" : "human"}:j`, "review.verdict", "C-x", { block: 1 + 3 * Math.floor(n / perBlock), finding: 1 + (n % perBlock), verdict, judge, reason: "r" });
     }
     return db;
   }
