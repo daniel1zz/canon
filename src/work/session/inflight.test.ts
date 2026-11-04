@@ -102,6 +102,7 @@ describe("changes that so far exist only on their branch", () => {
     ws(root).db.db.query("DELETE FROM claims").run(); // its session ended without a handoff
     expect(rows(canon(root, "change", "list").out)).toEqual([`${id(2)}      open       Only on branch  (on branch ${branch})`, `${id(1)}      open       Change 1`]);
     expect(canon(root, "brief").out).toContain(`${PICK}${id(2)} (on branch ${branch}), ${id(1)}\n`);
+    expect(PICK).toContain("unclaimed, not ambiguous"); // the line tells agents to skip what start would refuse (BR-2293)
   });
 
   test("BR-2291: once main has the change as done, a leftover branch lists it only with --all and without the branch mark", () => {
@@ -167,6 +168,7 @@ describe("unusual change branches", () => {
     const fine = mainWithC1();
     expect(canon(fine, "change", "list").code).toBe(0);
     expect(canon(fine, "brief").out).not.toContain("Unreadable change file");
+    expect(brief.out).toContain(`${PICK}${id(1)}\n`); // the rest is still offered, worded as change list is (BR-2149)
   });
 
   test("BR-2293: a change with several of its branches is listed once, marked ambiguous with all of them, and start refuses it; one branch is plain", () => {
