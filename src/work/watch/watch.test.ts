@@ -265,3 +265,38 @@ describe("a passing main", () => {
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT count(*) AS n FROM events WHERE kind = 'hook.run'").get()!.n).toBe(0);
   });
 });
+
+describe("a background result is recorded whole", () => {
+  test("BR-2220: when the failing-main record cannot be written, no floor.fail is left either, so the commit is tested again and recorded", async () => {
+    const { root } = watched();
+    const x = commit(root, "FAIL", "x\n");
+    const db = ws(root).db.db;
+    db.run("CREATE TRIGGER block_red BEFORE INSERT ON red_main BEGIN SELECT RAISE(ABORT, 'blocked'); END");
+    const first = await watch(ws(root), quiet);
+    expect(first.ok).toBe(false);
+    expect(results(root)).toEqual([]);
+    expect(redMain(ws(root).db)).toBeUndefined();
+    db.run("DROP TRIGGER block_red");
+    const again = await watch(ws(root), quiet);
+    expect(again.ok).toBe(true);
+    expect(results(root).map((r) => [r.kind, r.sha])).toEqual([["floor.fail", x]]);
+    expect(redMain(ws(root).db)?.sha).toBe(x);
+  });
+
+  test("BR-2222: when the failing-main record cannot be cleared after a pass, no floor.pass is left either, and the next run clears it", async () => {
+    const { root } = watched();
+    const bad = commit(root, "FAIL", "x\n");
+    expect((await watch(ws(root), quiet)).ok).toBe(true);
+    expect(redMain(ws(root).db)?.sha).toBe(bad);
+    const good = commit(root, "FAIL", null);
+    const db = ws(root).db.db;
+    db.run("CREATE TRIGGER keep_red BEFORE DELETE ON red_main BEGIN SELECT RAISE(ABORT, 'blocked'); END");
+    expect((await watch(ws(root), quiet)).ok).toBe(false);
+    expect(results(root).map((r) => r.kind)).toEqual(["floor.fail"]);
+    expect(redMain(ws(root).db)).toBeDefined();
+    db.run("DROP TRIGGER keep_red");
+    expect((await watch(ws(root), quiet)).ok).toBe(true);
+    expect(results(root).map((r) => [r.kind, r.sha])).toEqual([["floor.fail", bad], ["floor.pass", good]]);
+    expect(redMain(ws(root).db)).toBeUndefined();
+  });
+});

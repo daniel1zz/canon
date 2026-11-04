@@ -216,17 +216,32 @@ async function testCommit(ws: Workspace, say: Say, sha: string, running: Running
       closeSync(fd);
     }
     const passed = code === 0;
-    ws.db.event(ws.actor, passed ? "floor.pass" : "floor.fail", null, { sha, log, exit: code, ...(passed ? {} : { why }) });
+    // reason: the result event is what marks a commit tested (tested()), so it is written in one transaction with the
+    // failing-main record it implies; a watcher killed before that commit leaves neither, and the commit is tested again (#86).
+    const record = (write: () => void): Result<void> => {
+      try {
+        ws.db.db.transaction(() => {
+          ws.db.event(ws.actor, passed ? "floor.pass" : "floor.fail", null, { sha, log, exit: code, ...(passed ? {} : { why }) });
+          write();
+        }).immediate();
+        return ok(undefined);
+      } catch (e) {
+        return err("io", `cannot record the background floor's result for ${sha.slice(0, 9)} (${(e as Error).message}); it is tested again next time`);
+      }
+    };
     if (!passed) {
       const green = git(ws.primary, "rev-parse", "--verify", "--quiet", GREEN_REF);
       const tail = readFileSync(log, "utf8").split("\n").slice(-40).join("\n");
-      recordFailure(ws.db, { sha, log, tail, green: green.ok && green.value !== "" ? green.value : null });
+      const recorded = record(() => recordFailure(ws.db, { sha, log, tail, green: green.ok && green.value !== "" ? green.value : null }));
+      if (!recorded.ok) return recorded;
       say(`floor watch: ${ws.config.main} ${sha.slice(0, 9)} failed (${why}); recorded for a fix change (canon work start --fix-main)`);
       return ok({ sha, passed, log });
     }
     say(`floor watch: ${ws.config.main} ${sha.slice(0, 9)} passed`);
+    // reason: the ref moves before the pass is recorded, so a watcher killed in between only makes the commit be tested again (#86).
     markGreen(ws, sha, say);
-    clearRedMain(ws.db);
+    const recorded = record(() => clearRedMain(ws.db));
+    if (!recorded.ok) return recorded;
     if (config.ok && config.value.floorTiming === "after" && config.value.hooks.after_green.length > 0) {
       const env = { CANON_GREEN: sha, CANON_PRIMARY: ws.primary };
       await runHooks({ db: ws.db, actor: ws.actor, event: "after_green", change: null, cwd: dir, env }, config.value.hooks.after_green, say, false);
