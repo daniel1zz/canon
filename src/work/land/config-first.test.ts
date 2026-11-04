@@ -111,3 +111,50 @@ describe("a config key added and used in one landing", () => {
     expect(sh(root, "show", "main:canon/config.yaml")).toContain("typecheck_command");
   }, TIMED);
 });
+
+const CHECKS_FILE = "src/work/stats/checks.ts";
+const checkList = (...names: string[]) => `export const CHECKS = [${names.map((n) => `"${n}"`).join(", ")}];\n`;
+const withReview = (wt: string) => readFileSync(join(wt, "canon/config.yaml"), "utf8") + 'check_reviews:\n  passes: "2027-02-04"\n';
+
+/** A canon-like project whose main also declares the checks `floor` and `check` in a checks.ts. */
+function canonWithChecks(): string {
+  const root = canonLike();
+  mkdirSync(join(root, dirname(CHECKS_FILE)), { recursive: true });
+  writeFileSync(join(root, CHECKS_FILE), checkList("floor", "check"));
+  sh(root, "add", "-A");
+  sh(root, "commit", "-qm", "checks");
+  return root;
+}
+
+describe("a check name added and given a review date in one landing", () => {
+  test("BR-2248: a landing that declares a new check and names it under check_reviews is refused with config-key; main stays", async () => {
+    const root = canonWithChecks();
+    const before = sh(root, "rev-parse", "main");
+    const s = startNew(root, "Check and review");
+    commit(s.worktree, { [CHECKS_FILE]: checkList("floor", "check", "passes"), "canon/config.yaml": withReview(s.worktree) });
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("config-key");
+    const message = out.kind === "refused" ? out.message : "";
+    expect(message).toContain("`passes`");
+    expect(message).toContain("Land the check first");
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+    expect(lastRefusal(root)).toMatchObject({ reason: "config-key" });
+  });
+
+  test("BR-2248: declaring the check without a review date lands; adding the date in a second landing lands", async () => {
+    const root = canonWithChecks();
+    const a = startNew(root, "Check only");
+    commit(a.worktree, { [CHECKS_FILE]: checkList("floor", "check", "passes") });
+    expect((await land(ws(a.worktree), FAST, quiet)).kind).toBe("landed");
+    const b = startNew(root, "Review date");
+    commit(b.worktree, { "canon/config.yaml": withReview(b.worktree) });
+    expect((await land(ws(b.worktree), FAST, quiet)).kind).toBe("landed");
+  });
+
+  test("BR-2248: check names are not compared when main has no checks.ts", async () => {
+    const root = canonLike();
+    const s = startNew(root, "First checks file");
+    commit(s.worktree, { [CHECKS_FILE]: checkList("passes"), "canon/config.yaml": withReview(s.worktree) });
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+  });
+});

@@ -21,7 +21,7 @@ import { hasLessons, LESSONS_SECTION } from "../../knowledge/documents/templates
 import { addWorktree, git, gitEnv, isClean, listWorktreesLocked, pruneWorktrees, removeWorktree } from "../../kernel/git.ts";
 import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, type DeletedDoc } from "../../knowledge/review/review.ts";
 import { ensureWatcher, pathCanonReads, timingOf } from "../watch/watch.ts";
-import { keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
+import { checksAddedAndReviewed, checksAddedAndReviewedMessage, keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
 import { landingExecution, missingMessage, passesMeta, planClose, unconfirmedWording, wordingMessage } from "../execution/landing.ts";
 
 /**
@@ -682,10 +682,14 @@ async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: { wt:
   const base = { value: v.base };
   const head = { value: v.head };
   const refuse = (reason: StepFailure["reason"], message: string, findings?: readonly Finding[]): StepFailure => ({ ok: false, reason, message, ...(findings ? { findings } : {}) });
-  // A config key added to canon's code and used in canon/config.yaml in one landing breaks every older canon (BR-2248).
+  // A config key or check name added to canon's code and used in canon/config.yaml in one landing breaks every older canon (BR-2248).
   const added = keysAddedAndUsed(wt, v.main, v.head);
   if (!added.ok) return refuse("environment", added.error.message);
-  if (added.value.length > 0) return refuse("config-key", keysAddedAndUsedMessage(added.value, v.main));
+  const dated = checksAddedAndReviewed(wt, v.main, v.head);
+  if (!dated.ok) return refuse("environment", dated.error.message);
+  // reason: the same check as a new config key, since an older canon rejects both alike; one reason, one message per kind (BR-2248)
+  const unknown = [...(added.value.length > 0 ? [keysAddedAndUsedMessage(added.value, v.main)] : []), ...(dated.value.length > 0 ? [checksAddedAndReviewedMessage(dated.value, v.main)] : [])];
+  if (unknown.length > 0) return refuse("config-key", unknown.join("\n"));
   const read = readCorpus(wt, ws.config.types, ws.config);
   const tests = testFilesFor(wt, ws.config);
   // reason: the tree that is landing decides which paths may skip the floor (BR-2164), so it decides which test reads matter (BR-2181)
