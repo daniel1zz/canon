@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import type { Say, Workspace } from "../workspace.ts";
 import { type Finding } from "../../knowledge/check/check.ts";
 import { bindToLander, keepClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
-import { enter, failForConflict, failIfActive, finishEntry, heartbeat, holdsTurn, isSolo, tryTurn } from "./queue/queue.ts";
+import { enter, failForConflict, failIfActive, finishEntry, heartbeat, holdsTurn, isSolo, settleLocked, tryTurn } from "./queue/queue.ts";
 import { selfProcess, sessionProcess } from "../claims/liveness.ts";
 import { noticeOverlaps } from "../session/overlap.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
@@ -68,7 +68,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     // reason: only while this lander still owns the entry; a later landing may have taken it back as its kept place (BR-2177, issue #45).
     if (entry === undefined) {
       if (close) reopen(wt, close, say);
-    } else if (failIfActive(ws.db, entry, "killed", lander ?? null)) {
+    } else if (waitWhileLocked(ws, entry, say) && failIfActive(ws.db, entry, "killed", lander ?? null)) {
       ws.db.event(ws.actor, "land.killed", subject, { signal, rebaseAborted: aborted });
       if (close) reopen(wt, close, say);
     }
@@ -126,6 +126,24 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     process.off("SIGTERM", onSignal);
     process.off("SIGINT", onSignal);
   }
+}
+
+/**
+ * A lander signalled while its leader has it locked in a batch (BR-2172) waits here until the batch is settled: main
+ * moved with it (landed, its close commit stays) or did not (it is waiting again, so the handler gives the entry up
+ * and takes the close commit back itself). Neither it nor the leader decides alone at one instant, so a member still
+ * alive when the leader looks is never skipped by both (BR-2099, BR-2018, issue #43). Blocking on purpose: nothing else
+ * of this landing runs meanwhile. Always true, so it reads as a step of the handler's condition.
+ */
+function waitWhileLocked(ws: Workspace, entry: number, say: Say): true {
+  let said = false;
+  // reason: bounded by the leader: settleLocked frees this entry once the leader stops landing, dies or stops beating (BR-2173).
+  while (settleLocked(ws.db, entry, ws.config.landerStaleMs) === "locked") {
+    if (!said) say("signal received while this landing is locked in a batch whose leader is moving main; waiting for the batch to settle");
+    said = true;
+    Bun.sleepSync(50);
+  }
+  return true;
 }
 
 async function queueAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running }): Promise<LandOutcome> {

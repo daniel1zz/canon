@@ -276,6 +276,32 @@ export function unlockBatch(db: CoordDb, leader: number, members: readonly numbe
   for (const id of members) db.db.query("UPDATE queue SET state = 'waiting', batch = NULL, head = NULL WHERE id = ? AND state = 'landing' AND batch = ?").run(id, leader);
 }
 
+/**
+ * Where a member stands that its leader has locked in (BR-2172), for its signal handler (BR-2099, issue #43):
+ * "locked" while the leader is still landing, alive and beating, so main may still move with it, and its heartbeat is
+ * renewed so no other lander takes it for silent; otherwise a still locked entry is sent back to waiting, as tryTurn
+ * does (BR-2173), and "settled" says the batch has an outcome: the entry is landed, waiting again, or finished.
+ */
+export function settleLocked(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS): "locked" | "settled" {
+  const row = db.db.query<{ state: string; batch: number | null }, [number]>("SELECT state, batch FROM queue WHERE id = ?").get(entryId);
+  if (row?.state !== "landing" || row.batch === null) return "settled";
+  const leader = db.db.query<{ state: string; heartbeat: string; pid: number | null; pid_start: string | null }, [number]>("SELECT state, heartbeat, pid, pid_start FROM queue WHERE id = ?").get(row.batch);
+  // reason: the process probe runs before the transaction, so it never holds the write lock (as in tryTurn).
+  const gone = !leader || leader.pid === null || leader.pid_start === null || isGone({ pid: leader.pid, start: leader.pid_start }) === true;
+  const fresh = iso(new Date(now().getTime() - staleMs));
+  return db.db
+    .transaction((): "locked" | "settled" => {
+      const held = db.db.query<{ state: string; heartbeat: string }, [number]>("SELECT state, heartbeat FROM queue WHERE id = ?").get(row.batch!);
+      if (!gone && held?.state === "landing" && held.heartbeat >= fresh) {
+        if (db.db.query("UPDATE queue SET heartbeat = ? WHERE id = ? AND state = 'landing' AND batch = ?").run(iso(now()), entryId, row.batch).changes > 0) return "locked";
+        return "settled";
+      }
+      db.db.query("UPDATE queue SET state = 'waiting', batch = NULL, head = NULL WHERE id = ? AND state = 'landing' AND batch = ?").run(entryId, row.batch);
+      return "settled";
+    })
+    .immediate();
+}
+
 /** Records a locked member as landed at `sha`, its own commit on main; false when it had left the batch. */
 export function landBatched(db: CoordDb, entryId: number, sha: string): boolean {
   return db.db.query("UPDATE queue SET state = 'landed', result = ?, heartbeat = ? WHERE id = ? AND state = 'landing' AND batch IS NOT NULL").run(sha, iso(now()), entryId).changes > 0;

@@ -2,15 +2,30 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claims } from "../../claims/claims.ts";
-import { enqueue, finishEntry } from "../queue/queue.ts";
+import { enqueue, finishEntry, landBatched, unlockBatch } from "../queue/queue.ts";
 import { land } from "../land.ts";
 import { reopenForGoneLander } from "./batch.ts";
 import { processOf } from "../../claims/liveness.ts";
+import { readCorpus } from "../../../knowledge/documents/read.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
 // under load that alone came within 0.4 s of the 5 s default (C-111), so they get room, not the rest of the file.
 const TIMED = 30_000;
+const CLI = join(import.meta.dir, "../../../cli/main.ts");
+const until = async (what: () => boolean, tries = 400) => {
+  for (let i = 0; i < tries && !what(); i++) await Bun.sleep(25);
+  expect(what()).toBe(true);
+};
+/** Everything a stream has said so far, read in the background. */
+function collect(stream: ReadableStream<Uint8Array>): { text: string } {
+  const seen = { text: "" };
+  void (async () => {
+    const dec = new TextDecoder();
+    for await (const chunk of stream) seen.text += dec.decode(chunk, { stream: true });
+  })();
+  return seen;
+}
 
 describe("batched landings", () => {
   function batchProject(extra = "land_batch_max: 3\n") {
@@ -148,6 +163,51 @@ describe("batched landings", () => {
     expect(reopenForGoneLander(w, { entry: gone, subject: b.change, worktree: b.worktree }, quiet)).toBe(true);
     expect(readFileSync(join(b.worktree, file), "utf8")).toContain("status: open");
   });
+
+  test("BR-2099 BR-2018: a locked member signalled while main moves waits until the batch is settled; unlocked, it takes its own close commit back even though the leader saw it alive", async () => {
+    const { root } = batchProject();
+    const b = startNew(root, "Signalled");
+    const head = sh(b.worktree, "rev-parse", "HEAD");
+    const other = ws(root, "agent:b");
+    const leader = enqueue(other.db, "/leader", "C-98", "agent:b", processOf(process.pid)!); // alive and beating
+    other.db.db.query("UPDATE queue SET state = 'landing' WHERE id = ?").run(leader);
+    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: b.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const out = collect(p.stdout);
+    const entry = () => other.db.db.query<{ id: number; state: string; result: string | null }, [string]>("SELECT id, state, result FROM queue WHERE worktree = ? ORDER BY id DESC LIMIT 1").get(b.worktree);
+    await until(() => entry()?.state === "waiting");
+    expect(sh(b.worktree, "log", "-1", "--format=%s")).toBe(`canon: close ${b.change}`);
+    // The leader took B into its batch and locked it in; now it moves main.
+    other.db.db.query("UPDATE queue SET batch = ?, head = ?, state = 'landing' WHERE id = ?").run(leader, sh(b.worktree, "rev-parse", "HEAD"), entry()!.id);
+    p.kill("SIGTERM");
+    await until(() => out.text.includes("waiting for the batch"));
+    // main was refused (e.g. main-dirty): the leader unlocks B and finds B's lander still alive, so it leaves B alone.
+    unlockBatch(other.db, leader, [entry()!.id]);
+    expect(reopenForGoneLander(other, { entry: entry()!.id, subject: b.change, worktree: b.worktree }, quiet)).toBe(false);
+    expect(await p.exited).toBe(143);
+    expect(entry()).toMatchObject({ state: "failed", result: "killed" });
+    expect(sh(b.worktree, "rev-parse", "HEAD")).toBe(head);
+    expect(readCorpus(b.worktree).corpus.docs.find((d) => d.id === b.change)).toMatchObject({ status: "open" });
+  }, TIMED);
+
+  test("BR-2099 BR-2018: a locked member signalled while main moves exits once it is recorded landed, keeping its close commit", async () => {
+    const { root } = batchProject();
+    const b = startNew(root, "Signalled landed");
+    const other = ws(root, "agent:b");
+    const leader = enqueue(other.db, "/leader", "C-98", "agent:b", processOf(process.pid)!);
+    other.db.db.query("UPDATE queue SET state = 'landing' WHERE id = ?").run(leader);
+    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: b.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const out = collect(p.stdout);
+    const entry = () => other.db.db.query<{ id: number; state: string; result: string | null }, [string]>("SELECT id, state, result FROM queue WHERE worktree = ? ORDER BY id DESC LIMIT 1").get(b.worktree);
+    await until(() => entry()?.state === "waiting");
+    const closed = sh(b.worktree, "rev-parse", "HEAD");
+    other.db.db.query("UPDATE queue SET batch = ?, head = ?, state = 'landing' WHERE id = ?").run(leader, closed, entry()!.id);
+    p.kill("SIGTERM");
+    await until(() => out.text.includes("waiting for the batch"));
+    expect(landBatched(other.db, entry()!.id, closed)).toBe(true); // main moved with B on it
+    expect(await p.exited).toBe(143);
+    expect(entry()!.state).toBe("landed");
+    expect(sh(b.worktree, "log", "-1", "--format=%s")).toBe(`canon: close ${b.change}`);
+  }, TIMED);
 
   test("BR-2173: a member whose commits a dead leader already put on main lands again with nothing new", async () => {
     const root = project();

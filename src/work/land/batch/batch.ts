@@ -160,7 +160,8 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
 /**
  * After a batch was locked but main did not move: a member whose lander process is gone (a signal ended it while
  * it was locked, so it left its close commit, BR-2099) gets its close commit taken back here, as its own landing
- * would have done (BR-2018). A live member reopens it itself if its own landing later fails.
+ * would have done (BR-2018). A live member reopens it itself: a signalled one waits in its handler until it is
+ * unlocked and then takes it back (BR-2099, issue #43), any other one when its own landing later fails.
  */
 export function reopenForGoneLander(ws: Workspace, l: { entry: number; subject: string | null; worktree: string }, say: Say): boolean {
   const row = ws.db.db.query<{ pid: number | null; pid_start: string | null }, [number]>("SELECT pid, pid_start FROM queue WHERE id = ?").get(l.entry);

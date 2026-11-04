@@ -3,7 +3,7 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../../db.ts";
-import { batchCandidates, enqueue, failIfActive, finishEntry, joinBatch, landBatched, leaveBatch, lockBatch, QUEUE_STALE_MS, tryTurn, unlockBatch, type Priority } from "./queue.ts";
+import { batchCandidates, enqueue, failIfActive, finishEntry, joinBatch, landBatched, leaveBatch, lockBatch, QUEUE_STALE_MS, settleLocked, tryTurn, unlockBatch, type Priority } from "./queue.ts";
 import { selfProcess } from "../../claims/liveness.ts";
 
 function db(): CoordDb {
@@ -109,6 +109,22 @@ describe("batches", () => {
     expect(d.db.query<{ batch: number | null }, [number]>("SELECT batch FROM queue WHERE id = ?").get(m)?.batch).toBeNull();
     // now unlocked, a signal ends it like any lander: the entry is given up and its own handler takes the close commit back
     expect(failIfActive(d, m, "killed", me)).toBe(true);
+  });
+
+  test("BR-2099 BR-2018: a signalled locked member stays locked while its leader lands, and is freed to give its entry up once the leader dies or main is settled", () => {
+    const d = db();
+    const me = selfProcess();
+    const lead = enqueue(d, "/wt/a", "C-1", "x", me);
+    const m = enqueue(d, "/wt/b", "C-2", "x", me);
+    expect(tryTurn(d, lead).mine).toBe(true);
+    expect(joinBatch(d, lead, m, "h1")).toBe(true);
+    expect(lockBatch(d, lead, [m])).toBe(true);
+    expect(settleLocked(d, m)).toBe("locked"); // main may still move with it
+    d.db.query("UPDATE queue SET pid = ?, pid_start = ? WHERE id = ?").run(2 ** 22 + 12345, "never", lead); // the leader is SIGKILLed
+    expect(settleLocked(d, m)).toBe("settled");
+    expect(failIfActive(d, m, "killed", me)).toBe(true); // so its own handler gives it up and takes its close commit back
+    const n = enqueue(d, "/wt/c", "C-3", "x", me);
+    expect(settleLocked(d, n)).toBe("settled"); // not in a batch: nothing to wait for
   });
 
   test("BR-2173: a member does not wait behind a leader whose process is gone or that stopped beating (issue #41)", () => {
