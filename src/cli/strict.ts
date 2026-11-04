@@ -45,6 +45,42 @@ export function resolve(main: CommandDef<ArgsDef>, raw: readonly string[]): Reso
 }
 
 /**
+ * A string option always takes the next word as its value, also one that starts with "-" (BR-2228): citty would read
+ * `--title -x` as two options, so such a pair is joined into `--title=-x`, which citty reads as the value. Walks the
+ * levels the way `resolve` does, so each word is matched against the options of the command it belongs to.
+ * Pairs whose value does not start with "-" are left as they are: citty already reads them right.
+ */
+export function bindValues(main: CommandDef<ArgsDef>, raw: readonly string[]): string[] {
+  const out: string[] = [];
+  let cmd = main;
+  let descending = true;
+  for (let i = 0; i < raw.length; i++) {
+    const a = raw[i]!;
+    if (a === "--") {
+      out.push(...raw.slice(i));
+      break;
+    }
+    if (!a.startsWith("-") || a === "-") {
+      const subs = subsOf(cmd);
+      const sub = descending && Object.hasOwn(subs, a) ? subs[a] : undefined;
+      if (sub) cmd = sub;
+      else descending = false;
+      out.push(a);
+      continue;
+    }
+    const next = raw[i + 1];
+    const def = a.startsWith("--") && !a.includes("=") ? argsOf(cmd)[a.slice(2)] : undefined;
+    if (def && (def.type ?? "string") === "string" && next !== undefined && next.startsWith("-")) {
+      out.push(`${a}=${next}`);
+      i++;
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
+/**
  * Every argument a command line passes must be one its command declares (BR-2097): an unknown `--flag`
  * is silently ignored by citty, so `--dry-run` on a command without it would really run.
  * Mirrors citty's parser: `--name value` / `--name=value` for strings, `--name`, `--no-name`, `--name true|false`
@@ -92,8 +128,8 @@ export function unknownArgument(cmd: CommandDef<ArgsDef>, name: string, args: re
       if (v === undefined && (args[i + 1] === "true" || args[i + 1] === "false")) i++;
       continue;
     }
-    // reason: citty takes the next word as the value unless it starts with "-" (string flags only)
-    if (eq < 0 && i + 1 < args.length && !args[i + 1]!.startsWith("-")) i++;
+    // reason: a string option always takes the next word, also one starting with "-" (BR-2228; bindValues joins such pairs for citty)
+    if (eq < 0 && i + 1 < args.length) i++;
   }
   if (given.length > positionals && !(positionals > 0 && variadic.has(cmd))) {
     const extra = JSON.stringify(given[positionals]);

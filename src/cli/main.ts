@@ -1,7 +1,7 @@
 #!/usr/bin/env bun
 import { defineCommand, renderUsage, runCommand } from "citty";
 import { assemble, EXIT } from "./command.ts";
-import { argumentProblem, resolve } from "./strict.ts";
+import { argumentProblem, bindValues, resolve } from "./strict.ts";
 import { installCommands } from "./install/commands.ts";
 import { configCommands } from "../config/commands.ts";
 import { referenceCommands } from "../config/reference/commands.ts";
@@ -50,7 +50,8 @@ const main = defineCommand({
  * unexpected exceptions (bugs) exit 70 (D-4). Help prints usage to stdout and exits 0, before any argument check.
  */
 async function run(): Promise<void> {
-  const raw = process.argv.slice(2);
+  // reason: `--title -x` gives the title "-x", not an unknown option -x (BR-2228)
+  const raw = bindValues(main, process.argv.slice(2));
   const at = resolve(main, raw);
   // reason: after `--` every word is a positional argument, `--help` included, as citty parses it (BR-2194)
   const options = raw.includes("--") ? raw.slice(0, raw.indexOf("--")) : raw;

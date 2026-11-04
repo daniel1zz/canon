@@ -61,6 +61,17 @@ describe("canon init names main after the current branch", () => {
     expect(existsSync(join(root, ".claude/skills"))).toBe(false);
   });
 
+  test("BR-2032 BR-2124: a detached HEAD refuses with 4 before someone else's git hook would refuse with 5", () => {
+    const root = repo("main");
+    sh(root, "commit", "-q", "--allow-empty", "-m", "first");
+    sh(root, "checkout", "-q", "--detach");
+    const hook = join(root, sh(root, "rev-parse", "--git-path", "hooks"), "reference-transaction");
+    mkdirSync(join(hook, ".."), { recursive: true });
+    writeFileSync(hook, "#!/bin/sh\nexit 0\n");
+    expect(canon(root, "init").code).toBe(4);
+    expect(readFileSync(hook, "utf8")).toBe("#!/bin/sh\nexit 0\n");
+  });
+
   test("BR-2032: a detached HEAD with canon/config.yaml already there runs and leaves the config as it was", () => {
     const root = repo("main");
     mkdirSync(join(root, "canon"));
