@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { holdClaim, takeClaim } from "../claims/claims.ts";
 import { processOf, type Proc } from "../claims/liveness.ts";
@@ -207,6 +207,9 @@ describe("the lessons reminder comes last", () => {
     expect(stopLines.at(-1)).toBe(LESSON_REMINDER);
     expect(stopLines.findIndex((l) => l.includes("stopped-hook"))).toBeGreaterThan(-1);
     writeFileSync(join(s.worktree, `canon/rules/billing/${rule}.md`), `---\nid: ${rule}\ntitle: 退款\nstatus: active\nuntested: fixture\n---\n## 规则\n\n退款。\n\n## 例子\n\n- 退 → 退\n`);
+    // reason: the new active rule is executed by this change, so its close needs evidence: an acceptance line (BR-2241)
+    const changeFile = join(s.worktree, "canon/changes", readdirSync(join(s.worktree, "canon/changes")).find((f) => f.startsWith(`${s.change}-`) || f === `${s.change}.md`)!);
+    writeFileSync(changeFile, `${readFileSync(changeFile, "utf8").trimEnd()}\n\n## 验收\n\n- ${rule}：退一笔 → 已退\n`);
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "rule");
     const landed = canon(s.worktree, "work", "land", "--finish");
