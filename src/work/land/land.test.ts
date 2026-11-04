@@ -177,7 +177,7 @@ describe("work land", () => {
       sh(s.worktree, "commit", "-qm", "decision");
       const out = await land(ws(s.worktree), { ...FAST, fetcher }, quiet);
       if (out.kind !== "refused") return out.kind;
-      // reason: a source path that is no file is reported by canon check before the source step (BR-2110)
+      // reason: a source path that is no file, or a file without its quote, is reported by canon check before the source step (BR-2110, BR-2252)
       if (out.findings) return `${out.reason}: ${out.findings.map((f) => `${f.rule} ${f.message}`).join(" ")}`;
       return `${out.reason}: ${out.message.split("\n").slice(1).join(" ").trim()}`;
     };
@@ -185,7 +185,7 @@ describe("work land", () => {
     const cases: [string, string, string][] = [
       ["No source", "", "source: - D-1 is new and cites no source under ## 方案 (来源：<URL or repository path> “<quote>”)"],
       ["File ok", "   - 来源：refund.txt “export function refund(order)”", "landed"],
-      ["File wrong", "   - 来源：refund.txt “export function refund(item)”", "source: - D-1: refund.txt does not contain “export function refund(item)”"],
+      ["File wrong", "   - 来源：refund.txt “export function refund(item)”", "check: source-quote-missing D-1: refund.txt does not contain “export function refund(item)” (- 来源：refund.txt “export function refund(item)”)"],
       ["File missing", "   - 来源：missing.txt “export function refund(order)”", "check: source-malformed D-1: - 来源：missing.txt “export function refund(order)” (missing.txt is not a file in the repository)"],
       ["Page ok", "   - 来源：https://ok.example/a “refunds are allowed within 30 days”", "landed"],
       ["Page wrong", "   - 来源：https://ok.example/a “refunds are allowed within 60 days”", "source: - D-1: https://ok.example/a does not contain “refunds are allowed within 60 days”"],

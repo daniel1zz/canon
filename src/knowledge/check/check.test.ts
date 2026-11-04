@@ -332,6 +332,40 @@ describe("source paths", () => {
     expect(got).toHaveLength(1);
     expect(got[0]).toContain("src/old/refund.ts is not a file in the repository; cannot read git history to check source paths");
   });
+
+  test("BR-2110: a missing source path in a repository with no commit yet is reported", () => {
+    const root = repo(decision("   - 来源：src/old/refund.ts “export function refund(”"));
+    git(root, "init", "-q", "-b", "main");
+    const got = findings(root);
+    expect(got).toHaveLength(1);
+    expect(got[0]).toContain("src/old/refund.ts is not a file in the repository");
+  });
+});
+
+describe("source quotes", () => {
+  const decision = (status: string, sources: string) =>
+    ({ [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: X\nstatus: ${status}\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n${sources}\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n` });
+  const quoteFindings = (files: Record<string, string>) => {
+    const root = repo(files);
+    return check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "source-quote-missing").map((f) => f.message);
+  };
+  const line = "   - 来源：src/a.ts “export function refund(”";
+
+  test("BR-2252: a current decision's source file that no longer holds its quote is reported, naming the decision, file and quote", () => {
+    expect(quoteFindings({ "src/a.ts": "// x\nexport function refund(a) {}\n", ...decision("accepted", line) })).toEqual([]);
+    const got = quoteFindings({ "src/a.ts": "export function refundOrder(a) {}\n", ...decision("accepted", line) });
+    expect(got).toEqual([`${d(1)}: src/a.ts does not contain “export function refund(” (- 来源：src/a.ts “export function refund(”)`]);
+    expect(quoteFindings({ "src/a.ts": "export function refundOrder(a) {}\n", ...decision("proposed", line) })).toHaveLength(1);
+  });
+
+  test("BR-2252: the line number is ignored and whitespace collapses as at landing; superseded decisions, URLs and gone files are not checked", () => {
+    const file = { "src/a.ts": "\n".repeat(29) + "export\n  function refund(a) {}\n" };
+    expect(quoteFindings({ ...file, ...decision("accepted", "   - 来源：src/a.ts:12 “export   function refund(”") })).toEqual([]);
+    const changed = { "src/a.ts": "export function refundOrder(a) {}\n" };
+    expect(quoteFindings({ ...changed, ...decision("superseded", line) })).toEqual([]);
+    expect(quoteFindings({ ...changed, ...decision("accepted", "   - 来源：https://example.com/a “some long quote”") })).toEqual([]);
+    expect(quoteFindings(decision("accepted", "   - 来源：src/gone.ts “export function refund(”"))).toEqual([]);
+  });
 });
 
 describe("source verification", () => {

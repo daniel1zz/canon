@@ -146,10 +146,27 @@ export async function verify(root: string, list: readonly Source[], fetcher: Fet
       else if (!collapse(pageText(got.text)).includes(want)) failures.push(`${s.target} does not contain “${want}”`);
       continue;
     }
-    const path = s.target.replace(/:\d+(?:-\d+)?$/, "");
-    const full = resolve(join(root, path));
-    if (relative(root, full).startsWith("..") || !existsSync(full) || !statSync(full).isFile()) failures.push(`${path} is not a file in the repository`);
-    else if (!collapse(readFileSync(full, "utf8")).includes(want)) failures.push(`${path} does not contain “${want}”`);
+    const failure = fileSourceFailure(root, s);
+    if (failure !== undefined) failures.push(failure.message);
   }
   return failures;
+}
+
+/** A repository-path source's file, without its `:line` or `:from-to` suffix. */
+export function sourceFile(s: Source): string {
+  return s.target.replace(/:\d+(?:-\d+)?$/, "");
+}
+
+/**
+ * Why a repository-path source does not hold in the tree at `root`, or undefined when it does: its file must be a
+ * file there and hold the quote, whitespace collapsed on both sides. The one matcher behind the landing's check of
+ * new sources (BR-2111) and `canon check`'s offline check of every current decision's sources (BR-2252).
+ */
+export function fileSourceFailure(root: string, s: Source): { kind: "no-file" | "no-quote"; message: string } | undefined {
+  const path = sourceFile(s);
+  const full = resolve(join(root, path));
+  if (relative(root, full).startsWith("..") || !existsSync(full) || !statSync(full).isFile()) return { kind: "no-file", message: `${path} is not a file in the repository` };
+  const want = collapse(s.quote);
+  if (!collapse(readFileSync(full, "utf8")).includes(want)) return { kind: "no-quote", message: `${path} does not contain “${want}”` };
+  return undefined;
 }

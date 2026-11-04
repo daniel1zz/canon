@@ -1,4 +1,4 @@
-import { MIN_QUOTE, optionProblems, sources } from "./sources.ts";
+import { fileSourceFailure, MIN_QUOTE, optionProblems, sourceFile, sources } from "./sources.ts";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { parse } from "yaml";
@@ -39,6 +39,7 @@ export type CheckRule =
   | "code-layout" // with code_root: a domain without its directory, or a directory no domain or shared entry owns (BR-2118)
   | "decision-options" // a decision's options section shows no real choice (BR-2109)
   | "source-malformed" // a source line in a decision's options does not name a target and quote it (BR-2110)
+  | "source-quote-missing" // a current decision's source names a repository file that no longer holds its quote (BR-2252)
   | "doc-missing-section" // a document lacks a section its type requires, or the section is empty (BR-2091)
   | "path-missing" // a current document names, in backticks, a repository path that was moved or deleted
   | "list-mismatch" // a rule's `lists` front matter disagrees with its text or with the code (BR-2180)
@@ -244,10 +245,16 @@ function structureFindings(root: string, corpus: Corpus): Finding[] {
       for (const line of found.malformed) out.push({ path: d.path, rule: "source-malformed", message: `${d.id}: ${line} (want 来源：<URL or repository path> “<quote of at least ${MIN_QUOTE} characters>”)` });
       // reason: a path that is no file (a word such as arXiv taken as a path) is found here, not only at landing (BR-2110, BR-2111);
       // a file git history had was moved or deleted after the decision quoted it, so it is not reported (BR-2110, D-25)
-      const gone = found.sources
-        .filter((src) => !/^https?:\/\//.test(src.target))
-        .map((src) => ({ line: src.line, file: src.target.replace(/:\d+(?:-\d+)?$/, "") }))
-        .filter((src) => !isFile(join(root, src.file)));
+      const files = found.sources.filter((src) => !/^https?:\/\//.test(src.target));
+      const gone = files.map((src) => ({ line: src.line, file: sourceFile(src) })).filter((src) => !isFile(join(root, src.file)));
+      // reason: a superseded decision is history, its sources quote files as they were (BR-2252, BR-2171); a file
+      // that is gone now is BR-2110's to judge, so only a file that exists is checked for its quote
+      if (d.status !== "superseded") {
+        for (const src of files) {
+          const failure = fileSourceFailure(root, src);
+          if (failure?.kind === "no-quote") out.push({ path: d.path, rule: "source-quote-missing", message: `${d.id}: ${failure.message} (${src.line})` });
+        }
+      }
       if (gone.length > 0) {
         const history = historyOf(root, [...new Set(gone.map((g) => g.file))], "source paths");
         for (const g of gone) {
