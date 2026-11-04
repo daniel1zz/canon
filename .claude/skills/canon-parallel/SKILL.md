@@ -45,6 +45,7 @@ Copy this list into each brief and fill in the task. A subagent starts with none
 - **After landing**: run `canon work after-land <C-n> --wait` with its own change id where the command exists (check `canon work --help`). Without the id it reports the newest landing of anyone, which may be another subagent's; otherwise read the after-land log whose path the landing printed, until every background command has written its exit line, and read the code-review findings in it. A simple real bug found there is fixed in a new change; anything else is reported.
 - **Clean only its own worktree**: `canon work clean <C-n>` with its own change id, never a bare `canon work clean`.
 - **Review notes that do not block are not changes**: do not open a follow-up change for them.
+- **Decisions stay proposed**: a subagent cannot start subagents of its own, so it cannot run canon-design's independent challenge. When a task writes a decision, the brief says: land it as `proposed`, do not `canon decision accept` it, and list it in the report. The main agent then has an agent that sees the problem and the options, not the recommendation, challenge it, addresses what it finds, and accepts the decision itself.
 - **Report with measurements**: change ids, what changed, rules and decisions, the tests run and their result, each landing's exit code and time (queued and total), review findings, and anything not done with the reason.
 
 ## 4. While they run

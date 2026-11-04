@@ -59,6 +59,8 @@ hooks:
   after_land:
     # 合入后的代码评审（C-2）：只找安全和并发问题，一个根因一个 issue，写到 GitHub（负责人 2026-11-03 同意开启）
     - "bun scripts/code-review.ts"
+    # 合入后的一致性抽查（C-54、D-43）：只查改动最多的一个领域，准确率低于停用线时自己停（负责人 2026-11-04 同意开启，每次查 1 个领域）
+    - "bun scripts/consistency-review.ts --max-domains 1"
   after_green:
     # main 的后台 floor 通过后，从这个测过的提交重新构建主 checkout 的 dist/canon（PATH 上的 canon），
     # 不从没测过的 main 构建：合入了把命令行弄坏的变更时，修复变更还能用旧的 canon 合进来（D-31、BR-2222）
