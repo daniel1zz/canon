@@ -2,7 +2,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { GUARD_HEADER } from "./githook.ts";
+import { ensureGuard, GUARD_HEADER, guardScript } from "./githook.ts";
 
 // reason: every test here drives the canon CLI through spawned processes, which is what it tests; each spawn is a bun start
 // plus the command's own git calls, and at load 20 one test took 4.2 s of the 5 s default (C-111).
@@ -112,6 +112,47 @@ describe("installing the guard", () => {
     expect(check.out).toContain("not written by canon");
     expect(canon(ours, "update").code).toBe(5);
   });
+
+  const FOREIGN = "#!/bin/sh\nexit 0\n";
+  const leftovers = (root: string) => readdirSync(join(root, ".git/hooks")).filter((f) => f.includes(".canon-"));
+
+  test("BR-2124: a hook someone else writes after canon read the state, while it is missing, is kept and the install refuses with conflict", () => {
+    const root = repo();
+    mkdirSync(join(root, ".git/hooks"), { recursive: true });
+    const r = ensureGuard(root, "main", () => writeFileSync(hookPath(root), FOREIGN));
+    expect(r.ok).toBe(false);
+    if (!r.ok) {
+      expect(r.error.code).toBe("conflict");
+      expect(r.error.message).toContain(hookPath(root));
+    }
+    expect(readFileSync(hookPath(root), "utf8")).toBe(FOREIGN);
+    expect(leftovers(root)).toEqual([]);
+  });
+
+  test("BR-2124: canon's older guard swapped for someone else's hook after canon read it is put back, not replaced, and the install refuses with conflict", () => {
+    const root = repo();
+    mkdirSync(join(root, ".git/hooks"), { recursive: true });
+    writeFileSync(hookPath(root), `#!/bin/sh\n${GUARD_HEADER}\nexit 0\n`, { mode: 0o755 });
+    const r = ensureGuard(root, "main", () => writeFileSync(hookPath(root), FOREIGN));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe("conflict");
+    expect(readFileSync(hookPath(root), "utf8")).toBe(FOREIGN);
+    expect(leftovers(root)).toEqual([]);
+  });
+
+  test("BR-2124: the current guard written by another canon in between counts as done; with nobody in between the guard is installed", () => {
+    const root = repo();
+    mkdirSync(join(root, ".git/hooks"), { recursive: true });
+    const other = ensureGuard(root, "main", () => writeFileSync(hookPath(root), guardScript("main"), { mode: 0o755 }));
+    expect(other).toEqual({ ok: true, value: false });
+    expect(readFileSync(hookPath(root), "utf8")).toBe(guardScript("main"));
+
+    writeFileSync(hookPath(root), `#!/bin/sh\n${GUARD_HEADER}\nexit 0\n`, { mode: 0o755 });
+    expect(ensureGuard(root, "main", () => {})).toEqual({ ok: true, value: true });
+    expect(readFileSync(hookPath(root), "utf8")).toBe(guardScript("main"));
+    expect(statSync(hookPath(root)).mode & 0o111).not.toBe(0);
+    expect(leftovers(root)).toEqual([]);
+  });
 });
 
 describe("the main branch name in the guard", () => {
@@ -151,6 +192,19 @@ describe("the main branch name in the guard", () => {
     }
     expect(existsSync(join(root, ".claude"))).toBe(false);
     expect(existsSync(hookPath(root))).toBe(false);
+  });
+
+  test("BR-2123 BR-2124: a main git would refuse and someone else's hook together: the branch name is reported first, exit 2, the hook kept", () => {
+    const root = repo();
+    mkdirSync(join(root, "canon"));
+    writeFileSync(join(root, "canon/config.yaml"), 'main: "a..b"\nfloor: "true"\n');
+    mkdirSync(join(root, ".git/hooks"), { recursive: true });
+    writeFileSync(hookPath(root), "#!/bin/sh\nexit 0\n");
+    for (const args of [["install"], ["update"], ["update", "--check"]]) {
+      const r = canon(root, ...args);
+      expect([r.code, r.err]).toEqual([2, expect.stringContaining('"a..b" is not a valid git branch name')]);
+    }
+    expect(readFileSync(hookPath(root), "utf8")).toBe("#!/bin/sh\nexit 0\n");
   });
 });
 

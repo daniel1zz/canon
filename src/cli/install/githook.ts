@@ -1,4 +1,4 @@
-import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, linkSync, lstatSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
@@ -81,22 +81,99 @@ export function foreignGuard(path: string): Result<never> {
   return err("conflict", `${path} exists and was not written by canon; canon will not overwrite it. Remove it or move what it does elsewhere, then run again (canon's guard keeps main moving only through canon work land).`);
 }
 
-/** Writes canon's hook; true when it changed anything. Refuses someone else's hook (BR-2124). */
-export function ensureGuard(root: string, main: string): Result<boolean> {
+/** Whether `path` is a plain file whose second line is canon's marker: a hook canon wrote, of any version (BR-2124). */
+function canonsOwn(path: string): boolean {
+  try {
+    return lstatSync(path).isFile() && readFileSync(path, "utf8").split("\n")[1] === GUARD_HEADER;
+  } catch {
+    return false;
+  }
+}
+
+const code = (e: unknown) => (e as NodeJS.ErrnoException).code;
+
+/**
+ * Puts `tmp` at `path` only when nothing is there: link fails with EEXIST instead of replacing, so a hook someone wrote
+ * after the state was read is never overwritten (BR-2124, D-36). True when placed, false when `path` was taken.
+ */
+function placeExclusive(tmp: string, path: string): Result<boolean> {
+  try {
+    linkSync(tmp, path);
+    return ok(true);
+  } catch (e) {
+    if (code(e) === "EEXIST") return ok(false);
+    return err("io", `cannot put canon's guard at ${path} without risking someone else's hook there (${(e as Error).message}); the hooks directory must allow hard links`);
+  }
+}
+
+/** What to say when `path` was taken while canon was writing it: done if it is now the current guard, else a conflict. */
+function takenMeanwhile(root: string, main: string, path: string): Result<boolean> {
+  const st = guardStatus(root, main);
+  if (!st.ok) return st;
+  if (st.value.state === "current") return ok(false);
+  if (st.value.state === "foreign") return foreignGuard(path);
+  return err("conflict", `${path} changed while canon was writing it; run again`);
+}
+
+/**
+ * Writes canon's hook; true when it changed anything. Refuses someone else's hook (BR-2124), including one written
+ * between reading the state and writing (#25). `beforeReplace` runs at that point; only tests pass it, to stage the race.
+ */
+export function ensureGuard(root: string, main: string, beforeReplace?: () => void): Result<boolean> {
   const st = guardStatus(root, main);
   if (!st.ok) return st;
   if (st.value.state === "current") return ok(false);
   if (st.value.state === "foreign") return foreignGuard(st.value.path);
-  mkdirSync(join(st.value.path, ".."), { recursive: true });
-  // reason: git may run the hook at any moment; a temporary file made executable and renamed into place means it
-  // only ever sees the old hook or the whole new one, never an empty, half-written or not-yet-executable one (#24)
-  const tmp = `${st.value.path}.canon-${process.pid}.tmp`;
+  const path = st.value.path;
+  mkdirSync(join(path, ".."), { recursive: true });
+  // reason: git may run the hook at any moment; a temporary file made executable before it is placed means git never
+  // sees an empty, half-written or not-yet-executable hook (#24)
+  const tmp = `${path}.canon-${process.pid}.tmp`;
   try {
     writeFileSync(tmp, guardScript(main), { mode: 0o755 });
     chmodSync(tmp, 0o755);
-    renameSync(tmp, st.value.path);
+    beforeReplace?.();
+    if (st.value.state === "missing") {
+      const placed = placeExclusive(tmp, path);
+      if (!placed.ok) return placed;
+      return placed.value ? ok(true) : takenMeanwhile(root, main, path);
+    }
+    return replaceOld(root, main, tmp, path);
   } finally {
     rmSync(tmp, { force: true });
   }
-  return ok(true);
+}
+
+/**
+ * Replaces canon's older guard with `tmp` (D-36). rename has no compare-and-swap, so the file at `path` is first moved
+ * aside, which takes exactly what is there at that instant, and checked: canon's own is dropped and the new guard put in
+ * its place; anyone else's goes back and the install refuses (BR-2124). Only canon's files are ever deleted.
+ */
+function replaceOld(root: string, main: string, tmp: string, path: string): Result<boolean> {
+  const aside = `${path}.canon-${process.pid}.old`;
+  try {
+    renameSync(path, aside);
+  } catch (e) {
+    if (code(e) !== "ENOENT") return err("io", `cannot move ${path} aside to replace it: ${(e as Error).message}`);
+    // removed since it was read: now it is the missing case
+    const placed = placeExclusive(tmp, path);
+    if (!placed.ok) return placed;
+    return placed.value ? ok(true) : takenMeanwhile(root, main, path);
+  }
+  if (!canonsOwn(aside)) {
+    const back = placeExclusive(aside, path);
+    if (back.ok && back.value) {
+      rmSync(aside, { force: true });
+      return foreignGuard(path);
+    }
+    return err("conflict", `${path} was replaced by a hook canon did not write while canon was installing its guard, and canon could not put it back${back.ok ? " (the path was taken again)" : ` (${back.error.message})`}; that hook is kept at ${aside}. Put it back where it belongs, then run again.`);
+  }
+  const placed = placeExclusive(tmp, path);
+  if (!placed.ok) {
+    // reason: the old guard is canon's own, so it may go back by rename, but only onto an empty path (BR-2124)
+    if (!existsSync(path) && !isLink(path)) renameSync(aside, path);
+    return placed;
+  }
+  rmSync(aside, { force: true });
+  return placed.value ? ok(true) : takenMeanwhile(root, main, path);
 }
