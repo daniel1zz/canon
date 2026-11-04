@@ -19,6 +19,7 @@ import { findingDetail, verifyChange } from "./checks/steps.ts";
 import { floorSkip, runFloor } from "./checks/floor.ts";
 import { afterLand, closeLeftNote, closeSubject, finishLanding, moveMain, reopen, type CloseCommit } from "./finish/finish.ts";
 import { batchDir, landBatch, landedInBatch } from "./batch/batch.ts";
+import { pushMain } from "../remote/remote.ts";
 
 /**
  * Landing (design §6): queue → rebase onto main → floor → canon check → sources → review → before_land →
@@ -116,6 +117,8 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     // The claim names this lander until the landing ends, so the session exiting meanwhile frees it to no one (BR-2142, issue #17).
     bound = lander ? bindToLander(ws.db, wt, ws.actor, lander) : undefined;
     out = await queueAndLand(ws, opts, say, { entry, subject, branch: branch.value, running });
+    // After the turn has ended, so a slow remote holds up no other landing; a failed push leaves this landing landed (BR-2259, BR-2260).
+    if (out.kind === "landed") pushMain(ws, say);
     return out;
   } finally {
     if (close && out?.kind !== "landed") reopen(wt, close, say);

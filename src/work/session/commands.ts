@@ -20,6 +20,7 @@ import { overlapsOf } from "./overlap.ts";
 import { clean, LESSON_REMINDER, mainCorpus, start, stop } from "./session.ts";
 import { redMainNotice, startFixMain } from "../watch/redmain.ts";
 import { ensureWatcher } from "../watch/watch.ts";
+import { unpushedNotice } from "../remote/remote.ts";
 
 /** `canon brief` and `canon work start`, `stop`, `status`, `clean`: a session and its change's worktree. */
 
@@ -144,6 +145,8 @@ function briefState(ws: Workspace): Result<void> {
   } else {
     // reason: other sessions' handoffs and the question queue are shown only where no change is claimed; injected
     // into a change's session they draw it into work that is not its own (BR-2024)
+    // Commits on main the remote lacks, counted locally; like the handoffs, only where no change is claimed (BR-2261, BR-2024).
+    for (const line of unpushedNotice(ws)) say(line);
     if (hs.length) say(`Unfinished changes with handoffs: ${hs.map((h) => h.subject).join(", ")} (canon work status)`);
     const pending = questions(ws.db, "pending").length;
     if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
