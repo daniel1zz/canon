@@ -56,7 +56,7 @@ describe("rule review at land", () => {
     expect(seen).toBe(sh(s.worktree, "rev-parse", "HEAD").trim());
   });
 
-  test("BR-2009: a reviewer that fails to run refuses the landing", async () => {
+  test("BR-2009 BR-2216: a reviewer that fails to run refuses the landing and says its directory holds only committed files", async () => {
     const root = project();
     writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: "exit 3"\n`);
     mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
@@ -73,6 +73,8 @@ describe("rule review at land", () => {
     const out = await land(ws(s.worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("review");
     expect(out.kind === "refused" && out.message).toContain("could not run");
+    expect(out.kind === "refused" && out.message).toContain("git-ignored files such as node_modules");
+    expect(out.kind === "refused" && out.message).toMatch(/temporary worktree at main's commit [0-9a-f]{9}/);
   });
 
   /** A project with the billing domain on main and canon/config.yaml set to `config` (no review key when it has none). */
@@ -233,6 +235,30 @@ describe("rule review at land", () => {
     addRule(later.worktree);
     expect((await land(ws(later.worktree), FAST, quiet)).kind).toBe("landed");
     expect(skips(root)).toBe(1);
+  });
+
+  test("BR-2216: a reviewer that reads a git-ignored .env cannot find it and the refusal says why; a block verdict carries no such line", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    writeFileSync(join(root, ".gitignore"), ".env\n");
+    writeFileSync(join(root, ".env"), "KEY=1\n");
+    sh(root, "add", ".gitignore");
+    sh(root, "commit", "-qm", "ignore env");
+    const needsEnv = reviewer(root, `cat > /dev/null\ncat .env > /dev/null || exit 3\necho '{"verdict":"ok","findings":[]}'`, "env");
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: ${JSON.stringify(needsEnv.script)}\n`);
+    sh(root, "commit", "-qam", "reviewer");
+    const s = startNew(root, "Rule needing env");
+    writeFileSync(join(s.worktree, ".env"), "KEY=1\n");
+    addRule(s.worktree);
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(out.kind === "refused" && out.message).toContain("could not run");
+    expect(out.kind === "refused" && out.message).toContain("git-ignored files such as node_modules");
+    const strict = reviewer(root, `cat > /dev/null\necho '{"verdict":"block","findings":["vague"]}'`, "strict");
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: ${JSON.stringify(strict.script)}\n`);
+    sh(root, "commit", "-qam", "strict reviewer");
+    const blocked = await land(ws(s.worktree), FAST, quiet);
+    expect(blocked.kind === "refused" && blocked.message).toContain("rule review blocked");
+    expect(blocked.kind === "refused" && blocked.message).not.toContain("git-ignored");
   });
 
   test("BR-2074: a change that swaps the reviewer for one that always answers ok is still reviewed by main's command (#115)", async () => {

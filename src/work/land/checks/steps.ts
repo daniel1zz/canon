@@ -126,6 +126,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   let reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined;
   // reason: how a landing is reviewed (the command, its limit, the standing instruction list) comes from main's already-landed
   // config, never from the change's own tree: a change that swaps the reviewer would otherwise review itself (BR-2074, #115)
+  const mainAt = v.main; // the review results below are also named v
   const trusted = reviewSettingsOn(wt, v.main);
   if (!trusted.ok) return refuse("environment", `canon/config.yaml on main cannot be read for the review settings: ${trusted.error.message}`);
   const onMain = trusted.value;
@@ -153,7 +154,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       const at = tree.get();
       if (!at.ok) return refuse("environment", at.error.message);
       const v = await runReview(reviewer, at.value, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording }), limits);
-      if (!v.ok) return refuse("review", `the rule review could not run: ${v.error.message}`);
+      if (!v.ok) return refuse("review", couldNotRun("rule", v.error.message, at.value, mainAt));
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings, commit: head.value, ...(execution.wording.length > 0 ? { wording: v.value.wording ?? {} } : {}) });
       if (v.value.verdict === "block") return refuse("review", `rule review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
       const unconfirmed = unconfirmedWording(execution.wording, v.value.wording);
@@ -173,7 +174,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       const at = tree.get();
       if (!at.ok) return refuse("environment", at.error.message);
       const v = await runReview(reviewer, at.value, duplicatePrompt(standing, standingText(wt, onMain.instructions), opts.guide), limits);
-      if (!v.ok) return refuse("review", `the duplicate review could not run: ${v.error.message}`);
+      if (!v.ok) return refuse("review", couldNotRun("duplicate", v.error.message, at.value, mainAt));
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: standing, findings: v.value.findings, commit: head.value });
       if (v.value.verdict === "block") return refuse("review", `duplicate review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
       for (const f of v.value.findings) say(`review note: ${f}`);
@@ -255,4 +256,13 @@ async function checkSources(wt: string, base: string, entries: readonly { status
     for (const f of await verify(wt, now.filter((s) => !before.has(`${s.target} ${s.quote}`)), fetcher)) failures.push(`${d.id}: ${f}`);
   }
   return failures;
+}
+
+/** Why a review that could not run refused the landing, and what its directory lacks (BR-2216). */
+function couldNotRun(kind: "rule" | "duplicate", error: string, dir: string, main: string): string {
+  return [
+    `the ${kind} review could not run: ${error}`,
+    // reason: the review runs in a checkout of main's commit, so a command that needs git-ignored files fails there (BR-2216, D-51)
+    `  the review command ran in a temporary worktree at main's commit ${main.slice(0, 9)} (${dir}, removed afterwards), which holds only committed files: git-ignored files such as node_modules, .env or *.local.json are not there, so the command must not depend on them`,
+  ].join("\n");
 }
