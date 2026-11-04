@@ -530,6 +530,22 @@ describe("a passing main", () => {
     expect(eventsOf(root, "floor.after_green")).toEqual([]); // still due: the next watcher runs it again, alone
   });
 
+  test("BR-2285: a watcher that does not lead its process group does not find what after_green left after its parent exited: it goes on and writes its file", async () => {
+    const dir = join(process.env["TMPDIR"] ?? "/tmp", `canon-ag-group-orphan-${process.pid}-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const ready = join(dir, "ready");
+    const late = join(dir, "late");
+    const { root } = watched(`hooks:\n  after_green: '( (sleep 1; touch ${late}) & ); touch ${ready}; while true; do sleep 0.1; done'\n`);
+    const fake = fakeCanon(root);
+    // reason: not detached, so it shares this test's process group, as when run by hand from a shell without job control
+    const w = Bun.spawn(["bun", MAIN, "floor", "watch"], { cwd: root, stdout: "ignore", stderr: "ignore", stdin: "ignore", env: { ...process.env, PATH: `${fake.bin}:${process.env["PATH"]}`, CANON_ACTOR: "agent:a" } });
+    await until(() => existsSync(ready));
+    w.kill("SIGTERM");
+    expect(await w.exited).toBe(143);
+    await until(() => existsSync(late), 5_000).catch(() => {});
+    expect(existsSync(late)).toBe(true);
+  });
+
   test("BR-2285: a watcher that does not lead its process group stops only what it started: its after_green ends, the rest of the group runs on", async () => {
     const dir = join(process.env["TMPDIR"] ?? "/tmp", `canon-ag-group-${process.pid}-${Date.now()}`);
     mkdirSync(dir, { recursive: true });
