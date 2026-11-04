@@ -176,7 +176,7 @@ describe("the claim during a landing", () => {
     }
   });
 
-  test("BR-2258: when the index cannot be replaced and the files cannot be put back either, the result says so instead of saying nothing changed", () => {
+  test("BR-2258 BR-2018: when the index cannot be replaced and the files cannot be put back either, the result says so instead of saying nothing changed", () => {
     const root = project();
     const s = startNew(root, "Reopen undo fails");
     const path = sh(s.worktree, "diff", "--name-only", "main", "HEAD");
