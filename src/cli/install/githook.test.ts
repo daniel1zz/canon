@@ -247,6 +247,32 @@ describe("installing the guard while someone else writes the hook", () => {
     expect(kept.length).toBe(1);
     expect(readFileSync(join(root, ".git/hooks", kept[0]!), "utf8")).toBe(OLD);
   });
+
+  const ioError = () => {
+    throw Object.assign(new Error("EIO: i/o error, link"), { code: "EIO" });
+  };
+
+  test("BR-2124 BR-2022: when only placing the new guard fails, the older guard goes back by the same exclusive link, nothing left over", () => {
+    const root = withHook(OLD);
+    const r = guarded(root, (from, to) => (from.endsWith(".tmp") ? ioError() : realLink(from, to)));
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe("io");
+    expect(readFileSync(hookPath(root), "utf8")).toBe(OLD);
+    expect(leftovers(root)).toEqual([]);
+  });
+
+  test("BR-2124 BR-2022: when placing the new guard fails and a hook appears on the empty path, that hook stays and the older guard is deleted", () => {
+    const root = withHook(OLD);
+    const r = guarded(root, (from, to) => {
+      if (!from.endsWith(".tmp")) return realLink(from, to);
+      writeFileSync(to, FOREIGN);
+      ioError();
+    });
+    expect(r.ok).toBe(false);
+    if (!r.ok) expect(r.error.code).toBe("io");
+    expect(readFileSync(hookPath(root), "utf8")).toBe(FOREIGN);
+    expect(leftovers(root)).toEqual([]);
+  });
 });
 
 describe("the main branch name in the guard", () => {
