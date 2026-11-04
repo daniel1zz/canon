@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { defineCommand } from "citty";
-import { entry, fail, json, say, type DomainCommands } from "../../cli/command.ts";
+import { entry, EXIT, fail, json, say, type DomainCommands } from "../../cli/command.ts";
 import { git } from "../../kernel/git.ts";
 import { changedFiles, leftOut, snapshotKey, snapshots, takeSnapshot } from "./snapshot.ts";
 
@@ -24,6 +24,16 @@ const take = defineCommand({
     }
     const r = takeSnapshot(cwd);
     if (!r.ok) fail(r.error);
+    if (r.value.kind === "taken" && r.value.pruneError) {
+      // reason: the snapshot was made, so the hook must not let `|| echo` say it was not; it says what did fail (BR-2183, #84).
+      const what = `snapshot ${r.value.ref} taken, but deleting old snapshots failed: ${r.value.pruneError}`;
+      if (args.hook) {
+        process.stdout.write(`${JSON.stringify({ systemMessage: `canon: ${what}` })}\n`);
+        return;
+      }
+      console.error(`canon: ${what}`);
+      process.exit(EXIT.env);
+    }
     // Silent on success: the hook runs before every Bash call, and its output would be noise (BR-2182).
     if (!args.hook) say(r.value.kind === "taken" ? `snapshot ${r.value.ref}${r.value.skipped.length ? ` (left out: ${r.value.skipped.join(", ")})` : ""}` : `no snapshot: ${r.value.why}`);
   },

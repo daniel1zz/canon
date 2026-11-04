@@ -26,7 +26,7 @@ export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 export const snapshotKey = (worktree: string) => basename(worktree).replace(/[^A-Za-z0-9._-]/g, "_") || "_";
 
 export type TakeOutcome =
-  | { readonly kind: "taken"; readonly ref: string; readonly skipped: readonly string[] }
+  | { readonly kind: "taken"; readonly ref: string; readonly skipped: readonly string[]; readonly pruneError?: string }
   | { readonly kind: "none"; readonly why: "not a git worktree" | "not a canon project" | "nothing uncommitted" | "same as the last snapshot" };
 
 const who = { GIT_AUTHOR_NAME: "canon", GIT_AUTHOR_EMAIL: "canon@localhost", GIT_COMMITTER_NAME: "canon", GIT_COMMITTER_EMAIL: "canon@localhost" };
@@ -94,8 +94,8 @@ export function takeSnapshot(cwd: string, now: Date = new Date()): Result<TakeOu
     const made = git(root, "update-ref", ref, commit.value, ""); // "" = create only, never overwrite a snapshot
     if (!made.ok) return made;
     const pruned = prune(root, now);
-    if (!pruned.ok) return pruned;
-    return ok({ kind: "taken", ref, skipped });
+    // reason: the snapshot is already made; failing to delete old ones must not report it as not taken (BR-2183, #84).
+    return ok({ kind: "taken", ref, skipped, ...(pruned.ok ? {} : { pruneError: pruned.error.message }) });
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
@@ -120,8 +120,19 @@ export function snapshots(root: string, key: string): Snapshot[] {
 
 const latest = (root: string, key: string) => snapshots(root, key)[0];
 
-/** Applies the keeping policy to every worktree's snapshots, deleting in one ref transaction (BR-2183). */
+/**
+ * Applies the keeping policy to every worktree's snapshots, deleting in one ref transaction (BR-2183). Another hook
+ * pruning the same snapshots at the same moment makes the transaction fail on a ref lock; the list is read again
+ * and tried once more, and what that one already deleted is no longer in it (#84).
+ */
 function prune(root: string, now: Date): Result<void> {
+  const first = pruneOnce(root, now);
+  if (first.ok) return first;
+  Bun.sleepSync(100);
+  return pruneOnce(root, now);
+}
+
+function pruneOnce(root: string, now: Date): Result<void> {
   const hour = 3_600_000;
   const recent = now.getTime() - KEEP_ALL_HOURS * hour;
   const cutoff = now.getTime() - MAX_AGE_DAYS * 24 * hour;

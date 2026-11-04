@@ -1,5 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtempSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, unlinkSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
+import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git } from "../../kernel/git.ts";
@@ -163,6 +164,32 @@ describe("keeping snapshots", () => {
     taken(root, new Date(now));
     expect(snapshots(root, "C-1")).toHaveLength(0);
     expect(snapshots(root, "C-2")).toHaveLength(1);
+  });
+});
+
+describe("deleting old snapshots fails", () => {
+  test("BR-2183: a snapshot is kept and reported as taken when deleting old ones fails; --hook says so in a systemMessage and exits 0, without it exit 4", () => {
+    const root = project();
+    const key = snapshotKey(root);
+    const hourStart = Math.floor((Date.now() - 2 * DAY) / 3_600_000) * 3_600_000;
+    writeFileSync(join(root, "app.txt"), "old 1\n");
+    taken(root, new Date(hourStart + 60_000));
+    writeFileSync(join(root, "app.txt"), "old 2\n");
+    taken(root, new Date(hourStart + 120_000));
+    // the older of the two in that hour is the one the next snapshot deletes; lock its ref so the delete fails
+    const doomed = snapshots(root, key).at(-1)!.ref;
+    const lock = join(root, ".git", `${doomed}.lock`);
+    mkdirSync(dirname(lock), { recursive: true });
+    writeFileSync(lock, "");
+    for (const [hook, text, code] of [[true, "now 1\n", 0], [false, "now 2\n", 4]] as const) {
+      writeFileSync(join(root, "app.txt"), text);
+      const r = hook ? canon(root, JSON.stringify({ cwd: root }), "snapshot", "take", "--hook") : canon(root, undefined, "snapshot", "take");
+      expect(r.code).toBe(code);
+      const said = hook ? (JSON.parse(r.out) as { systemMessage: string }).systemMessage : r.err;
+      expect(said).toContain("taken, but deleting old snapshots failed");
+      expect(show(root, `${snapshots(root, key)[0]!.ref}:app.txt`)).toEqual({ ok: true, value: text.trim() });
+    }
+    expect(snapshots(root, key).map((s) => s.ref)).toContain(doomed);
   });
 });
 
