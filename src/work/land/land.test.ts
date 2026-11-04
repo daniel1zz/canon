@@ -175,14 +175,17 @@ describe("work land", () => {
       sh(s.worktree, "add", "-A");
       sh(s.worktree, "commit", "-qm", "decision");
       const out = await land(ws(s.worktree), { ...FAST, fetcher }, quiet);
-      return out.kind === "refused" ? `${out.reason}: ${out.message.split("\n").slice(1).join(" ").trim()}` : out.kind;
+      if (out.kind !== "refused") return out.kind;
+      // reason: a source path that is no file is reported by canon check before the source step (BR-2110)
+      if (out.findings) return `${out.reason}: ${out.findings.map((f) => `${f.rule} ${f.message}`).join(" ")}`;
+      return `${out.reason}: ${out.message.split("\n").slice(1).join(" ").trim()}`;
     };
     // reason: one landing per test, not eight in one, so each case has the whole timeout to itself under load (C-111).
     const cases: [string, string, string][] = [
       ["No source", "", "source: - D-1 is new and cites no source under ## 方案 (来源：<URL or repository path> “<quote>”)"],
       ["File ok", "   - 来源：refund.txt “export function refund(order)”", "landed"],
       ["File wrong", "   - 来源：refund.txt “export function refund(item)”", "source: - D-1: refund.txt does not contain “export function refund(item)”"],
-      ["File missing", "   - 来源：missing.txt “export function refund(order)”", "source: - D-1: missing.txt is not a file in the repository"],
+      ["File missing", "   - 来源：missing.txt “export function refund(order)”", "check: source-malformed D-1: - 来源：missing.txt “export function refund(order)” (missing.txt is not a file in the repository)"],
       ["Page ok", "   - 来源：https://ok.example/a “refunds are allowed within 30 days”", "landed"],
       ["Page wrong", "   - 来源：https://ok.example/a “refunds are allowed within 60 days”", "source: - D-1: https://ok.example/a does not contain “refunds are allowed within 60 days”"],
       ["Page 404", "   - 来源：https://ok.example/gone “refunds are allowed within 30 days”", "source: - D-1: https://ok.example/gone answered HTTP 404"],

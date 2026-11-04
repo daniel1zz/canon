@@ -191,7 +191,7 @@ describe("duplicate review of standing instructions at land", () => {
     expect(readFileSync(promptFile, "utf8")).toContain("# Changed in this landing: .claude/skills/x/SKILL.md");
   });
 
-  test("BR-2143: with instructions configured, only the listed files trigger the review; code alone and deletions never do", async () => {
+  test("BR-2143 BR-2231: with instructions configured, only the listed files trigger the review; code alone and deletions never do; a listed file cannot be deleted while listed", async () => {
     const { root, promptFile } = standingProject("block", "instructions: [docs/agent.md]\n");
     mkdirSync(join(root, "docs"), { recursive: true });
     writeFileSync(join(root, "docs/agent.md"), "# Agent\n");
@@ -203,13 +203,18 @@ describe("duplicate review of standing instructions at land", () => {
     sh(a.worktree, "add", "-A");
     sh(a.worktree, "commit", "-qm", "not listed");
     expect((await land(ws(a.worktree), FAST, quiet)).kind).toBe("landed");
-    const d = startNew(root, "Delete the listed file");
-    sh(d.worktree, "rm", "-q", "docs/agent.md");
+    const gone = startNew(root, "Delete the listed file");
+    sh(gone.worktree, "rm", "-q", "docs/agent.md");
+    sh(gone.worktree, "commit", "-qm", "delete");
+    const refused = await land(ws(gone.worktree), FAST, quiet);
+    expect(refused.kind === "refused" && refused.reason).toBe("check"); // still listed in instructions (BR-2231)
+    // reason: a listed instruction file cannot be deleted while still listed (BR-2231), so the deletion is a skill's
+    const d = startNew(root, "Delete a skill");
+    sh(d.worktree, "rm", "-q", ".claude/skills/x/SKILL.md");
     sh(d.worktree, "commit", "-qm", "delete");
     expect((await land(ws(d.worktree), FAST, quiet)).kind).toBe("landed");
     expect(existsSync(promptFile)).toBe(false);
-    const b = startNew(root, "Add the listed file back");
-    mkdirSync(join(b.worktree, "docs"), { recursive: true });
+    const b = startNew(root, "Edit the listed file");
     writeFileSync(join(b.worktree, "docs/agent.md"), "# Agent\n\nnew\n");
     sh(b.worktree, "add", "-A");
     sh(b.worktree, "commit", "-qm", "listed");
