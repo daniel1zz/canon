@@ -245,14 +245,15 @@ function structureFindings(root: string, corpus: Corpus): Finding[] {
       for (const line of found.malformed) out.push({ path: d.path, rule: "source-malformed", message: `${d.id}: ${line} (want 来源：<URL or repository path> “<quote of at least ${MIN_QUOTE} characters>”)` });
       // reason: a path that is no file (a word such as arXiv taken as a path) is found here, not only at landing (BR-2110, BR-2111);
       // a file git history had was moved or deleted after the decision quoted it, so it is not reported (BR-2110, D-25)
-      const files = found.sources.filter((src) => !/^https?:\/\//.test(src.target));
-      const gone = files.map((src) => ({ line: src.line, file: sourceFile(src) })).filter((src) => !isFile(join(root, src.file)));
+      // reason: one lstat-first look per source decides both checks, so a link is never followed, not even to ask
+      // whether its target exists (BR-2186, BR-2252)
+      const files = found.sources.filter((src) => !/^https?:\/\//.test(src.target)).map((src) => ({ src, failure: fileSourceFailure(root, src) }));
+      const gone = files.filter((f) => f.failure?.kind === "no-file").map((f) => ({ line: f.src.line, file: sourceFile(f.src) }));
       // reason: a superseded decision is history, its sources quote files as they were (BR-2252, BR-2171); a file
       // that is gone now is BR-2110's to judge, so only a file that exists is checked for its quote
       if (d.status !== "superseded") {
-        for (const src of files) {
-          const failure = fileSourceFailure(root, src);
-          if (failure?.kind === "no-quote") out.push({ path: d.path, rule: "source-quote-missing", message: `${d.id}: ${failure.message} (${src.line})` });
+        for (const { src, failure } of files) {
+          if (failure?.kind === "no-quote" || failure?.kind === "link") out.push({ path: d.path, rule: "source-quote-missing", message: `${d.id}: ${failure.message} (${src.line})` });
         }
       }
       if (gone.length > 0) {

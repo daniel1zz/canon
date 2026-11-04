@@ -1,5 +1,5 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { existsSync, lstatSync, readFileSync, statSync } from "node:fs";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
 import { isPlaceholderLine, LIST_MARKER, section } from "../documents/templates.ts";
 
 /**
@@ -162,10 +162,25 @@ export function sourceFile(s: Source): string {
  * file there and hold the quote, whitespace collapsed on both sides. The one matcher behind the landing's check of
  * new sources (BR-2111) and `canon check`'s offline check of every current decision's sources (BR-2252).
  */
-export function fileSourceFailure(root: string, s: Source): { kind: "no-file" | "no-quote"; message: string } | undefined {
+export function fileSourceFailure(root: string, s: Source): { kind: "no-file" | "no-quote" | "link"; message: string } | undefined {
   const path = sourceFile(s);
   const full = resolve(join(root, path));
-  if (relative(root, full).startsWith("..") || !existsSync(full) || !statSync(full).isFile()) return { kind: "no-file", message: `${path} is not a file in the repository` };
+  const inside = relative(resolve(root), full);
+  if (inside === "" || inside.startsWith("..") || isAbsolute(inside)) return { kind: "no-file", message: `${path} is not a file in the repository` };
+  // reason: a link is never followed, so a link to a file outside the repository cannot be read, or probed for
+  // existence, through a source (BR-2186, BR-2252); only the parts below root count, root itself may sit under one
+  let at = resolve(root);
+  for (const part of inside.split(sep)) {
+    at = join(at, part);
+    let link: boolean;
+    try {
+      link = lstatSync(at).isSymbolicLink();
+    } catch {
+      return { kind: "no-file", message: `${path} is not a file in the repository` };
+    }
+    if (link) return { kind: "link", message: `${path} is a symbolic link; canon does not follow links, so it was not read` };
+  }
+  if (!existsSync(full) || !statSync(full).isFile()) return { kind: "no-file", message: `${path} is not a file in the repository` };
   const want = collapse(s.quote);
   if (!collapse(readFileSync(full, "utf8")).includes(want)) return { kind: "no-quote", message: `${path} does not contain “${want}”` };
   return undefined;

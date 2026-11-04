@@ -366,6 +366,23 @@ describe("source quotes", () => {
     expect(quoteFindings({ ...changed, ...decision("accepted", "   - 来源：https://example.com/a “some long quote”") })).toEqual([]);
     expect(quoteFindings(decision("accepted", "   - 来源：src/gone.ts “export function refund(”"))).toEqual([]);
   });
+
+  test("BR-2252: a source that is, or lies under, a symbolic link is not read: the same finding whatever the link points at", () => {
+    const outside = mkdtempSync(join(tmpdir(), "canon-outside-"));
+    writeFileSync(join(outside, "credentials"), "aws_secret_access_key = AKIA\n");
+    const all = (link: string, target: string, source: string) => {
+      const root = repo(decision("accepted", `   - 来源：${source}`));
+      mkdirSync(join(root, "docs"), { recursive: true });
+      symlinkSync(target, join(root, link));
+      const got = check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule.startsWith("source-"));
+      return got.map((f) => `${f.rule} ${f.message.split(" (")[0]}`);
+    };
+    const linked = (p: string) => [`source-quote-missing ${d(1)}: ${p} is a symbolic link; canon does not follow links, so it was not read`];
+    expect(all("docs/k", join(outside, "credentials"), "docs/k “aws_secret_access_key = A”")).toEqual(linked("docs/k"));
+    expect(all("docs/k", join(outside, "credentials"), "docs/k “aws_secret_access_key = Z”")).toEqual(linked("docs/k"));
+    expect(all("docs/k", join(outside, "nothing-here"), "docs/k “aws_secret_access_key = A”")).toEqual(linked("docs/k"));
+    expect(all("vendor", outside, "vendor/credentials “aws_secret_access_key = A”")).toEqual(linked("vendor/credentials"));
+  });
 });
 
 describe("source verification", () => {
