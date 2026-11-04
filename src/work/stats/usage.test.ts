@@ -131,6 +131,29 @@ describe("canon usage while records are removed", () => {
   });
 });
 
+describe("canon usage boundaries", () => {
+  test("BR-2265: a slash command counts only while its skill is available in the --days window", () => {
+    const projects = records({ "-w-p/old.jsonl": [listing(daysAgo(50), { foo: "f" }), command(daysAgo(50), "foo")] });
+    expect(usesOf(report(projects, 60), "skill")).toEqual([["foo", 1, daysAgo(50)]]);
+    expect(usesOf(report(projects, 30), "skill")).toEqual([]);
+  });
+
+  test("BR-2265: a session started in a subdirectory of the primary checkout is not read", () => {
+    const projects = records({ "-w-p/s1.jsonl": [toolUse(daysAgo(1), "Skill", { skill: "a" })], "-w-p-src/s5.jsonl": [toolUse(daysAgo(1), "Skill", { skill: "b" })] });
+    expect(report(projects).uses.map((u) => u.name)).toEqual(["a"]);
+  });
+
+  test("BR-2265: when every listed record is removed during the scan the report still succeeds with 0 files and the listed directories", () => {
+    const projects = records({ "-w-p/s1.jsonl": [toolUse(daysAgo(1), "Skill", { skill: "a" })] });
+    const read = (file: string) => {
+      rmSync(join(projects, "-w-p"), { recursive: true });
+      return readRecords(file);
+    };
+    const r = usageReport(projects, AT, 30, NOW, read);
+    expect(r.ok && [r.value.files, r.value.dirs.length, r.value.uses.length]).toEqual([0, 1, 0]);
+  });
+});
+
 describe("canon usage unused", () => {
   test("BR-2266: an available item not used in the window is listed with its size, last use and last injection, largest first", () => {
     const projects = records({
