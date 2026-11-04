@@ -506,6 +506,19 @@ describe("concurrent starts", () => {
     expect(upstream.ok ? upstream.value : "").toBe("");
   }, 60_000);
 
+  test("BR-2132: with git's branch.autoSetupMerge=always, 8 concurrent CLI starts still all succeed and write no upstream config (issue #27)", async () => {
+    const root = project();
+    sh(root, "config", "branch.autoSetupMerge", "always"); // git then tracks even a local start point
+    const procs = Array.from({ length: 8 }, (_, i) =>
+      Bun.spawn(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "start", "--title", `Always ${i}`], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: `agent:a${i}` } }),
+    );
+    const results = await Promise.all(procs.map(async (p) => ({ code: await p.exited, err: await new Response(p.stderr).text() })));
+    expect(results.filter((r) => r.code !== 0)).toEqual([]);
+    expect(new Set(claims(ws(root).db).map((c) => c.subject)).size).toBe(8);
+    const upstream = git(root, "config", "--get-regexp", "^branch\\.change/");
+    expect(upstream.ok ? upstream.value : "").toBe("");
+  }, 60_000);
+
   // Another canon process inside the worktree lock, leaving .git/worktrees/half as git does midway through an add:
   // gitdir written, commondir created but still empty. A plain `git worktree add` meanwhile dies on it (issue #32).
   const HOLDER = `

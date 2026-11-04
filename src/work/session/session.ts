@@ -96,9 +96,10 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   let hasBranch = false;
   if (!existsSync(path)) {
     hasBranch = git(ws.primary, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`).ok;
-    // reason: BR-2132 — branch from the local main, never a remote-tracking ref: that writes upstream config and concurrent starts fail to lock .git/config.
+    // reason: BR-2132 — branch from the local main, never a remote-tracking ref, and with --no-track: either way git
+    // would write upstream config (branch.autoSetupMerge=always tracks a local start point too, issue #27) and lock .git/config.
     // reason: BR-2223 — addWorktree, not plain git: concurrent adds read each other's half-made .git/worktrees/<id> (issue #32).
-    const add = hasBranch ? addWorktree(ws.primary, path, branch) : addWorktree(ws.primary, "-b", branch, path, main);
+    const add = hasBranch ? addWorktree(ws.primary, path, branch) : addWorktree(ws.primary, "--no-track", "-b", branch, path, main);
     if (!add.ok) {
       releaseClaim(ws.db, changeId, ws.actor);
       ws.db.event(ws.actor, "start.refuse", changeId, { reason: "worktree", error: add.error.message });
