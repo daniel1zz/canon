@@ -1,7 +1,7 @@
 #!/bin/sh
 # Runs `bun test` the way the floor and `canon work test` run it (C-247): one per-test timeout for every
 # test file, and git reading only a fixed config written here, so this machine's git settings cannot change results.
-# Arguments are passed on to `bun test` (e.g. one test file).
+# Arguments are passed on to `bun test` (e.g. one test file, or --parallel for the floor: one worker per CPU core, C-290).
 set -eu
 
 # reason: bunfig.toml has no test timeout key, and setDefaultTimeout in a preload only covers the first file (C-247)

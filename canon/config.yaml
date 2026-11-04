@@ -2,7 +2,7 @@
 main: main
 # 必须在 main 的代码树上执行成功；floor_timing: after 下合入不跑它，main 前移后在后台跑（canon floor watch）
 # 测试经过 scripts/test.sh：统一的测试超时，git 只读脚本写的固定配置，本机 git 设置改变不了结果（C-247）
-floor: "bun install --frozen-lockfile && bunx tsc --noEmit -p tsconfig.json && sh scripts/test.sh"
+floor: "bun install --frozen-lockfile && bunx tsc --noEmit -p tsconfig.json && sh scripts/test.sh --parallel"
 # 先合后测（D-31、BR-2218）：开发阶段合入不等 floor，main 没通过时由 canon work start --fix-main 开的变更向前修
 floor_timing: after
 # 代码目录和规则领域一一对应（D-15）：canon/rules/work/land ↔ src/work/land；src/kernel 是不属于任何业务领域的共享内核
