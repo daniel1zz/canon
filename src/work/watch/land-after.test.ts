@@ -257,7 +257,7 @@ describe("landing while main is failing", () => {
     expect(r.out + r.err).not.toContain("main is failing");
   });
 
-  test("BR-2221: once the fix change has landed and the floor fails again on a commit with it, the record no longer names it and --fix-main opens another", async () => {
+  test("BR-2220, BR-2221: once the fix change has landed and the floor fails again on a commit with it, the record no longer names it and --fix-main opens another", async () => {
     const root = await redProject();
     const started = startFixMain(ws(root), quiet);
     if (!started.ok) throw new Error(started.error.message);
