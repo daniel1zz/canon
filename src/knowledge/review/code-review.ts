@@ -14,15 +14,13 @@ export const LABEL = "canon-review";
 const MAX_FILE_BYTES = 100_000;
 
 export interface Finding {
-  /** One of the kinds the review asks for: `security` or `concurrency` here, others in the consistency check (BR-2272). */
+  /** One of the kinds the review asks for: `security` or `concurrency`. */
   readonly kind: string;
   readonly title: string;
   readonly root_cause: string;
   readonly file: string;
   readonly line: number;
   readonly scenario: string;
-  /** The rule a consistency finding is about (BR-2272); the code review does not ask for one. */
-  readonly rule?: string;
   /** Number of an open issue the AI says has the same root cause. */
   readonly existing: number | null;
 }
@@ -78,7 +76,7 @@ export function reviewPrompt(diff: string, files: readonly { path: string; text:
   ].join("\n");
 }
 
-/** Where findings go: the issue label, and how an issue names the review that filed it (BR-2210, BR-2272). */
+/** Where findings go: the issue label, and how an issue names the review that filed it (BR-2210). */
 export interface Filing {
   readonly label: string;
   /** E.g. "post-land code review", used as "found by the <who> of C-5". */
@@ -89,7 +87,7 @@ export const CODE_REVIEW: Filing = { label: LABEL, who: "post-land code review" 
 const CODE_KINDS = ["security", "concurrency"] as const;
 
 /** Parses the AI's answer; findings missing a file, a line or a scenario, or of another kind, are dropped (BR-2071). */
-export function parseFindings(text: string, say: (line: string) => void, kinds: readonly string[] = CODE_KINDS): Result<Finding[]> {
+export function parseFindings(text: string, say: (line: string) => void): Result<Finding[]> {
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) return err("invalid", `the reviewer printed no JSON: ${text.trim().slice(0, 200)}`);
   let raw: unknown;
@@ -106,13 +104,12 @@ export function parseFindings(text: string, say: (line: string) => void, kinds: 
     const kind = f["kind"];
     const line = typeof f["line"] === "number" ? f["line"] : Number(f["line"]);
     const [title, rootCause, file, scenario] = [str("title"), str("root_cause"), str("file"), str("scenario")];
-    if (typeof kind !== "string" || !kinds.includes(kind) || !title || !rootCause || !file || !scenario || !Number.isInteger(line) || line <= 0) {
+    if (typeof kind !== "string" || !(CODE_KINDS as readonly string[]).includes(kind) || !title || !rootCause || !file || !scenario || !Number.isInteger(line) || line <= 0) {
       say(`dropped a finding without kind, file, line or scenario: ${JSON.stringify(f).slice(0, 200)}`);
       continue;
     }
     const existing = typeof f["existing"] === "number" ? f["existing"] : null;
-    const rule = str("rule");
-    out.push({ kind, title, root_cause: rootCause, file, line, scenario, existing, ...(rule ? { rule } : {}) });
+    out.push({ kind, title, root_cause: rootCause, file, line, scenario, existing });
   }
   return ok(out);
 }

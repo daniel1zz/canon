@@ -51,8 +51,6 @@ Record one of four results in an issue comment, with the commands and their outp
 | A request that should not be done | a decision (section 5) |
 | Needs direction, or a decision reserved for humans (money, irreversible on shared scope, a person's credentials) | `canon human ask "<question with the options>"`; comment on the issue that it waits on that question; move on |
 
-Issues labelled `canon-consistency` (the post-land consistency check) are the exception to the `not planned` rows: that check measures its accuracy from the close reason, so close with `not planned` only when the reviewer was wrong (not reproduced); a finding that was right but is already fixed on main, a duplicate, a known limit or rejected by a decision is closed `completed`, with the same comment.
-
 ## 4. Turn it into a change
 
 Every code change goes through a change, small ones included: `canon work start --title "<what will be true afterwards>"`.
