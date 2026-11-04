@@ -185,7 +185,7 @@ describe("a failed push", () => {
     expect(bareMain(bare)).toBe(before);
   });
 
-  test("BR-2260: a failed push and the fetch after it together wait at most remote_timeout_seconds, not twice that", () => {
+  test("BR-2259, BR-2260: a failed push and the fetch after it together wait at most remote_timeout_seconds, not twice that", () => {
     const { root, bare } = withRemote("remote: origin\nremote_timeout_seconds: 3\n");
     seed(root);
     const gitDir = sh(root, "rev-parse", "--absolute-git-dir");
