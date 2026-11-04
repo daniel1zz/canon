@@ -32,16 +32,16 @@ export function listedChanges(ws: Workspace, corpus: Corpus, backlog: readonly B
   const local = corpus.docs.filter((d): d is Change => d.kind === "change");
   const known = new Set(local.map((c) => c.id));
   const found = new Map<string, { change: Change; onBranch: string[] }>();
-  for (const [id, names] of branches.value) {
+  for (const [id, refs] of branches.value) {
     if (known.has(id)) continue;
     let change: Change | undefined;
     const holding: string[] = [];
-    for (const branch of names) {
-      const read = changeOnBranch(ws, id, branch);
+    for (const ref of refs) {
+      const read = changeOnBranch(ws, id, ref);
       if (!read.ok) return read;
       if (!read.value) continue;
       change ??= read.value;
-      holding.push(branch);
+      holding.push(ref.branch);
     }
     if (change) found.set(id, { change, onBranch: holding });
   }
@@ -71,34 +71,47 @@ export function marksOf(l: ListedChange, full: boolean): string[] {
   return out;
 }
 
-/** Local branches `change/C-n` and `change/C-n-<slug>`, by change id (the names `canon work start` resumes, BR-2107). */
-function changeBranches(ws: Workspace): Result<Map<string, string[]>> {
+/** A change branch and the commit it pointed at when listed. */
+export interface BranchRef {
+  readonly branch: string;
+  readonly commit: string;
+}
+
+/**
+ * Local branches `change/C-n` and `change/C-n-<slug>`, by change id (the names `canon work start` resumes, BR-2107),
+ * each with the commit it points at now: reading that commit, not the name, keeps working when another session's
+ * drop, clean or undone start deletes the branch while this one is still listing (BR-2291, #110).
+ */
+function changeBranches(ws: Workspace): Result<Map<string, BranchRef[]>> {
   const prefix = changeType(ws).prefix;
-  const refs = git(ws.primary, "for-each-ref", "--format=%(refname:short)", "refs/heads/change/");
+  const refs = git(ws.primary, "for-each-ref", "--format=%(objectname) %(refname:short)", "refs/heads/change/");
   if (!refs.ok) return refs;
   const name = new RegExp(`^change/(${prefix}-\\d+)(?:-.*)?$`);
-  const out = new Map<string, string[]>();
-  for (const branch of refs.value.split("\n").filter(Boolean).sort()) {
-    const m = branch.match(name);
-    if (m) out.set(m[1]!, [...(out.get(m[1]!) ?? []), branch]);
+  const out = new Map<string, BranchRef[]>();
+  const lines = refs.value.split("\n").filter(Boolean).map((l) => ({ commit: l.slice(0, l.indexOf(" ")), branch: l.slice(l.indexOf(" ") + 1) }));
+  for (const ref of lines.sort((a, b) => (a.branch < b.branch ? -1 : a.branch > b.branch ? 1 : 0))) {
+    const m = ref.branch.match(name);
+    if (m) out.set(m[1]!, [...(out.get(m[1]!) ?? []), ref]);
   }
   return ok(out);
 }
 
 /**
- * The change file `id` as committed on `branch`, read from git so the branch's worktree need not exist; undefined
- * when the branch has no such file. A file that is there but does not parse fails loudly, never skipped.
+ * The change file `id` as committed on `ref.commit`, read from git so the branch's worktree, or the branch itself, need
+ * not exist any more; undefined when that commit has no such file. A file that is there but does not parse fails
+ * loudly, never skipped.
  */
-function changeOnBranch(ws: Workspace, id: string, branch: string): Result<Change | undefined> {
+export function changeOnBranch(ws: Workspace, id: string, ref: BranchRef): Result<Change | undefined> {
   const type = changeType(ws);
   const dir = `${CANON_DIR}/${type.dir}/`;
-  // reason: the branch name goes to git as one argument, never through a shell, so shell syntax in it stays inert (BR-2107)
-  const files = git(ws.primary, "ls-tree", "--name-only", branch, "--", dir);
+  const branch = ref.branch;
+  // reason: read by commit id, not by branch name: the name may be deleted meanwhile (#110), and may hold shell syntax (BR-2107)
+  const files = git(ws.primary, "ls-tree", "--name-only", ref.commit, "--", dir);
   if (!files.ok) return files;
   const file = new RegExp(`^${id}(-[a-z0-9-]+)?\\.md$`);
   const path = files.value.split("\n").find((p) => file.test(p.slice(dir.length)));
   if (!path) return ok(undefined);
-  const text = git(ws.primary, "show", `${branch}:${path}`);
+  const text = git(ws.primary, "show", `${ref.commit}:${path}`);
   if (!text.ok) return text;
   const where = `${path} on branch ${branch}`;
   const parsed = parseDocFile(text.value, where);

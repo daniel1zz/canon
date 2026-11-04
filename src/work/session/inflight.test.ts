@@ -2,6 +2,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { writeHandoff } from "./handoffs.ts";
+import { changeOnBranch } from "./inflight.ts";
 import { project, sh, ws } from "../testkit.ts";
 
 // reason: each case spawns the CLI several times (work start, stop, change list, brief); under load one spawn takes seconds (C-111)
@@ -106,6 +107,17 @@ describe("changes that so far exist only on their branch", () => {
     const r = canon(root, "change", "list");
     expect(r.code).toBe(4);
     expect(r.err).toContain(`${id(3)}.md on branch change/${id(3)}-broken`);
+  });
+});
+
+describe("a branch deleted while listing", () => {
+  test("BR-2291: the change file is read from the commit the branch pointed at when listed, so a branch deleted meanwhile still reads", () => {
+    const { root, branch } = withBranchOnly();
+    const commit = sh(root, "rev-parse", branch);
+    sh(root, "worktree", "remove", "--force", join(root, "..", `${root.split("/").pop()}.worktrees`, id(2)));
+    sh(root, "branch", "-D", branch); // another session's drop, between listing the branches and reading this one
+    const read = changeOnBranch(ws(root), id(2), { branch, commit });
+    expect(read.ok && read.value ? [read.value.id, read.value.title, read.value.status] : read).toEqual([id(2), "Only on branch", "open"]);
   });
 });
 
