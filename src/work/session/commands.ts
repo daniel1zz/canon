@@ -63,7 +63,7 @@ const status = defineCommand({
     const ws = workspace();
     const gone = goneLanders(ws.db);
     const untested = untestedNotice(ws);
-    const data = { untested, claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending") };
+    const data = { ...(untested.length > 0 ? { untested } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending") };
     if (args.json) return json(data);
     for (const line of untested) say(line);
     say("Claims:");

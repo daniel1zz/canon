@@ -216,6 +216,7 @@ describe("canon work status and canon brief show the untested landings", () => {
     expect(status).toContain("main: 3 landings not yet tested (next run in ~15 min, or when 7 more landings are in; `canon floor watch --now` runs it at once)");
     const data = JSON.parse(run("work", "status", "--json")) as { untested: string[] };
     expect(data.untested).toHaveLength(1);
+    expect(JSON.parse(run("work", "status", "--json")).untested).toEqual(data.untested);
     expect(run("brief")).toContain("main: 3 landings not yet tested");
     for (const w of ws(b.root).db.db.query<{ pid: number }, []>("SELECT pid FROM watcher").all()) process.kill(w.pid, "SIGTERM");
   });
