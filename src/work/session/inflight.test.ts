@@ -229,6 +229,25 @@ describe("judged against main, not the current checkout", () => {
     expect(canon(root, "brief").out).not.toContain(id(3));
   });
 
+  test("BR-2292: in an old worktree, a leftover branch of a change main already has, with a broken file, gives no note and is not listed; nor does BR-2293's ambiguous", () => {
+    const root = mainWithC1();
+    const old = canon(root, "work", "start", "--title", "Old");
+    expect(old.code).toBe(0);
+    const wt = old.out.match(/cd (.+)/)![1]!.trim();
+    onBranch(root, `change/${id(3)}-x`, () => writeFileSync(join(root, `canon/changes/${id(3)}.md`), "no front matter\n"));
+    onBranch(root, `change/${id(5)}-a`, () => changeFile(root, 5, "done"));
+    onBranch(root, `change/${id(5)}-b`, () => changeFile(root, 5, "done"));
+    changeFile(root, 3, "done");
+    changeFile(root, 5, "done"); // both landed: main has them, the branches stay
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "landed");
+    const list = canon(wt, "change", "list");
+    expect([list.code, list.err]).toEqual([0, ""]);
+    expect(list.out).not.toContain(id(3));
+    expect(list.out).not.toContain(id(5)); // BR-2293: not marked ambiguous either
+    expect(canon(root, "brief").out).not.toContain("Unreadable change file");
+  });
+
   test("BR-2150: after the owner removes a dangling backlog line on main, a worktree not rebased gets a note, not a finding", () => {
     const root = mainWithC1();
     const stale = id(9);
