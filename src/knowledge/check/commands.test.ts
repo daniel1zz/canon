@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { project } from "../../work/testkit.ts";
 
@@ -61,11 +61,12 @@ describe("canon check output", () => {
     expect(findings.map((f) => `${f["rule"]} ${f["path"]}`)).toEqual(["ref-dangling canon/backlog.md:4", "domain-code-declared canon/rules/billing/sub/README.md"]);
   });
 
-  test("BR-2139: amends that is not a list, names no document, or names a non-decision makes canon check exit 1", () => {
+  test("BR-2139: amends that is not a list, names no document, names a non-decision or the decision itself makes canon check exit 1", () => {
     for (const [amends, kind] of [
       [`amends: ${id("D", 9)}\n`, "file-invalid"],
       [`amends: [${id("D", 99)}]\n`, "ref-dangling"],
       [`amends: [${id("BR", 1)}]\n`, "amends-not-decision"],
+      [`amends: [${id("D", 10)}]\n`, "amends-not-decision"],
     ] as const) {
       const root = clean();
       write(root, { [`canon/decisions/${id("D", 9)}.md`]: decision(9, ""), [`canon/decisions/${id("D", 10)}.md`]: decision(10, amends) });
@@ -75,5 +76,40 @@ describe("canon check output", () => {
     const ok = clean();
     write(ok, { [`canon/decisions/${id("D", 9)}.md`]: decision(9, ""), [`canon/decisions/${id("D", 10)}.md`]: decision(10, `amends: [${id("D", 9)}]\n`) });
     expect(canon(ok, "check").code).toBe(0);
+  });
+
+  test("BR-2230: supersedes naming a rule, a change or the decision itself is supersedes-not-decision; naming nothing is only ref-dangling", () => {
+    const kinds = (supersedes: string) => {
+      const root = clean();
+      write(root, {
+        [`canon/decisions/${id("D", 1)}.md`]: decision(1, ""),
+        [`canon/changes/${id("C", 9)}.md`]: `---\nid: ${id("C", 9)}\ntitle: C\nstatus: done\n---\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n## 任务\n\n- [x] x\n`,
+        [`canon/decisions/${id("D", 2)}.md`]: decision(2, `supersedes: ${supersedes}\n`),
+      });
+      const r = canon(root, "check", "--json");
+      return [r.code, (JSON.parse(r.out) as { rule: string }[]).map((f) => f.rule)];
+    };
+    expect(kinds(id("D", 1))).toEqual([0, []]);
+    expect(kinds(id("C", 9))).toEqual([1, ["supersedes-not-decision"]]);
+    expect(kinds(id("BR", 1))).toEqual([1, ["supersedes-not-decision"]]);
+    expect(kinds(id("D", 2))).toEqual([1, ["supersedes-not-decision"]]);
+    expect(kinds(id("D", 99))).toEqual([1, ["ref-dangling"]]);
+  });
+
+  test("BR-2231: a file instructions lists that does not exist, or is a directory, is instructions-missing; the default CLAUDE.md is not checked", () => {
+    const run = (instructions: string | undefined, files: Record<string, string>) => {
+      const root = clean();
+      write(root, files);
+      if (instructions !== undefined) appendFileSync(join(root, "canon/config.yaml"), `instructions: ${instructions}\n`);
+      const r = canon(root, "check");
+      return [r.code, r.out.split("\n").filter((l) => l.startsWith("instructions-missing"))];
+    };
+    expect(run("[CLAUDE.md, docs/agent.md]", { "CLAUDE.md": "x", "docs/agent.md": "y" })).toEqual([0, []]);
+    expect(run("[CLAUDE.md, docs/agent.md]", { "CLAUDE.md": "x" })).toEqual([
+      1,
+      ["instructions-missing canon/config.yaml: instructions lists docs/agent.md, which is not a file in the repository (BR-2231)"],
+    ]);
+    expect(run("[docs]", { "docs/agent.md": "y" })[0]).toBe(1);
+    expect(run(undefined, {})).toEqual([0, []]);
   });
 });

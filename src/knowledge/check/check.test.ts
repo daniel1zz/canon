@@ -260,6 +260,7 @@ describe("decision options and sources", () => {
   test("BR-2110: a source line names a URL or relative path and quotes at least eight characters; a placeholder line is not one", () => {
     const got = run(
       {
+        "src/check/check.ts": "export function check(",
         ...decision(
           1,
           [
@@ -280,6 +281,24 @@ describe("decision options and sources", () => {
     expect(got.map((m) => m.split(": ")[1]!.split(" (want")[0])).toEqual(
       ["- 来源：arXiv 上那篇论文", "- 来源：/Users/a/x.ts “some long quote here”", "- 来源：../x.ts “some long quote here”", "- 来源：https://example.com “太短”"].sort(),
     );
+  });
+});
+
+describe("source paths", () => {
+  const decision = (sources: string) =>
+    ({ [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: X\nstatus: proposed\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n${sources}\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n` });
+  const malformed = (files: Record<string, string>) => {
+    const root = repo(files);
+    return check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "source-malformed").map((f) => f.message);
+  };
+
+  test("BR-2110: a source path must be a file of the repository: a word taken as a path, or a directory, is reported; an existing file with a line number is not", () => {
+    const file = { "src/billing/refund.ts": "export function refund(" };
+    expect(malformed({ ...file, ...decision("   - 来源：src/billing/refund.ts:1 “export function refund(”") })).toEqual([]);
+    expect(malformed({ ...file, ...decision("   - 来源：https://example.com/x “export function refund(”") })).toEqual([]);
+    const word = malformed({ ...file, ...decision("   - 来源：arXiv “struggle to self-correct”") });
+    expect(word).toEqual([`${d(1)}: - 来源：arXiv “struggle to self-correct” (arXiv is not a file in the repository)`]);
+    expect(malformed({ ...file, ...decision("   - 来源：src/billing “export function refund(”") })).toHaveLength(1);
   });
 });
 
@@ -471,5 +490,12 @@ describe("backticked repository paths", () => {
       [`canon/rules/billing/${br(1)}.md`]: rule("## 规则\n\nx\n\n```\n## 例子\n```\n\nReads `src/old.ts`.\n\n## 例子\n\n~~~\n## 规则\n~~~\n\n- `src/coord` → y\n"),
     });
     expect(missing(root)).toEqual([`canon/rules/billing/${br(1)}.md: src/old.ts`]);
+  });
+});
+
+describe("test file discovery", () => {
+  test("BR-2046: without tests configured only the root canon directory is skipped; a canon directory deeper down is scanned", () => {
+    const root = repo({ "src/canon/a.test.ts": `test("${br(1)}", () => {});`, "canon/b.test.ts": `test("${br(2)}", () => {});`, "pkg/dist/c.test.ts": "" });
+    expect(findTestFiles(root)).toEqual(["src/canon/a.test.ts"]);
   });
 });

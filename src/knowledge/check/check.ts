@@ -1,6 +1,7 @@
 import { MIN_QUOTE, optionProblems, sources } from "./sources.ts";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
+import { parse } from "yaml";
 import { stripCode, type Corpus, type Rule } from "../documents/model.ts";
 import type { FileProblem } from "../documents/read.ts";
 import { idsIn as idsOf } from "../documents/types.ts";
@@ -26,7 +27,9 @@ export type CheckRule =
   | "file-invalid" // a canon/ file does not fit the model
   | "id-duplicate" // two files claim one id
   | "ref-dangling" // a document or test names an id that does not exist
-  | "amends-not-decision" // a decision's `amends` names a document that is not a decision (BR-2139)
+  | "amends-not-decision" // a decision's `amends` names a document that is not a decision, or itself (BR-2139)
+  | "supersedes-not-decision" // a decision's `supersedes` names a document that is not a decision, or itself (BR-2230)
+  | "instructions-missing" // a file `instructions` lists in canon/config.yaml does not exist (BR-2231)
   | "rule-untested" // an active rule has no test and no `untested:` reason
   | "test-retired-rule" // a test still names a retired rule
   | "rule-no-statement" // an active rule has no non-empty "## 规则" section
@@ -69,7 +72,14 @@ export function check(input: CheckInput): Finding[] {
     if (d.kind === "decision") {
       for (const a of d.amends) {
         const target = input.corpus.docs.find((x) => x.id === a);
-        if (target && target.kind !== "decision") findings.push({ path: d.path, rule: "amends-not-decision", message: `amends ${a}, which is a ${target.kind}, not a decision (BR-2139)` });
+        if (a === d.id) findings.push({ path: d.path, rule: "amends-not-decision", message: `amends itself; list the decisions it changes in part (BR-2139)` });
+        else if (target && target.kind !== "decision") findings.push({ path: d.path, rule: "amends-not-decision", message: `amends ${a}, which is a ${target.kind}, not a decision (BR-2139)` });
+      }
+      // reason: a wrong target is otherwise found only when the decision is accepted (BR-2230, BR-2027)
+      if (d.supersedes !== undefined) {
+        const target = input.corpus.docs.find((x) => x.id === d.supersedes);
+        if (d.supersedes === d.id) findings.push({ path: d.path, rule: "supersedes-not-decision", message: `supersedes itself; name the decision it replaces (BR-2230)` });
+        else if (target && target.kind !== "decision") findings.push({ path: d.path, rule: "supersedes-not-decision", message: `supersedes ${d.supersedes}, which is a ${target.kind}, not a decision (BR-2230)` });
       }
     }
   }
@@ -120,7 +130,8 @@ export function check(input: CheckInput): Finding[] {
       findings.push({ path: rule.path, rule: "rule-untested", message: `${rule.id} has no running test whose title names it and no \`untested:\` reason` });
     }
   }
-  findings.push(...structureFindings(input.corpus));
+  findings.push(...structureFindings(input.root, input.corpus));
+  findings.push(...instructionFindings(input.root));
   if (codeRoot !== undefined) findings.push(...layoutFindings(input.root, input.corpus));
   for (const f of pathFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "path-missing", message: f.message });
   for (const f of listFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "list-mismatch", message: f.message });
@@ -185,10 +196,32 @@ function isDir(full: string): boolean {
   return existsSync(full) && statSync(full).isDirectory();
 }
 
+function isFile(full: string): boolean {
+  return existsSync(full) && statSync(full).isFile();
+}
+
+/**
+ * BR-2231: every file `instructions` lists must exist. Only a list written in canon/config.yaml counts: the default
+ * `[CLAUDE.md]` is no claim that the file exists, since `canon init` creates none. So the raw file is read here, not
+ * the config with its defaults filled in; a config that does not parse is already refused by every command (BR-2045).
+ */
+function instructionFindings(root: string): Finding[] {
+  const path = join(root, CONFIG_FILE);
+  if (!existsSync(path)) return [];
+  const raw: unknown = parse(readFileSync(path, "utf8"));
+  const listed = raw !== null && typeof raw === "object" && !Array.isArray(raw) ? (raw as Record<string, unknown>)["instructions"] : undefined;
+  if (!Array.isArray(listed)) return [];
+  return listed
+    .filter((p): p is string => typeof p === "string" && !isFile(join(root, p)))
+    .map((p) => ({ path: CONFIG_FILE, rule: "instructions-missing", message: `instructions lists ${p}, which is not a file in the repository (BR-2231)` }));
+}
+
+const CONFIG_FILE = "canon/config.yaml";
+
 const TERMS_SECTION = "术语";
 
 /** Required sections (BR-2091), rule shape (BR-2033, BR-2034) and unfilled templates (BR-2035): outcomes of the document, checked at land. */
-function structureFindings(corpus: Corpus): Finding[] {
+function structureFindings(root: string, corpus: Corpus): Finding[] {
   const out: Finding[] = [];
   const unfilled = hasPlaceholderLine;
   const filled = (body: string, title: string) => {
@@ -206,7 +239,13 @@ function structureFindings(corpus: Corpus): Finding[] {
     }
     if (d.kind === "decision") {
       for (const p of optionProblems(d.body)) out.push({ path: d.path, rule: "decision-options", message: `${d.id} ${p.message}` });
-      for (const line of sources(d.body).malformed) out.push({ path: d.path, rule: "source-malformed", message: `${d.id}: ${line} (want 来源：<URL or repository path> “<quote of at least ${MIN_QUOTE} characters>”)` });
+      const found = sources(d.body);
+      for (const line of found.malformed) out.push({ path: d.path, rule: "source-malformed", message: `${d.id}: ${line} (want 来源：<URL or repository path> “<quote of at least ${MIN_QUOTE} characters>”)` });
+      // reason: a path that is no file (a word such as arXiv taken as a path) is found here, not only at landing (BR-2110, BR-2111)
+      for (const src of found.sources) {
+        const file = src.target.replace(/:\d+(?:-\d+)?$/, "");
+        if (!/^https?:\/\//.test(src.target) && !isFile(join(root, file))) out.push({ path: d.path, rule: "source-malformed", message: `${d.id}: ${src.line} (${file} is not a file in the repository)` });
+      }
     }
     if (d.kind !== "rule" || d.status !== "active") continue;
     const statement = section(d.body, RULE_SECTION);
@@ -226,14 +265,16 @@ function structureFindings(corpus: Corpus): Finding[] {
 
 const JS_TS = /\.[cm]?[jt]sx?$/;
 
-const SKIP_DIRS = new Set(["node_modules", ".git", "canon", "dist", ".cache"]);
+const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".cache"]);
+/** Skipped only at the repository root: canon's own documents, not any directory that happens to be named canon (BR-2046). */
+const ROOT_SKIP_DIRS = new Set(["canon"]);
 
 export function findTestFiles(root: string): string[] {
   const out: string[] = [];
   const walk = (dir: string) => {
     // reason: a symbolic link is never followed or read, so a dangling link or a loop cannot crash check (BR-2186)
     for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (SKIP_DIRS.has(entry.name)) continue;
+      if (SKIP_DIRS.has(entry.name) || (dir === root && ROOT_SKIP_DIRS.has(entry.name))) continue;
       const full = join(dir, entry.name);
       if (entry.isDirectory()) walk(full);
       else if (entry.isFile() && /\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.name)) out.push(relative(root, full));
