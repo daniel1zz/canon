@@ -300,3 +300,73 @@ describe("a background result is recorded whole", () => {
     expect(redMain(ws(root).db)).toBeUndefined();
   });
 });
+
+describe("a watcher older than main's config", () => {
+  /**
+   * main's latest commit uses `future_key`, which this canon does not know, while the primary checkout keeps the
+   * config it can read. `canon` on PATH is a script that exits `reads` for `config --schema` and, for `floor watch`,
+   * writes its directory and CANON_WATCH_HANDOFF to `started`.
+   */
+  function stale(reads: number) {
+    const { root } = watched();
+    const config = readFileSync(join(root, "canon/config.yaml"), "utf8");
+    writeFileSync(join(root, "canon/config.yaml"), `${config}future_key: 1\n`);
+    sh(root, "commit", "-qam", "config with a key from newer canon");
+    writeFileSync(join(root, "canon/config.yaml"), config);
+    const bin = `${root}-bin`;
+    mkdirSync(bin, { recursive: true });
+    const started = join(bin, "started");
+    writeFileSync(
+      join(bin, "canon"),
+      `#!/bin/sh\nif [ "$1" = config ]; then exit ${reads}; fi\nif [ "$1 $2" = "floor watch" ]; then printf '%s %s\\n' "$(pwd -P)" "$CANON_WATCH_HANDOFF" > ${started}; fi\n`,
+      { mode: 0o755 },
+    );
+    return { root, sha: sh(root, "rev-parse", "main"), bin, started };
+  }
+
+  async function withPath<T>(bin: string, handoff: string | undefined, run: () => Promise<T>): Promise<T> {
+    const path = process.env["PATH"];
+    process.env["PATH"] = `${bin}:${path}`;
+    if (handoff) process.env["CANON_WATCH_HANDOFF"] = handoff;
+    try {
+      return await run();
+    } finally {
+      process.env["PATH"] = path;
+      delete process.env["CANON_WATCH_HANDOFF"];
+    }
+  }
+
+  const staleEvents = (root: string) =>
+    ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'floor.stale'").all().map((r) => JSON.parse(r.detail) as { sha: string });
+
+  test("BR-2250: when PATH's canon reads the config this watcher cannot, it records floor.stale, not floor.fail, and hands the commit to PATH's canon", async () => {
+    const { root, sha, bin, started } = stale(0);
+    const r = await withPath(bin, undefined, () => watch(ws(root), quiet));
+    expect(r.ok && r.value.tested).toEqual([]);
+    expect(results(root)).toEqual([]);
+    expect(redMain(ws(root).db)).toBeUndefined();
+    expect(staleEvents(root).map((e) => e.sha)).toEqual([sha]);
+    await until(() => existsSync(started));
+    expect(readFileSync(started, "utf8").trim()).toBe(`${realpathSync(root)} ${sha}`);
+    expect(watcherRows(root)).toEqual([]);
+  });
+
+  test("BR-2250: when PATH's canon cannot read the config either, it is main's failure: floor.fail with exit 2 and no handoff", async () => {
+    const { root, sha, bin, started } = stale(2);
+    const r = await withPath(bin, undefined, () => watch(ws(root), quiet));
+    expect(r.ok && r.value.tested.map((t) => [t.sha, t.passed])).toEqual([[sha, false]]);
+    expect(results(root).map((x) => [x.kind, x.sha, x.exit])).toEqual([["floor.fail", sha, 2]]);
+    expect(redMain(ws(root).db)?.sha).toBe(sha);
+    expect(staleEvents(root)).toEqual([]);
+    expect(existsSync(started)).toBe(false);
+  });
+
+  test("BR-2250: a watcher handed this commit already does not hand it off again: floor.fail", async () => {
+    const { root, sha, bin, started } = stale(0);
+    const r = await withPath(bin, sha, () => watch(ws(root), quiet));
+    expect(r.ok && r.value.tested.map((t) => [t.sha, t.passed])).toEqual([[sha, false]]);
+    expect(results(root).map((x) => [x.kind, x.sha])).toEqual([["floor.fail", sha]]);
+    expect(staleEvents(root)).toEqual([]);
+    expect(existsSync(started)).toBe(false);
+  });
+});

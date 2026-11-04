@@ -45,8 +45,7 @@ export function timingOf(wt: string): FloorTiming {
  * one landing would leave every session's canon failing on main's config until the background floor passes.
  */
 export function pathCanonReads(wt: string): Result<void> {
-  // reason: PATH is read at the call, not as it was when the process started, so the canon looked up is the one PATH names now.
-  const bin = Bun.which("canon", { PATH: process.env["PATH"] ?? "" });
+  const bin = pathCanon();
   if (!bin) return err("invalid", "canon is not on PATH, so nothing shows that the canon sessions run after this landing can read its canon/config.yaml (floor_timing: after, BR-2224)");
   const r = Bun.spawnSync([bin, "config", "--schema"], { cwd: wt, stdout: "ignore", stderr: "pipe", stdin: "ignore" });
   if (r.exitCode === 0) return ok(undefined);
@@ -58,6 +57,15 @@ export function pathCanonReads(wt: string): Result<void> {
       "and use it in another landing after main has passed (BR-2224).",
   );
 }
+
+/** The canon PATH names now, or null when there is none. */
+function pathCanon(): string | null {
+  // reason: PATH is read at the call, not as it was when the process started, so the canon looked up is the one PATH names now.
+  return Bun.which("canon", { PATH: process.env["PATH"] ?? "" });
+}
+
+/** Set on a watcher started to take over a commit its starter's older code could not read the config of (BR-2250). */
+const HANDOFF_ENV = "CANON_WATCH_HANDOFF";
 
 /** Whether the background floor already ran on `sha` (BR-2219): a pass or a failure, either way it is not run again. */
 export function tested(db: CoordDb, sha: string): boolean {
@@ -100,7 +108,11 @@ export const watchDir = (db: CoordDb) => join(dirname(db.db.filename), "watch");
 export interface Watched {
   readonly ran: boolean;
   readonly tested: readonly { readonly sha: string; readonly passed: boolean; readonly log: string }[];
+  /** The commit handed to PATH's canon because this watcher's code could not read its config (BR-2250). */
+  readonly handedOff?: string;
 }
+
+type Tested = { readonly sha: string; readonly passed: boolean; readonly log: string };
 
 /** What a signal must stop: the setup or floor running now. */
 interface Running {
@@ -120,7 +132,7 @@ export async function watch(ws: Workspace, say: Say): Promise<Result<Watched>> {
   if (!self) return err("io", "cannot read this process's start time from ps, so this watcher cannot record itself");
   const dir = watchDir(ws.db);
   const running: Running = {};
-  const results: { sha: string; passed: boolean; log: string }[] = [];
+  const results: Tested[] = [];
   let mine = false;
   let busy = false;
   // reason: a watcher stopped by a signal removes its worktree and gives up its place at once, so the next one starts clean (BR-2219).
@@ -146,6 +158,15 @@ export async function watch(ws: Workspace, say: Say): Promise<Result<Watched>> {
         ws.db.db.query("UPDATE watcher SET sha = ? WHERE id = 1 AND pid = ?").run(tip.value, self.pid);
         const r = await testCommit(ws, say, tip.value, running);
         if (!r.ok) return r;
+        if (r.value.stale !== undefined) {
+          // reason: the place is given up before PATH's canon starts, or it would find this watcher alive and end (BR-2250).
+          releaseWatcher(ws.db, self);
+          mine = false;
+          const started = spawnWatcher(ws, [r.value.stale, "floor", "watch"], { [HANDOFF_ENV]: tip.value });
+          if (!started.ok) return started;
+          say(`floor watch: this watcher's canon is older than ${ws.config.main} ${tip.value.slice(0, 9)}'s canon/config.yaml; ${r.value.stale} tests it in the background (log: ${started.value})`);
+          return ok({ ran: results.length > 0, tested: results, handedOff: tip.value });
+        }
         results.push(r.value);
       }
       releaseWatcher(ws.db, self);
@@ -178,7 +199,7 @@ async function runLogged(command: string, cwd: string, fd: number, running: Runn
  * Tests one commit (BR-2219): a fresh detached worktree at it, setup, then the floor, both into `watch-<sha12>.log`;
  * records floor.pass or floor.fail, then the pass (BR-2222) or the failure (BR-2220); removes the worktree last.
  */
-async function testCommit(ws: Workspace, say: Say, sha: string, running: Running): Promise<Result<{ sha: string; passed: boolean; log: string }>> {
+async function testCommit(ws: Workspace, say: Say, sha: string, running: Running): Promise<Result<Tested & { readonly stale?: string }>> {
   const dir = watchDir(ws.db);
   const log = logFile(ws.db, `watch-${sha.slice(0, 12)}.log`);
   rmSync(dir, { recursive: true, force: true });
@@ -191,11 +212,14 @@ async function testCommit(ws: Workspace, say: Say, sha: string, running: Running
     const fd = openSync(log, "w");
     let code: number;
     let why: string;
+    let stale: string | null = null;
     // reason: the tested commit's own config names its setup, floor and after_green, as a landing reads the landing tree's (BR-2218).
     const config = readConfig(dir);
     try {
       if (!config.ok) {
         writeSync(fd, `${config.error.message}\n`);
+        stale = newerCanon(dir, sha);
+        if (stale) writeSync(fd, `${stale} reads it, so this watcher's own canon is older than this commit's config; ${stale} tests it (BR-2250)\n`);
         code = 2;
         why = "its canon/config.yaml cannot be read";
       } else if (!config.value.floor) {
@@ -214,6 +238,14 @@ async function testCommit(ws: Workspace, say: Say, sha: string, running: Running
       }
     } finally {
       closeSync(fd);
+    }
+    if (stale) {
+      try {
+        ws.db.event(ws.actor, "floor.stale", null, { sha, log, why: "this watcher's canon cannot read its canon/config.yaml; the canon on PATH can" });
+      } catch (e) {
+        return err("io", `cannot record that ${sha.slice(0, 9)} is handed to the canon on PATH (${(e as Error).message})`);
+      }
+      return ok({ sha, passed: false, log, stale });
     }
     const passed = code === 0;
     // reason: the result event is what marks a commit tested (tested()), so it is written in one transaction with the
@@ -252,6 +284,17 @@ async function testCommit(ws: Workspace, say: Say, sha: string, running: Running
   }
 }
 
+/**
+ * The canon on PATH when it reads the config in `dir` that this process's code cannot (BR-2250): then this watcher
+ * is older than the commit, not the commit broken. Null when PATH has no canon, it cannot read it either, or this
+ * watcher was itself handed `sha` (so a commit is never handed back and forth).
+ */
+function newerCanon(dir: string, sha: string): string | null {
+  if (process.env[HANDOFF_ENV] === sha) return null;
+  const bin = pathCanon();
+  return bin && pathCanonReads(dir).ok ? bin : null;
+}
+
 /** Moves refs/canon/green to `sha` by a compare-and-swap from the value it had (BR-2222). */
 function markGreen(ws: Workspace, sha: string, say: Say): void {
   const old = git(ws.primary, "rev-parse", "--verify", "--quiet", GREEN_REF);
@@ -275,16 +318,28 @@ export function ensureWatcher(ws: Workspace, say: Say): string | undefined {
   if (timingOnMain(ws) !== "after") return undefined;
   const tip = git(ws.primary, "rev-parse", "--verify", `refs/heads/${ws.config.main}`);
   if (!tip.ok || tested(ws.db, tip.value) || liveWatcher(ws.db)) return undefined;
+  const started = spawnWatcher(ws, [...canonCommand(), "floor", "watch"]);
+  // reason: a watcher that cannot be started fails the command that starts it, as before BR-2250 split this out.
+  if (!started.ok) throw new Error(started.error.message);
+  say(`floor watch: testing ${ws.config.main} ${tip.value.slice(0, 9)} in the background (log: ${started.value})`);
+  return started.value;
+}
+
+/** Starts `command` (a `canon floor watch`) detached in the primary checkout with its output in watch.log; returns the log. */
+function spawnWatcher(ws: Workspace, command: string[], env?: Record<string, string>): Result<string> {
   const log = logFile(ws.db, "watch.log");
-  mkdirSync(dirname(log), { recursive: true });
-  const fd = openSync(log, "a");
   try {
-    // reason: its own process group, so a signal to the command that started it (a tool timeout, Ctrl-C) does not stop it (BR-2219).
-    const p = Bun.spawn([...canonCommand(), "floor", "watch"], { cwd: ws.primary, stdout: fd, stderr: fd, stdin: "ignore", detached: true });
-    p.unref();
-  } finally {
-    closeSync(fd);
+    mkdirSync(dirname(log), { recursive: true });
+    const fd = openSync(log, "a");
+    try {
+      // reason: its own process group, so a signal to the command that started it (a tool timeout, Ctrl-C) does not stop it (BR-2219).
+      const p = Bun.spawn(command, { cwd: ws.primary, stdout: fd, stderr: fd, stdin: "ignore", detached: true, ...(env ? { env: { ...(process.env as Record<string, string>), ...env } } : {}) });
+      p.unref();
+    } finally {
+      closeSync(fd);
+    }
+    return ok(log);
+  } catch (e) {
+    return err("io", `cannot start \`${command.join(" ")}\` in the background: ${(e as Error).message}`);
   }
-  say(`floor watch: testing ${ws.config.main} ${tip.value.slice(0, 9)} in the background (log: ${log})`);
-  return log;
 }
