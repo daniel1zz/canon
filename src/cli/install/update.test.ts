@@ -137,8 +137,8 @@ describe("finding and applying updates", () => {
     const r = canon(root, env, "update");
     expect(r.code).toBe(1);
     expect(r.err).toContain("canon-a/SKILL.md");
-    expect(r.err.indexOf("claude -p --output-format text")).toBeGreaterThan(-1);
-    expect(r.err.indexOf("claude -p --output-format text")).toBeLessThan(r.err.indexOf("canon human ask"));
+    expect(r.err.indexOf("claude -p --model sonnet --output-format text")).toBeGreaterThan(-1);
+    expect(r.err.indexOf("claude -p --model sonnet --output-format text")).toBeLessThan(r.err.indexOf("canon human ask"));
     expect(git(root, "branch", "--list", "change/*")).toBe("");
     expect(existsSync(join(root, "..", `${root.split("/").pop()}.worktrees`))).toBe(false);
     writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ntests: []\nreview: none\n');

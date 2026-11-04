@@ -5,7 +5,7 @@ import { configKey, MINUTE, optionalString, positiveNumber, positiveValue, REL_D
 export const REVIEW_NONE = "none";
 
 /** The command an unset `review` should become, as `canon init` writes it (BR-2032) and the refusal suggests (BR-2074). */
-export const DEFAULT_REVIEW = "claude -p --output-format text";
+export const DEFAULT_REVIEW = "claude -p --model sonnet --output-format text";
 
 /** How to set a reviewer, first; then that turning the review off is the owner's call, landed by itself (BR-2074, BR-2295, D-51). */
 export const REVIEW_WAYS_OUT = [

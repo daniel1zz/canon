@@ -270,11 +270,11 @@ describe("project and documents", () => {
     const lines = readFileSync(join(root, "canon/config.yaml"), "utf8").split("\n");
     expect(lines[0]).toBe("# yaml-language-server: $schema=../.canon/config.schema.json");
     expect(lines).toContain('floor: "bun test"');
-    const review = lines.indexOf('review: "claude -p --output-format text"');
+    const review = lines.indexOf('review: "claude -p --model sonnet --output-format text"');
     expect(review).toBeGreaterThan(0);
     expect(lines[review - 1]).toStartWith("#"); // the comment says what it reviews and how to turn it off
     expect(lines[review - 1]).toContain("review: none");
-    expect(canon(root, "config").out).toContain('review = "claude -p --output-format text"');
+    expect(canon(root, "config").out).toContain('review = "claude -p --model sonnet --output-format text"');
   });
 
   test("BR-2027: accepting a decision supersedes the one it replaces; a non-decision target is not found", () => {

@@ -133,8 +133,8 @@ describe("rule review at land", () => {
     expect(said).toContain("land refused (review)");
     expect(said).toContain(id);
     expect(said).toContain("review: none");
-    expect(said.indexOf('review: "claude -p --output-format text"')).toBeGreaterThan(-1);
-    expect(said.indexOf('review: "claude -p --output-format text"')).toBeLessThan(said.indexOf("review: none"));
+    expect(said.indexOf('review: "claude -p --model sonnet --output-format text"')).toBeGreaterThan(-1);
+    expect(said.indexOf('review: "claude -p --model sonnet --output-format text"')).toBeLessThan(said.indexOf("review: none"));
     expect(said).toContain("canon human ask");
     expect(skips(root)).toBe(0);
     expect(sh(root, "rev-parse", "main")).toBe(before);
@@ -206,8 +206,8 @@ describe("rule review at land", () => {
       expect(out.kind === "refused" && out.reason).toBe("review");
       const message = out.kind === "refused" ? out.message : "";
       expect(message).toContain(id);
-      expect(message.indexOf("claude -p --output-format text")).toBeGreaterThan(-1);
-      expect(message.indexOf("claude -p --output-format text")).toBeLessThan(message.indexOf("canon human ask"));
+      expect(message.indexOf("claude -p --model sonnet --output-format text")).toBeGreaterThan(-1);
+      expect(message.indexOf("claude -p --model sonnet --output-format text")).toBeLessThan(message.indexOf("canon human ask"));
       expect(sh(root, "rev-parse", "main")).toBe(before);
       expect(existsSync(r.promptFile)).toBe(false);
     }
