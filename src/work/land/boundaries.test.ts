@@ -2,9 +2,10 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claims, takeClaim } from "../claims/claims.ts";
-import { enqueue, finishEntry, tryTurn } from "./queue.ts";
+import { enqueue, finishEntry, tryTurn } from "./queue/queue.ts";
 import { start } from "../session/session.ts";
-import { land, predictedConflicts } from "./land.ts";
+import { land } from "./land.ts";
+import { predictedConflicts } from "./queue/wait.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;

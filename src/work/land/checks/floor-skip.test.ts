@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { land } from "./land.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { land } from "../land.ts";
+import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 describe("floor skip for landings that change only declared paths", () => {
   function skipProject(config: string) {
@@ -79,7 +79,7 @@ describe("floor skip for landings that change only declared paths", () => {
     const out = await land(ws(s.worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("check");
     expect(events(root, "land.refuse")[0]!["floor_skipped"]).toBe(true);
-    const { computeStats } = await import("../stats/stats.ts");
+    const { computeStats } = await import("../../stats/stats.ts");
     const stats = computeStats(ws(root).db, {}, "2026-11-03");
     expect(stats.find((x) => x.check === "floor")!.runs).toBe(0);
     expect(stats.find((x) => x.check === "check")!.runs).toBe(1);

@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { renewClaim, takeClaim } from "../claims/claims.ts";
+import { renewClaim, takeClaim } from "../../claims/claims.ts";
 import { enqueue, finishEntry, heartbeat, tryTurn } from "./queue.ts";
-import { readCorpus } from "../../knowledge/documents/read.ts";
-import { land, waitPollMs } from "./land.ts";
-import { processOf, selfProcess, type Proc } from "../claims/liveness.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { readCorpus } from "../../../knowledge/documents/read.ts";
+import { land } from "../land.ts";
+import { waitPollMs } from "./wait.ts";
+import { processOf, selfProcess, type Proc } from "../../claims/liveness.ts";
+import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
 // under load that alone came within 0.4 s of the 5 s default (C-111), so they get room, not the rest of the file.
@@ -90,7 +91,7 @@ describe("the claim names the lander while it lands", () => {
       expect(tryTurn(other.db, ahead).mine).toBe(true);
       const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: "agent:a" };
       delete env["CLAUDECODE"];
-      const lander = Bun.spawn(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env });
+      const lander = Bun.spawn(["bun", join(import.meta.dir, "../../../cli/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env });
       for (let i = 0; i < 200 && pidOf(root, s.change) !== lander.pid; i++) await Bun.sleep(50);
       expect(pidOf(root, s.change)).toBe(lander.pid);
       expect(takeClaim(other.db, s.change, s.worktree, "agent:b").ok).toBe(false);
@@ -114,7 +115,7 @@ describe("the claim names the lander while it lands", () => {
       expect(tryTurn(other.db, ahead).mine).toBe(true);
       const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: "agent:a" };
       delete env["CLAUDECODE"];
-      const lander = Bun.spawn(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env });
+      const lander = Bun.spawn(["bun", join(import.meta.dir, "../../../cli/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env });
       for (let i = 0; i < 200 && pidOf(root, s.change) !== lander.pid; i++) await Bun.sleep(50);
       expect(pidOf(root, s.change)).toBe(lander.pid);
       lander.kill("SIGKILL");
@@ -137,7 +138,7 @@ describe("the claim names the lander while it lands", () => {
 });
 
 describe("a lander killed by a signal", () => {
-  const CLI = join(import.meta.dir, "../../cli/main.ts");
+  const CLI = join(import.meta.dir, "../../../cli/main.ts");
   const entryOf = (root: string) => ws(root).db.db.query<{ id: number; state: string; result: string | null }, []>("SELECT id, state, result FROM queue ORDER BY id DESC LIMIT 1").get();
   const until = async (what: () => boolean) => {
     for (let i = 0; i < 200 && !what(); i++) await Bun.sleep(50);

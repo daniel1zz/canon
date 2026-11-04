@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { readConfig } from "../../config/config.ts";
 import { check } from "../../knowledge/check/check.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
-import { enqueue, finishEntry, tryTurn } from "./queue.ts";
+import { enqueue, finishEntry, tryTurn } from "./queue/queue.ts";
 import { land } from "./land.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 

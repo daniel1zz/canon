@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { land } from "./land.ts";
-import { enqueue, finishEntry } from "./queue.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { land } from "../land.ts";
+import { enqueue, finishEntry } from "../queue/queue.ts";
+import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 // reason: the batch case drives two real landings behind a blocker, which takes longer than the 5 s default
 const TIMED = 30_000;

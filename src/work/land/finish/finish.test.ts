@@ -1,12 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { claims, takeClaim } from "../claims/claims.ts";
-import { enqueue, finishEntry, tryTurn } from "./queue.ts";
-import { handoffs, writeHandoff } from "../session/handoffs.ts";
-import { readCorpus } from "../../knowledge/documents/read.ts";
-import { land, reopen } from "./land.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { claims, takeClaim } from "../../claims/claims.ts";
+import { enqueue, finishEntry, tryTurn } from "../queue/queue.ts";
+import { handoffs, writeHandoff } from "../../session/handoffs.ts";
+import { readCorpus } from "../../../knowledge/documents/read.ts";
+import { land } from "../land.ts";
+import { reopen } from "./finish.ts";
+import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
 // under load that alone came within 0.4 s of the 5 s default (C-111), so they get room, not the rest of the file.

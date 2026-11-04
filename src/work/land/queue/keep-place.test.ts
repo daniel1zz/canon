@@ -2,12 +2,12 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CoordDb } from "../db.ts";
-import { readConfig } from "../../config/config.ts";
+import { CoordDb } from "../../db.ts";
+import { readConfig } from "../../../config/config.ts";
 import { abandonGone, batchCandidates, enqueue, enter, failForConflict, failIfActive, finishEntry, keptPlaces, tryTurn } from "./queue.ts";
-import { selfProcess } from "../claims/liveness.ts";
-import { land } from "./land.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { selfProcess } from "../../claims/liveness.ts";
+import { land } from "../land.ts";
+import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 function db(): CoordDb {
   const r = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-keep-place-")), "state.db"));
@@ -171,7 +171,7 @@ describe("a landing back at its kept place", () => {
 });
 
 describe("kept places end to end, through real landings", () => {
-  const CLI = join(import.meta.dir, "../../cli/main.ts");
+  const CLI = join(import.meta.dir, "../../../cli/main.ts");
   const until = async (what: () => boolean, tries = 400) => {
     for (let i = 0; i < tries && !what(); i++) await Bun.sleep(25);
     expect(what()).toBe(true);

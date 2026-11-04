@@ -2,9 +2,9 @@ import { describe, expect, test } from "bun:test";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { CoordDb } from "../db.ts";
+import { CoordDb } from "../../db.ts";
 import { batchCandidates, enqueue, failIfActive, finishEntry, joinBatch, landBatched, leaveBatch, lockBatch, QUEUE_STALE_MS, tryTurn, unlockBatch, type Priority } from "./queue.ts";
-import { selfProcess } from "../claims/liveness.ts";
+import { selfProcess } from "../../claims/liveness.ts";
 
 function db(): CoordDb {
   const r = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-next-state-")), "state.db"));

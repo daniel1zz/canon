@@ -2,7 +2,7 @@ import { chmodSync, existsSync, lstatSync, mkdirSync, readFileSync, renameSync, 
 import { join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
-import { LAND_MARKER } from "../../work/land/land.ts";
+import { LAND_MARKER } from "../../work/land/finish/finish.ts";
 
 /**
  * The git hook that makes `canon work land` the only way main moves (BR-2123, D-16). git runs a

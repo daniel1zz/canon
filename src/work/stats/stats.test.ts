@@ -7,7 +7,8 @@ import { CoordDb } from "../db.ts";
 import { readConfig } from "../../config/config.ts";
 import { drop } from "../drop/drop.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
-import { findingDetail, land } from "../land/land.ts";
+import { land } from "../land/land.ts";
+import { findingDetail } from "../land/checks/steps.ts";
 import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "./stats.ts";
 
 const of = (stats: ReturnType<typeof computeStats>, check: string) => stats.find((s) => s.check === check)!;

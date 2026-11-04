@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { CoordDb } from "../db.ts";
 import { isGone, processOf, selfProcess, sessionProcess, type Proc } from "./liveness.ts";
 import { claims, holdClaim, keepClaim, renewClaim, takeClaim, unholdClaim } from "./claims.ts";
-import { enqueue, finishEntry, tryTurn } from "../land/queue.ts";
+import { enqueue, finishEntry, tryTurn } from "../land/queue/queue.ts";
 import { land } from "../land/land.ts";
 import { stop } from "../session/session.ts";
 import { computeStats } from "../stats/stats.ts";

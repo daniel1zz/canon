@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { parseUrgent } from "../../knowledge/documents/backlog.ts";
-import { recordFailure } from "../watch/redmain.ts";
-import { priorityNow } from "./land.ts";
-import { project, sh, startNew, ws } from "../testkit.ts";
+import { parseUrgent } from "../../../knowledge/documents/backlog.ts";
+import { recordFailure } from "../../watch/redmain.ts";
+import { priorityNow } from "./wait.ts";
+import { project, sh, startNew, ws } from "../../testkit.ts";
 
 describe("what jumps the landing queue", () => {
   test("BR-2232: only the items under 优先合入 count, up to the next heading of the same or a higher level", () => {

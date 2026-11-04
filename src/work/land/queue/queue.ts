@@ -1,5 +1,5 @@
-import type { CoordDb } from "../db.ts";
-import { isGone, type Proc } from "../claims/liveness.ts";
+import type { CoordDb } from "../../db.ts";
+import { isGone, type Proc } from "../../claims/liveness.ts";
 
 /**
  * Live coordination operations (design §2). Each is one transaction on the shared DB, so two sessions

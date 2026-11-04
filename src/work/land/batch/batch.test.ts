@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { claims } from "../claims/claims.ts";
-import { enqueue, finishEntry } from "./queue.ts";
-import { land, reopenForGoneLander } from "./land.ts";
-import { processOf } from "../claims/liveness.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { claims } from "../../claims/claims.ts";
+import { enqueue, finishEntry } from "../queue/queue.ts";
+import { land } from "../land.ts";
+import { reopenForGoneLander } from "./batch.ts";
+import { processOf } from "../../claims/liveness.ts";
+import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
 // under load that alone came within 0.4 s of the 5 s default (C-111), so they get room, not the rest of the file.
@@ -66,7 +67,7 @@ describe("batched landings", () => {
     const oks = landOks(root);
     expect(oks.map((o) => o.subject)).toEqual([a.change, b.change]);
     expect(oks[1]!["batched_by"]).toBeNumber();
-    const { computeStats } = await import("../stats/stats.ts");
+    const { computeStats } = await import("../../stats/stats.ts");
     expect(computeStats(ws(root).db, {}, "2026-11-03").find((x) => x.check === "floor")!.runs).toBe(1);
   }, TIMED);
 

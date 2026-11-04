@@ -2,10 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claims } from "../claims/claims.ts";
-import { enqueue, finishEntry, tryTurn } from "./queue.ts";
+import { enqueue, finishEntry, tryTurn } from "./queue/queue.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { clean, stop } from "../session/session.ts";
-import { land, LAND_MARKER } from "./land.ts";
+import { land } from "./land.ts";
+import { LAND_MARKER } from "./finish/finish.ts";
 import { ensureGuard } from "../../cli/install/githook.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 

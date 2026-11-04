@@ -13,7 +13,7 @@ import { findDoc, referencedIds } from "../../knowledge/query/query.ts";
 import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
 import { claimOfWorktree, claimsWithState, liveClaims, type ClaimState } from "../claims/claims.ts";
 import { questions } from "../humans/questions.ts";
-import { activeQueue, keptPlaces } from "../land/queue.ts";
+import { activeQueue, keptPlaces } from "../land/queue/queue.ts";
 import { openWorkspace, type Workspace } from "../workspace.ts";
 import { handoffs } from "./handoffs.ts";
 import { overlapsOf } from "./overlap.ts";

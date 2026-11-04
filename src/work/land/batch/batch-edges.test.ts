@@ -1,13 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { enqueue, finishEntry } from "./queue.ts";
-import { land } from "./land.ts";
-import { FAST, project, sh, startNew, ws } from "../testkit.ts";
+import { enqueue, finishEntry } from "../queue/queue.ts";
+import { land } from "../land.ts";
+import { FAST, project, sh, startNew, ws } from "../../testkit.ts";
 
 // reason: end-to-end batches run real landings through 2 s queue polls and spawned landers on purpose (C-111).
 const TIMED = 60_000;
-const CLI = join(import.meta.dir, "../../cli/main.ts");
+const CLI = join(import.meta.dir, "../../../cli/main.ts");
 
 /** A project whose floor counts its runs in a file, fails on a FAIL file, and sleeps `batchSleep` s in a batch worktree. */
 function batchProject(extra: string, batchSleep = 0) {

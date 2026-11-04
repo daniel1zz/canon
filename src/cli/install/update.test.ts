@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { BRIEF_COMMAND, SNAPSHOT_COMMAND } from "./hook.ts";
 import { CoordDb } from "../../work/db.ts";
-import { enqueue, tryTurn } from "../../work/land/queue.ts";
+import { enqueue, tryTurn } from "../../work/land/queue/queue.ts";
 
 /** The PreToolUse entry canon installs (BR-2185); a project with canon's current settings has it. */
 const SNAPSHOT_ENTRY = { matcher: "Bash", hooks: [{ type: "command", command: SNAPSHOT_COMMAND }] };

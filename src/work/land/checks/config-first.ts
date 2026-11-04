@@ -1,6 +1,6 @@
 import { parse } from "yaml";
-import { git } from "../../kernel/git.ts";
-import { err, ok, type Result } from "../../kernel/result.ts";
+import { git } from "../../../kernel/git.ts";
+import { err, ok, type Result } from "../../../kernel/result.ts";
 
 /** One key declaration in a domain's `config-keys.ts`, as `configKey` takes it (C-135). */
 const DECLARATION = /^\s*key: "([A-Za-z0-9_]+)",\s*$/gm;

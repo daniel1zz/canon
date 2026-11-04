@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { land } from "./land.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { land } from "../land.ts";
+import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 describe("rule review at land", () => {
   function reviewedProject(verdict: "ok" | "block") {

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { readCorpus } from "../../knowledge/documents/read.ts";
-import { keptPlaces } from "./queue.ts";
+import { keptPlaces } from "./queue/queue.ts";
 import { land } from "./land.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 

@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { land } from "../land/land.ts";
-import { enqueue, finishEntry } from "../land/queue.ts";
+import { enqueue, finishEntry } from "../land/queue/queue.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
 // reason: a landing in after mode starts the background floor, a spawned `canon floor watch`; these tests wait for it
