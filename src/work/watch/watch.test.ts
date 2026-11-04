@@ -443,7 +443,7 @@ describe("a passing main", () => {
     expect(briefAfterGuide(root)).not.toContain("floor watch:");
   });
 
-  test("BR-2222: a floor.pass an older canon marked `after_green: true` with no floor.after_green is not run again", async () => {
+  test("BR-2219 BR-2222: a floor.pass an older canon marked `after_green: true` with no floor.after_green is not run again", async () => {
     const { root } = watched(`hooks:\n  after_green: 'touch ran'\n`);
     const a = sh(root, "rev-parse", "main");
     sh(root, "update-ref", GREEN_REF, a);
