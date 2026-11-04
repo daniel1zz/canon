@@ -11,6 +11,7 @@ import { addWorktree, git, pruneWorktrees, removeWorktree } from "../../kernel/g
 import { isGone, selfProcess, type Proc } from "../claims/liveness.ts";
 import type { FloorTiming } from "./config-keys.ts";
 import { clearRedMain, recordFailure } from "./redmain.ts";
+import { stopStarted } from "./stop.ts";
 
 /**
  * Merge-then-test (D-31): with `floor_timing: after`, landings move main without the floor and `canon floor watch`
@@ -122,11 +123,6 @@ type Tested = { readonly sha: string; readonly passed: boolean; readonly log: st
 /** One tested commit, and whether after_green ran and every command of it exited 0 (BR-2251). */
 type TestedHere = Tested & { readonly stale?: string; readonly rebuilt?: boolean };
 
-/** What a signal must stop: the setup or floor running now. */
-interface Running {
-  proc?: { kill(): void } | undefined;
-}
-
 /**
  * `canon floor watch` (BR-2219): unless another watcher is alive, tests main's latest commit, then the latest again
  * while main moved meanwhile, until the latest is tested; commits in between are skipped.
@@ -139,13 +135,13 @@ export async function watch(ws: Workspace, say: Say): Promise<Result<Watched>> {
   const self = selfProcess();
   if (!self) return err("io", "cannot read this process's start time from ps, so this watcher cannot record itself");
   const dir = watchDir(ws.db);
-  const running: Running = {};
   const results: Tested[] = [];
   let mine = false;
   let busy = false;
-  // reason: a watcher stopped by a signal removes its worktree and gives up its place at once, so the next one starts clean (BR-2219).
+  // reason: a watcher stopped by a signal first stops everything it started, then removes its worktree and gives up its
+  // place, so the next one starts clean and never runs beside what this one left (BR-2219, BR-2270, issue #101).
   const onSignal = (signal: NodeJS.Signals) => {
-    running.proc?.kill();
+    if (!stopStarted()) say("floor watch: cannot read the process table, so the commands this watcher started could not be stopped");
     if (existsSync(dir)) removeWorktree(ws.primary, "--force", dir);
     if (mine) releaseWatcher(ws.db, self);
     process.exit(signal === "SIGINT" ? 130 : 143);
@@ -162,7 +158,7 @@ export async function watch(ws: Workspace, say: Say): Promise<Result<Watched>> {
       // reason: the green commit's after_green first: it is what PATH's canon was meant to be rebuilt from (BR-2270, issue #89).
       const due = dueAfterGreen(ws);
       if (due) {
-        const rebuilt = await rerunAfterGreen(ws, say, due, running);
+        const rebuilt = await rerunAfterGreen(ws, say, due);
         if (!rebuilt.ok) return rebuilt;
         if (rebuilt.value) {
           const handed = handOff(ws, say, self, due);
@@ -177,7 +173,7 @@ export async function watch(ws: Workspace, say: Say): Promise<Result<Watched>> {
         if (!tip.ok) return err("io", tip.error.message);
         if (tested(ws.db, tip.value)) break;
         ws.db.db.query("UPDATE watcher SET sha = ? WHERE id = 1 AND pid = ?").run(tip.value, self.pid);
-        const r = await testCommit(ws, say, tip.value, running);
+        const r = await testCommit(ws, say, tip.value);
         if (!r.ok) return r;
         if (r.value.stale !== undefined) {
           // reason: the place is given up before PATH's canon starts, or it would find this watcher alive and end (BR-2250).
@@ -241,21 +237,18 @@ function handOff(ws: Workspace, say: Say, self: Proc, sha: string): "handed" | R
   return "handed";
 }
 
-/** Runs `command` in `cwd` with its output appended to the log behind `fd`; `running` lets a signal stop it. */
-async function runLogged(command: string, cwd: string, fd: number, running: Running, env?: Record<string, string>): Promise<number> {
+/** Runs `command` in `cwd` with its output appended to the log behind `fd`. */
+async function runLogged(command: string, cwd: string, fd: number, env?: Record<string, string>): Promise<number> {
   writeSync(fd, `$ ${command}\n`);
   const proc = Bun.spawn(["sh", "-c", command], { cwd, stdout: fd, stderr: fd, stdin: "ignore", ...(env ? { env: { ...(process.env as Record<string, string>), ...env } } : {}) });
-  running.proc = proc;
-  const code = await proc.exited;
-  running.proc = undefined;
-  return code;
+  return await proc.exited;
 }
 
 /**
  * Tests one commit (BR-2219): a fresh detached worktree at it, setup, then the floor, both into `watch-<sha12>.log`;
  * records floor.pass or floor.fail, then the pass (BR-2222) or the failure (BR-2220); removes the worktree last.
  */
-async function testCommit(ws: Workspace, say: Say, sha: string, running: Running): Promise<Result<TestedHere>> {
+async function testCommit(ws: Workspace, say: Say, sha: string): Promise<Result<TestedHere>> {
   const dir = watchDir(ws.db);
   const log = logFile(ws.db, `watch-${sha.slice(0, 12)}.log`);
   rmSync(dir, { recursive: true, force: true });
@@ -283,12 +276,12 @@ async function testCommit(ws: Workspace, say: Say, sha: string, running: Running
         code = 2;
         why = "it has no floor";
       } else {
-        const setup = config.value.setup ? await runLogged(config.value.setup, dir, fd, running) : 0;
+        const setup = config.value.setup ? await runLogged(config.value.setup, dir, fd) : 0;
         if (setup !== 0) {
           code = setup;
           why = `setup exited ${setup}`;
         } else {
-          code = await runLogged(config.value.floor, dir, fd, running);
+          code = await runLogged(config.value.floor, dir, fd);
           why = `floor exited ${code}`;
         }
       }
@@ -333,7 +326,7 @@ async function testCommit(ws: Workspace, say: Say, sha: string, running: Running
     const recorded = record(() => clearRedMain(ws.db));
     if (!recorded.ok) return recorded;
     if (due && config.ok) {
-      const done = await afterGreen(ws, say, sha, dir, config.value.hooks.after_green, running);
+      const done = await afterGreen(ws, say, sha, dir, config.value.hooks.after_green);
       return done.ok ? ok({ sha, passed, log, rebuilt: done.value }) : done;
     }
     return ok({ sha, passed, log });
@@ -346,10 +339,9 @@ async function testCommit(ws: Workspace, say: Say, sha: string, running: Running
  * Runs after_green for the passed commit `sha` checked out in `dir`, then records `floor.after_green`: from then on
  * it is not due (BR-2222, BR-2270). True when every command exited 0, so PATH's canon counts as rebuilt (BR-2251).
  */
-async function afterGreen(ws: Workspace, say: Say, sha: string, dir: string, commands: readonly string[], running: Running, rerun = false): Promise<Result<boolean>> {
+async function afterGreen(ws: Workspace, say: Say, sha: string, dir: string, commands: readonly string[], rerun = false): Promise<Result<boolean>> {
   const env = { CANON_GREEN: sha, CANON_PRIMARY: ws.primary };
-  // reason: registered in `running`, so a signal that ends this watcher stops after_green too and a rerun never runs beside it (BR-2270, issue #99).
-  const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "after_green", change: null, cwd: dir, env, port: noPort, running }, commands, say, false);
+  const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "after_green", change: null, cwd: dir, env, port: noPort }, commands, say, false);
   return endAfterGreen(ws, sha, { failed: failed ? failed.command : null, ...(rerun ? { rerun } : {}) }) ?? ok(failed === undefined);
 }
 
@@ -384,7 +376,7 @@ export function dueAfterGreen(ws: Workspace): string | undefined {
  * output into `after-green-<sha12>.log`; the floor does not run again. A setup that fails is recorded as the end too,
  * so a broken setup is not retried by every watcher. True when every after_green command exited 0 (BR-2251).
  */
-async function rerunAfterGreen(ws: Workspace, say: Say, sha: string, running: Running): Promise<Result<boolean>> {
+async function rerunAfterGreen(ws: Workspace, say: Say, sha: string): Promise<Result<boolean>> {
   const dir = watchDir(ws.db);
   rmSync(dir, { recursive: true, force: true });
   pruneWorktrees(ws.primary);
@@ -400,7 +392,7 @@ async function rerunAfterGreen(ws: Workspace, say: Say, sha: string, running: Ru
       const fd = openSync(log, "w");
       let code: number;
       try {
-        code = await runLogged(config.value.setup, dir, fd, running);
+        code = await runLogged(config.value.setup, dir, fd);
       } finally {
         closeSync(fd);
       }
@@ -409,7 +401,7 @@ async function rerunAfterGreen(ws: Workspace, say: Say, sha: string, running: Ru
         return endAfterGreen(ws, sha, { rerun: true, setup_exit: code }) ?? ok(false);
       }
     }
-    return await afterGreen(ws, say, sha, dir, config.value.hooks.after_green, running, true);
+    return await afterGreen(ws, say, sha, dir, config.value.hooks.after_green, true);
   } finally {
     removeWorktree(ws.primary, "--force", dir);
   }

@@ -22,19 +22,6 @@ export interface HookContext {
   readonly env: Readonly<Record<string, string>>;
   /** The change's port for CANON_PORT (BR-2267); asked only when there is a command to run. */
   readonly port: PortLookup;
-  /** Set to the command running now, so a signal to the caller can stop it with its children (BR-2270, issue #99). */
-  readonly running?: { proc?: { kill(): void } | undefined };
-}
-
-/** Sends SIGTERM to `pid` and every process below it, children first, so none is left running on its own. */
-export function killTree(pid: number): void {
-  const kids = Bun.spawnSync(["pgrep", "-P", String(pid)], { stdout: "pipe", stderr: "ignore" }).stdout.toString().split("\n").filter((l) => l.trim() !== "");
-  for (const k of kids) killTree(Number(k));
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-    // reason: it ended on its own meanwhile; nothing left to stop.
-  }
 }
 
 export interface HookFailure {
@@ -90,9 +77,7 @@ export async function runHooks(ctx: HookContext, commands: readonly string[], sa
   for (const command of commands) {
     say(`hook ${ctx.event}: ${command}`);
     const proc = Bun.spawn(merged(command), { cwd: ctx.cwd, env: prep.env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
-    if (ctx.running) ctx.running.proc = { kill: () => killTree(proc.pid) };
     const [out, errText, exit] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-    if (ctx.running) ctx.running.proc = undefined;
     const output = `${out}${errText}`;
     if (output.trim() !== "") for (const line of tail(output).split("\n")) say(`  ${line}`);
     ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit });
