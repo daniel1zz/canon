@@ -14,12 +14,15 @@ export const LABEL = "canon-review";
 const MAX_FILE_BYTES = 100_000;
 
 export interface Finding {
-  readonly kind: "security" | "concurrency";
+  /** One of the kinds the review asks for: `security` or `concurrency` here, others in the consistency check (BR-2272). */
+  readonly kind: string;
   readonly title: string;
   readonly root_cause: string;
   readonly file: string;
   readonly line: number;
   readonly scenario: string;
+  /** The rule a consistency finding is about (BR-2272); the code review does not ask for one. */
+  readonly rule?: string;
   /** Number of an open issue the AI says has the same root cause. */
   readonly existing: number | null;
 }
@@ -73,8 +76,18 @@ export function reviewPrompt(diff: string, files: readonly { path: string; text:
   ].join("\n");
 }
 
-/** Parses the AI's answer; findings missing a file, a line or a scenario are dropped (BR-2071). */
-export function parseFindings(text: string, say: (line: string) => void): Result<Finding[]> {
+/** Where findings go: the issue label, and how an issue names the review that filed it (BR-2210, BR-2272). */
+export interface Filing {
+  readonly label: string;
+  /** E.g. "post-land code review", used as "found by the <who> of C-5". */
+  readonly who: string;
+}
+
+export const CODE_REVIEW: Filing = { label: LABEL, who: "post-land code review" };
+const CODE_KINDS = ["security", "concurrency"] as const;
+
+/** Parses the AI's answer; findings missing a file, a line or a scenario, or of another kind, are dropped (BR-2071). */
+export function parseFindings(text: string, say: (line: string) => void, kinds: readonly string[] = CODE_KINDS): Result<Finding[]> {
   const match = text.match(/\{[\s\S]*\}/);
   if (!match) return err("invalid", `the reviewer printed no JSON: ${text.trim().slice(0, 200)}`);
   let raw: unknown;
@@ -91,42 +104,43 @@ export function parseFindings(text: string, say: (line: string) => void): Result
     const kind = f["kind"];
     const line = typeof f["line"] === "number" ? f["line"] : Number(f["line"]);
     const [title, rootCause, file, scenario] = [str("title"), str("root_cause"), str("file"), str("scenario")];
-    if ((kind !== "security" && kind !== "concurrency") || !title || !rootCause || !file || !scenario || !Number.isInteger(line) || line <= 0) {
+    if (typeof kind !== "string" || !kinds.includes(kind) || !title || !rootCause || !file || !scenario || !Number.isInteger(line) || line <= 0) {
       say(`dropped a finding without kind, file, line or scenario: ${JSON.stringify(f).slice(0, 200)}`);
       continue;
     }
     const existing = typeof f["existing"] === "number" ? f["existing"] : null;
-    out.push({ kind, title, root_cause: rootCause, file, line, scenario, existing });
+    const rule = str("rule");
+    out.push({ kind, title, root_cause: rootCause, file, line, scenario, existing, ...(rule ? { rule } : {}) });
   }
   return ok(out);
 }
 
-function run(cmd: string, args: readonly string[], cwd: string, stdin?: string): Result<string> {
+export function run(cmd: string, args: readonly string[], cwd: string, stdin?: string): Result<string> {
   const r = Bun.spawnSync(["sh", "-c", `${cmd} "$@"`, "sh", ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: new Blob([stdin ?? ""]) });
   if (r.exitCode !== 0) return err("io", `${cmd} ${args.join(" ")} exited ${r.exitCode}: ${r.stderr.toString().trim().slice(0, 300)}`);
   return ok(r.stdout.toString());
 }
 
-function openIssues(e: Env): Result<OpenIssue[]> {
-  const r = run(e.gh, ["issue", "list", "--state", "open", "--label", LABEL, "--limit", "200", "--json", "number,title,body"], e.cwd);
+export function openIssues(e: Env, label: string = LABEL): Result<OpenIssue[]> {
+  const r = run(e.gh, ["issue", "list", "--state", "open", "--label", label, "--limit", "200", "--json", "number,title,body"], e.cwd);
   if (!r.ok) return r;
   return ok(JSON.parse(r.value || "[]") as OpenIssue[]);
 }
 
 /** An open issue with the same root cause: the one the AI named if it is really open, else one whose title matches. */
-function sameRootCause(e: Env, f: Finding, open: readonly OpenIssue[]): Result<number | null> {
+function sameRootCause(e: Env, f: Finding, open: readonly OpenIssue[], label: string): Result<number | null> {
   if (f.existing !== null && open.some((i) => i.number === f.existing)) return ok(f.existing);
-  const r = run(e.gh, ["issue", "list", "--state", "open", "--label", LABEL, "--search", `${f.title} in:title`, "--json", "number,title"], e.cwd);
+  const r = run(e.gh, ["issue", "list", "--state", "open", "--label", label, "--search", `${f.title} in:title`, "--json", "number,title"], e.cwd);
   // reason: a failed search proves nothing about duplicates; filing anyway could open a second issue for one root cause (BR-2211)
   if (!r.ok) return r;
   const hits = JSON.parse(r.value || "[]") as { number: number; title: string }[];
   return ok(hits.find((h) => h.title.trim().toLowerCase() === f.title.trim().toLowerCase())?.number ?? null);
 }
 
-function body(e: Env, group: readonly Finding[]): string {
+function body(e: Env, group: readonly Finding[], who: string): string {
   const f = group[0]!;
   return [
-    `**${f.kind}**, found by the post-land code review of ${e.change || "a landing"} (\`${e.head.slice(0, 9)}\`).`,
+    `**${f.kind}**, found by the ${who} of ${e.change || "a landing"} (\`${e.head.slice(0, 9)}\`).`,
     "",
     `Root cause: ${f.root_cause}`,
     "",
@@ -158,11 +172,18 @@ export function codeReview(e: Env): Result<ReviewReport> {
   if (!answer.ok) return answer;
   const findings = parseFindings(answer.value, e.say);
   if (!findings.ok) return findings;
+  return fileFindings(e, findings.value, open.value, CODE_REVIEW);
+}
 
+/**
+ * Files kept findings, one issue per root cause (BR-2072): a comment on an open issue of `filing.label` with the same
+ * root cause, else a new issue with that label; prints "no findings" when there is nothing to file (BR-2070).
+ */
+export function fileFindings(e: Env, findings: readonly Finding[], open: readonly OpenIssue[], filing: Filing): Result<ReviewReport> {
   // One root cause, one issue: findings of this run that share a root cause or an existing issue are grouped.
   const groups = new Map<string, Finding[]>();
-  for (const f of findings.value) {
-    const same = sameRootCause(e, f, open.value);
+  for (const f of findings) {
+    const same = sameRootCause(e, f, open, filing.label);
     if (!same.ok) return same;
     const target = same.value;
     const key = target !== null ? `#${target}` : f.root_cause.toLowerCase().replace(/\s+/g, " ");
@@ -173,12 +194,12 @@ export function codeReview(e: Env): Result<ReviewReport> {
   for (const group of groups.values()) {
     const f = group[0]!;
     if (f.existing !== null) {
-      const r = run(e.gh, ["issue", "comment", String(f.existing), "--body", body(e, group)], e.cwd);
+      const r = run(e.gh, ["issue", "comment", String(f.existing), "--body", body(e, group, filing.who)], e.cwd);
       if (!r.ok) return r;
       commented.push(f.existing);
       e.say(`commented on #${f.existing}: ${f.title}`);
     } else {
-      const r = run(e.gh, ["issue", "create", "--title", f.title, "--label", LABEL, "--body", body(e, group)], e.cwd);
+      const r = run(e.gh, ["issue", "create", "--title", f.title, "--label", filing.label, "--body", body(e, group, filing.who)], e.cwd);
       if (!r.ok) return r;
       created.push(r.value.trim());
       e.say(`created ${r.value.trim()}: ${f.title}`);
