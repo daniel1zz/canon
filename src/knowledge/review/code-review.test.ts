@@ -156,7 +156,7 @@ describe("post-land code review", () => {
   test("BR-2070: the script prints code-review: <reason> and exits 1 when the reviewer fails, with no 'no findings'", () => {
     const t = setup({ findings: [] });
     const script = join(import.meta.dir, "..", "..", "..", "scripts", "code-review.ts");
-    const env = { ...process.env, CANON_BASE: t.env.base, CANON_HEAD: t.env.head, CANON_CODE_REVIEW_AI: "sh -c 'echo broken >&2; exit 1'", CANON_GH: t.env.gh } as Record<string, string>;
+    const env = { ...process.env, CANON_CODE_REVIEW_FORCE: "1", CANON_BASE: t.env.base, CANON_HEAD: t.env.head, CANON_CODE_REVIEW_AI: "sh -c 'echo broken >&2; exit 1'", CANON_GH: t.env.gh } as Record<string, string>;
     const r = Bun.spawnSync(["bun", script], { cwd: t.root, env, stdout: "pipe", stderr: "pipe" });
     expect(r.exitCode).toBe(1);
     expect(r.stderr.toString()).toMatch(/^code-review: .*exited 1/m);
@@ -234,10 +234,10 @@ describe("post-land code review", () => {
     const create = t.calls().find((c) => c[1] === "create")!;
     expect(create[create.indexOf("--title") + 1]).toBe("Queue turn is not atomic");
     const text = create[create.indexOf("--body") + 1]!.split("\n");
-    expect(text[0]).toBe(`**concurrency**, found by the post-land code review of C-5 (\`${t.env.head.slice(0, 9)}\`).`);
+    expect(text[0]).toBe(`**concurrency**, found by the post-land code review of C-5 (\`${t.env.base.slice(0, 9)}..${t.env.head.slice(0, 9)}\`).`);
     expect(text).toContain("Root cause: tryTurn reads and writes the queue in two statements");
-    expect(text).toContain("- `src/queue.ts:1`: two landers call tryTurn at the same moment → both land");
-    expect(text.at(-1)).toBe(`Reproduce from: \`git diff ${t.env.base.slice(0, 9)} ${t.env.head.slice(0, 9)}\``);
+    expect(text).toContain("- `src/queue.ts:1` (in range): two landers call tryTurn at the same moment → both land");
+    expect(text.at(-1)).toBe(`Reproduce from: \`git diff ${t.env.base.slice(0, 9)} ${t.env.head.slice(0, 9)} -- src/queue.ts\``);
 
     const anonymous = setup({ findings: [finding()] });
     expect(codeReview({ ...anonymous.env, change: "" }).ok).toBe(true);
@@ -250,7 +250,7 @@ describe("post-land code review", () => {
     const comment = two.calls().find((c) => c[1] === "comment")!;
     const lines = comment[comment.indexOf("--body") + 1]!.split("\n");
     expect(lines[0]).toStartWith("**concurrency**, found by the post-land code review of C-5");
-    expect(lines.filter((l) => l.startsWith("- `src/queue.ts:"))).toEqual(["- `src/queue.ts:1`: two landers call tryTurn at the same moment → both land", "- `src/queue.ts:2`: a retry interleaves → lost update"]);
+    expect(lines.filter((l) => l.startsWith("- `src/queue.ts:"))).toEqual(["- `src/queue.ts:1` (in range): two landers call tryTurn at the same moment → both land", "- `src/queue.ts:2` (in range): a retry interleaves → lost update"]);
   });
 
   test("BR-2211: gh failing to list, create or comment is an error with exit 1, never no findings", () => {
@@ -267,14 +267,14 @@ describe("post-land code review", () => {
     const gh = join(creating.tools, "gh-no-create.sh");
     writeFileSync(gh, `if [ "$2" = "create" ]; then echo denied >&2; exit 1; fi\necho '[]'\n`);
     const script = join(import.meta.dir, "..", "..", "..", "scripts", "code-review.ts");
-    const env = { ...process.env, CANON_BASE: creating.env.base, CANON_HEAD: creating.env.head, CANON_CODE_REVIEW_AI: creating.env.ai, CANON_GH: `sh ${gh}` } as Record<string, string>;
+    const env = { ...process.env, CANON_CODE_REVIEW_FORCE: "1", CANON_BASE: creating.env.base, CANON_HEAD: creating.env.head, CANON_CODE_REVIEW_AI: creating.env.ai, CANON_GH: `sh ${gh}` } as Record<string, string>;
     const run = Bun.spawnSync(["bun", script], { cwd: creating.root, env, stdout: "pipe", stderr: "pipe" });
     expect(run.exitCode).toBe(1);
     expect(run.stderr.toString()).toMatch(/^code-review: [^\n]*issue create[\s\S]*exited 1: denied/);
     expect(run.stdout.toString()).not.toContain("no findings");
 
     const fine = setup({ findings: [] });
-    const ok = Bun.spawnSync(["bun", script], { cwd: fine.root, env: { ...env, CANON_BASE: fine.env.base, CANON_HEAD: fine.env.head, CANON_CODE_REVIEW_AI: fine.env.ai, CANON_GH: fine.env.gh }, stdout: "pipe", stderr: "pipe" });
+    const ok = Bun.spawnSync(["bun", script], { cwd: fine.root, env: { ...env, CANON_CODE_REVIEW_FORCE: "1", CANON_BASE: fine.env.base, CANON_HEAD: fine.env.head, CANON_CODE_REVIEW_AI: fine.env.ai, CANON_GH: fine.env.gh }, stdout: "pipe", stderr: "pipe" });
     expect(ok.exitCode).toBe(0);
     expect(ok.stdout.toString()).toContain("code-review: no findings");
   });
@@ -284,7 +284,7 @@ describe("post-land code review", () => {
     const gh = join(failing.tools, "gh-no-search.sh");
     writeFileSync(gh, `echo "$*" >> ${JSON.stringify(join(failing.tools, "calls.log"))}\ncase "$*" in *--search*) echo "search down" >&2; exit 1;; esac\necho '[]'\n`);
     const script = join(import.meta.dir, "..", "..", "..", "scripts", "code-review.ts");
-    const env = { ...process.env, CANON_BASE: failing.env.base, CANON_HEAD: failing.env.head, CANON_CODE_REVIEW_AI: failing.env.ai, CANON_GH: `sh ${gh}` } as Record<string, string>;
+    const env = { ...process.env, CANON_CODE_REVIEW_FORCE: "1", CANON_BASE: failing.env.base, CANON_HEAD: failing.env.head, CANON_CODE_REVIEW_AI: failing.env.ai, CANON_GH: `sh ${gh}` } as Record<string, string>;
     const run = Bun.spawnSync(["bun", script], { cwd: failing.root, env, stdout: "pipe", stderr: "pipe" });
     expect(run.exitCode).toBe(1);
     expect(run.stderr.toString()).toMatch(/^code-review: [^\n]*issue list [^\n]*--search[\s\S]*exited 1: search down/);

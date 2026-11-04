@@ -69,6 +69,11 @@ remote: origin
 # 生命周期 hook（D-2、D-3）：每项是一条命令或命令列表
 hooks:
   after_land:
+    # 代码评审按批运行（D-59、BR-2314）：未评审的合入达到 review_max_unreviewed 个、或最老的已过 review_max_age_minutes 分钟才评审，一次评审整个范围。
+    # 默认值是 10 和 60；先只写成注释：PATH 上的 canon 认得这两个键之前写进配置会被 BR-2224 拒绝，认得之后的下一次合入取消注释
+    #   review_max_unreviewed: 10
+    #   review_max_age_minutes: 60（这两个键写在顶层，不在 hooks 下）
+    # 立即评审攒着的：CANON_CODE_REVIEW_FORCE=1 bun scripts/code-review.ts
     # 合入后的代码评审（C-2）：只找安全和并发问题，一个根因一个 issue，写到 GitHub（负责人 2026-11-03 同意开启）；用 sonnet（负责人 2026-11-04，C-308）
     - "CANON_CODE_REVIEW_AI='claude -p --model sonnet --output-format text' bun scripts/code-review.ts"
   after_green:

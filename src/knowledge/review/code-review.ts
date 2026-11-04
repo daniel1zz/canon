@@ -39,6 +39,8 @@ export interface Env {
   readonly ai: string;
   readonly gh: string;
   readonly say: (line: string) => void;
+  /** The change a finding's line belongs to, when it can be told (BR-2210). */
+  readonly owner?: (file: string, line: number) => string | undefined;
 }
 
 /** The files the landing added, changed or renamed outside canon/, with their full text at HEAD; deleted ones are only in the diff. */
@@ -132,14 +134,16 @@ function sameRootCause(e: Env, f: Finding, open: readonly OpenIssue[], label: st
 
 function body(e: Env, group: readonly Finding[], who: string): string {
   const f = group[0]!;
+  const range = `${e.base.slice(0, 9)}..${e.head.slice(0, 9)}`;
+  const files = [...new Set(group.map((g) => g.file))];
   return [
-    `**${f.kind}**, found by the ${who} of ${e.change || "a landing"} (\`${e.head.slice(0, 9)}\`).`,
+    `**${f.kind}**, found by the ${who} of ${e.change || "a landing"} (\`${range}\`).`,
     "",
     `Root cause: ${f.root_cause}`,
     "",
-    ...group.map((g) => `- \`${g.file}:${g.line}\`: ${g.scenario}`),
+    ...group.map((g) => `- \`${g.file}:${g.line}\` (${e.owner?.(g.file, g.line) ?? "in range"}): ${g.scenario}`),
     "",
-    `Reproduce from: \`git diff ${e.base.slice(0, 9)} ${e.head.slice(0, 9)}\``,
+    ...files.map((file) => `Reproduce from: \`git diff ${e.base.slice(0, 9)} ${e.head.slice(0, 9)} -- ${file}\``),
   ].join("\n");
 }
 

@@ -204,7 +204,7 @@ describe("canon floor watch skips what needs no floor", () => {
 });
 
 describe("canon work status and canon brief show the untested landings", () => {
-  it("BR-2313: three untested landings show the count and when the next run is due; none shows nothing", () => {
+  it("BR-2313: three untested landings show the count and when the next run is due; none shows nothing", async () => {
     const b = batched();
     const run = (...args: string[]) => {
       const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd: b.root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: env({ CANON_NOW: after(b.root, 5) }) });
@@ -218,6 +218,16 @@ describe("canon work status and canon brief show the untested landings", () => {
     expect(data.untested).toHaveLength(1);
     expect(JSON.parse(run("work", "status", "--json")).untested).toEqual(data.untested);
     expect(run("brief")).toContain("main: 3 landings not yet tested");
-    for (const w of ws(b.root).db.db.query<{ pid: number }, []>("SELECT pid FROM watcher").all()) process.kill(w.pid, "SIGTERM");
+    // reason: brief starts the watcher in the background; stop it once it has taken its place, or it waits for ever under the fixed CANON_NOW
+    const end = Date.now() + 20_000;
+    let stopped = false;
+    while (!stopped && Date.now() < end) {
+      for (const w of ws(b.root).db.db.query<{ pid: number }, []>("SELECT pid FROM watcher").all()) {
+        process.kill(w.pid, "SIGTERM");
+        stopped = true;
+      }
+      if (!stopped) await Bun.sleep(50);
+    }
+    expect(stopped).toBe(true);
   });
 });

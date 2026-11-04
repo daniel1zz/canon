@@ -21,6 +21,7 @@ import { overlapsOf } from "./overlap.ts";
 import { clean, LESSON_REMINDER, mainCorpus, start, stop } from "./session.ts";
 import { redMainNotice, startFixMain } from "../watch/redmain.ts";
 import { ensureWatcher, untestedNotice } from "../watch/watch.ts";
+import { startTrailingReview, unreviewedNotice } from "../../knowledge/review/code-review-batch.ts";
 import { unpushedNotice } from "../remote/remote.ts";
 
 /** `canon brief` and `canon work start`, `stop`, `status`, `clean`: a session and its change's worktree. */
@@ -63,9 +64,10 @@ const status = defineCommand({
     const ws = workspace();
     const gone = goneLanders(ws.db);
     const untested = untestedNotice(ws);
-    const data = { ...(untested.length > 0 ? { untested } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending") };
+    const unreviewed = unreviewedNotice(ws);
+    const data = { ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending") };
     if (args.json) return json(data);
-    for (const line of untested) say(line);
+    for (const line of [...untested, ...unreviewed]) say(line);
     say("Claims:");
     // Every row is listed; one that no longer binds is marked, judged as `canon work start` judges it (BR-2192, BR-2100).
     for (const c of data.claims) say(`  ${c.subject.padEnd(8)} ${c.actor}  ${c.holder}  until ${c.expires_at}${STALE[c.state]}`);
@@ -130,7 +132,9 @@ function briefState(ws: Workspace): Result<void> {
   // A failing main comes first, in every worktree (BR-2220); then the background floor starts if main's latest commit needs it (BR-2219).
   for (const line of redMainNotice(ws.db, mine?.subject)) say(line);
   ensureWatcher(ws, say);
-  for (const line of untestedNotice(ws)) say(line);
+  for (const line of [...untestedNotice(ws), ...unreviewedNotice(ws)]) say(line);
+  // The last batch of a burst has no later landing to review it (BR-2316).
+  startTrailingReview(ws, say);
   if (mine) {
     say(`You are in ${mine.subject} (${ws.root}). Read it: canon show ${mine.subject}; context: canon context ${mine.subject}`);
     const h = hs.find((x) => x.subject === mine.subject);

@@ -59,4 +59,22 @@ export const reviewKeys = {
     listed: 170,
     checked: 90,
   }),
+  reviewMaxUnreviewed: configKey<number>({
+    key: "review_max_unreviewed",
+    doc: "The post-land code review (`scripts/code-review.ts`) reviews the landings since the last review in one batch once this many are waiting (D-59, BR-2314); 1 reviews every landing.",
+    default: 10,
+    schema: { type: "integer", minimum: 1, default: 10 },
+    read: (v) => (typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`review_max_unreviewed` must be a whole number of at least 1")),
+    listed: 171,
+    checked: 91,
+  }),
+  reviewMaxAgeMs: configKey<number>({
+    key: "review_max_age_minutes",
+    doc: "The post-land code review also runs once the oldest landing not reviewed yet is this many minutes old (D-59, BR-2314); 0 reviews at once.",
+    default: 60 * MINUTE,
+    schema: { type: "number", minimum: 0, default: 60 },
+    read: (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? ok(v * MINUTE) : err("invalid", "`review_max_age_minutes` must be a number of minutes, 0 or more")),
+    listed: 172,
+    checked: 92,
+  }),
 };
