@@ -2,7 +2,7 @@ import { existsSync } from "node:fs";
 import type { Say, Workspace } from "../workspace.ts";
 import { type Finding } from "../../knowledge/check/check.ts";
 import { bindToLander, keepClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
-import { enter, failForConflict, failIfActive, finishEntry, heartbeat, holdsTurn, settleLocked, tryTurn } from "./queue/queue.ts";
+import { batchRefusal, enter, failForConflict, failIfActive, finishEntry, heartbeat, holdsTurn, settleLocked, tryTurn } from "./queue/queue.ts";
 import { selfProcess, sessionProcess } from "../claims/liveness.ts";
 import { noticeOverlaps } from "../session/overlap.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
@@ -71,6 +71,14 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     } else if (waitWhileLocked(ws, entry, say) && failIfActive(ws.db, entry, "killed", lander ?? null)) {
       ws.db.event(ws.actor, "land.killed", subject, { signal, rebaseAborted: aborted });
       if (close) reopen(wt, close, say);
+    } else {
+      // reason: a leader may have refused this entry in its batch before this lander read it; the change did not land,
+      // so its close commit is taken back here as the refusal would have done (BR-2173, BR-2018, #98).
+      const refused = batchRefusal(ws.db, entry);
+      if (refused !== undefined) {
+        ws.db.event(ws.actor, "land.refuse", subject, { reason: "floor", message: refused.slice(0, 2000), signal });
+        if (close) reopen(wt, close, say);
+      }
     }
     if (bound) unbindFromLander(ws.db, bound);
     process.exit(signal === "SIGINT" ? 130 : 143);

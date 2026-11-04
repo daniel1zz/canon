@@ -261,6 +261,12 @@ export function leaveBatch(db: CoordDb, entryId: number): boolean {
   return db.db.query("UPDATE queue SET batch = NULL, head = NULL WHERE id = ? AND state = 'waiting' AND batch IS NOT NULL").run(entryId).changes > 0;
 }
 
+/** The batch refusal a leader left on this entry, if any (BR-2173): the message its own lander reports. */
+export function batchRefusal(db: CoordDb, entryId: number): string | undefined {
+  const r = db.db.query<{ state: string; result: string | null }, [number]>("SELECT state, result FROM queue WHERE id = ?").get(entryId);
+  return r?.state === "failed" && r.result?.startsWith(REFUSED_IN_BATCH) ? r.result.slice(REFUSED_IN_BATCH.length) : undefined;
+}
+
 /**
  * Refuses a member of `leader`'s batch whose addition made the floor fail (BR-2173); its own lander reads the message
  * back on its next try for the turn. False when it had left the batch meanwhile.

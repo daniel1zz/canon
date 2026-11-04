@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { claims } from "../../claims/claims.ts";
-import { enqueue, finishEntry, landBatched, unlockBatch } from "../queue/queue.ts";
+import { enqueue, finishEntry, joinBatch, landBatched, refuseInBatch, unlockBatch } from "../queue/queue.ts";
 import { land } from "../land.ts";
 import { reopenForGoneLander } from "./batch.ts";
 import { processOf } from "../../claims/liveness.ts";
@@ -270,6 +270,26 @@ describe("batched landings", () => {
     expect(await p.exited).toBe(143);
     expect(entry()!.state).toBe("landed");
     expect(sh(b.worktree, "log", "-1", "--format=%s")).toBe(`canon: close ${b.change}`);
+  }, TIMED);
+
+  test("BR-2173 BR-2018: a member the leader refused in its batch takes its close commit back even when a signal comes before it reads the refusal", async () => {
+    const { root } = batchProject();
+    const b = startNew(root, "Refused then signalled");
+    const head = sh(b.worktree, "rev-parse", "HEAD");
+    const other = ws(root, "agent:b");
+    const leader = enqueue(other.db, "/leader", "C-98", "agent:b", processOf(process.pid)!);
+    other.db.db.query("UPDATE queue SET state = 'landing' WHERE id = ?").run(leader);
+    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: b.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const entry = () => other.db.db.query<{ id: number; state: string }, [string]>("SELECT id, state FROM queue WHERE worktree = ? ORDER BY id DESC LIMIT 1").get(b.worktree);
+    await until(() => entry()?.state === "waiting");
+    expect(sh(b.worktree, "log", "-1", "--format=%s")).toBe(`canon: close ${b.change}`);
+    expect(joinBatch(other.db, leader, entry()!.id, sh(b.worktree, "rev-parse", "HEAD"))).toBe(true);
+    expect(refuseInBatch(other.db, leader, entry()!.id, "the floor failed once it joined")).toBe(true);
+    // reason: the lander polls at most every 2 s; the signal comes right after the refusal, before it polls again
+    p.kill("SIGTERM");
+    expect(await p.exited).toBe(143);
+    expect(sh(b.worktree, "rev-parse", "HEAD")).toBe(head);
+    expect(readCorpus(b.worktree).corpus.docs.find((d) => d.id === b.change)).toMatchObject({ status: "open" });
   }, TIMED);
 
   test("BR-2173: a member whose commits a dead leader already put on main lands again with nothing new", async () => {
