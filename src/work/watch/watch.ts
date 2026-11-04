@@ -11,7 +11,7 @@ import { addWorktree, git, pruneWorktrees, removeWorktree } from "../../kernel/g
 import { isGone, selfProcess, type Proc } from "../claims/liveness.ts";
 import type { FloorTiming } from "./config-keys.ts";
 import { clearRedMain, recordFailure } from "./redmain.ts";
-import { stopStarted } from "./stop.ts";
+import { stopAndWait } from "./stop.ts";
 
 /**
  * Merge-then-test (D-31): with `floor_timing: after`, landings move main without the floor and `canon floor watch`
@@ -141,7 +141,9 @@ export async function watch(ws: Workspace, say: Say): Promise<Result<Watched>> {
   // reason: a watcher stopped by a signal first stops everything it started, then removes its worktree and gives up its
   // place, so the next one starts clean and never runs beside what this one left (BR-2285, issue #101).
   const onSignal = (signal: NodeJS.Signals) => {
-    if (!stopStarted()) say("floor watch: cannot read the process table, so the commands this watcher started could not be stopped");
+    // reason: the place is given up only once what it started has ended, so a rerun never runs beside a TERM handler still writing (BR-2285, issue #102).
+    const said = stopAndWait();
+    if (said) say(`floor watch: ${said}`);
     if (existsSync(dir)) removeWorktree(ws.primary, "--force", dir);
     if (mine) releaseWatcher(ws.db, self);
     process.exit(signal === "SIGINT" ? 130 : 143);

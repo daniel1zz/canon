@@ -78,3 +78,48 @@ export function stopStarted(self = process.pid): boolean {
   for (const p of stopped) send(p, "SIGCONT");
   return true;
 }
+
+/** How long a signalled watcher waits for what it started to end after SIGTERM before it sends SIGKILL (BR-2285). */
+export const STOP_GRACE_MS = 10_000;
+
+/**
+ * Waits, blocking, until nothing this process started still runs, or `ms` passes. True when nothing is left; false when
+ * something still runs or the process table cannot be read. It blocks on purpose: while it waits, the watcher's own code
+ * must not go on to record a result or start the next command (#102).
+ */
+export function waitStarted(ms: number, self = process.pid): boolean {
+  const end = Date.now() + ms;
+  for (;;) {
+    const rows = table();
+    if (!rows) return false;
+    if (startedBy(rows, self).length === 0) return true;
+    if (Date.now() >= end) return false;
+    Bun.sleepSync(50);
+  }
+}
+
+/** Sends SIGKILL to everything this process started, again for any that shows up meanwhile, until a listing finds none or `ms` passes. */
+export function killStarted(ms: number, self = process.pid): boolean {
+  const end = Date.now() + ms;
+  for (;;) {
+    const rows = table();
+    if (!rows) return false;
+    const left = startedBy(rows, self);
+    if (left.length === 0) return true;
+    if (Date.now() >= end) return false;
+    for (const p of left) send(p, "SIGKILL");
+    Bun.sleepSync(50);
+  }
+}
+
+/**
+ * Stops what this process started (BR-2285): SIGTERM through stopStarted, then waits up to STOP_GRACE_MS for all of
+ * it to end, so a TERM handler can finish (an atomic replace, flushing output); what is still there then gets SIGKILL.
+ * Returns what to say, or undefined when everything ended.
+ */
+export function stopAndWait(self = process.pid): string | undefined {
+  if (!stopStarted(self)) return "cannot read the process table, so the commands this watcher started could not be stopped";
+  if (waitStarted(STOP_GRACE_MS, self)) return undefined;
+  const killed = killStarted(5_000, self);
+  return `what this watcher started was still running ${STOP_GRACE_MS / 1000} s after SIGTERM; sent SIGKILL${killed ? "" : ", and some of it is still running"}`;
+}

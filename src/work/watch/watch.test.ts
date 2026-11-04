@@ -101,27 +101,45 @@ const eventsOf = (root: string, kind: string) =>
 
 /**
  * Starts `canon floor watch` as its own group leader, as canon starts it, on a project whose config is `config(ready,
- * late)`; once `ready` exists sends `signal` to the watcher alone, waits for it to exit 143 (130 for SIGINT) and then 1.5 s more, which
- * is longer than a `sleep 1; touch late` the command left behind needs to write `late`.
+ * late)`; once `ready` exists sends `signal` (SIGTERM unless given) to the watcher alone, waits for it to exit 143 (130
+ * for SIGINT) and then 1.5 s more, which is longer than a `sleep 1; touch late` the command left behind needs to write
+ * `late`. `floor` replaces the floor ($READY and $LATE in it are the paths); `bin` goes first on PATH; the watcher's
+ * output is returned as `out`, `waited` is how long it took to exit after the signal, `lateAtExit` whether `late`
+ * existed when it exited.
  */
-async function termedWhile(config: (ready: string, late: string) => string, floor?: string, signal: "SIGTERM" | "SIGINT" = "SIGTERM") {
+async function termedWhile(config: (ready: string, late: string) => string, opts: { floor?: string; signal?: "SIGTERM" | "SIGINT"; bin?: (dir: string) => string } = {}) {
+  const signal = opts.signal ?? "SIGTERM";
   const dir = join(process.env["TMPDIR"] ?? "/tmp", `canon-term-${process.pid}-${Date.now()}`);
   mkdirSync(dir, { recursive: true });
   const ready = join(dir, "ready");
   const late = join(dir, "late");
   const w = watched(config(ready, late));
-  if (floor !== undefined) {
-    writeFileSync(join(w.root, "canon/config.yaml"), `floor: '${floor.replaceAll("$READY", ready).replaceAll("$LATE", late)}'\ntests: []\nfloor_timing: after\n`);
+  if (opts.floor !== undefined) {
+    writeFileSync(join(w.root, "canon/config.yaml"), `floor: '${opts.floor.replaceAll("$READY", ready).replaceAll("$LATE", late)}'\ntests: []\nfloor_timing: after\n`);
     sh(w.root, "commit", "-qam", "floor");
   }
   const fake = fakeCanon(w.root);
-  const p = Bun.spawn(["bun", MAIN, "floor", "watch"], { cwd: w.root, stdout: "ignore", stderr: "ignore", stdin: "ignore", detached: true, env: { ...process.env, PATH: `${fake.bin}:${process.env["PATH"]}`, CANON_ACTOR: "agent:a" } });
+  const path = [...(opts.bin ? [opts.bin(dir)] : []), fake.bin, process.env["PATH"]].join(":");
+  const p = Bun.spawn(["bun", MAIN, "floor", "watch"], { cwd: w.root, stdout: "pipe", stderr: "pipe", stdin: "ignore", detached: true, env: { ...process.env, PATH: path, CANON_ACTOR: "agent:a" } });
+  const out = Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text()]).then(([o, e]) => o + e);
   await until(() => existsSync(ready));
+  const sent = Date.now();
   p.kill(signal); // the watcher only, not its group
   expect(await p.exited).toBe(signal === "SIGINT" ? 130 : 143);
+  const waited = Date.now() - sent;
+  const lateAtExit = existsSync(late);
   await Bun.sleep(1500);
-  return { ...w, late };
+  return { ...w, dir, late, lateAtExit, out: await out, waited };
 }
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
 
 const hookExits = (root: string) => ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'hook.run' ORDER BY id").all().map((r) => (JSON.parse(r.detail) as { exit: number }).exit);
 
@@ -191,7 +209,7 @@ describe("canon floor watch", () => {
   });
 
   test("BR-2285 BR-2219: a watcher stopped by SIGTERM while the floor runs stops the floor's processes too, those whose parent exited included, and records no result", async () => {
-    const { root, late } = await termedWhile(() => "", "( (sleep 1; touch $LATE) & ); touch $READY; sleep 30");
+    const { root, late } = await termedWhile(() => "", { floor: "( (sleep 1; touch $LATE) & ); touch $READY; sleep 30" });
     expect(existsSync(late)).toBe(false);
     expect(results(root)).toEqual([]);
     expect(existsSync(watchDir(ws(root).db))).toBe(false);
@@ -549,8 +567,48 @@ describe("a passing main", () => {
     expect(eventsOf(root, "floor.after_green")).toEqual([]);
   });
 
+  test("BR-2285 BR-2219: a watcher stopped by SIGTERM gives up its place only after after_green's TERM trap has run to the end", async () => {
+    const { root, lateAtExit } = await termedWhile((ready, late) => `hooks:\n  after_green: 'trap "sleep 1; touch ${late}; exit 1" TERM; touch ${ready}; while true; do sleep 0.1; done'\n`);
+    // the trap needs a second; the watcher exited only after it wrote `late`
+    expect(lateAtExit).toBe(true);
+    expect(watcherRows(root)).toEqual([]);
+    expect(eventsOf(root, "floor.after_green")).toEqual([]);
+  });
+
+  test("BR-2285: an after_green that ignores SIGTERM gets SIGKILL after 10 s, and the watcher exits only once it is gone", async () => {
+    const { waited, out, dir } = await termedWhile((ready) => `hooks:\n  after_green: 'trap "" TERM; echo $$ > ${ready}.pid; touch ${ready}; while true; do sleep 0.1; done'\n`);
+    const pid = Number(readFileSync(join(dir, "ready.pid"), "utf8").trim());
+    expect(waited).toBeGreaterThanOrEqual(9_500);
+    expect(out).toContain("SIGKILL");
+    expect(alive(pid)).toBe(false);
+  });
+
+  test("BR-2285: a process that left the watcher's process group with setsid is not stopped: it goes on and writes its file", async () => {
+    const { late } = await termedWhile((ready, late) => {
+      writeFileSync(`${ready}.pl`, `use POSIX; if (fork() == 0) { POSIX::setsid(); sleep 1; open(my $f, ">", "${late}"); exit 0 }\n`);
+      return `hooks:\n  after_green: 'perl ${ready}.pl; touch ${ready}; while true; do sleep 0.1; done'\n`;
+    });
+    expect(existsSync(late)).toBe(true);
+  });
+
+  test("BR-2285: when the process table cannot be read the watcher says so and still exits 143", async () => {
+    const { out, dir } = await termedWhile((ready) => `hooks:\n  after_green: 'echo $$ > ${ready}.pid; touch ${ready}; while true; do sleep 0.1; done'\n`, {
+      bin: (d) => {
+        const bin = join(d, "bin");
+        mkdirSync(bin, { recursive: true });
+        // reason: only the listing the watcher stops by fails; ps for a process's start time (D-11) still works
+        writeFileSync(join(bin, "ps"), `#!/bin/sh\n[ "$2" = "pid=,ppid=,pgid=,stat=" ] && exit 1\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+        return bin;
+      },
+    });
+    expect(out).toContain("cannot read the process table");
+    const pid = Number(readFileSync(join(dir, "ready.pid"), "utf8").trim());
+    expect(alive(pid)).toBe(true); // nothing could stop it
+    process.kill(pid, "SIGKILL");
+  });
+
   test("BR-2285: a watcher stopped by SIGINT exits 130 and stops what after_green left running too", async () => {
-    const { root, late } = await termedWhile(orphaning, undefined, "SIGINT");
+    const { root, late } = await termedWhile(orphaning, { signal: "SIGINT" });
     expect(existsSync(late)).toBe(false);
     expect(eventsOf(root, "floor.after_green")).toEqual([]);
   });
