@@ -15,7 +15,7 @@ import { readCorpus } from "../../knowledge/documents/read.ts";
 import { idsIn } from "../../knowledge/documents/types.ts";
 import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
-import { stopAndWaitAsync } from "../watch/stop.ts";
+import { stopGroups } from "./stop-groups.ts";
 import { availableParallelism } from "node:os";
 import { jobCap, readCpu, startPool, type CpuSample, type CpuState, type FileResult, type Outcome } from "./pool.ts";
 import type { Workspace } from "../workspace.ts";
@@ -160,11 +160,16 @@ export function commandFor(template: string, file: string): string {
   return template.replaceAll(FILE_PLACEHOLDER, `'${file.replaceAll("'", `'\\''`)}'`);
 }
 
-/** Runs one shell command in `root`, capturing its exit code, time and combined output. */
-async function runShell(root: string, command: string): Promise<Outcome> {
+/**
+ * Runs one shell command in `root`, in a process group of its own so a stop reaches all it started (BR-2304), capturing
+ * its exit code, time and combined output. `groups` holds the group's leader while it runs.
+ */
+async function runShell(root: string, command: string, groups: Set<number>): Promise<Outcome> {
   const t0 = performance.now();
-  const proc = Bun.spawn(["sh", "-c", command], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+  const proc = Bun.spawn(["sh", "-c", command], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", detached: true });
+  groups.add(proc.pid);
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  groups.delete(proc.pid);
   // reason: sh reports a command killed by a signal as 128 + the signal's number (BR-2304)
   const signalled = ["SIGHUP", "SIGINT", "SIGTERM"].includes(String(proc.signalCode)) || [129, 130, 143].includes(exitCode);
   return { exitCode, ms: Math.round(performance.now() - t0), output: `${stdout}${stderr}`, signalled };
@@ -201,8 +206,8 @@ export interface WorkTestDeps {
   readonly graceMs: number;
   readonly parallelism: () => number;
   readonly signals: { on(s: NodeJS.Signals, f: (s: NodeJS.Signals) => void): unknown; off(s: NodeJS.Signals, f: (s: NodeJS.Signals) => void): unknown };
-  /** Stops everything this process started (BR-2304); `hurried` turns true on a second signal. */
-  readonly stop: (hurried: () => boolean) => Promise<string | undefined>;
+  /** Stops the process groups of the commands still running (BR-2304); `hurried` turns true on a second signal. */
+  readonly stop: (groups: readonly number[], hurried: () => boolean) => Promise<string | undefined>;
   readonly exit: (code: number) => void;
 }
 
@@ -212,8 +217,7 @@ export const machineDeps: WorkTestDeps = {
   graceMs: 500,
   parallelism: availableParallelism,
   signals: process,
-  // reason: only the descendants, not the rest of a process group `canon work test | tee` shares (BR-2304)
-  stop: (hurried) => stopAndWaitAsync(process.pid, false, hurried),
+  stop: (groups, hurried) => stopGroups(groups, hurried),
   exit: (code) => process.exit(code),
 };
 
@@ -252,6 +256,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   // What a stop signal needs to know (BR-2304): the files with a final result, and the ones running now.
   const finalized = new Map<string, FileResult>();
   let running: () => number = () => 0;
+  const groups = new Set<number>();
   let typecheck: number | null = null;
   let jobs = { peak: 0, cpu: "ok" as CpuState, stalledWindows: 0 };
   let signal: NodeJS.Signals | undefined;
@@ -269,7 +274,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
     signal = sig;
     const were = running();
     void (async () => {
-      const note = await deps.stop(() => hurried);
+      const note = await deps.stop([...groups], () => hurried);
       if (note) say(note);
       say(`stopped by ${sig}: ${were} test file(s) were running, ${files.length - finalized.size - were} not started`);
       const result: WorkTestResult = { files: finalized.size, failed: failedNow(), typecheck, check: 0, unmatched: unmatched.length, signal: sig };
@@ -291,7 +296,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
 
   const phases = async (): Promise<void> => {
     if (ws.config.typecheckCommand) {
-      const r = await runShell(ws.root, ws.config.typecheckCommand);
+      const r = await runShell(ws.root, ws.config.typecheckCommand, groups);
       typecheck = r.exitCode;
       say(`${r.exitCode === 0 ? "pass" : "FAIL"}  ${secs(r.ms).padStart(6)}  typecheck${r.exitCode === 0 ? "" : ` (exit ${r.exitCode})`}`);
       if (r.exitCode !== 0) tail(r.output);
@@ -307,7 +312,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
     else say(`test files: up to ${cap} at once (${setting}), another one only while at least 1 CPU is idle`);
 
     const pool = startPool({
-      files, cap, first, run: (file) => runShell(ws.root, commandFor(testCommand, file)), readCpu: deps.readCpu, tickMs: deps.tickMs, graceMs: deps.graceMs, say,
+      files, cap, first, run: (file) => runShell(ws.root, commandFor(testCommand, file), groups), readCpu: deps.readCpu, tickMs: deps.tickMs, graceMs: deps.graceMs, say,
       stopping: () => signal !== undefined,
       onEnd: (r) => {
         show(r, false);
@@ -331,7 +336,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
         if (signal !== undefined) return;
         let busy = 1;
         running = () => busy;
-        const r = await runShell(ws.root, commandFor(testCommand, f));
+        const r = await runShell(ws.root, commandFor(testCommand, f), groups);
         busy = 0;
         if (signal !== undefined) return;
         rerunAlone.push(f);

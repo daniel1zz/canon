@@ -459,7 +459,7 @@ function jobsFixture(n: number, script: string, testJobs: string) {
   return wt;
 }
 
-/** The deps of an idle machine whose signals and stop are fakes. */
+/** The deps of an idle machine whose signals are an emitter; stopping is the real one, which only signals groups the run started. */
 function fakeDeps(over: Partial<WorkTestDeps> = {}) {
   const signals = new EventEmitter();
   const exits: number[] = [];
@@ -470,7 +470,6 @@ function fakeDeps(over: Partial<WorkTestDeps> = {}) {
     graceMs: 300,
     parallelism: () => 8,
     signals: { on: (s, f) => signals.on(s, f), off: (s, f) => signals.off(s, f) },
-    stop: async () => undefined,
     exit: (c) => void exits.push(c),
     ...over,
   };
@@ -649,7 +648,7 @@ describe("canon work test stops on a signal", () => {
   }
 
   test("BR-2304: SIGTERM while files run stops them, counts running and not started, skips canon check and exits 143", async () => {
-    const wt = jobsFixture(4, 'touch "started.$$"\nsleep 5\n', "2");
+    const wt = jobsFixture(4, 'touch "started.$$"\nsleep 30 &\necho $! >> "kids.$$"\nwait\n', "2");
     const { d, signals, exits } = fakeDeps();
     const lines: string[] = [];
     const run = workTest(ws(wt), false, (l) => lines.push(l), d);
@@ -661,7 +660,9 @@ describe("canon work test stops on a signal", () => {
     expect(lines.some((l) => l.startsWith("canon check"))).toBe(false);
     expect(r.ok && r.value.signal).toBe("SIGTERM");
     expect(lastEvent(wt)).toMatchObject({ signal: "SIGTERM", files: 0, failed: 0 });
-    Bun.spawnSync(["pkill", "-f", `${wt}/run.sh`]);
+    const kids = readdirSync(wt).filter((f) => f.startsWith("kids.")).map((f) => Number(readFileSync(join(wt, f), "utf8").trim()));
+    expect(kids).toHaveLength(2);
+    for (const pid of kids) expect(() => process.kill(pid, 0)).toThrow(); // the files' own children are gone too
   });
 
   test("BR-2304: SIGHUP is handled like SIGTERM and exits 129; SIGINT exits 130", async () => {
@@ -675,15 +676,14 @@ describe("canon work test stops on a signal", () => {
       await run;
       expect(exits).toEqual([code]);
       expect(lines).toContain(`stopped by ${sig}: 1 test file(s) were running, 1 not started`);
-      Bun.spawnSync(["pkill", "-f", `${wt}/run.sh`]);
-    }
+      }
   });
 
   test("BR-2304: a second signal while the stop waits turns the hurry flag on", async () => {
     const wt = jobsFixture(1, 'touch "started.$$"\nsleep 5\n', "1");
     let hurriedAtEnd = false;
     const { d, signals } = fakeDeps({
-      stop: async (hurried) => {
+      stop: async (_groups, hurried) => {
         for (let i = 0; i < 100 && !hurried(); i++) await Bun.sleep(20);
         hurriedAtEnd = hurried();
         return undefined;
@@ -696,7 +696,6 @@ describe("canon work test stops on a signal", () => {
     signals.emit("SIGINT", "SIGINT");
     await run;
     expect(hurriedAtEnd).toBe(true);
-    Bun.spawnSync(["pkill", "-f", `${wt}/run.sh`]);
   });
 
   test("BR-2304: a file that ends by a signal after canon was told to stop is no failure and no rerun", async () => {
@@ -752,7 +751,6 @@ describe("canon work test stops on a signal", () => {
     await run;
     expect(exits).toEqual([143]);
     expect(lines.some((l) => /^stopped by SIGTERM: 0 test file\(s\) were running, \d+ not started$/.test(l))).toBe(true);
-    Bun.spawnSync(["pkill", "-f", "tc.sh"]);
   });
 
   test("BR-2304: during the rerun, files that failed together and are not rerun yet count as not started, not failed", async () => {
@@ -767,7 +765,6 @@ describe("canon work test stops on a signal", () => {
     await run;
     expect(lines).toContain("stopped by SIGTERM: 1 test file(s) were running, 1 not started");
     expect(lastEvent(wt)).toMatchObject({ signal: "SIGTERM", files: 0, failed: 0 });
-    Bun.spawnSync(["pkill", "-f", `${wt}/run.sh`]);
   });
 });
 
@@ -811,6 +808,5 @@ describe("canon work test stops its process tree on a real signal", () => {
     expect(await proc.exited).toBe(143);
     expect(performance.now() - t0).toBeLessThan(8000); // not the 10 s grace period
     expect(alive(pid)).toBe(false);
-    Bun.spawnSync(["pkill", "-f", `${wt}/run.sh`]);
   }, 30_000);
 });
