@@ -61,20 +61,23 @@ function listCommand(kind: Kind, describe: string) {
       if (kind === "change") {
         // Changes come in the owner's order (canon/backlog.md), started ones next, and include those that so far exist
         // only on their change branch, so the list the guide points to holds released work too (BR-2148, BR-2291, D-50).
-        const listed = must(listedChanges(ws, corpus, readBacklog(ws.root, ws.config.types), (c) => live(c)));
+        const { listed, unreadable } = must(listedChanges(ws, corpus, readBacklog(ws.root, ws.config.types), (c) => live(c)));
         if (args.json) {
-          return json(listed.map(({ change: { body: _b, ...r }, onBranch, handoff, claimed }) => ({
+          json(listed.map(({ change: { body: _b, ...r }, onBranch, handoff, claimed }) => ({
             ...r,
             on_branch: onBranch,
             handoff: handoff ? { next: handoff.next, actor: handoff.actor, updated_at: handoff.updated_at } : null,
             claimed,
           })));
+        } else {
+          for (const l of listed) {
+            const marks = marksOf(l, true);
+            say(`${l.change.id.padEnd(8)} ${l.change.status.padEnd(10)} ${l.change.title}${marks.length ? `  (${marks.join("; ")})` : ""}`);
+          }
+          if (listed.length === 0 && unreadable.length === 0) say("(no changes)");
         }
-        for (const l of listed) {
-          const marks = marksOf(l, true);
-          say(`${l.change.id.padEnd(8)} ${l.change.status.padEnd(10)} ${l.change.title}${marks.length ? `  (${marks.join("; ")})` : ""}`);
-        }
-        if (listed.length === 0) say("(no changes)");
+        // reason: the rest is listed first; an unreadable branch file is said on stderr and fails the command (BR-2292)
+        if (unreadable.length) fail({ code: "io", message: unreadable.map((u) => `unreadable change file: ${u}`).join("\n") });
         return;
       }
       if (args.json) return json(rows.map(({ body: _b, ...r }) => r));

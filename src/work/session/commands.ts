@@ -159,8 +159,10 @@ function briefState(ws: Workspace): Result<void> {
     // reason: (claimed) only where `canon work start` would refuse; an expired or abandoned claim it takes over (BR-2149, BR-2100)
     const open = listedChanges(ws, onMain.value, backlog.value, (c) => c.status === "open");
     if (!open.ok) return open;
-    if (open.value.length) {
-      const order = open.value.map((l) => {
+    // reason: another session's half-done branch is said, never fatal: brief must still list everything else (BR-2292)
+    for (const u of open.value.unreadable) say(`Unreadable change file, not listed: ${u}`);
+    if (open.value.listed.length) {
+      const order = open.value.listed.map((l) => {
         const marks = marksOf(l, false);
         return marks.length ? `${l.change.id} (${marks.join(", ")})` : l.change.id;
       });

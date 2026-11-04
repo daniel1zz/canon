@@ -1,7 +1,8 @@
 import { defineCommand } from "citty";
-import { corpusOf, entry, EXIT, json, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { corpusOf, entry, EXIT, json, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
 import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
 import { check } from "./check.ts";
+import { changeIdsOnBranches } from "../../work/session/inflight.ts";
 import { budgetHint, sessionText, sizeLines } from "./session-text.ts";
 import { testFilesFor } from "./tests.ts";
 
@@ -13,7 +14,7 @@ const checkCmd = defineCommand({
   run({ args }) {
     const ws = workspace();
     const read = corpusOf(ws);
-    const findings = check({ root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config), floorSkipPaths: ws.config.floorSkipPaths });
+    const findings = check({ root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config), floorSkipPaths: ws.config.floorSkipPaths, branchChanges: must(changeIdsOnBranches(ws)) });
     if (args.json) json(findings);
     else for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
     if (!args.json) say(findings.length === 0 ? `ok: ${read.corpus.docs.length} documents, ${read.corpus.domains.length} domains` : `${findings.length} finding(s)`);

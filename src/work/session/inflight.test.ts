@@ -32,6 +32,30 @@ function withBranchOnly(): { root: string; wt: string; branch: string } {
   return { root, wt: started.out.match(/cd (.+)/)![1]!.trim(), branch: `change/${id(2)}-only-on-branch` };
 }
 
+/** A project whose main has the open C-1. */
+function mainWithC1(): string {
+  const root = project();
+  changeFile(root, 1);
+  sh(root, "add", "-A");
+  sh(root, "commit", "-qm", "C-1");
+  return root;
+}
+
+/** Makes `branch` from main with what `write` puts in the checkout committed on it, then returns to main. */
+function onBranch(root: string, branch: string, write: () => void) {
+  sh(root, "checkout", "-q", "-b", branch, "main");
+  write();
+  sh(root, "add", "-A");
+  sh(root, "commit", "-q", "--allow-empty", "-m", branch);
+  sh(root, "checkout", "-q", "main");
+}
+
+function backlog(root: string, text: string) {
+  writeFileSync(join(root, "canon/backlog.md"), `---\ntitle: 待办顺序\n---\n# 待办顺序\n\n${text}`);
+  sh(root, "add", "-A");
+  sh(root, "commit", "-qm", "backlog");
+}
+
 const rows = (out: string) => out.split("\n").filter(Boolean);
 const ids = (out: string) => rows(out).map((l) => l.split(/\s+/)[0]);
 const PICK = "with no task, take the first unclaimed one: ";
@@ -90,23 +114,92 @@ describe("changes that so far exist only on their branch", () => {
     expect(rows(canon(root, "change", "list", "--all").out)).toEqual([`${id(2)}      done       Change 2`, `${id(1)}      open       Change 1`]);
   });
 
-  test("BR-2291: a branch whose change file does not parse fails with exit 4 naming it; a branch without the file is not listed", () => {
-    const root = project();
-    changeFile(root, 1);
-    sh(root, "add", "-A");
-    sh(root, "commit", "-qm", "C-1");
-    sh(root, "checkout", "-q", "-b", `change/${id(4)}-empty`);
-    sh(root, "checkout", "-q", "main");
-    expect(ids(canon(root, "change", "list").out)).toEqual([id(1)]);
-
-    sh(root, "checkout", "-q", "-b", `change/${id(3)}-broken`);
-    writeFileSync(join(root, `canon/changes/${id(3)}.md`), "no front matter\n");
-    sh(root, "add", "-A");
-    sh(root, "commit", "-qm", "broken");
-    sh(root, "checkout", "-q", "main");
+  test("BR-2291: a change branch without its own change file is not listed, nor a change file committed on another change's branch", () => {
+    const root = mainWithC1();
+    onBranch(root, `change/${id(4)}-empty`, () => {});
+    onBranch(root, `change/${id(2)}-x`, () => {
+      changeFile(root, 2);
+      changeFile(root, 7);
+    });
     const r = canon(root, "change", "list");
-    expect(r.code).toBe(4);
-    expect(r.err).toContain(`${id(3)}.md on branch change/${id(3)}-broken`);
+    expect([r.code, ids(r.out)]).toEqual([0, [id(2), id(1)]]);
+  });
+
+  test("BR-2291: the owner's backlog orders a change only on its branch like any other", () => {
+    const { root, branch } = withBranchOnly();
+    ws(root).db.db.query("DELETE FROM claims").run();
+    backlog(root, `- ${id(1)}\n`);
+    expect(ids(canon(root, "change", "list").out)).toEqual([id(1), id(2)]);
+    backlog(root, `- ${id(2)}\n- ${id(1)}\n`);
+    expect(ids(canon(root, "change", "list").out)).toEqual([id(2), id(1)]);
+    expect(canon(root, "brief").out).toContain(`${PICK}${id(2)} (on branch ${branch}), ${id(1)}\n`);
+  });
+});
+
+describe("unusual change branches", () => {
+  test("BR-2150: canon check accepts a backlog id whose change file is on its own branch only, and still reports one whose branch lacks it", () => {
+    const root = mainWithC1();
+    onBranch(root, `change/${id(9)}-x`, () => changeFile(root, 9));
+    backlog(root, `- ${id(9)}\n- ${id(1)}\n`);
+    const ok = canon(root, "check");
+    expect([ok.code, ok.out]).toEqual([0, expect.stringContaining("ok:")]);
+    expect(ids(canon(root, "change", "list").out)).toEqual([id(9), id(1)]);
+    expect(canon(root, "brief").out).toContain(`${PICK}${id(9)} (on branch change/${id(9)}-x), ${id(1)}\n`);
+
+    onBranch(root, `change/${id(8)}-x`, () => {});
+    backlog(root, `- ${id(8)}\n`);
+    const r = canon(root, "check");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(`lists ${id(8)}, which is not a change`);
+  });
+
+  test("BR-2292: an unreadable change file on a branch is said in brief, which lists the rest and exits 0; change list lists the rest, then fails with exit 4", () => {
+    const root = mainWithC1();
+    onBranch(root, `change/${id(3)}-broken`, () => writeFileSync(join(root, `canon/changes/${id(3)}.md`), "no front matter\n"));
+    const brief = canon(root, "brief");
+    expect(brief.code).toBe(0);
+    expect(brief.out).toContain(`Unreadable change file, not listed: canon/changes/${id(3)}.md on branch change/${id(3)}-broken`);
+    expect(brief.out).toContain(`${PICK}${id(1)}\n`);
+    const list = canon(root, "change", "list");
+    expect(list.code).toBe(4);
+    expect(ids(list.out)).toEqual([id(1)]);
+    expect(list.err).toContain(`unreadable change file: canon/changes/${id(3)}.md on branch change/${id(3)}-broken`);
+    const fine = mainWithC1();
+    expect(canon(fine, "change", "list").code).toBe(0);
+    expect(canon(fine, "brief").out).not.toContain("Unreadable change file");
+  });
+
+  test("BR-2293: a change on several of its branches is listed once, marked ambiguous, and start refuses it; one branch without the file is plain", () => {
+    const root = mainWithC1();
+    onBranch(root, `change/${id(5)}-a`, () => changeFile(root, 5));
+    onBranch(root, `change/${id(5)}-b`, () => {});
+    expect(rows(canon(root, "change", "list").out)[0]).toBe(`${id(5)}      open       Change 5  (on branch change/${id(5)}-a)`);
+    onBranch(root, `change/${id(5)}-c`, () => changeFile(root, 5));
+    expect(rows(canon(root, "change", "list").out)[0]).toBe(`${id(5)}      open       Change 5  (ambiguous: change/${id(5)}-a, change/${id(5)}-c)`);
+    const data = JSON.parse(canon(root, "change", "list", "--json").out) as { id: string; on_branch: string[] }[];
+    expect(data[0]).toMatchObject({ id: id(5), on_branch: [`change/${id(5)}-a`, `change/${id(5)}-c`] });
+    expect(canon(root, "brief").out).toContain(`${PICK}${id(5)} (ambiguous: change/${id(5)}-a, change/${id(5)}-c), ${id(1)}\n`);
+    expect(canon(root, "work", "start", id(5)).code).toBe(2);
+  });
+
+  test("BR-2294: a change done only on its branch is listed without --all, marked closed on branch, not landed, and start takes it up; done on main or dropped is not", () => {
+    const root = mainWithC1();
+    onBranch(root, `change/${id(6)}-x`, () => changeFile(root, 6, "done"));
+    expect(rows(canon(root, "change", "list").out)[0]).toBe(`${id(6)}      done       Change 6  (on branch change/${id(6)}-x; closed on branch, not landed)`);
+    expect(canon(root, "brief").out).toContain(`${PICK}${id(6)} (on branch change/${id(6)}-x, closed on branch, not landed), ${id(1)}\n`);
+    expect(canon(root, "work", "start", id(6)).code).toBe(0);
+
+    const dropped = mainWithC1();
+    onBranch(dropped, `change/${id(6)}-x`, () => changeFile(dropped, 6, "dropped"));
+    expect(ids(canon(dropped, "change", "list").out)).toEqual([id(1)]);
+    expect(canon(dropped, "work", "start", id(6)).code).toBe(2);
+
+    const landed = mainWithC1();
+    onBranch(landed, `change/${id(6)}-x`, () => changeFile(landed, 6, "done"));
+    changeFile(landed, 6, "done");
+    sh(landed, "add", "-A");
+    sh(landed, "commit", "-qm", "landed");
+    expect(ids(canon(landed, "change", "list").out)).toEqual([id(1)]);
   });
 });
 
@@ -117,7 +210,7 @@ describe("a branch deleted while listing", () => {
     sh(root, "worktree", "remove", "--force", join(root, "..", `${root.split("/").pop()}.worktrees`, id(2)));
     sh(root, "branch", "-D", branch); // another session's drop, between listing the branches and reading this one
     const read = changeOnBranch(ws(root), id(2), { branch, commit });
-    expect(read.ok && read.value ? [read.value.id, read.value.title, read.value.status] : read).toEqual([id(2), "Only on branch", "open"]);
+    expect(read.ok && read.value && "change" in read.value ? [read.value.change.id, read.value.change.title, read.value.change.status] : read).toEqual([id(2), "Only on branch", "open"]);
   });
 });
 

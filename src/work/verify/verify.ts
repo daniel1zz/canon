@@ -1,4 +1,5 @@
 import { existsSync, readFileSync, statSync } from "node:fs";
+import { changeIdsOnBranches } from "../session/inflight.ts";
 import { basename, join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
@@ -239,7 +240,9 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
 
   // The same check as `canon check`, on the worktree's files (BR-2227).
   const read = readCorpus(ws.root, ws.config.types, ws.config);
-  const findings = check({ root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config), floorSkipPaths: ws.config.floorSkipPaths });
+  const onBranches = changeIdsOnBranches(ws);
+  if (!onBranches.ok) return onBranches;
+  const findings = check({ root: ws.root, ...read, testFiles: testFilesFor(ws.root, ws.config), floorSkipPaths: ws.config.floorSkipPaths, branchChanges: onBranches.value });
   for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
   say(findings.length === 0 ? "canon check: ok" : `canon check: ${findings.length} finding(s)`);
   // A hint on standard error, never a failure (BR-2257, D-37).

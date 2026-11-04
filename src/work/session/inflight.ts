@@ -1,5 +1,5 @@
 import { git } from "../../kernel/git.ts";
-import { err, ok, type Result } from "../../kernel/result.ts";
+import { ok, type Result } from "../../kernel/result.ts";
 import { inBacklogOrder, type BacklogEntry } from "../../knowledge/documents/backlog.ts";
 import { parseDocFile } from "../../knowledge/documents/docfile.ts";
 import type { Change, ChangeStatus, Corpus } from "../../knowledge/documents/model.ts";
@@ -22,16 +22,25 @@ export interface ListedChange {
   readonly claimed: boolean;
 }
 
+/** What the listing found: the changes, and the branch files it could not read, each said on its own (BR-2292). */
+export interface Listing {
+  readonly listed: ListedChange[];
+  /** One message per unreadable change file on a branch, naming the file and the branch. */
+  readonly unreadable: string[];
+}
+
 /**
  * The changes of `corpus` and of the change branches whose id `corpus` lacks, filtered by `keep`, in the owner's
- * order with started ones (a handoff or a change branch) ahead of the rest (BR-2148, BR-2291).
+ * order with started ones (a handoff or a change branch) ahead of the rest (BR-2148, BR-2291). A change that only
+ * its branch has and that says `done` there is kept whatever `keep` says: its landing never reached main (BR-2294).
  */
-export function listedChanges(ws: Workspace, corpus: Corpus, backlog: readonly BacklogEntry[], keep: (c: Change) => boolean): Result<ListedChange[]> {
+export function listedChanges(ws: Workspace, corpus: Corpus, backlog: readonly BacklogEntry[], keep: (c: Change) => boolean): Result<Listing> {
   const branches = changeBranches(ws);
   if (!branches.ok) return branches;
   const local = corpus.docs.filter((d): d is Change => d.kind === "change");
   const known = new Set(local.map((c) => c.id));
   const found = new Map<string, { change: Change; onBranch: string[] }>();
+  const unreadable: string[] = [];
   for (const [id, refs] of branches.value) {
     if (known.has(id)) continue;
     let change: Change | undefined;
@@ -40,32 +49,54 @@ export function listedChanges(ws: Workspace, corpus: Corpus, backlog: readonly B
       const read = changeOnBranch(ws, id, ref);
       if (!read.ok) return read;
       if (!read.value) continue;
-      change ??= read.value;
       holding.push(ref.branch);
+      // reason: one half-done branch must not hide every other change from every session (BR-2292)
+      if ("unreadable" in read.value) unreadable.push(read.value.unreadable);
+      else change ??= read.value.change;
     }
     if (change) found.set(id, { change, onBranch: holding });
   }
-  const all = [...local, ...[...found.values()].map((f) => f.change)].filter(keep);
+  const offMain = (c: Change) => found.has(c.id) && c.status === "done";
+  const all = [...local, ...[...found.values()].map((f) => f.change)].filter((c) => keep(c) || offMain(c));
   const hs = new Map(handoffs(ws.db).map((h) => [h.subject, h]));
   const started = new Set([...hs.keys(), ...branches.value.keys()]);
   const held = new Set(liveClaims(ws.db).map((c) => c.subject));
-  return ok(
-    inBacklogOrder(all, backlog, started).map((change) => ({
+  return ok({
+    listed: inBacklogOrder(all, backlog, started).map((change) => ({
       change,
       onBranch: found.get(change.id)?.onBranch ?? [],
       handoff: hs.get(change.id),
       claimed: held.has(change.id),
     })),
-  );
+    unreadable,
+  });
+}
+
+/** The ids whose change file is on their own change branch, for `canon check`: the owner may order them in the backlog (BR-2150). */
+export function changeIdsOnBranches(ws: Workspace): Result<Set<string>> {
+  const branches = changeBranches(ws);
+  if (!branches.ok) return branches;
+  const out = new Set<string>();
+  for (const [id, refs] of branches.value) {
+    for (const ref of refs) {
+      const path = changeFileOn(ws, id, ref);
+      if (!path.ok) return path;
+      if (path.value) out.add(id);
+    }
+  }
+  return ok(out);
 }
 
 /**
- * How a listed change is marked: `on branch <b>` when only its branch has it, its handoff, `claimed` (BR-2291).
- * `full` writes the handoff's next step (canon change list); the brief keeps its one line short with `handoff`.
+ * How a listed change is marked (BR-2291, BR-2293, BR-2294): `on branch <b>` when only its branch has it, or `ambiguous: <b>, <b>`
+ * when several do (`canon work start` refuses it, BR-2107); `closed on branch, not landed` when that branch says done;
+ * its handoff; `claimed`. `full` writes the handoff's next step (canon change list); the brief keeps it to `handoff`.
  */
 export function marksOf(l: ListedChange, full: boolean): string[] {
   const out: string[] = [];
-  if (l.onBranch.length) out.push(`on ${l.onBranch.length > 1 ? "branches" : "branch"} ${l.onBranch.join(", ")}`);
+  if (l.onBranch.length === 1) out.push(`on branch ${l.onBranch[0]}`);
+  if (l.onBranch.length > 1) out.push(`ambiguous: ${l.onBranch.join(", ")}`);
+  if (l.onBranch.length && l.change.status === "done") out.push("closed on branch, not landed");
   if (l.handoff) out.push(full ? `handoff: ${l.handoff.next}` : "handoff");
   if (l.claimed) out.push("claimed");
   return out;
@@ -96,33 +127,37 @@ function changeBranches(ws: Workspace): Result<Map<string, BranchRef[]>> {
   return ok(out);
 }
 
-/**
- * The change file `id` as committed on `ref.commit`, read from git so the branch's worktree, or the branch itself, need
- * not exist any more; undefined when that commit has no such file. A file that is there but does not parse fails
- * loudly, never skipped.
- */
-export function changeOnBranch(ws: Workspace, id: string, ref: BranchRef): Result<Change | undefined> {
-  const type = changeType(ws);
-  const dir = `${CANON_DIR}/${type.dir}/`;
-  const branch = ref.branch;
+/** The path of change file `id` in `ref.commit`, undefined when that commit has none. */
+function changeFileOn(ws: Workspace, id: string, ref: BranchRef): Result<string | undefined> {
+  const dir = `${CANON_DIR}/${changeType(ws).dir}/`;
   // reason: read by commit id, not by branch name: the name may be deleted meanwhile (#110), and may hold shell syntax (BR-2107)
   const files = git(ws.primary, "ls-tree", "--name-only", ref.commit, "--", dir);
   if (!files.ok) return files;
   const file = new RegExp(`^${id}(-[a-z0-9-]+)?\\.md$`);
-  const path = files.value.split("\n").find((p) => file.test(p.slice(dir.length)));
-  if (!path) return ok(undefined);
-  const text = git(ws.primary, "show", `${ref.commit}:${path}`);
+  return ok(files.value.split("\n").find((p) => file.test(p.slice(dir.length))));
+}
+
+/**
+ * The change file `id` as committed on `ref.commit`, read from git so the branch's worktree, or the branch itself, need
+ * not exist any more; undefined when that commit has no such file. A file that is there but does not parse comes back
+ * as `unreadable` with the file and branch named, never skipped silently (BR-2292); a git failure is an error.
+ */
+export function changeOnBranch(ws: Workspace, id: string, ref: BranchRef): Result<{ change: Change } | { unreadable: string } | undefined> {
+  const type = changeType(ws);
+  const path = changeFileOn(ws, id, ref);
+  if (!path.ok || !path.value) return path.ok ? ok(undefined) : path;
+  const text = git(ws.primary, "show", `${ref.commit}:${path.value}`);
   if (!text.ok) return text;
-  const where = `${path} on branch ${branch}`;
+  const where = `${path.value} on branch ${ref.branch}`;
   const parsed = parseDocFile(text.value, where);
-  if (!parsed.ok) return err("io", parsed.error.message);
+  if (!parsed.ok) return ok({ unreadable: parsed.error.message });
   const { meta, body } = parsed.value;
   const status = meta["status"] ?? type.defaultStatus;
   if (meta["id"] !== id || typeof meta["title"] !== "string" || !type.statuses?.includes(status as string)) {
-    return err("io", `${where}: front matter needs id ${id}, a title and a status of ${type.statuses?.join(", ")}`);
+    return ok({ unreadable: `${where}: front matter needs id ${id}, a title and a status of ${type.statuses?.join(", ")}` });
   }
   const rules = Array.isArray(meta["rules"]) ? meta["rules"].filter((r): r is string => typeof r === "string") : [];
-  return ok({ kind: "change", id, title: meta["title"], path, body, status: status as ChangeStatus, rules, passes: {} });
+  return ok({ change: { kind: "change", id, title: meta["title"], path: path.value, body, status: status as ChangeStatus, rules, passes: {} } });
 }
 
 function changeType(ws: Workspace) {

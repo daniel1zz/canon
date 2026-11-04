@@ -54,6 +54,8 @@ export interface CheckInput {
   readonly testFiles?: readonly string[];
   /** `floor_skip_paths` of the config in force; tests must not read the repository's files under them (BR-2181). */
   readonly floorSkipPaths?: readonly string[];
+  /** Ids whose change file is on their own change branch, not yet on main: the backlog may list them (BR-2150, D-50). */
+  readonly branchChanges?: ReadonlySet<string>;
 }
 
 export function check(input: CheckInput): Finding[] {
@@ -87,6 +89,8 @@ export function check(input: CheckInput): Finding[] {
   // The owner's order names changes only; a typo would silently drop a change from where the owner put it (BR-2150).
   for (const e of readBacklog(input.root, input.corpus.types)) {
     const target = input.corpus.docs.find((x) => x.id === e.id);
+    // reason: the owner orders work still only on its branch too; it lands later with its file (BR-2150, D-50)
+    if (!target && input.branchChanges?.has(e.id)) continue;
     if (!target || target.kind !== "change") findings.push({ path: `${BACKLOG_FILE}:${e.line}`, rule: "ref-dangling", message: `lists ${e.id}, which is not a change` });
   }
   const { codeRoot } = input.corpus.layout;

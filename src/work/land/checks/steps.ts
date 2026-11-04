@@ -1,4 +1,5 @@
 import type { Say, Workspace } from "../../workspace.ts";
+import { changeIdsOnBranches } from "../../session/inflight.ts";
 import { readConfig } from "../../../config/config.ts";
 import { check, type Finding } from "../../../knowledge/check/check.ts";
 import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../../../knowledge/check/sources.ts";
@@ -54,7 +55,9 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   // reason: the tree that is landing decides which paths may skip the floor (BR-2164), so it decides which test reads matter (BR-2181)
   const landing = readConfig(wt);
   if (!landing.ok) return refuse("check", `canon check: cannot read canon/config.yaml of the landing tree: ${landing.error.message}`);
-  const findings = check({ root: wt, ...read, testFiles: tests, floorSkipPaths: landing.value.floorSkipPaths });
+  const onBranches = changeIdsOnBranches(ws);
+  if (!onBranches.ok) return refuse("environment", onBranches.error.message);
+  const findings = check({ root: wt, ...read, testFiles: tests, floorSkipPaths: landing.value.floorSkipPaths, branchChanges: onBranches.value });
   if (findings.length > 0) return refuse("check", `canon check: ${findings.length} finding(s)`, findings);
   // Execution records (D-32): planned rules made active by their change only, pass records written only by canon, and
   // still matching their rules after the rebase (BR-2240, BR-2242, BR-2244).

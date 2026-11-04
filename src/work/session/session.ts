@@ -68,7 +68,8 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
       ws.db.event(ws.actor, "start.refuse", target.change, { reason: "not-found" });
       return err("not_found", `${target.change} is not a change on ${main} or on a change/${target.change} branch; start a new one with --title`);
     }
-    if (doc.status !== "open") {
+    // reason: done only on its own branch means its landing never reached main (killed mid-way); it is resumed to land (BR-2294)
+    if (doc.status !== "open" && !(existing && doc.status === "done")) {
       ws.db.event(ws.actor, "start.refuse", doc.id, { reason: "not-open", status: doc.status });
       return err("invalid", `${doc.id} is ${doc.status}`);
     }
