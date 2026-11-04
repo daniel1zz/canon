@@ -42,7 +42,9 @@ export function takeSnapshot(cwd: string, now: Date = new Date()): Result<TakeOu
   if (!top.ok) return ok({ kind: "none", why: "not a git worktree" });
   const root = top.value;
   if (!existsSync(join(root, "canon", "config.yaml"))) return ok({ kind: "none", why: "not a canon project" });
-  const status = git(root, "status", "--porcelain");
+  // reason: without --no-optional-locks, git status refreshes the index under .git/index.lock, so a hook before every
+  // Bash call would make a git command running at the same moment (a landing's ff-merge, a commit) fail on that lock (BR-2182, #83).
+  const status = git(root, "--no-optional-locks", "status", "--porcelain");
   if (!status.ok) return status;
   if (status.value === "") return ok({ kind: "none", why: "nothing uncommitted" });
 

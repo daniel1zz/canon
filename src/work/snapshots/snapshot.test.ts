@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdtempSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, unlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git } from "../../kernel/git.ts";
@@ -45,6 +45,18 @@ describe("taking a snapshot", () => {
     expect(show(root, `${s.ref}:staged.txt`)).toEqual({ ok: true, value: "staged" });
     expect(show(root, `${s.ref}:.env`).ok).toBe(false);
     expect(sh(root, "rev-parse", `${s.ref}^`)).toBe(sh(root, "rev-parse", "HEAD"));
+  });
+
+  test("BR-2182: a snapshot leaves the index file byte for byte as it was, even when its stat data is out of date", () => {
+    const root = project();
+    // reason: a newer mtime with the same content makes git status want to refresh and write the index (#83)
+    const later = new Date(Date.now() + 60_000);
+    utimesSync(join(root, "app.txt"), later, later);
+    writeFileSync(join(root, "new.txt"), "new\n");
+    const index = join(root, ".git", "index");
+    const before = readFileSync(index);
+    taken(root);
+    expect(readFileSync(index).equals(before)).toBe(true);
   });
 
   test("BR-2182: what git checkout <file> throws away is still in the snapshot taken before it", () => {
