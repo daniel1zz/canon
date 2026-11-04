@@ -37,7 +37,7 @@ export const json = (v: unknown) => console.log(JSON.stringify(v, null, 2));
 // ---------------------------------------------------------------- how domains contribute commands
 
 /**
- * One command a domain contributes, from the file `commands.ts` in that domain's own directory; src/cli/main.ts
+ * One command a domain contributes, from the file `commands.ts` in that domain's own directory; src/cli/tree.ts
  * only assembles them, so a new command never edits a shared file (C-132).
  * `under` names the group it belongs to (`work`), absent for a top-level command; `rank` is its place in
  * `--help` among its siblings (lower first).
