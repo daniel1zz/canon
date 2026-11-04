@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { importedPaths } from "../../knowledge/query/query.ts";
 import { project, sh, startNew, ws } from "../testkit.ts";
@@ -1030,11 +1031,13 @@ describe("canon work test selection: command modules, strings and a CLI that can
   });
 
   test("BR-2157: the real tree is read: at least 50 tests that spawn the CLI and 30 commands are recognised", () => {
-    const root = join(import.meta.dir, "..", "..", "..");
-    const exists = (p: string) => existsSync(join(root, p));
-    const reader = cliReader(root, (f) => importedPaths(root, f, exists));
-    const tests = [...new Bun.Glob("src/**/*.test.ts").scanSync({ cwd: root })];
-    for (const f of tests) reader.cliOf(f, readFileSync(join(root, f), "utf8"));
+    // reason: only src/ is read, copied to a temporary project, so the test does not read a floor_skip_paths directory (BR-2164, BR-2181)
+    const copy = mkdtempSync(join(tmpdir(), "canon-real-tree-"));
+    cpSync(join(import.meta.dir, "..", ".."), join(copy, "src"), { recursive: true });
+    const exists = (p: string) => existsSync(join(copy, p));
+    const reader = cliReader(copy, (f) => importedPaths(copy, f, exists));
+    const tests = [...new Bun.Glob("src/**/*.test.ts").scanSync({ cwd: copy })];
+    for (const f of tests) reader.cliOf(f, readFileSync(join(copy, f), "utf8"));
     expect(reader.problems()).toEqual([]);
     const { files, commands } = reader.counts();
     expect(files).toBeGreaterThanOrEqual(50);
