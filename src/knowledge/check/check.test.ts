@@ -181,6 +181,20 @@ describe("rule shape", () => {
     ).toEqual([`rule-no-example ${br(1)}.md`, `rule-no-example ${br(2)}.md`, "test-retired-rule a.test.ts"]);
   });
 
+  test("BR-2301: an example that states the behaviour before the change is reported; the wording in code, in the statement or in a retired rule is not", () => {
+    const rule = (example: string) => `## 规则\n\nS，在做任何改动之前检查。\n\n## 例子\n\n${example}\n`;
+    expect(
+      run({
+        ...fileOf(1, rule("- 退款第 31 天 → 拒绝；改动前照样退款")),
+        ...fileOf(2, rule("- day 31 → refused; previously it refunded")),
+        ...fileOf(3, rule("- 输出里有 `改动前`")), // product output written as code
+        ...fileOf(4, rule("- `info/exclude` 原来是 `.env` → 变成两行，原来的行原样保留")), // the input's earlier state, not the product's
+        ...fileOf(5, rule("- 第 31 天 → 拒绝")), // the statement says 改动之前, which is ordering, not history
+        ...fileOf(6, rule("- day 31 → refunded; before this change it was refused"), "status: retired\n"),
+      }),
+    ).toEqual([`example-before-change ${br(1)}.md`, `example-before-change ${br(2)}.md`, "test-retired-rule a.test.ts"]);
+  });
+
   test("BR-2035: a placeholder line left from a template is reported, but not one written as code", () => {
     const root = repo({
       "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\n<这个领域管什么、不管什么。>\n",

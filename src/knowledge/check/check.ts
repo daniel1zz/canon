@@ -34,6 +34,7 @@ export type CheckRule =
   | "test-retired-rule" // a test still names a retired rule
   | "rule-no-statement" // an active or planned rule has no non-empty "## 规则" section
   | "rule-no-example" // an active or planned rule without `untested:` has no example in "## 例子"
+  | "example-before-change" // a current rule's "## 例子" states how the product behaved before the change (BR-2301)
   | "domain-code-missing" // a domain README lists a code path that does not exist (BR-2079)
   | "domain-code-declared" // a README lists `code:` where the layout gives the location (BR-2117)
   | "code-layout" // with code_root: a domain without its directory, or a directory no domain or shared entry owns (BR-2118)
@@ -300,6 +301,10 @@ function structureFindings(root: string, corpus: Corpus): Finding[] {
     if (statement === undefined || statement.trim() === "") {
       out.push({ path: d.path, rule: "rule-no-statement", message: `${d.id} has no "${RULE_SECTION}" section with the statement` });
     }
+    const before = beforeChangeWording(section(d.body, EXAMPLE_SECTION) ?? "");
+    if (before !== undefined) {
+      out.push({ path: d.path, rule: "example-before-change", message: `${d.id}: "${EXAMPLE_SECTION}" says how it was before the change ("${before}"); examples state only what the product must do now, the old behaviour belongs in the change file's 为什么` });
+    }
     if (d.untested !== undefined) continue;
     const examples = (section(d.body, EXAMPLE_SECTION) ?? "").split("\n").filter((l) => l.trim() !== "" && !isPlaceholderLine(l));
     if (examples.length === 0) out.push({ path: d.path, rule: "rule-no-example", message: `${d.id} has no example under "${EXAMPLE_SECTION}"` });
@@ -309,6 +314,20 @@ function structureFindings(root: string, corpus: Corpus): Finding[] {
     if (unfilled(dom.body)) out.push({ path: dom.path, rule: "template-unfilled", message: `domain ${dom.name} README still contains a template placeholder line` });
   }
   return out;
+}
+
+/**
+ * Wording that describes the product before a change (BR-2301). Every example line the rule review had removed from
+ * canon/rules used 改动前; the rest are its plain synonyms. "改动之前" and "原来是" are left out: "在做任何改动之前" states an
+ * order and "原来是" an input's earlier state, both current behaviour.
+ */
+const BEFORE_CHANGE = ["改动前", "修改前", "修复前", "原来会", "以前会", "before this change", "before the fix", "previously"];
+
+/** The first before-the-change wording in an examples section, outside code spans and fences; undefined when there is none. */
+export function beforeChangeWording(examples: string): string | undefined {
+  // reason: text in backticks is the product's input or output, which may hold these words (BR-2301)
+  const text = stripCode(examples).toLowerCase();
+  return BEFORE_CHANGE.find((w) => text.includes(w));
 }
 
 const JS_TS = /\.[cm]?[jt]sx?$/;

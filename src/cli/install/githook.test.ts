@@ -463,12 +463,13 @@ describe("what a refusal leaves in the checkout", () => {
     return { clone, own };
   }
 
-  test("BR-2298: a git pull --rebase stopped by the guard names git rebase --abort, then canon sync; the abort puts main's checkout back", () => {
+  test("BR-2298 BR-2284: a git pull --rebase stopped by the guard names git rebase --abort, then canon sync, and does not put anything back; the abort puts main's checkout back", () => {
     const { clone, own } = apart();
     const pull = git(clone, ["-c", "rebase.backend=merge", "-c", "rebase.autoStash=false", "pull", "-q", "--rebase", "origin", "main"]);
     expect(pull.code).not.toBe(0);
     expect(pull.err).toContain("canon: refusing to move main");
     expect(pull.err).toContain("first run git rebase --abort, then canon sync");
+    expect(pull.err).not.toContain("back at main"); // HEAD is detached mid-rebase: main is not checked out (BR-2284)
     expect(sh(clone, "rev-parse", "main")).toBe(own);
     expect(git(clone, ["symbolic-ref", "-q", "HEAD"]).code).not.toBe(0); // git stopped mid-rebase, HEAD detached
     expect(git(clone, ["rebase", "--abort"]).code).toBe(0);
