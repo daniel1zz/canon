@@ -63,8 +63,8 @@ remote: origin
 # 生命周期 hook（D-2、D-3）：每项是一条命令或命令列表
 hooks:
   after_land:
-    # 合入后的代码评审（C-2）：只找安全和并发问题，一个根因一个 issue，写到 GitHub（负责人 2026-11-03 同意开启）
-    - "bun scripts/code-review.ts"
+    # 合入后的代码评审（C-2）：只找安全和并发问题，一个根因一个 issue，写到 GitHub（负责人 2026-11-03 同意开启）；用 sonnet（负责人 2026-11-04，C-308）
+    - "CANON_CODE_REVIEW_AI='claude -p --model sonnet --output-format text' bun scripts/code-review.ts"
   after_green:
     # main 的后台 floor 通过后，从这个测过的提交重新构建主 checkout 的 dist/canon（PATH 上的 canon），
     # 不从没测过的 main 构建：合入了把命令行弄坏的变更时，修复变更还能用旧的 canon 合进来（D-31、BR-2222）
