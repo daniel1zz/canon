@@ -94,4 +94,24 @@ describe("canon init, install and update ignore Claude Code's subagent worktrees
     expect(git(root, "rev-parse", "HEAD")).toBe(head);
     expect(canon(root, "update", "--check").code).toBe(0);
   });
+
+  test("BR-2086: with the line missing and a skill out of date, update opens a change, lands the skill and writes the line", () => {
+    const root = repo();
+    expect(canon(root, "init", "--floor", "true").code).toBe(0);
+    writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ntests: []\nreview: none\n');
+    git(root, "add", "-A");
+    git(root, "commit", "-qm", "init");
+    const head = git(root, "rev-parse", "HEAD");
+    writeFileSync(excludePath(root), "");
+    writeFileSync(join(src, "canon-a/SKILL.md"), "a v2\n");
+    try {
+      const up = canon(root, "update");
+      expect(up.code).toBe(0);
+      expect(git(root, "rev-parse", "HEAD")).not.toBe(head);
+      expect(git(root, "show", "main:.claude/skills/canon-a/SKILL.md")).toBe("a v2");
+      expect(linesOf(root)).toHaveLength(1);
+    } finally {
+      writeFileSync(join(src, "canon-a/SKILL.md"), "a v1\n");
+    }
+  });
 });

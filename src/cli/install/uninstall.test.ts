@@ -120,6 +120,8 @@ describe("canon uninstall", () => {
     expect(existsSync(join(root, ".git", "canon"))).toBe(false);
     expect(existsSync(`${root}.worktrees`)).toBe(false);
     expect(git(root, "for-each-ref", "refs/canon", "refs/heads/change")).toBe("");
+    // the /.canon/ exclude line goes, the /.claude/worktrees/ one stays (BR-2305)
+    expect(readFileSync(join(root, ".git/info/exclude"), "utf8").split("\n").filter((l) => l.startsWith("/"))).toEqual(["/.claude/worktrees/"]);
     writeFileSync(join(root, "f"), "x\n");
     git(root, "add", "f");
     expect(run(root, "commit", "-qm", "plain").exitCode).toBe(0);
