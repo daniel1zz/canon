@@ -89,15 +89,15 @@ export const STOP_GRACE_MS = 10_000;
 
 /**
  * Waits, blocking, until nothing this process started still runs, or `ms` passes. True when nothing is left; false when
- * something still runs or the process table cannot be read. It blocks on purpose: while it waits, the watcher's own code
- * must not go on to record a result or start the next command (#102).
+ * something still runs, or the process table could not be read, when `ms` is over. It blocks on purpose: while it waits,
+ * the watcher's own code must not go on to record a result or start the next command (#102).
  */
 export function waitStarted(ms: number, self = process.pid): boolean {
   const end = Date.now() + ms;
   for (;;) {
     const rows = table();
-    if (!rows) return false;
-    if (startedBy(rows, self).length === 0) return true;
+    // reason: one listing that fails proves nothing has ended; the wait goes on to its end, so a TERM handler keeps its time (BR-2285, issue #108)
+    if (rows && startedBy(rows, self).length === 0) return true;
     if (Date.now() >= end) return false;
     Bun.sleepSync(50);
   }

@@ -591,6 +591,35 @@ describe("a passing main", () => {
     expect(eventsOf(root, "floor.after_green")).toEqual([]);
   });
 
+  test("BR-2285: one listing of the process table that fails while the watcher waits does not cut the TERM trap's time short", async () => {
+    const { lateAtExit, out } = await termedWhile((ready, late) => `hooks:\n  after_green: 'trap "sleep 1; touch ${late}; exit 1" TERM; touch ${ready}; while true; do sleep 0.1; done'\n`, {
+      bin: (d) => {
+        const bin = join(d, "bin");
+        mkdirSync(bin, { recursive: true });
+        // reason: the first two listings stop and signal; the third, the first of the wait, fails (issue #108)
+        writeFileSync(join(bin, "ps"), `#!/bin/sh\nif [ "$2" = "pid=,ppid=,pgid=,stat=" ]; then echo x >> ${d}/n; [ "$(wc -l < ${d}/n)" -eq 3 ] && exit 1; fi\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+        return bin;
+      },
+    });
+    expect(lateAtExit).toBe(true);
+    expect(out).not.toContain("SIGKILL");
+  });
+
+  test("BR-2285: a process still listed 5 s after SIGKILL is reported as still running, and the watcher still exits 143 and gives up its place", async () => {
+    const { out, root } = await termedWhile((ready) => `hooks:\n  after_green: 'touch ${ready}; while true; do sleep 0.1; done'\n`, {
+      bin: (d) => {
+        const bin = join(d, "bin");
+        mkdirSync(bin, { recursive: true });
+        // reason: a made-up member of the watcher's group that no signal can end, as a process stuck in the kernel would be;
+        // the wrapper's own children (ps, awk) are left out, as the watcher leaves out the ps it runs
+        writeFileSync(join(bin, "ps"), `#!/bin/sh\nif [ "$2" = "pid=,ppid=,pgid=,stat=" ]; then /bin/ps "$@" | awk -v me=$$ '$2 != me' && echo "99999999 $PPID $PPID S"; exit; fi\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+        return bin;
+      },
+    });
+    expect(out).toContain("sent SIGKILL, and some of it is still running");
+    expect(watcherRows(root)).toEqual([]);
+  });
+
   test("BR-2285: an after_green that ignores SIGTERM gets SIGKILL after 10 s, and the watcher exits only once it is gone", async () => {
     const { waited, out, dir } = await termedWhile((ready) => `hooks:\n  after_green: 'trap "" TERM; echo $$ > ${ready}.pid; touch ${ready}; while true; do sleep 0.1; done'\n`);
     const pid = Number(readFileSync(join(dir, "ready.pid"), "utf8").trim());
