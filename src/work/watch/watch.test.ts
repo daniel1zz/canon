@@ -390,6 +390,79 @@ describe("a passing main", () => {
     expect(existsSync(watchDir(ws(root).db))).toBe(false);
   });
 
+  /** A passed main whose watcher was killed with SIGKILL while after_green ran: after_green appends CANON_GREEN to `ran`. */
+  async function killedInAfterGreen(extra = "") {
+    const dir = join(process.env["TMPDIR"] ?? "/tmp", `canon-ag-${process.pid}-${Date.now()}`);
+    mkdirSync(dir, { recursive: true });
+    const hold = join(dir, "hold");
+    const ran = join(dir, "ran");
+    const w = watched(`hooks:\n  after_green: 'echo "$CANON_GREEN" >> ${ran}; while [ -e ${hold} ]; do sleep 0.1; done'\n${extra.replaceAll("$DIR", dir)}`);
+    const a = sh(w.root, "rev-parse", "main");
+    const fake = fakeCanon(w.root);
+    writeFileSync(hold, "");
+    const killed = Bun.spawn(["bun", MAIN, "floor", "watch"], { cwd: w.root, stdout: "ignore", stderr: "ignore", stdin: "ignore", detached: true, env: { ...process.env, PATH: `${fake.bin}:${process.env["PATH"]}`, CANON_ACTOR: "agent:a" } });
+    await until(() => existsSync(ran));
+    // reason: the whole group, so after_green dies with it, as on a reboot or an OOM kill
+    process.kill(-killed.pid, "SIGKILL");
+    await killed.exited;
+    rmSync(hold);
+    return { ...w, a, ran, fake, dir };
+  }
+
+  test("BR-2270: a watcher killed while after_green runs leaves it due; the next canon brief starts a watcher that runs it again on the green commit, once", async () => {
+    const { root, tested, a, ran, fake } = await killedInAfterGreen();
+    expect(results(root).map((x) => [x.kind, x.sha])).toEqual([["floor.pass", a]]);
+    expect(sh(root, "rev-parse", GREEN_REF)).toBe(a);
+    const out = await withPath(fake.bin, undefined, async () => briefAfterGuide(root));
+    expect(out).toContain(`after_green for main ${a.slice(0, 9)} did not finish`);
+    await until(() => eventsOf(root, "floor.after_green").length === 1 && watcherRows(root).length === 0);
+    expect(readFileSync(ran, "utf8").trim().split("\n")).toEqual([a, a]);
+    expect(tested()).toEqual([a]); // the floor did not run again
+    expect(eventsOf(root, "floor.after_green").map((e) => e.sha)).toEqual([a]);
+    // It ran to the end and exited 0, so PATH's canon was started to go on (BR-2251); nothing is due any more.
+    expect(eventsOf(root, "floor.handoff").map((e) => e.sha)).toEqual([a]);
+    expect(await withPath(fake.bin, undefined, async () => briefAfterGuide(root))).not.toContain("floor watch:");
+  });
+
+  test("BR-2270: a setup that fails when after_green is run again ends it: after_green does not run and is not due any more", async () => {
+    const { root, a, ran, fake, dir } = await killedInAfterGreen(`setup: "test ! -e $DIR/nosetup"\n`);
+    writeFileSync(join(dir, "nosetup"), "");
+    await withPath(fake.bin, undefined, async () => briefAfterGuide(root));
+    await until(() => eventsOf(root, "floor.after_green").length === 1 && watcherRows(root).length === 0);
+    expect(ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'floor.after_green'").get()!.detail).toContain('"setup_exit":1');
+    expect(readFileSync(ran, "utf8").trim().split("\n")).toEqual([a]);
+    expect(eventsOf(root, "floor.handoff")).toEqual([]);
+    expect(await withPath(fake.bin, undefined, async () => briefAfterGuide(root))).not.toContain("floor watch:");
+  });
+
+  test("BR-2270: only the commit refs/canon/green names is run again: an older pass still due is not, once a later one ran its after_green", async () => {
+    const { root } = watched(`hooks:\n  after_green: exit 1\n`);
+    const a = sh(root, "rev-parse", "main");
+    const b = commit(root, "b.txt", "b\n");
+    await watch(ws(root), quiet); // b passes and runs its after_green
+    ws(root).db.event("agent:a", "floor.pass", null, { sha: a, log: "x", exit: 0, after_green: true }); // a, left due
+    expect(sh(root, "rev-parse", GREEN_REF)).toBe(b);
+    expect(briefAfterGuide(root)).not.toContain("floor watch:");
+    sh(root, "update-ref", GREEN_REF, a); // as when a was the last pass
+    expect(briefAfterGuide(root)).toContain(`after_green for main ${a.slice(0, 9)} did not finish`);
+  });
+
+  test("BR-2270: a pass in a project without after_green owes nothing: its floor.pass has no after_green and brief starts no watcher", async () => {
+    const { root } = watched();
+    await watch(ws(root), quiet);
+    expect(ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'floor.pass'").get()!.detail).not.toContain("after_green");
+    expect(briefAfterGuide(root)).not.toContain("floor watch:");
+  });
+
+  test("BR-2270: an after_green that ran to the end, even exiting 1, is not run again by the next canon brief", async () => {
+    const { root } = watched(`hooks:\n  after_green: exit 1\n`);
+    const a = sh(root, "rev-parse", "main");
+    await watch(ws(root), quiet);
+    expect(eventsOf(root, "floor.after_green").map((e) => e.sha)).toEqual([a]);
+    expect(briefAfterGuide(root)).not.toContain("floor watch:");
+    expect(hookExits(root)).toEqual([1]);
+  });
+
   test("BR-2222: an after_green that exits 1 leaves the pass and refs/canon/green as they are", async () => {
     const { root } = watched(`hooks:\n  after_green: exit 1\n`);
     const a = sh(root, "rev-parse", "main");
@@ -440,7 +513,8 @@ describe("a background result is recorded whole", () => {
   });
 
   test("BR-2222: when the failing-main record cannot be cleared after a pass, no floor.pass is left either, and the next run clears it", async () => {
-    const { root } = watched();
+    const { root } = watched(`hooks:\n  after_green: 'echo "$CANON_GREEN" >> "$CANON_PRIMARY.ran"'\n`);
+    const ran = () => (existsSync(`${root}.ran`) ? readFileSync(`${root}.ran`, "utf8").trim().split("\n") : []);
     const bad = commit(root, "FAIL", "x\n");
     expect((await watch(ws(root), quiet)).ok).toBe(true);
     expect(redMain(ws(root).db)?.sha).toBe(bad);
@@ -450,10 +524,14 @@ describe("a background result is recorded whole", () => {
     expect((await watch(ws(root), quiet)).ok).toBe(false);
     expect(results(root).map((r) => r.kind)).toEqual(["floor.fail"]);
     expect(redMain(ws(root).db)).toBeDefined();
+    expect(sh(root, "rev-parse", GREEN_REF)).toBe(good); // the ref moved before the record failed
+    expect(ran()).toEqual([]); // after_green did not run
     db.run("DROP TRIGGER keep_red");
-    expect((await watch(ws(root), quiet)).ok).toBe(true);
+    // reason: after_green exits 0, which hands off to PATH's canon (BR-2251); a fake one keeps a real canon from starting here.
+    expect((await withPath(fakeCanon(root).bin, undefined, () => watch(ws(root), quiet))).ok).toBe(true);
     expect(results(root).map((r) => [r.kind, r.sha])).toEqual([["floor.fail", bad], ["floor.pass", good]]);
     expect(redMain(ws(root).db)).toBeUndefined();
+    expect(ran()).toEqual([good]);
   });
 });
 
