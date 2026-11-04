@@ -44,7 +44,7 @@ function project() {
   for (const args of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]]) git(root, ...args);
   const env = { CANON_SKILLS_SOURCE: src };
   expect(canon(root, env, "init", "--floor", "true").code).toBe(0);
-  writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ntests: []\n');
+  writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ntests: []\nreview: none\n'); // the updates land skill changes without a reviewer, on purpose (BR-2074)
   git(root, "add", "-A");
   git(root, "commit", "-qm", "init");
   return { src, root, env };
