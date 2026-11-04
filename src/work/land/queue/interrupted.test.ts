@@ -118,6 +118,7 @@ describe("land.start", () => {
     rmSync(join(root, ".git/hooks/pre-commit"));
     expect(kinds(root, s.change).at(-1)).toBe("land.killed");
     expect(kinds(root, s.change)[0]).toBe("land.start");
+    expect(detail(root, "land.killed")["signal"]).toBe("SIGTERM");
     const status = await run(root, ["work", "status"]);
     expect(status.out).not.toContain("INTERRUPTED");
   }, TIMED);
@@ -364,6 +365,15 @@ describe("the next landing and the other commands report a killed landing", () =
     expect(killed.code).toBe(3);
     expect(killed.err).toContain("landing INTERRUPTED");
     expect(killed.err).toContain(`process ${lander.pid}`);
+  }, TIMED);
+
+  test("BR-2310: after-land for a change whose landing reached main before it was killed says so, and that after_land did not run", async () => {
+    const { root, s, pid } = await killedAfterMainMoved();
+    const r = await run(root, ["work", "after-land", s.change]);
+    expect(r.code).toBe(3);
+    expect(r.err).toContain("the landing reached main");
+    expect(r.err).toContain(`process ${pid}`);
+    expect(r.err).toContain("after_land commands did not run");
   }, TIMED);
 
   test("BR-2310: brief in the worktree of a killed landing says so; otherwise its output has no such line", async () => {
