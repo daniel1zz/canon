@@ -347,8 +347,10 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
     }
   };
   const stopped = await Promise.race([phases().then(() => undefined), stoppedP]);
+  // reason: a stop that began as the phases ended is still being carried out; its result is the run's (BR-2304)
+  const result0 = stopped ?? (signal !== undefined ? await stoppedP : undefined);
   for (const s of STOP_SIGNALS) deps.signals.off(s, onSignal);
-  if (stopped) return ok(stopped);
+  if (result0) return ok(result0);
   const failed = files.filter((f) => finalized.get(f)!.exitCode !== 0);
 
   // The same check as `canon check`, on the worktree's files (BR-2227).
