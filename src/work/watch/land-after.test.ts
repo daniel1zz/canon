@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { land } from "../land/land.ts";
 import { enqueue, finishEntry } from "../land/queue/queue.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { fixLandedIn, redMain, startFixMain } from "./redmain.ts";
+import { watch } from "./watch.ts";
 
 // reason: a landing in after mode starts the background floor, a spawned `canon floor watch`; these tests wait for it
 setDefaultTimeout(60_000);
@@ -199,5 +201,98 @@ describe("the canon on PATH reads the landing's config in after mode", () => {
     } finally {
       fakeCanon("exit 0");
     }
+  });
+});
+
+describe("landing while main is failing", () => {
+  /** A project in after mode whose main fails its floor, with the failure recorded by a background run. */
+  async function redProject() {
+    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\n");
+    writeFileSync(join(root, "FAIL"), "x\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "broken");
+    expect((await watch(ws(root), quiet)).ok).toBe(true);
+    return root;
+  }
+
+  test("BR-2306: a landing that succeeds says main is failing and that nobody is fixing it, with the --fix-main hint", async () => {
+    const root = await redProject();
+    const s = startNew(root, "Lands on red");
+    commitFile(s.worktree, "new.txt", "x\n");
+    const r = canon(s.worktree, "work", "land");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("main is failing floor since");
+    expect(r.out).toContain("nobody is fixing it yet");
+    expect(r.out).toContain("canon work start --fix-main");
+  });
+
+  test("BR-2306: with a fix change on the record the landing names it", async () => {
+    const root = await redProject();
+    expect(canon(root, "work", "start", "--fix-main").code).toBe(0);
+    const fix = redMain(ws(root).db)!.change!;
+    const s = startNew(root, "Lands beside the fix");
+    commitFile(s.worktree, "new.txt", "x\n");
+    const r = canon(s.worktree, "work", "land");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`being fixed in ${fix}`);
+  });
+
+  test("BR-2306: a refused landing says it too, on stderr, with the exit code unchanged", async () => {
+    const root = await redProject();
+    const s = startNew(root, "Refused on red");
+    writeFileSync(join(s.worktree, "app.txt"), "changed\n");
+    const r = canon(s.worktree, "work", "land");
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("land refused (dirty)");
+    expect(r.err).toContain("main is failing floor since");
+    expect(r.err).toContain("nobody is fixing it yet");
+  });
+
+  test("BR-2306: when main is not failing nothing is added", async () => {
+    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\n");
+    const s = startNew(root, "Lands on green");
+    commitFile(s.worktree, "new.txt", "x\n");
+    const r = canon(s.worktree, "work", "land");
+    expect(r.code).toBe(0);
+    expect(r.out + r.err).not.toContain("main is failing");
+  });
+
+  test("BR-2221: once the fix change has landed and the floor fails again on a commit with it, the record no longer names it and --fix-main opens another", async () => {
+    const root = await redProject();
+    const started = startFixMain(ws(root), quiet);
+    if (!started.ok) throw new Error(started.error.message);
+    const first = started.value.change;
+    // The fix is not enough: FAIL stays. Its change file gets the sections a landing requires.
+    const dir = join(started.value.worktree, "canon/changes");
+    const file = join(dir, readdirSync(dir).find((f) => f.startsWith(`${first}-`) || f === `${first}.md`)!);
+    const text = readFileSync(file, "utf8");
+    writeFileSync(file, `${text.slice(0, text.indexOf("---\n", 4) + 4)}\n## 为什么\n\nfix.\n\n## 要改什么\n\nfix.\n\n## 教训\n\n无。\n\n## 任务\n\n- [ ] fix\n`);
+    sh(started.value.worktree, "commit", "-q", "--amend", "--no-edit", "-a");
+    commitFile(started.value.worktree, "partial.txt", "x\n");
+    const out = await land(ws(started.value.worktree), FAST, quiet);
+    expect(out.kind).toBe("landed");
+    expect(await backgroundResult(root, sh(root, "rev-parse", "main"))).toBe("floor.fail");
+    expect(redMain(ws(root).db)!.change).toBeNull();
+    const again = canon(root, "work", "start", "--fix-main");
+    expect(again.code).toBe(0);
+    expect(redMain(ws(root).db)!.change).not.toBe(first);
+  });
+
+  test("BR-2221: a fix change that has not landed, or whose landing the failing commit does not contain, stays on the record", async () => {
+    const root = await redProject();
+    const started = startFixMain(ws(root), quiet);
+    if (!started.ok) throw new Error(started.error.message);
+    const fix = started.value.change;
+    const w = ws(root);
+    const older = sh(root, "rev-parse", "main");
+    expect(fixLandedIn(w, older)).toBe(false);
+    writeFileSync(join(root, "second.txt"), "x\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "second");
+    const landed = sh(root, "rev-parse", "main");
+    w.db.event(w.actor, "land.ok", fix, { sha: landed });
+    expect(fixLandedIn(w, older)).toBe(false);
+    expect(fixLandedIn(w, landed)).toBe(true);
+    expect(redMain(w.db)!.change).toBe(fix);
   });
 });

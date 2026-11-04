@@ -39,8 +39,10 @@ export function redMain(db: CoordDb): RedMain | undefined {
  * Records a background failure (BR-2220): a new record when there is none; otherwise only its failing commit, log
  * and output tail change, never when it began, the last passing commit or the fix change.
  */
-export function recordFailure(db: CoordDb, f: { sha: string; log: string; tail: string; green: string | null }): void {
+export function recordFailure(db: CoordDb, f: { sha: string; log: string; tail: string; green: string | null; fixLanded?: boolean }): void {
   const now = new Date().toISOString();
+  // reason: a fix change that has landed and is part of the commit that still fails has done what it could; the record must not keep naming it, or no one can open the next fix (BR-2221).
+  if (f.fixLanded) db.db.query("UPDATE red_main SET change = NULL, fix_pid = NULL, fix_start = NULL WHERE id = 1").run();
   db.db
     .query(
       "INSERT INTO red_main(id, sha, first_sha, log, tail, since, green, updated_at) VALUES (1, ?1, ?1, ?2, ?3, ?4, ?5, ?4) ON CONFLICT(id) DO UPDATE SET sha = excluded.sha, log = excluded.log, tail = excluded.tail, updated_at = excluded.updated_at",
@@ -51,6 +53,17 @@ export function recordFailure(db: CoordDb, f: { sha: string; log: string; tail: 
 /** Main passed: the record goes (BR-2222). */
 export function clearRedMain(db: CoordDb): void {
   db.db.query("DELETE FROM red_main WHERE id = 1").run();
+}
+
+/** Whether the fix change on the record has landed and `sha` contains the commit it landed as (BR-2221). */
+export function fixLandedIn(ws: Workspace, sha: string): boolean {
+  const change = redMain(ws.db)?.change;
+  if (!change) return false;
+  const rows = ws.db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = 'land.ok' AND subject = ? ORDER BY id").all(change);
+  return rows.some((r) => {
+    const landed = (JSON.parse(r.detail) as { sha?: string }).sha;
+    return landed !== undefined && git(ws.primary, "merge-base", "--is-ancestor", landed, sha).ok;
+  });
 }
 
 /** A dropped fix change no longer fixes main, so another session may open one (BR-2221). */
@@ -67,20 +80,35 @@ const short = (sha: string) => sha.slice(0, 9);
 export function redMainNotice(db: CoordDb, mine: string | undefined): string[] {
   const r = redMain(db);
   if (!r) return [];
-  const since = r.first_sha === r.sha ? short(r.sha) : `${short(r.first_sha)} (latest failing commit ${short(r.sha)})`;
   const lines = [
-    `main is failing floor since ${since}, first failed at ${r.since} (canon floor watch, D-31)`,
+    redMainHead(r),
     `  log: ${r.log}`,
     "  last lines of its output:",
     ...r.tail.trimEnd().split("\n").slice(-10).map((l) => `    ${l}`),
     `  last passing commit: ${r.green ? short(r.green) : "none recorded"}`,
   ];
-  if (r.change) lines.push(`  being fixed in ${r.change}`);
-  else if (r.fix_pid !== null) lines.push("  a session is opening the fix change right now (canon work start --fix-main)");
-  else lines.push("  nobody is fixing it yet: a session that has no claimed change runs `canon work start --fix-main` to fix it");
+  lines.push(redMainFixer(r));
   if (mine && mine === r.change) lines.push(`  ${mine} is the change that fixes it.`);
   else if (mine) lines.push(`  These failures are not caused by ${mine}: do not fix them in ${mine}; its own tests may fail for the same reason.`);
   return lines;
+}
+
+const redMainHead = (r: RedMain) => {
+  const since = r.first_sha === r.sha ? short(r.sha) : `${short(r.first_sha)} (latest failing commit ${short(r.sha)})`;
+  return `main is failing floor since ${since}, first failed at ${r.since} (canon floor watch, D-31)`;
+};
+
+const redMainFixer = (r: RedMain) =>
+  r.change
+    ? `  being fixed in ${r.change}`
+    : r.fix_pid !== null
+      ? "  a session is opening the fix change right now (canon work start --fix-main)"
+      : "  nobody is fixing it yet: a session that has no claimed change runs `canon work start --fix-main` to fix it";
+
+/** The two lines of the brief's block that `canon work land` repeats with its result (BR-2306); empty when main is not failing. */
+export function redMainLandingLines(db: CoordDb): string[] {
+  const r = redMain(db);
+  return r ? [redMainHead(r), redMainFixer(r)] : [];
 }
 
 /** The title of the fix change for a failing commit (BR-2221). */

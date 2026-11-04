@@ -2,6 +2,7 @@ import { defineCommand } from "citty";
 import { entry, EXIT, fail, say, workspace, type DomainCommands } from "../../cli/command.ts";
 import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
 import { LESSON_REMINDER } from "../session/session.ts";
+import { redMainLandingLines } from "../watch/redmain.ts";
 import { land } from "./land.ts";
 
 /** `canon work land`. */
@@ -16,6 +17,7 @@ const landCmd = defineCommand({
     const timeoutMs = minutes === undefined ? ws.config.landTimeoutMs : minutes * 60_000;
     const out = await land(ws, { finish: Boolean(args.finish), timeoutMs, guide: WORKFLOW_GUIDE }, say);
     if (out.kind === "landed") {
+      for (const line of redMainLandingLines(ws.db)) say(line);
       if (out.finished) say(LESSON_REMINDER);
       return;
     }
@@ -25,6 +27,7 @@ const landCmd = defineCommand({
     }
     console.error(`canon: land refused (${out.reason}): ${out.message}`);
     for (const f of out.findings ?? []) console.error(`  ${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
+    for (const line of redMainLandingLines(ws.db)) console.error(line);
     if (out.reason === "claimed") process.exit(EXIT.conflict);
     if (out.reason === "environment") process.exit(EXIT.env);
     process.exit(out.reason === "dirty" || out.reason === "on-main" || out.reason === "no-floor" || out.reason === "no-claim" ? EXIT.usage : EXIT.refused);

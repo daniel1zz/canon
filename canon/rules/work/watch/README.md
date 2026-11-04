@@ -4,7 +4,7 @@
 
 ## 术语
 
-- **后台测试**：对 main 的某个提交跑一次 floor，在 git 公共目录下的临时 worktree 里进行，不碰主 checkout。后台测试进程可能比它测的提交旧，所以每次 `after_green` 重新构建 PATH 上的 canon 后，它把接下来的测试交给新构建的 canon、自己结束（BR-2251）；不是这样交接来的进程，自己的代码读不了被测提交的配置、PATH 上的 canon 读得了时，也交给 PATH 上的 canon 重测（BR-2250）。
+- **后台测试**：对 main 的某个提交跑一次 floor，在 git 公共目录下的临时 worktree 里进行，不碰主 checkout。后台测试进程可能比它测的提交旧，所以每次 `after_green` 重新构建 PATH 上的 canon 后，它把接下来的测试交给新构建的 canon、自己结束（BR-2251）。
 - **通过的提交**：最近一次后台测试通过的 main 提交，记在 `refs/canon/green`；PATH 上的 canon 这类东西只应从它构建（`after_green`）。
 - **main 没通过**：最近一次后台测试失败，协调数据库里有一条记录（提交、日志、输出尾部、修复它的变更），直到之后某次后台测试通过。
 - **修复 main 的变更**：用 `canon work start --fix-main` 开的变更，同一时间只有一个。
