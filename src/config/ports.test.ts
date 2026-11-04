@@ -212,22 +212,39 @@ describe("ports config", () => {
 });
 
 describe("no free port", () => {
-  test("BR-2269: a start when every port is held exits 5 naming the holders, records why, and leaves no worktree or claim, with no setup or hook configured", () => {
+  test("BR-2269: a start when every port is held still starts, with an empty CANON_PORT in setup and after_start and the reason said once", () => {
     const p = base();
-    const root = configured(`ports: ${p}-${p + 1}\n`);
+    const root = configured(`ports: ${p}-${p + 1}\nsetup: 'echo "[$CANON_PORT]" > port.txt'\nhooks:\n  after_start: 'echo "[$CANON_PORT]" > hook.txt'\n`);
     const a = start(ws(root), { title: "A" }, quiet);
     const b = start(ws(root), { title: "B" }, quiet);
     if (!a.ok || !b.ok) throw new Error("start failed");
     const cli = Bun.spawnSync(["bun", MAIN, "work", "start", "--title", "C"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:c" } });
-    expect(cli.exitCode).toBe(5);
-    const msg = cli.stderr.toString();
-    for (const x of [`${p}-${p + 1}`, a.value.change, b.value.change]) expect(msg).toContain(x);
-    expect(claims(ws(root).db).map((c) => c.subject).sort()).toEqual([a.value.change, b.value.change].sort());
-    const wts = sh(root, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ") && l.includes(".worktrees/"));
-    expect(wts.length).toBe(2);
-    expect(events(root, "start.refuse").map((e) => e["reason"])).toEqual(["port"]);
+    expect(cli.exitCode).toBe(0);
+    const out = cli.stdout.toString() + cli.stderr.toString();
+    expect(out).toContain("start: CANON_PORT is empty: no free port");
+    for (const x of [`${p}-${p + 1}`, a.value.change, b.value.change]) expect(out).toContain(x);
+    const c = claims(ws(root).db).find((x) => x.subject !== a.value.change && x.subject !== b.value.change);
+    if (!c) throw new Error("no claim for the third change");
+    expect(portFile(c.holder)).toBe("[]");
+    expect(portFile(c.holder, "hook.txt")).toBe("[]");
+    expect(events(root, "start.refuse")).toEqual([]);
+    expect(events(root, "port.refuse").length).toBe(1);
+    const own = ws(root).db.db.query<{ change: string }, [string]>("SELECT change FROM ports WHERE change = ?").all(c.subject);
+    expect(own).toEqual([]);
+  });
+
+  test("BR-2269: a change that started with no port gets one when it starts again after a port is freed", () => {
+    const p = base();
+    const root = configured(`ports: ${p}-${p}\nhooks:\n  after_start: 'echo "[$CANON_PORT]" >> "$CANON_WORKTREE/../ports.txt"'\n`);
+    planned(root, "C-1");
+    const a = start(ws(root, "agent:a"), { title: "A" }, quiet);
+    if (!a.ok) throw new Error(a.error.message);
+    const one = start(ws(root), { change: "C-1" }, quiet);
+    if (!one.ok) throw new Error(one.error.message);
+    expect(stop(ws(one.value.worktree), "later", undefined, true).ok).toBe(true);
     sh(root, "worktree", "remove", "--force", a.value.worktree);
-    expect(start(ws(root), { title: "C again" }, quiet).ok).toBe(true);
+    expect(start(ws(root), { change: "C-1" }, quiet).ok).toBe(true);
+    expect(readFileSync(join(one.value.worktree, "..", "ports.txt"), "utf8").trim().split("\n")).toEqual([`[${p}]`, "[]", `[${p}]`]); // A, then C-1 twice
   });
 });
 
@@ -264,7 +281,7 @@ describe("a hook with no port", () => {
     expect(batch?.commands.map((c) => c.exit)).toEqual([0, 0]);
   });
 
-  test("BR-2287: a change with a port says nothing about CANON_PORT and its hook.run events carry no port field", () => {
+  test("BR-2287, BR-2269: a change with a port says nothing about CANON_PORT and its hook.run events carry no port field", () => {
     const p = base();
     const root = configured(`ports: ${p}-${p + 9}\nhooks:\n  after_start: 'true'\n`);
     const said: string[] = [];
@@ -289,18 +306,20 @@ describe("choosing a new port", () => {
     }
   });
 
-  test("BR-2288: a freed port its gone worktree's server still holds is not handed out; the start is refused naming it", () => {
+  test("BR-2288: a freed port its gone worktree's server still holds is not handed out; the start says so and leaves CANON_PORT empty", () => {
     const p = base();
-    const root = configured(`ports: ${p}-${p + 1}\n`);
+    const root = configured(`ports: ${p}-${p + 1}\nsetup: 'echo "[$CANON_PORT]" > port.txt'\n`);
     const a = start(ws(root), { title: "A" }, quiet);
     const b = start(ws(root), { title: "B" }, quiet);
     if (!a.ok || !b.ok) throw new Error("start failed");
     sh(root, "worktree", "remove", "--force", a.value.worktree);
     const l = hold(p);
     try {
-      const cli = Bun.spawnSync(["bun", MAIN, "work", "start", "--title", "C"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:c" } });
-      expect(cli.exitCode).toBe(5);
-      expect(cli.stderr.toString()).toContain(`in use by a process outside canon: ${p}`);
+      const said: string[] = [];
+      const c = start(ws(root, "agent:c"), { title: "C" }, (x) => said.push(x));
+      if (!c.ok) throw new Error(c.error.message);
+      expect(said.join("\n")).toContain(`in use by a process outside canon: ${p}`);
+      expect(portFile(c.value.worktree)).toBe("[]");
     } finally {
       l.stop(true);
     }

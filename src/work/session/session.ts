@@ -109,19 +109,15 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     }
     created = true;
   }
-  // reason: the port is taken once the worktree exists and before setup, so setup sees it and a full range undoes the start (BR-2267, BR-2269, D-41)
+  // reason: the port is taken once the worktree exists and before setup, so setup sees it (BR-2267, D-41); a full range
+  // does not stop the start, since most changes run nothing that needs a port (BR-2269, D-48)
   const port = ws.config.ports ? portFor(ws.db, ws.actor, changeId, ws.config.ports, path) : ok(undefined);
-  if (!port.ok) {
-    if (created) undoStart(ws, changeId, path, branch, !hasBranch);
-    else releaseClaim(ws.db, changeId, ws.actor);
-    ws.db.event(ws.actor, "start.refuse", changeId, { reason: "port" });
-    return err(port.error.code, created ? `${port.error.message}; the new worktree was removed and ${changeId} released` : `${port.error.message}; ${changeId} was released`);
-  }
+  if (!port.ok) say(`start: CANON_PORT is empty: ${port.error.message}`);
   const portLookup: PortLookup = () => port;
   if (created) {
     if (ws.config.setup) {
       say(`setup: ${ws.config.setup}`);
-      const env = { ...(process.env as Record<string, string>), CANON_PORT: port.value === undefined ? "" : String(port.value) };
+      const env = { ...(process.env as Record<string, string>), CANON_PORT: port.ok && port.value !== undefined ? String(port.value) : "" };
       const r = Bun.spawnSync(["sh", "-c", ws.config.setup], { cwd: path, env, stdout: "inherit", stderr: "inherit" });
       if (r.exitCode !== 0) {
         undoStart(ws, changeId, path, branch, !hasBranch);
