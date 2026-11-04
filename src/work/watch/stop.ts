@@ -137,12 +137,13 @@ export function killStarted(ms: number, self = process.pid): { left: Left; sent:
  * Returns what to say, or undefined when everything ended.
  */
 export function stopAndWait(self = process.pid): string | undefined {
-  if (!stopStarted(self)) return "cannot read the process table, so the commands this watcher started may not all have been stopped";
+  // reason: what was signalled before the listing failed may be running a TERM handler; it is waited for like any other (BR-2285, issue #109)
+  const partly = stopStarted(self) ? undefined : "cannot read the process table, so the commands this watcher started may not all have been stopped";
   const waited = waitStarted(STOP_GRACE_MS, self);
-  if (waited === "none") return undefined;
+  if (waited === "none") return partly;
   const s = STOP_GRACE_MS / 1000;
   const head = waited === "running" ? `what this watcher started was still running ${s} s after SIGTERM` : `${s} s after SIGTERM the process table cannot be read to see whether what this watcher started has ended`;
   const killed = killStarted(5_000, self);
   const tail = !killed.sent && killed.left === "unread" ? "cannot read the process table to send SIGKILL" : `sent SIGKILL${killed.left === "running" ? ", and some of it is still running" : killed.left === "unread" ? ", and whether it ended cannot be read" : ""}`;
-  return `${head}; ${tail}`;
+  return [partly, head, tail].filter((x) => x !== undefined).join("; ");
 }

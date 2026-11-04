@@ -684,6 +684,21 @@ describe("a passing main", () => {
     expect(await out).toContain("may not all have been stopped");
   });
 
+  test("BR-2285: after a listing that fails while stopping, the watcher still waits for the TERM trap it signalled before it gives up its place", async () => {
+    const { lateAtExit, out, root } = await termedWhile((ready, late) => `hooks:\n  after_green: 'trap "sleep 1; touch ${late}; exit 1" TERM; touch ${ready}; while true; do sleep 0.1; done'\n`, {
+      bin: (d) => {
+        const bin = join(d, "bin");
+        mkdirSync(bin, { recursive: true });
+        // reason: the first listing stops the hook, the second fails (issue #109)
+        writeFileSync(join(bin, "ps"), `#!/bin/sh\nif [ "$2" = "pid=,ppid=,pgid=,stat=" ]; then echo x >> ${d}/n; [ "$(wc -l < ${d}/n)" -eq 2 ] && exit 1; fi\nexec /bin/ps "$@"\n`, { mode: 0o755 });
+        return bin;
+      },
+    });
+    expect(lateAtExit).toBe(true);
+    expect(out).toContain("may not all have been stopped");
+    expect(watcherRows(root)).toEqual([]);
+  });
+
   test("BR-2285: when the process table cannot be read the watcher says so and still exits 143", async () => {
     const { out, dir } = await termedWhile((ready) => `hooks:\n  after_green: 'echo $$ > ${ready}.pid; touch ${ready}; while true; do sleep 0.1; done'\n`, {
       bin: (d) => {
