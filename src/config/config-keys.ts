@@ -16,7 +16,7 @@ const NON_BLANK: JsonSchema = { type: "string", pattern: "\\S" };
 export const hookKeys = {
   hooks: configKey<Readonly<Record<HookEvent, readonly string[]>>>({
     key: "hooks",
-    doc: "Commands per lifecycle event, run in order; each event takes a command or a list of commands.",
+    doc: "Commands per lifecycle event, run in order; each event takes a command or a list of commands. after_green commands must be safe to run again: one can be cut off and is not rerun, the next pass runs them for a newer commit, possibly beside what the cut-off run left; act on CANON_GREEN and write files to a temporary name, then rename (BR-2222, D-55).",
     default: { after_start: [], before_land: [], after_land: [], after_stop: [], after_green: [] },
     schema: { type: ["object", "null"], additionalProperties: false, properties: Object.fromEntries(HOOK_EVENTS.map((e) => [e, { anyOf: [NON_BLANK, { type: "array", items: NON_BLANK }] }])), default: {} },
     read: readHooks,

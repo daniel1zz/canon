@@ -11,13 +11,12 @@ import { addWorktree, git, pruneWorktrees, removeWorktree } from "../../kernel/g
 import { isGone, selfProcess, type Proc } from "../claims/liveness.ts";
 import type { FloorTiming } from "./config-keys.ts";
 import { clearRedMain, recordFailure } from "./redmain.ts";
-import { stopAndWait } from "./stop.ts";
+import { stopStarted } from "./stop.ts";
 
 /**
  * Merge-then-test (D-31): with `floor_timing: after`, landings move main without the floor and `canon floor watch`
  * tests main's latest commit in the background, one run at a time, in a temporary worktree (BR-2219). A failure is
- * recorded for a fix change (BR-2220); a pass moves refs/canon/green and runs after_green (BR-2222), again by the
- * next watcher when one was killed before it ended (BR-2270). After an
+ * recorded for a fix change (BR-2220); a pass moves refs/canon/green and runs after_green (BR-2222). After an
  * after_green that rebuilt PATH's canon the watcher hands the next test to that canon and ends (BR-2251).
  */
 
@@ -138,12 +137,14 @@ export async function watch(ws: Workspace, say: Say): Promise<Result<Watched>> {
   const results: Tested[] = [];
   let mine = false;
   let busy = false;
-  // reason: a watcher stopped by a signal first stops everything it started, then removes its worktree and gives up its
-  // place, so the next one starts clean and never runs beside what this one left (BR-2285, issue #101).
+  let stopping = false;
+  // reason: a watcher stopped by a signal sends SIGTERM to what it started and gives up its place without waiting;
+  // what they do after that is theirs, and after_green must be safe to run again (BR-2285, D-55).
   const onSignal = (signal: NodeJS.Signals) => {
-    // reason: the place is given up only once what it started has ended, so a rerun never runs beside a TERM handler still writing (BR-2285, issue #102).
-    const said = stopAndWait();
-    if (said) say(`floor watch: ${said}`);
+    // reason: SIGTERM to its own group reaches this process too; that second delivery is ignored.
+    if (stopping) return;
+    stopping = true;
+    stopStarted();
     if (existsSync(dir)) removeWorktree(ws.primary, "--force", dir);
     if (mine) releaseWatcher(ws.db, self);
     process.exit(signal === "SIGINT" ? 130 : 143);
@@ -157,19 +158,6 @@ export async function watch(ws: Workspace, say: Say): Promise<Result<Watched>> {
         break;
       }
       mine = true;
-      // reason: the green commit's after_green first: it is what PATH's canon was meant to be rebuilt from (BR-2270, issue #89).
-      const due = dueAfterGreen(ws);
-      if (due) {
-        const rebuilt = await rerunAfterGreen(ws, say, due);
-        if (!rebuilt.ok) return rebuilt;
-        if (rebuilt.value) {
-          const handed = handOff(ws, say, self, due);
-          mine = handed !== "handed" && handed.ok && handed.value;
-          if (handed === "handed") return ok({ ran: results.length > 0, tested: results, rebuiltAt: due });
-          if (!handed.ok) return handed;
-          if (!handed.value) return ok({ ran: results.length > 0, tested: results });
-        }
-      }
       for (;;) {
         const tip = git(ws.primary, "rev-parse", "--verify", `refs/heads/${ws.config.main}`);
         if (!tip.ok) return err("io", tip.error.message);
@@ -299,14 +287,12 @@ async function testCommit(ws: Workspace, say: Say, sha: string): Promise<Result<
       return ok({ sha, passed: false, log, stale });
     }
     const passed = code === 0;
-    const due = passed && config.ok && config.value.floorTiming === "after" && config.value.hooks.after_green.length > 0;
     // reason: the result event is what marks a commit tested (tested()), so it is written in one transaction with the
     // failing-main record it implies; a watcher killed before that commit leaves neither, and the commit is tested again (#86).
     const record = (write: () => void): Result<void> => {
       try {
         ws.db.db.transaction(() => {
-          // reason: `after_green: true` marks the hooks due in the same write as the pass, so a watcher killed before they end leaves them due (BR-2270, issue #89).
-          ws.db.event(ws.actor, passed ? "floor.pass" : "floor.fail", null, { sha, log, exit: code, ...(passed ? {} : { why }), ...(due ? { after_green: true } : {}) });
+          ws.db.event(ws.actor, passed ? "floor.pass" : "floor.fail", null, { sha, log, exit: code, ...(passed ? {} : { why }) });
           write();
         }).immediate();
         return ok(undefined);
@@ -327,83 +313,13 @@ async function testCommit(ws: Workspace, say: Say, sha: string): Promise<Result<
     markGreen(ws, sha, say);
     const recorded = record(() => clearRedMain(ws.db));
     if (!recorded.ok) return recorded;
-    if (due && config.ok) {
-      const done = await afterGreen(ws, say, sha, dir, config.value.hooks.after_green);
-      return done.ok ? ok({ sha, passed, log, rebuilt: done.value }) : done;
+    if (config.ok && config.value.floorTiming === "after" && config.value.hooks.after_green.length > 0) {
+      const env = { CANON_GREEN: sha, CANON_PRIMARY: ws.primary };
+      const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "after_green", change: null, cwd: dir, env, port: noPort }, config.value.hooks.after_green, say, false);
+      // reason: every command exiting 0 counts as PATH's canon rebuilt from this commit (BR-2251).
+      return ok({ sha, passed, log, rebuilt: failed === undefined });
     }
     return ok({ sha, passed, log });
-  } finally {
-    removeWorktree(ws.primary, "--force", dir);
-  }
-}
-
-/**
- * Runs after_green for the passed commit `sha` checked out in `dir`, then records `floor.after_green`: from then on
- * it is not due (BR-2222, BR-2270). True when every command exited 0, so PATH's canon counts as rebuilt (BR-2251).
- */
-async function afterGreen(ws: Workspace, say: Say, sha: string, dir: string, commands: readonly string[], rerun = false): Promise<Result<boolean>> {
-  const env = { CANON_GREEN: sha, CANON_PRIMARY: ws.primary };
-  const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "after_green", change: null, cwd: dir, env, port: noPort }, commands, say, false);
-  return endAfterGreen(ws, sha, { failed: failed ? failed.command : null, ...(rerun ? { rerun } : {}) }) ?? ok(failed === undefined);
-}
-
-/** Records that after_green for `sha` has run to the end, or could not run at all; an error when it cannot be written. */
-function endAfterGreen(ws: Workspace, sha: string, detail: Record<string, unknown>): Result<never> | undefined {
-  try {
-    ws.db.event(ws.actor, "floor.after_green", null, { sha, ...detail });
-    return undefined;
-  } catch (e) {
-    return err("io", `after_green for ${sha.slice(0, 9)} ran, but that cannot be recorded (${(e as Error).message}); it runs again next time`);
-  }
-}
-
-/**
- * The commit refs/canon/green names when its after_green is due and never ran to the end (BR-2270): its floor.pass
- * marks after_green due and there is no floor.after_green for it, because the watcher was killed in between (issue #89).
- * Only the green commit: a later pass runs after_green for itself.
- */
-export function dueAfterGreen(ws: Workspace): string | undefined {
-  const green = git(ws.primary, "rev-parse", "--verify", "--quiet", GREEN_REF);
-  if (!green.ok || green.value === "") return undefined;
-  const due = ws.db.db
-    .query(
-      "SELECT 1 FROM events p WHERE p.kind = 'floor.pass' AND json_extract(p.detail, '$.sha') = ?1 AND json_extract(p.detail, '$.after_green') = 1 AND NOT EXISTS (SELECT 1 FROM events d WHERE d.kind = 'floor.after_green' AND json_extract(d.detail, '$.sha') = ?1) LIMIT 1",
-    )
-    .get(green.value);
-  return due ? green.value : undefined;
-}
-
-/**
- * Runs the due after_green of `sha` again (BR-2270): a fresh detached worktree at it, its setup, then its after_green,
- * output into `after-green-<sha12>.log`; the floor does not run again. A setup that fails is recorded as the end too,
- * so a broken setup is not retried by every watcher. True when every after_green command exited 0 (BR-2251).
- */
-async function rerunAfterGreen(ws: Workspace, say: Say, sha: string): Promise<Result<boolean>> {
-  const dir = watchDir(ws.db);
-  rmSync(dir, { recursive: true, force: true });
-  pruneWorktrees(ws.primary);
-  const added = addWorktree(ws.primary, "-q", "--detach", dir, sha);
-  if (!added.ok) return err("io", `cannot create the worktree to run after_green for ${sha.slice(0, 9)} in: ${added.error.message}`);
-  try {
-    say(`floor watch: after_green for ${ws.config.main} ${sha.slice(0, 9)} did not finish; running it again`);
-    const config = readConfig(dir);
-    if (!config.ok || config.value.hooks.after_green.length === 0) return endAfterGreen(ws, sha, { rerun: true, failed: null }) ?? ok(false);
-    if (config.value.setup) {
-      const log = logFile(ws.db, `after-green-${sha.slice(0, 12)}.log`);
-      mkdirSync(dirname(log), { recursive: true });
-      const fd = openSync(log, "w");
-      let code: number;
-      try {
-        code = await runLogged(config.value.setup, dir, fd);
-      } finally {
-        closeSync(fd);
-      }
-      if (code !== 0) {
-        say(`floor watch: setup exited ${code}, so after_green for ${sha.slice(0, 9)} did not run (log: ${log})`);
-        return endAfterGreen(ws, sha, { rerun: true, setup_exit: code }) ?? ok(false);
-      }
-    }
-    return await afterGreen(ws, say, sha, dir, config.value.hooks.after_green, true);
   } finally {
     removeWorktree(ws.primary, "--force", dir);
   }
@@ -437,21 +353,16 @@ function canonCommand(): string[] {
 
 /**
  * Starts `canon floor watch` in the background when main is watched (floor_timing after), its latest commit is not
- * tested, or the green commit's after_green is due (BR-2270), and no watcher is alive (BR-2219). Never waits for it;
- * returns the log of the started watcher, if any.
+ * tested and no watcher is alive (BR-2219). Never waits for it; returns the log of the started watcher, if any.
  */
 export function ensureWatcher(ws: Workspace, say: Say): string | undefined {
   if (timingOnMain(ws) !== "after") return undefined;
   const tip = git(ws.primary, "rev-parse", "--verify", `refs/heads/${ws.config.main}`);
-  if (!tip.ok || liveWatcher(ws.db)) return undefined;
-  const untested = !tested(ws.db, tip.value);
-  const due = untested ? undefined : dueAfterGreen(ws);
-  if (!untested && !due) return undefined;
+  if (!tip.ok || liveWatcher(ws.db) || tested(ws.db, tip.value)) return undefined;
   const started = spawnWatcher(ws, [...canonCommand(), "floor", "watch"]);
   // reason: a watcher that cannot be started fails the command that starts it, as before BR-2250 split this out.
   if (!started.ok) throw new Error(started.error.message);
-  if (due) say(`floor watch: after_green for ${ws.config.main} ${due.slice(0, 9)} did not finish; running it again in the background (log: ${started.value})`);
-  else say(`floor watch: testing ${ws.config.main} ${tip.value.slice(0, 9)} in the background (log: ${started.value})`);
+  say(`floor watch: testing ${ws.config.main} ${tip.value.slice(0, 9)} in the background (log: ${started.value})`);
   return started.value;
 }
 
