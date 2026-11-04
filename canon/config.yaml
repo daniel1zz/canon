@@ -15,9 +15,10 @@ tests:
 # canon work test 运行一个测试文件的命令，{file} 换成它的路径（D-23）；和 floor 一样经过 scripts/test.sh（C-247）
 test_command: "sh scripts/test.sh {file}"
 # canon work test 每次都跑（BR-2297）：读遍 src/ 的测试，改动不导入它、也不碰它点名的规则时照样能弄坏它（C-240 弄坏 BR-2223 那次，C-262）。
-# 找法：测试里递归读 src/ 的只有这一个（grep readdirSync、Bun.Glob、scanSync，C-281）；新增这样的测试时加在这里
+# 找法：测试里递归读真实仓库 src/ 的是第一个（grep readdirSync、Bun.Glob、scanSync，C-281）；第二个读随 canon 发出的 skill（BR-2096）。新增这样的测试时加在这里
 always_tests:
   - "src/work/session/worktree-lock-callers.test.ts"
+  - "src/cli/install/install.test.ts"
 # canon work test 在测试之前跑一次（BR-2226）：和 floor 的类型检查那一步相同，类型错误不用等 floor 才发现（C-163 曾因此被拒）
 typecheck_command: "bunx tsc --noEmit -p tsconfig.json"
 # 每个会话开始时都会读到的文件：改了它们，合入时评审同一条要求是否写在多处（BR-2143）；工作说明的源码也算：
