@@ -169,17 +169,25 @@ describe("unusual change branches", () => {
     expect(canon(fine, "brief").out).not.toContain("Unreadable change file");
   });
 
-  test("BR-2293: a change on several of its branches is listed once, marked ambiguous, and start refuses it; one branch without the file is plain", () => {
+  test("BR-2293: a change with several of its branches is listed once, marked ambiguous with all of them, and start refuses it; one branch is plain", () => {
     const root = mainWithC1();
     onBranch(root, `change/${id(5)}-a`, () => changeFile(root, 5));
-    onBranch(root, `change/${id(5)}-b`, () => {});
     expect(rows(canon(root, "change", "list").out)[0]).toBe(`${id(5)}      open       Change 5  (on branch change/${id(5)}-a)`);
-    onBranch(root, `change/${id(5)}-c`, () => changeFile(root, 5));
-    expect(rows(canon(root, "change", "list").out)[0]).toBe(`${id(5)}      open       Change 5  (ambiguous: change/${id(5)}-a, change/${id(5)}-c)`);
-    const data = JSON.parse(canon(root, "change", "list", "--json").out) as { id: string; on_branch: string[] }[];
-    expect(data[0]).toMatchObject({ id: id(5), on_branch: [`change/${id(5)}-a`, `change/${id(5)}-c`] });
-    expect(canon(root, "brief").out).toContain(`${PICK}${id(5)} (ambiguous: change/${id(5)}-a, change/${id(5)}-c), ${id(1)}\n`);
+    onBranch(root, `change/${id(5)}-b`, () => {});
+    expect(rows(canon(root, "change", "list").out)[0]).toBe(`${id(5)}      open       Change 5  (ambiguous: change/${id(5)}-a, change/${id(5)}-b)`);
     expect(canon(root, "work", "start", id(5)).code).toBe(2);
+    onBranch(root, `change/${id(5)}-c`, () => changeFile(root, 5));
+    const data = JSON.parse(canon(root, "change", "list", "--json").out) as { id: string; on_branch: string[] }[];
+    expect(data[0]).toMatchObject({ id: id(5), on_branch: [`change/${id(5)}-a`, `change/${id(5)}-b`, `change/${id(5)}-c`] });
+    expect(canon(root, "brief").out).toContain(`${PICK}${id(5)} (ambiguous: change/${id(5)}-a, change/${id(5)}-b, change/${id(5)}-c), ${id(1)}\n`);
+    expect(canon(root, "work", "start", id(5)).code).toBe(2);
+
+    const broken = mainWithC1();
+    onBranch(broken, `change/${id(5)}-a`, () => changeFile(broken, 5));
+    onBranch(broken, `change/${id(5)}-c`, () => writeFileSync(join(broken, `canon/changes/${id(5)}.md`), "no front matter\n"));
+    const brief = canon(broken, "brief").out;
+    expect(brief).toContain(`${PICK}${id(5)} (ambiguous: change/${id(5)}-a, change/${id(5)}-c), ${id(1)}\n`);
+    expect(brief).toContain(`Unreadable change file, not listed: canon/changes/${id(5)}.md on branch change/${id(5)}-c`);
   });
 
   test("BR-2294: a change done only on its branch is listed without --all, marked closed on branch, not landed, and start takes it up; done on main or dropped is not", () => {

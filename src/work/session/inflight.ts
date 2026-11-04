@@ -44,17 +44,16 @@ export function listedChanges(ws: Workspace, corpus: Corpus, backlog: readonly B
   for (const [id, refs] of branches.value) {
     if (known.has(id)) continue;
     let change: Change | undefined;
-    const holding: string[] = [];
     for (const ref of refs) {
       const read = changeOnBranch(ws, id, ref);
       if (!read.ok) return read;
       if (!read.value) continue;
-      holding.push(ref.branch);
       // reason: one half-done branch must not hide every other change from every session (BR-2292)
       if ("unreadable" in read.value) unreadable.push(read.value.unreadable);
       else change ??= read.value.change;
     }
-    if (change) found.set(id, { change, onBranch: holding });
+    // reason: every branch counts, with the file or without, as `canon work start` counts them (BR-2293, BR-2107)
+    if (change) found.set(id, { change, onBranch: refs.map((r) => r.branch) });
   }
   const offMain = (c: Change) => found.has(c.id) && c.status === "done";
   const all = [...local, ...[...found.values()].map((f) => f.change)].filter((c) => keep(c) || offMain(c));
