@@ -90,7 +90,7 @@ describe("a config key added and used in one landing", () => {
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
   });
 
-  test("BR-2248: in a batch a member is compared with main, not with the member before it, so the batch falls back and both land alone", async () => {
+  test("BR-2248: in a batch a member is compared with main, not with the member before it: it goes back to the queue, the one before it lands, then it lands", async () => {
     const root = canonLike("land_batch_max: 3\n");
     const a = startNew(root, "Adds the key");
     commit(a.worktree, { [KEYS]: declarations("floor", "tests", "floor_timing", "typecheck_command") });
@@ -108,6 +108,8 @@ describe("a config key added and used in one landing", () => {
     const out = await Promise.all(runs);
     expect(said[0]!.some((m) => m.includes(`${b.change} was refused in the batch (config-key)`))).toBe(true);
     expect(out.map((o) => o.kind)).toEqual(["landed", "landed"]);
+    expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'batch.drop'").get()?.n).toBe(1);
+    expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'batch.fail'").get()?.n).toBe(0);
     expect(sh(root, "show", "main:canon/config.yaml")).toContain("typecheck_command");
   }, TIMED);
 });

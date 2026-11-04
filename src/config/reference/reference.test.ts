@@ -187,6 +187,8 @@ describe("the config schema", () => {
       expect([label, canonAccepts(s.config)]).toEqual([label, s.ok]);
       expect([label, validate(s.config)]).toEqual([label, s.wider ? true : s.ok]);
     }
+    // `all` is a word, not a number, and both sides take it for land_batch_max (BR-2172, D-42)
+    expect([canonAccepts({ land_batch_max: "all" }), validate({ land_batch_max: "all" })]).toEqual([true, true]);
   });
 
   // reason: null is written per key by hand above only where someone thought of it; generated for every key, a key added

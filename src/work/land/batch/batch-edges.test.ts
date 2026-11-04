@@ -166,7 +166,7 @@ describe("a batch's own edges", () => {
     expect(floorRuns().length).toBe(2); // the batch never reached its floor
   }, TIMED);
 
-  test("BR-2190: when the batch worktree cannot be made, the leader lands alone, records no batch.fail, and the member is not marked solo", async () => {
+  test("BR-2190: when the batch worktree cannot be made, the leader lands alone, records no batch.fail, and the member goes back to the queue and lands", async () => {
     const { root, floorRuns } = batchProject("land_batch_max: 2\n");
     const a = startNew(root, "A");
     commitFile(a.worktree, "a.txt", "a\n");
@@ -181,14 +181,14 @@ describe("a batch's own edges", () => {
       expect(out.map((o) => o.kind)).toEqual(["landed", "landed"]);
       expect(run.said[0]!.some((m) => m.includes("could not create a worktree to test in"))).toBe(true);
       expect(events(root, "batch.fail")).toEqual([]);
-      expect(entryOf(root, b.worktree)!.solo).toBe(0);
+      expect(entryOf(root, b.worktree)!.state).toBe("landed");
       expect(floorRuns().length).toBe(2);
     } finally {
       chmodSync(batchRoot, 0o755);
     }
   }, TIMED);
 
-  test("BR-2190: a leader that finds it lost its turn before moving main sends the member back to the queue unmarked; the member lands", async () => {
+  test("BR-2190: a leader that finds it lost its turn before moving main sends the member back to the queue; the member lands", async () => {
     const { root, floorRuns } = batchProject("land_batch_max: 2\n", 2);
     const a = startNew(root, "Leader");
     commitFile(a.worktree, "a.txt", "a\n");
@@ -203,7 +203,7 @@ describe("a batch's own edges", () => {
     expect(oa!.kind === "refused" && oa!.reason).toBe("lost-turn");
     expect(ob!.kind).toBe("landed");
     expect(events(root, "batch.fail")).toEqual([]);
-    expect(entryOf(root, b.worktree)!.solo).toBe(0);
+    expect(entryOf(root, b.worktree)!.state).toBe("landed");
     expect(sh(root, "show", "main:b.txt")).toBe("b");
     expect(existsSync(join(root, "a.txt"))).toBe(false);
     expect(sh(root, "merge-base", "--is-ancestor", before, "main")).toBe("");
