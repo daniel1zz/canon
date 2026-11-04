@@ -322,5 +322,12 @@ describe("post-land consistency check: precision", () => {
     expect(s.run(["--min-closed", "0"]).code).toBe(2);
     expect(s.run(["--max-open", "0"]).code).toBe(2);
     s.cleanup();
+    const low = setup({ "src/orders/o.ts": "export const o = 2;\n" }, { closed: closed(0, 10) });
+    expect(low.run([], { CANON_HEAD: "" }).code).toBe(2);
+    expect(low.run(["--min-precision", "0"]).code).toBe(0);
+    expect(low.prompts()).toHaveLength(1);
+    expect(low.run(["--min-precision", "1"]).out).toContain("off: precision 0/10 is below 1");
+    expect(low.prompts()).toHaveLength(1);
+    low.cleanup();
   });
 });
