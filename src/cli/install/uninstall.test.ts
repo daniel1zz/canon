@@ -61,7 +61,7 @@ describe("canon uninstall", () => {
     expect(git(remote, "rev-parse", "main")).toBe(git(root, "rev-parse", "main"));
   });
 
-  test("BR-2278: a landing that is refused leaves canon on main and everything outside the tree in place, exit 1", () => {
+  test("BR-2278, BR-2022: a landing that is refused leaves canon on main and everything outside the tree in place, exit 1", () => {
     const { root, env } = project('floor: "false"\ntests: []\n');
     const r = canon(root, env, "uninstall");
     expect(r.code).toBe(1);
