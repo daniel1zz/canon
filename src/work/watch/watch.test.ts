@@ -567,7 +567,7 @@ describe("a passing main", () => {
     expect(eventsOf(root, "floor.after_green")).toEqual([]);
   });
 
-  test("BR-2285 BR-2219: a watcher stopped by SIGTERM gives up its place only after after_green's TERM trap has run to the end", async () => {
+  test("BR-2285 BR-2270 BR-2219: a watcher stopped by SIGTERM gives up its place only after after_green's TERM trap has run to the end, and after_green stays due", async () => {
     const { root, lateAtExit } = await termedWhile((ready, late) => `hooks:\n  after_green: 'trap "sleep 1; touch ${late}; exit 1" TERM; touch ${ready}; while true; do sleep 0.1; done'\n`);
     // the trap needs a second; the watcher exited only after it wrote `late`
     expect(lateAtExit).toBe(true);
