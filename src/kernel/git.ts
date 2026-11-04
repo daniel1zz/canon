@@ -1,5 +1,5 @@
 import { Database } from "bun:sqlite";
-import { closeSync, copyFileSync, mkdirSync, openSync, renameSync, rmSync } from "node:fs";
+import { closeSync, copyFileSync, existsSync, mkdirSync, openSync, renameSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
 import { err, ok, type Result } from "./result.ts";
 
@@ -135,6 +135,19 @@ export function removeWorktree(cwd: string, ...args: string[]): Result<string> {
 export function listWorktreesLocked(cwd: string): Result<WorktreeInfo[]> {
   const r = withWorktreeLock(cwd, "read", () => listWorktrees(cwd));
   return r.ok ? r.value : r;
+}
+
+/**
+ * listWorktreesLocked, except when the directory holding the worktree lock does not exist: taking the lock would
+ * create canon's state directory again, which `canon uninstall` has to leave gone (BR-2280). Without that directory
+ * no canon process holds the lock, so reading unlocked races nothing canon does (BR-2223).
+ */
+export function listWorktreesKeepingState(cwd: string): Result<WorktreeInfo[]> {
+  const path = worktreeLockPath(cwd);
+  if (!path.ok) return path;
+  // reason: no state directory, so no canon lock holder to wait for, and taking the lock would recreate it (BR-2280, BR-2223)
+  if (!existsSync(dirname(path.value))) return listWorktrees(cwd);
+  return listWorktreesLocked(cwd);
 }
 
 /** How long moveBranch waits for another git command to release the worktree's index lock (BR-2258). */

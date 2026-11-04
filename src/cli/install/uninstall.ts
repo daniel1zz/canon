@@ -5,7 +5,7 @@ import { readConfig, type Config } from "../../config/config.ts";
 import { GENERATED_DIR } from "../../config/reference/reference.ts";
 import { batchState, settleBackgroundHooks } from "../../config/hooks.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { git, listWorktrees, listWorktreesLocked, toplevel } from "../../kernel/git.ts";
+import { git, listWorktreesKeepingState, listWorktreesLocked, toplevel } from "../../kernel/git.ts";
 import { CoordDb } from "../../work/db.ts";
 import { liveClaims } from "../../work/claims/claims.ts";
 import { land } from "../../work/land/land.ts";
@@ -219,8 +219,8 @@ function cleanUp(root: string, config: Config | undefined, opts: UninstallOption
   const dbPath = join(state, "state.db");
   const actor = currentActor();
   if (!actor.ok) return actor;
-  // reason: unlocked: the worktree lock lives in the state directory, and taking it would create that directory again (BR-2280)
-  const wts = listWorktrees(root);
+  // reason: under the worktree lock while the state directory exists; without it, unlocked, so the lock does not create it again (BR-2280, BR-2223)
+  const wts = listWorktreesKeepingState(root);
   if (!wts.ok) return wts;
   const primary = wts.value[0]!.path;
   const main = config?.main ?? "main";
