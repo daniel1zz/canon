@@ -579,7 +579,7 @@ describe("a passing main", () => {
     const { waited, out, dir } = await termedWhile((ready) => `hooks:\n  after_green: 'trap "" TERM; echo $$ > ${ready}.pid; touch ${ready}; while true; do sleep 0.1; done'\n`);
     const pid = Number(readFileSync(join(dir, "ready.pid"), "utf8").trim());
     expect(waited).toBeGreaterThanOrEqual(9_500);
-    expect(out).toContain("SIGKILL");
+    expect(out).toContain("sent SIGKILL");
     expect(alive(pid)).toBe(false);
   });
 
