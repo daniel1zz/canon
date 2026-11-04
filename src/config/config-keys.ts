@@ -27,7 +27,7 @@ export const hookKeys = {
   }),
   ports: configKey<PortRange | undefined>({
     key: "ports",
-    doc: "The range of ports, `<from>-<to>` such as 4100-4199, each change gets one of as CANON_PORT in setup and every hook; the same change keeps its port, two changes whose worktrees exist never share one (BR-2267, D-41). Unset means no port.",
+    doc: "The range of ports, `<from>-<to>` such as 4100-4199, each change gets one of as CANON_PORT in setup and every hook; the same change keeps its port, two changes whose worktrees exist never share one, and a port something else listens on is skipped (BR-2267, BR-2288, D-41, D-48). Unset means no port.",
     default: undefined,
     schema: { type: ["string", "null"], pattern: "^\\s*\\d+\\s*-\\s*\\d+\\s*$|^$" },
     read: readPorts,

@@ -83,7 +83,8 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
     };
     if (ws.config.setup) {
       // reason: run without blocking, so the heartbeat timer and the signal handler keep running through a slow setup (BR-2049, BR-2099, issue #60).
-      const setup = Bun.spawn(["sh", "-c", ws.config.setup], { cwd: dir, stdout: "ignore", stderr: "ignore" });
+      // reason: the batch worktree belongs to no single change, so its setup gets no port, not the one canon was run with (BR-2267, D-48).
+      const setup = Bun.spawn(["sh", "-c", ws.config.setup], { cwd: dir, env: { ...(process.env as Record<string, string>), CANON_PORT: "" }, stdout: "ignore", stderr: "ignore" });
       t.running.floor = setup;
       const code = await setup.exited;
       t.running.floor = undefined;

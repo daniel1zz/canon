@@ -43,15 +43,14 @@ function envFor(ctx: HookContext, port: number | undefined): Record<string, stri
 }
 
 /**
- * The environment for this event's commands, or the failure that stands for all of them when the change gets no port:
- * none of them runs, and the run counts as a failed hook (BR-2269).
+ * The environment for this event's commands, and why CANON_PORT is empty when the change gets no port: the commands
+ * run all the same, the reason is said once and carried on each `hook.run` event (BR-2287, D-48).
  */
-function prepare(ctx: HookContext, say: (line: string) => void): { env: Record<string, string> } | { failure: HookFailure } {
+function prepare(ctx: HookContext, say: (line: string) => void): { env: Record<string, string>; portNote: Record<string, string> } {
   const port = ctx.port();
-  if (port.ok) return { env: envFor(ctx, port.value) };
-  say(`hook ${ctx.event}: not run: ${port.error.message}`);
-  ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command: null, exit: 1, port: port.error.message });
-  return { failure: { command: "CANON_PORT", exit: 1, output: port.error.message } };
+  if (port.ok) return { env: envFor(ctx, port.value), portNote: {} };
+  say(`hook ${ctx.event}: CANON_PORT is empty: ${port.error.message}`);
+  return { env: envFor(ctx, undefined), portNote: { port: port.error.message } };
 }
 
 const shellQuote = (text: string) => `'${text.replaceAll("'", `'\\''`)}'`;
@@ -72,7 +71,6 @@ const merged = (command: string): string[] => ["sh", "-c", `exec 2>&1\n${command
 export async function runHooks(ctx: HookContext, commands: readonly string[], say: (line: string) => void, stopOnFailure: boolean): Promise<HookFailure | undefined> {
   if (commands.length === 0) return undefined;
   const prep = prepare(ctx, say);
-  if ("failure" in prep) return prep.failure;
   let first: HookFailure | undefined;
   for (const command of commands) {
     say(`hook ${ctx.event}: ${command}`);
@@ -80,7 +78,7 @@ export async function runHooks(ctx: HookContext, commands: readonly string[], sa
     const [out, errText, exit] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
     const output = `${out}${errText}`;
     if (output.trim() !== "") for (const line of tail(output).split("\n")) say(`  ${line}`);
-    ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit });
+    ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit, ...prep.portNote });
     if (exit !== 0) {
       first ??= { command, exit, output: tail(output) };
       if (stopOnFailure) return first;
@@ -94,7 +92,6 @@ export async function runHooks(ctx: HookContext, commands: readonly string[], sa
 export function runHooksSync(ctx: HookContext, commands: readonly string[], say: (line: string) => void): HookFailure | undefined {
   if (commands.length === 0) return undefined;
   const prep = prepare(ctx, say);
-  if ("failure" in prep) return prep.failure;
   let first: HookFailure | undefined;
   for (const command of commands) {
     say(`hook ${ctx.event}: ${command}`);
@@ -102,7 +99,7 @@ export function runHooksSync(ctx: HookContext, commands: readonly string[], say:
     const output = `${r.stdout.toString()}${r.stderr.toString()}`;
     if (output.trim() !== "") for (const line of tail(output).split("\n")) say(`  ${line}`);
     const exit = r.exitCode ?? -1;
-    ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit });
+    ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit, ...prep.portNote });
     if (exit !== 0) {
       first ??= { command, exit, output: tail(output) };
       say(`hook ${ctx.event} exited ${exit}; the result is unchanged`);
@@ -122,20 +119,17 @@ export function runHooksInBackground(ctx: HookContext, commands: readonly string
   // reason: the exit line must start a line to be read (EXIT_LINE); output that does not end in a newline gets one
   // first, and only then, so a log of newline-ended output stays as it was (BR-2137, issue #61)
   const quoted = shellQuote(logPath);
-  // reason: without a port no command runs (BR-2269); each still gets its exit line, 1, so after-land and brief report the failure as they report any
+  // reason: a change with no port still runs every command, with CANON_PORT empty and the reason first in the log (BR-2287, D-48)
   const port = ctx.port();
-  const noPortLine = port.ok ? "" : `echo ${shellQuote(`not run: ${port.error.message}`)}; `;
-  const script = commands
-    .map((c, i) =>
-      port.ok
-        ? `(\n${c}\n); __canon_exit=$?; [ -n "$(tail -c 1 ${quoted})" ] && echo; echo "[hook ${i + 1}/${commands.length} exited $__canon_exit]"`
-        : `${noPortLine}echo "[hook ${i + 1}/${commands.length} exited 1]"`,
-    )
-    .join("\n");
+  const portNote: Record<string, string> = port.ok ? {} : { port: port.error.message };
+  const noPortLine = port.ok ? "" : `echo ${shellQuote(`hook ${ctx.event}: CANON_PORT is empty: ${port.error.message}`)}\n`;
+  const script =
+    noPortLine +
+    commands.map((c, i) => `(\n${c}\n); __canon_exit=$?; [ -n "$(tail -c 1 ${quoted})" ] && echo; echo "[hook ${i + 1}/${commands.length} exited $__canon_exit]"`).join("\n");
   // reason: the whole batch is recorded in one transaction before any command can finish, so a reader never sees
   // part of a batch whose recorded commands have all exited and takes it for finished (BR-2166, issue #38)
   ctx.db.db
-    .transaction(() => commands.forEach((command, i) => ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit: null, background: true, log: logPath, index: i + 1, batch })))
+    .transaction(() => commands.forEach((command, i) => ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit: null, background: true, log: logPath, index: i + 1, batch, ...portNote })))
     .immediate();
   const p = Bun.spawn(["sh", "-c", script], { cwd: ctx.cwd, env: envFor(ctx, port.ok ? port.value : undefined), stdout: fd, stderr: fd, stdin: "ignore" });
   p.unref();
