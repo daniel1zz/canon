@@ -9,7 +9,7 @@ export const TERM_WAIT_MS = 10_000;
 export const KILL_WAIT_MS = 5_000;
 
 /** True while any process is left in the group `pid` leads. */
-function groupAlive(pid: number): boolean {
+export function groupAlive(pid: number): boolean {
   try {
     process.kill(-pid, 0);
     return true;

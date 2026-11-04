@@ -121,12 +121,13 @@ export function startPool(o: PoolOptions): Pool {
     windowStart = cap > 1 ? o.readCpu() : undefined;
     windowAt = performance.now();
     void o.run(file).then(async (out) => {
-      let stopped = out.signalled && o.stopping();
+      // reason: whatever its exit code (a tool that traps SIGTERM and exits 1), a file that ends after the stop signal was running when it came (BR-2304)
+      let stopped = o.stopping();
       if (out.signalled && !stopped) {
         await Bun.sleep(o.graceMs);
         stopped = o.stopping();
       }
-      if (stopped) return; // stays in `running` for good: it was running when the signal came (BR-2304)
+      if (stopped) return; // stays in `running` for good, so the counts taken at the signal stay true (BR-2304)
       running.delete(file);
       const r: FileResult = { ...out, file, overlapped: rec.overlapped };
       results.push(r);

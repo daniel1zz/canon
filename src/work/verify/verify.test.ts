@@ -731,6 +731,78 @@ describe("canon work test stops on a signal", () => {
     expect(result).toMatchObject({ files: 1, failed: 1 });
   });
 
+  test("BR-2304: a file that traps SIGTERM and exits 1 is no failure; the counts are those taken at the signal", async () => {
+    const wt = jobsFixture(3, 'trap "exit 1" TERM\ntouch "started.$$"\nsleep 30 &\nwait\n', "2");
+    const { d, signals, exits } = fakeDeps();
+    const lines: string[] = [];
+    const run = workTest(ws(wt), false, (l) => lines.push(l), d);
+    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 2) await Bun.sleep(25);
+    signals.emit("SIGTERM", "SIGTERM");
+    await run;
+    expect(exits).toEqual([143]);
+    expect(lines.some((l) => l.startsWith("FAIL"))).toBe(false);
+    expect(lines).toContain("stopped by SIGTERM: 2 test file(s) were running, 1 not started");
+    expect(lastEvent(wt)).toMatchObject({ signal: "SIGTERM", files: 0, failed: 0 });
+  });
+
+  test("BR-2304: a type check stopped by the signal records no typecheck result, prints no FAIL and starts nothing after it", async () => {
+    const wt = jobsFixture(2, "exit 0\n", "1");
+    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntypecheck_command: "sh tc.sh"\n', "tc.sh": 'trap "exit 2" TERM\ntouch tc.started\nsleep 30 &\nwait\n' });
+    const { d, signals } = fakeDeps();
+    const lines: string[] = [];
+    const run = workTest(ws(wt), false, (l) => lines.push(l), d);
+    await until(join(wt, "tc.started"));
+    signals.emit("SIGTERM", "SIGTERM");
+    await run;
+    await Bun.sleep(200);
+    expect(lastEvent(wt)).toMatchObject({ signal: "SIGTERM", typecheck: null });
+    expect(lines.some((l) => l.startsWith("FAIL") || l.startsWith("test files:") || l.startsWith("pass"))).toBe(false);
+  });
+
+  test("BR-2304: when reporting the stop throws, canon still exits with the signal's code and says so on standard error", async () => {
+    const wt = jobsFixture(1, 'touch "started.$$"\nsleep 30 &\nwait\n', "1");
+    const { d, signals, exits } = fakeDeps();
+    const errors: string[] = [];
+    const real = console.error;
+    console.error = (m: string) => void errors.push(String(m));
+    try {
+      const run = workTest(ws(wt), false, (l) => {
+        if (l.startsWith("stopped by")) throw new Error("output closed");
+      }, d);
+      while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 1) await Bun.sleep(25);
+      signals.emit("SIGINT", "SIGINT");
+      await run;
+    } finally {
+      console.error = real;
+    }
+    expect(exits).toEqual([130]);
+    expect(errors.some((e) => e.includes("stopping after SIGINT failed: output closed"))).toBe(true);
+  });
+
+  test("BR-2304: a background process left by a file that already ended is stopped with the running files", async () => {
+    const wt = jobsFixture(2, 'case "$1" in *t1*) sleep 30 >/dev/null 2>&1 &\necho $! > bg.pid;;\n*) touch "started.$$"; sleep 30 & wait;;\nesac\n', "1");
+    const { d, signals } = fakeDeps();
+    const run = workTest(ws(wt), false, () => {}, d);
+    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 1) await Bun.sleep(25);
+    const bg = Number(readFileSync(join(wt, "bg.pid"), "utf8").trim());
+    expect(() => process.kill(bg, 0)).not.toThrow(); // still alive: t1 ended, its group did not
+    signals.emit("SIGTERM", "SIGTERM");
+    await run;
+    await Bun.sleep(100);
+    expect(() => process.kill(bg, 0)).toThrow();
+  });
+
+  test("BR-2304: after the files have ended and before canon check no stop listener is left, so a signal then kills canon as usual", async () => {
+    const wt = jobsFixture(1, "exit 0\n", "1");
+    const { d, signals } = fakeDeps();
+    const seen: number[] = [];
+    await workTest(ws(wt), false, (l) => {
+      if (l.startsWith("canon check")) seen.push(signals.listenerCount("SIGTERM") + signals.listenerCount("SIGINT") + signals.listenerCount("SIGHUP"));
+    }, d);
+    expect(seen).toEqual([0]);
+    expect(lastEvent(wt)["signal"]).toBeUndefined();
+  });
+
   test("BR-2304: signals during a run that reached the pool are on; after the files finish canon check runs with them off", async () => {
     const wt = jobsFixture(1, "exit 0\n", "1");
     const { d, signals } = fakeDeps();

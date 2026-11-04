@@ -144,6 +144,28 @@ describe("canon work test pool", () => {
     expect(r.results[0]!.exitCode).toBe(143);
   });
 
+  test("BR-2304: a file that ends by a signal well before the stop signal is an ordinary failure, one that ends well inside the window is not", async () => {
+    // the window is graceMs; both sides are tested 100 ms or more away from its edge, as timers do not keep the edge to the millisecond
+    for (const [stopAt, failed] of [[60, false], [350, true]] as const) {
+      let stop = false;
+      const { p, ended } = pool({ files: ["a"], cap: 1, graceMs: 200, stopping: () => stop, run: () => Promise.resolve({ exitCode: 143, ms: 1, output: "", signalled: true }) });
+      setTimeout(() => (stop = true), stopAt);
+      await Bun.sleep(500);
+      expect(ended.length).toBe(failed ? 1 : 0);
+      expect(p.running()).toBe(failed ? 0 : 1);
+    }
+  });
+
+  test("BR-2304: a file that ends with any exit code after the stop signal is not recorded, not printed, and stays counted as running", async () => {
+    let stop = false;
+    const { p, ended } = pool({ files: ["a"], cap: 1, stopping: () => stop, run: () => Bun.sleep(80).then(() => ({ exitCode: 1, ms: 80, output: "boom", signalled: false })) });
+    setTimeout(() => (stop = true), 20);
+    await Bun.sleep(250);
+    expect(ended).toEqual([]);
+    expect(p.ended()).toEqual([]);
+    expect(p.running()).toBe(1);
+  });
+
   test("BR-2303: a file is marked overlapped when another ran at any time while it did, in either order", async () => {
     const { p } = pool({ files: ["a", "b", "c"], cap: 2, tickMs: 20, run: (f) => done(f === "c" ? 20 : 150) });
     const r = await p.done;

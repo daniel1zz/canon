@@ -15,7 +15,7 @@ import { readCorpus } from "../../knowledge/documents/read.ts";
 import { idsIn } from "../../knowledge/documents/types.ts";
 import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
-import { stopGroups } from "./stop-groups.ts";
+import { groupAlive, stopGroups } from "./stop-groups.ts";
 import { availableParallelism } from "node:os";
 import { jobCap, readCpu, startPool, type CpuSample, type CpuState, type FileResult, type Outcome } from "./pool.ts";
 import type { Workspace } from "../workspace.ts";
@@ -169,7 +169,8 @@ async function runShell(root: string, command: string, groups: Set<number>): Pro
   const proc = Bun.spawn(["sh", "-c", command], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", detached: true });
   groups.add(proc.pid);
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
-  groups.delete(proc.pid);
+  // reason: a group that still has members (a background process the file left) stays, so a stop signal reaches it; dead ones are dropped, so a reused pid is never signalled (BR-2304)
+  for (const g of [...groups]) if (!groupAlive(g)) groups.delete(g);
   // reason: sh reports a command killed by a signal as 128 + the signal's number (BR-2304)
   const signalled = ["SIGHUP", "SIGINT", "SIGTERM"].includes(String(proc.signalCode)) || [129, 130, 143].includes(exitCode);
   return { exitCode, ms: Math.round(performance.now() - t0), output: `${stdout}${stderr}`, signalled };
@@ -272,15 +273,25 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
       return;
     }
     signal = sig;
+    // reason: everything the stop reports is taken here, before any file can end; later ends are not recorded (BR-2304)
+    for (const g of [...groups]) if (!groupAlive(g)) groups.delete(g);
     const were = running();
+    const result: WorkTestResult = { files: finalized.size, failed: failedNow(), typecheck, check: 0, unmatched: unmatched.length, signal: sig };
+    const notStarted = files.length - finalized.size - were;
+    const pids = [...groups];
     void (async () => {
-      const note = await deps.stop([...groups], () => hurried);
-      if (note) say(note);
-      say(`stopped by ${sig}: ${were} test file(s) were running, ${files.length - finalized.size - were} not started`);
-      const result: WorkTestResult = { files: finalized.size, failed: failedNow(), typecheck, check: 0, unmatched: unmatched.length, signal: sig };
-      ws.db.event(ws.actor, "work.test", subject, { all, ...result, jobs: cap, ...jobs, ms: Math.round(performance.now() - t0) });
-      deps.exit(EXIT_OF_SIGNAL[sig]!);
-      stoppedWith(result);
+      // reason: whatever fails while stopping or reporting, canon still exits with the signal's code (BR-2304)
+      try {
+        const note = await deps.stop(pids, () => hurried);
+        if (note) say(note);
+        say(`stopped by ${sig}: ${were} test file(s) were running, ${notStarted} not started`);
+        ws.db.event(ws.actor, "work.test", subject, { all, ...result, jobs: cap, ...jobs, ms: Math.round(performance.now() - t0) });
+      } catch (e) {
+        console.error(`canon work test: stopping after ${sig} failed: ${e instanceof Error ? e.message : String(e)}`);
+      } finally {
+        deps.exit(EXIT_OF_SIGNAL[sig]!);
+        stoppedWith(result);
+      }
     })();
   };
   for (const s of STOP_SIGNALS) deps.signals.on(s, onSignal);
@@ -297,6 +308,8 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   const phases = async (): Promise<void> => {
     if (ws.config.typecheckCommand) {
       const r = await runShell(ws.root, ws.config.typecheckCommand, groups);
+      // reason: a type check stopped by the signal has no verdict: nothing is recorded or printed, no later step runs (BR-2304)
+      if (signal !== undefined) return;
       typecheck = r.exitCode;
       say(`${r.exitCode === 0 ? "pass" : "FAIL"}  ${secs(r.ms).padStart(6)}  typecheck${r.exitCode === 0 ? "" : ` (exit ${r.exitCode})`}`);
       if (r.exitCode !== 0) tail(r.output);
