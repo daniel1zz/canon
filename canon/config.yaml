@@ -53,6 +53,8 @@ setup: "bun install"
 # 规则和决策文字的评审：从 stdin 读提示，在 stdout 输出 JSON 结论
 review: "scripts/review-claude.sh"
 # 生命周期 hook（D-2、D-3）：每项是一条命令或命令列表
+# 合入移动 main 之后把 main 推到这个 git 远端（D-38、BR-2259）；推送失败不改变合入结果，canon brief 提示没推上去的提交数
+remote: origin
 hooks:
   after_land:
     # 合入后的代码评审（C-2）：只找安全和并发问题，一个根因一个 issue，写到 GitHub（负责人 2026-11-03 同意开启）
