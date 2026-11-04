@@ -114,12 +114,13 @@ function openIssues(e: Env): Result<OpenIssue[]> {
 }
 
 /** An open issue with the same root cause: the one the AI named if it is really open, else one whose title matches. */
-function sameRootCause(e: Env, f: Finding, open: readonly OpenIssue[]): number | null {
-  if (f.existing !== null && open.some((i) => i.number === f.existing)) return f.existing;
+function sameRootCause(e: Env, f: Finding, open: readonly OpenIssue[]): Result<number | null> {
+  if (f.existing !== null && open.some((i) => i.number === f.existing)) return ok(f.existing);
   const r = run(e.gh, ["issue", "list", "--state", "open", "--label", LABEL, "--search", `${f.title} in:title`, "--json", "number,title"], e.cwd);
-  if (!r.ok) return null;
+  // reason: a failed search proves nothing about duplicates; filing anyway could open a second issue for one root cause (BR-2211)
+  if (!r.ok) return r;
   const hits = JSON.parse(r.value || "[]") as { number: number; title: string }[];
-  return hits.find((h) => h.title.trim().toLowerCase() === f.title.trim().toLowerCase())?.number ?? null;
+  return ok(hits.find((h) => h.title.trim().toLowerCase() === f.title.trim().toLowerCase())?.number ?? null);
 }
 
 function body(e: Env, group: readonly Finding[]): string {
@@ -161,7 +162,9 @@ export function codeReview(e: Env): Result<ReviewReport> {
   // One root cause, one issue: findings of this run that share a root cause or an existing issue are grouped.
   const groups = new Map<string, Finding[]>();
   for (const f of findings.value) {
-    const target = sameRootCause(e, f, open.value);
+    const same = sameRootCause(e, f, open.value);
+    if (!same.ok) return same;
+    const target = same.value;
     const key = target !== null ? `#${target}` : f.root_cause.toLowerCase().replace(/\s+/g, " ");
     groups.set(key, [...(groups.get(key) ?? []), { ...f, existing: target }]); // a number that is not an open issue is dropped
   }

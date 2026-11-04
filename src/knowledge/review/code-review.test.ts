@@ -267,4 +267,26 @@ describe("post-land code review", () => {
     expect(ok.exitCode).toBe(0);
     expect(ok.stdout.toString()).toContain("code-review: no findings");
   });
+
+  test("BR-2211: a failing title search is an error with exit 1 that files nothing, unless the AI named an open issue", () => {
+    const failing = setup({ findings: [finding()] });
+    const gh = join(failing.tools, "gh-no-search.sh");
+    writeFileSync(gh, `echo "$*" >> ${JSON.stringify(join(failing.tools, "calls.log"))}\ncase "$*" in *--search*) echo "search down" >&2; exit 1;; esac\necho '[]'\n`);
+    const script = join(import.meta.dir, "..", "..", "..", "scripts", "code-review.ts");
+    const env = { ...process.env, CANON_BASE: failing.env.base, CANON_HEAD: failing.env.head, CANON_CODE_REVIEW_AI: failing.env.ai, CANON_GH: `sh ${gh}` } as Record<string, string>;
+    const run = Bun.spawnSync(["bun", script], { cwd: failing.root, env, stdout: "pipe", stderr: "pipe" });
+    expect(run.exitCode).toBe(1);
+    expect(run.stderr.toString()).toMatch(/^code-review: [^\n]*issue list [^\n]*--search[\s\S]*exited 1: search down/);
+    expect(run.stdout.toString()).not.toContain("no findings");
+    const calls = readFileSync(join(failing.tools, "calls.log"), "utf8");
+    expect(calls).not.toContain("issue create");
+    expect(calls).not.toContain("issue comment");
+
+    // The AI named an open labelled issue: no search runs, so a broken search changes nothing.
+    const named = setup({ findings: [finding({ existing: 12 })] }, [{ number: 12, title: "Queue turn is not atomic", body: "" }]);
+    const r = codeReview(named.env);
+    expect(r.ok).toBe(true);
+    expect(named.calls().some((c) => c.includes("--search"))).toBe(false);
+    expect(named.calls().some((c) => c[1] === "comment" && c[2] === "12")).toBe(true);
+  });
 });

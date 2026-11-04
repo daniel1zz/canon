@@ -42,7 +42,10 @@ const context = defineCommand({
   },
   run({ args }) {
     const ws = workspace();
-    const ctx = contextFor(corpusOf(ws).corpus, args.target, ws.root);
+    const corpus = corpusOf(ws).corpus;
+    // reason: an id that names no document is a typo or a stale reference, unlike a path that may be a new directory (BR-2234)
+    if (isIdQuery(corpus, args.target) && !findDoc(corpus, args.target.trim())) fail({ code: "not_found", message: `${args.target} does not exist` });
+    const ctx = contextFor(corpus, args.target, ws.root);
     say(renderContext(ws.root, ctx, { full: Boolean(args.full), target: args.target }));
     // Open review notes on what this context covers, shown to whoever is about to change it (BR-2146, D-21).
     // reason: an imported domain's rules are listed by title too, so their notes belong here as well (BR-2146, #73)

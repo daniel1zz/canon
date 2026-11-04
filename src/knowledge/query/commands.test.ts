@@ -111,3 +111,26 @@ describe("show", () => {
     expect(canon(root, "context", id("D", 9)).out).not.toContain("partly amended by");
   });
 });
+
+describe("context of a target that matches nothing", () => {
+  test("BR-2234: an id that names no document exits 3 with nothing on stdout, in any case; an existing id exits 0", () => {
+    const root = fixture();
+    for (const target of [id("BR", 99999), id("br", 99999)]) {
+      const r = canon(root, "context", target);
+      expect(r.code).toBe(3);
+      expect(r.out).toBe("");
+      expect(r.err).toBe(`canon: ${target} does not exist\n`);
+    }
+    const found = canon(root, "context", id("BR", 3));
+    expect(found.code).toBe(0);
+    expect(found.out).toContain("Session length");
+    expect(found.out).toContain("# Domain: auth");
+  });
+
+  test("BR-2234: a path no domain covers still exits 0 with the hint", () => {
+    const root = fixture();
+    const r = canon(root, "context", "src/nowhere");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("No domain, rule or document matches. Domains: canon rule domains");
+  });
+});
