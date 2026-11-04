@@ -6,7 +6,6 @@ import { git } from "../../kernel/git.ts";
 import { FILE_PLACEHOLDER } from "./config-keys.ts";
 import { backlogNotes, check, noteLine } from "../../knowledge/check/check.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
-import { envSpawnHints, renderEnvSpawnHint } from "../../knowledge/check/env-spawn.ts";
 import { testTitles } from "../../knowledge/check/test-titles.ts";
 import { budgetHint, sessionText } from "../../knowledge/check/session-text.ts";
 import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
@@ -381,8 +380,6 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   // A hint on standard error, never a failure (BR-2257, D-37).
   const hint = budgetHint(sessionText(ws.root, WORKFLOW_GUIDE), ws.config.sessionTextBudget);
   if (hint) console.error(hint);
-  // A hint, never a failure: the static judgement has false positives (BR-2300).
-  for (const h of envSpawnHints(ws.root, testFiles)) console.error(renderEnvSpawnHint(h));
 
   // Open review notes on what this change touches, the ones canon context shows; a hint, never a failure (BR-2249, D-21).
   const notes = openNotes(ws.db, [...rules, ...decisions]);

@@ -5,7 +5,6 @@ import { backlogNotes, check, noteLine } from "./check.ts";
 import { changeIdsOnBranches, listedBefore } from "../../work/session/inflight.ts";
 import { budgetHint, sessionText, sizeLines } from "./session-text.ts";
 import { testFilesFor } from "./tests.ts";
-import { envSpawnHints, renderEnvSpawnHint } from "./env-spawn.ts";
 
 /** `canon check`: corpus integrity. */
 
@@ -28,8 +27,6 @@ const checkCmd = defineCommand({
     if (args.sizes) for (const line of sizeLines(parts, ws.config.sessionTextBudget)) console.error(line);
     const hint = budgetHint(parts, ws.config.sessionTextBudget);
     if (hint) console.error(hint);
-    // reason: a static guess with false positives, so a hint on standard error, never a finding (BR-2300)
-    for (const h of envSpawnHints(ws.root, testFiles)) console.error(renderEnvSpawnHint(h));
     process.exit(findings.length === 0 ? EXIT.ok : EXIT.refused);
   },
 });
