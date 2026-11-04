@@ -33,7 +33,7 @@ describe("planned rules in canon check", () => {
     expect(findings(root)).toEqual([]);
   });
 
-  test("BR-2235: any other status is file-invalid and names the three allowed", () => {
+  test("BR-2235 BR-2001: any other status is file-invalid and names the three allowed", () => {
     const root = repo(rule(1, "status: draft\n"));
     expect(findings(root)).toEqual([`file-invalid canon/rules/billing/${br(1)}.md status must be one of active, retired, planned`]);
   });

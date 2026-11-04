@@ -257,7 +257,7 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     }
   }, TIMED * 2);
 
-  test("BR-2239: with no review command the wording record is refused with reason review", async () => {
+  test("BR-2239 BR-2074: with no review command the wording record is refused with reason review", async () => {
     const { s } = await wordingProject(() => undefined);
     write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
     const out = await land(ws(s.worktree), FINISH, quiet);
@@ -265,7 +265,7 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     expect(out.kind === "refused" && out.message).toContain("no review command");
   }, TIMED);
 
-  test("BR-2239: the review runs for the wording record even when this landing changes no rule file", async () => {
+  test("BR-2239 BR-2010: the review runs for the wording record even when this landing changes no rule file", async () => {
     const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`));
     write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
