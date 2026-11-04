@@ -8,6 +8,7 @@ import { documentCommands } from "../knowledge/documents/commands.ts";
 import { queryCommands } from "../knowledge/query/commands.ts";
 import { workCommands } from "../work/commands.ts";
 import { dropCommands } from "../work/drop/commands.ts";
+import { executionCommands } from "../work/execution/commands.ts";
 import { humanCommands } from "../work/humans/commands.ts";
 import { issueCommands } from "../work/issues/commands.ts";
 import { landCommands } from "../work/land/commands.ts";
@@ -31,6 +32,7 @@ export const main = defineCommand({
     checkCommands,
     documentCommands,
     queryCommands,
+    executionCommands,
     workCommands,
     sessionCommands,
     landCommands,

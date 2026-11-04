@@ -30,10 +30,10 @@ export type CheckRule =
   | "amends-not-decision" // a decision's `amends` names a document that is not a decision, or itself (BR-2139)
   | "supersedes-not-decision" // a decision's `supersedes` names a document that is not a decision, or itself (BR-2230)
   | "instructions-missing" // a file `instructions` lists in canon/config.yaml does not exist (BR-2231)
-  | "rule-untested" // an active rule has no test and no `untested:` reason
+  | "rule-untested" // an active rule has no test and no `untested:` reason (a planned one needs none, BR-2235)
   | "test-retired-rule" // a test still names a retired rule
-  | "rule-no-statement" // an active rule has no non-empty "## 规则" section
-  | "rule-no-example" // an active rule with tests has no example in "## 例子"
+  | "rule-no-statement" // an active or planned rule has no non-empty "## 规则" section
+  | "rule-no-example" // an active or planned rule without `untested:` has no example in "## 例子"
   | "domain-code-missing" // a domain README lists a code path that does not exist (BR-2079)
   | "domain-code-declared" // a README lists `code:` where the layout gives the location (BR-2117)
   | "code-layout" // with code_root: a domain without its directory, or a directory no domain or shared entry owns (BR-2118)
@@ -66,7 +66,7 @@ export function check(input: CheckInput): Finding[] {
 
   for (const d of input.corpus.docs) {
     // Ids written as code (`BR-12` or inside a fenced block) are examples, not references.
-    for (const ref of idsIn(stripCode(d.body) + (d.kind === "change" ? ` ${d.rules.join(" ")}` : "") + (d.kind === "decision" && d.supersedes ? ` ${d.supersedes}` : "") + (d.kind === "decision" ? ` ${d.amends.join(" ")}` : ""))) {
+    for (const ref of idsIn(stripCode(d.body) + (d.kind === "change" ? ` ${d.rules.join(" ")} ${Object.keys(d.passes).join(" ")}` : "") + (d.kind === "decision" && d.supersedes ? ` ${d.supersedes}` : "") + (d.kind === "decision" ? ` ${d.amends.join(" ")}` : ""))) {
       if (ref !== d.id && !byId.has(ref)) findings.push({ path: d.path, rule: "ref-dangling", message: `names ${ref}, which does not exist` });
     }
     if (d.kind === "decision") {
@@ -125,6 +125,7 @@ export function check(input: CheckInput): Finding[] {
       }
     }
   }
+  // reason: a planned rule is designed but not executed yet, so it needs no test (BR-2235, BR-2005)
   for (const rule of rules.values()) {
     if (rule.status === "active" && rule.untested === undefined && !tested.has(rule.id)) {
       findings.push({ path: rule.path, rule: "rule-untested", message: `${rule.id} has no running test whose title names it and no \`untested:\` reason` });
@@ -256,7 +257,8 @@ function structureFindings(root: string, corpus: Corpus): Finding[] {
         }
       }
     }
-    if (d.kind !== "rule" || d.status !== "active") continue;
+    // reason: a planned rule is held to the same shape as an active one: its executing change verifies this text (BR-2033, BR-2034)
+    if (d.kind !== "rule" || d.status === "retired") continue;
     const statement = section(d.body, RULE_SECTION);
     if (statement === undefined || statement.trim() === "") {
       out.push({ path: d.path, rule: "rule-no-statement", message: `${d.id} has no "${RULE_SECTION}" section with the statement` });

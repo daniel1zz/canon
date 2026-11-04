@@ -4,13 +4,14 @@
  * `canon stats` reports on exactly these names, and `check_reviews` in config may only name them (BR-2069).
  */
 export const LAND_STAGES: readonly (readonly string[])[] = [
-  ["on-main", "no-floor", "dirty", "no-claim", "lessons"],
+  ["on-main", "no-floor", "dirty", "no-claim", "lessons", "evidence"],
   ["timeout"],
   ["conflict"],
   ["config"],
   ["floor"],
   ["config-key"],
   ["check"],
+  ["activate", "rule-changed", "passes"],
   ["source"],
   ["review"],
   ["hook"],

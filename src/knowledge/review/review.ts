@@ -15,6 +15,18 @@ import { LESSONS_SECTION, section } from "../documents/templates.ts";
 export interface ReviewVerdict {
   readonly verdict: "ok" | "block";
   readonly findings: readonly string[];
+  /** Per rule asked about in `# Wording judgements`, what the reviewer answered (BR-2239); absent when it gave none. */
+  readonly wording?: Readonly<Record<string, string>>;
+}
+
+/** A rule whose 规则 section changed while its examples did not, for the review to judge wording or behaviour (BR-2239, BR-2243). */
+export interface WordingQuestion {
+  readonly id: string;
+  readonly title: string;
+  /** The 规则 section of the version that passed before, and of the current version. */
+  readonly before: string;
+  readonly after: string;
+  readonly examples: string;
 }
 
 /** A rule or decision file the landing deletes, with the text it had on main. */
@@ -32,6 +44,8 @@ export interface ReviewExtras {
   readonly deletedReadmes?: readonly { readonly path: string; readonly text: string }[];
   /** The change this landing belongs to; the review reads its lessons (BR-2162). */
   readonly change?: Doc | undefined;
+  /** Rules the closing change recorded as wording-only edits; the review must judge each (BR-2239). */
+  readonly wording?: readonly WordingQuestion[];
 }
 
 export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras = {}): string {
@@ -44,10 +58,35 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
     "Write the findings in the language the documents are written in.",
     // reason: turning a lesson into a mechanism needs the owner's confirmation; the review only reminds, never blocks (BR-2162, D-24)
     "When the change's lessons section is shown below, add a note (never block for it) naming the change id: for a lesson marked text-only (只靠文字) without a reason although a rule, check or command could enforce it; and for a lesson whose mechanism is a rule, check or command this landing adds (in the changed documents) when the lesson does not say the owner confirmed it.",
-    'Answer with JSON only: {"verdict":"ok"|"block","findings":["<one sentence each, naming the id>"]}',
+    extras.wording?.length
+      ? 'Answer with JSON only: {"verdict":"ok"|"block","findings":["<one sentence each, naming the id>"],"wording":{"<rule id>":"wording"|"behaviour"}}, with one wording entry per rule under # Wording judgements'
+      : 'Answer with JSON only: {"verdict":"ok"|"block","findings":["<one sentence each, naming the id>"]}',
     "",
-    "# Changed documents (new text)",
   ];
+  if (extras.wording?.length) {
+    // reason: the close commit recorded these as wording-only edits; only this independent judgement lets them keep the earlier pass (BR-2239, D-32)
+    parts.push(
+      "# Wording judgements",
+      "",
+      'Each rule below changed only its 规则 section since the version that passed; its examples are the same. Answer "wording" when the edit changes no requirement (the product must do exactly what it had to before, for every input), "behaviour" when it adds, removes or changes any requirement, condition or boundary. When unsure, answer "behaviour". This judgement does not affect the verdict.',
+      "",
+    );
+    for (const q of extras.wording) parts.push(`## ${q.id} ${q.title}
+
+### 规则 before
+
+${q.before.trim()}
+
+### 规则 now
+
+${q.after.trim()}
+
+### 例子 (unchanged)
+
+${q.examples.trim()}
+`);
+  }
+  parts.push("# Changed documents (new text)");
   for (const d of changed) {
     // reason: the body has no front matter, so the reviewer could not see what a decision supersedes or amends (BR-2141)
     const links = d.kind === "decision" ? [...(d.supersedes ? [`supersedes: ${d.supersedes}`] : []), ...(d.amends.length ? [`amends: ${d.amends.join(", ")}`] : [])] : [];
@@ -83,8 +122,9 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
     seen.add(top);
     parts.push(`# Current context for ${top}\n\n${renderContext(root, contextFor(corpus, top), { full: true })}`);
   }
-  const index = corpus.docs.filter((d) => d.kind === "rule" && d.status === "active");
-  parts.push(`# Rule index (every active rule, all domains)\n\n${index.map((r) => `- ${r.id} [${r.kind === "rule" ? r.domain : ""}] ${r.title}`).join("\n")}`);
+  // reason: planned rules constrain execution too, so a contradiction with one is found as well (BR-2036, BR-2235)
+  const index = corpus.docs.filter((d) => d.kind === "rule" && d.status !== "retired");
+  parts.push(`# Rule index (every active and planned rule, all domains)\n\n${index.map((r) => `- ${r.id} [${r.kind === "rule" ? r.domain : ""}]${r.kind === "rule" && r.status === "planned" ? " [规划中]" : ""} ${r.title}`).join("\n")}`);
   const accepted = corpus.docs.filter((d) => d.kind === "decision" && d.status === "accepted");
   if (accepted.length) parts.push(`# Accepted decisions\n\n${accepted.map((d) => `- ${d.id} ${d.title}`).join("\n")}`);
   return parts.join("\n");
@@ -116,7 +156,9 @@ export async function runReview(command: string, cwd: string, prompt: string): P
     const v = JSON.parse(match[0]) as { verdict?: unknown; findings?: unknown };
     if (v.verdict !== "ok" && v.verdict !== "block") return err("invalid", `review verdict must be "ok" or "block", got ${JSON.stringify(v.verdict)}`);
     const findings = Array.isArray(v.findings) ? v.findings.map(String) : [];
-    return ok({ verdict: v.verdict, findings });
+    const w = (v as { wording?: unknown }).wording;
+    const wording = w !== null && typeof w === "object" && !Array.isArray(w) ? Object.fromEntries(Object.entries(w as Record<string, unknown>).map(([k, x]) => [k, String(x)])) : undefined;
+    return ok({ verdict: v.verdict, findings, ...(wording ? { wording } : {}) });
   } catch (e) {
     return err("invalid", `review JSON does not parse: ${(e as Error).message}`);
   }

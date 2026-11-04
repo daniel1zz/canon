@@ -9,10 +9,14 @@ export interface TestTitle {
   readonly title: string;
   /** False when the call or an enclosing describe is skipped, todo, conditional or otherwise not plainly run. */
   readonly runs: boolean;
+  /** 1-based lines of the call's name and of its closing parenthesis: the lines a change touching this test edits (BR-2241). */
+  readonly start: number;
+  readonly end: number;
 }
 
 /** `spans`: on a template literal, how many tokens of its `${…}` expressions follow it. */
-type Token = { readonly kind: "ident" | "punct" | "string"; readonly text: string; readonly spans?: number };
+/** `at`: offset of the token's first character in the source. */
+type Token = { readonly kind: "ident" | "punct" | "string"; readonly text: string; readonly at: number; readonly spans?: number };
 
 const CALLS = new Set(["test", "it", "describe", "xtest", "xit", "xdescribe"]);
 // reason: only modifiers that still run the test unconditionally count (BR-2005); `.skip`, `.todo`,
@@ -35,6 +39,7 @@ function lex(src: string): Token[] {
   const run = (stopAtBrace: boolean): void => {
     let depth = 0;
     while (i < src.length) {
+      const at = i;
       const c = src[i]!;
       const next = src[i + 1];
       if (c === " " || c === "\t" || c === "\n" || c === "\r") i++;
@@ -52,7 +57,7 @@ function lex(src: string): Token[] {
           text += src[j] ?? "";
           j++;
         }
-        out.push({ kind: "string", text });
+        out.push({ kind: "string", text, at });
         i = j + 1;
       } else if (c === "`") {
         i++;
@@ -72,7 +77,7 @@ function lex(src: string): Token[] {
         }
         i++;
         // The literal comes first so a title stays the first token after `(`; its expressions follow.
-        out.push({ kind: "string", text, spans: inner.length }, ...inner);
+        out.push({ kind: "string", text, at, spans: inner.length }, ...inner);
       } else if (c === "/" && regexAllowed()) {
         let j = i + 1;
         let cls = false;
@@ -84,17 +89,17 @@ function lex(src: string): Token[] {
         }
         j++;
         while (j < src.length && /[a-z]/i.test(src[j]!)) j++;
-        out.push({ kind: "punct", text: "regex" });
+        out.push({ kind: "punct", text: "regex", at });
         i = j;
       } else if (/[A-Za-z_$]/.test(c)) {
         let j = i + 1;
         while (j < src.length && /[\w$]/.test(src[j]!)) j++;
-        out.push({ kind: "ident", text: src.slice(i, j) });
+        out.push({ kind: "ident", text: src.slice(i, j), at });
         i = j;
       } else if (/[0-9]/.test(c)) {
         let j = i + 1;
         while (j < src.length && /[\w.]/.test(src[j]!)) j++;
-        out.push({ kind: "punct", text: "number" });
+        out.push({ kind: "punct", text: "number", at });
         i = j;
       } else {
         if (stopAtBrace) {
@@ -104,7 +109,7 @@ function lex(src: string): Token[] {
             return;
           }
         }
-        out.push({ kind: "punct", text: c });
+        out.push({ kind: "punct", text: c, at });
         i++;
       }
     }
@@ -127,6 +132,19 @@ function closing(tokens: readonly Token[], open: number): number {
 
 export function testTitles(src: string): TestTitle[] {
   const tokens = lex(src);
+  const breaks: number[] = [];
+  for (let n = src.indexOf("\n"); n >= 0; n = src.indexOf("\n", n + 1)) breaks.push(n);
+  // 1-based line of an offset: one more than the number of line breaks before it.
+  const lineOf = (offset: number): number => {
+    let lo = 0;
+    let hi = breaks.length;
+    while (lo < hi) {
+      const mid = (lo + hi) >> 1;
+      if (breaks[mid]! < offset) lo = mid + 1;
+      else hi = mid;
+    }
+    return lo + 1;
+  };
   const out: TestTitle[] = [];
   const skippedUntil: number[] = []; // closing index of each enclosing describe that does not run
   for (let i = 0; i < tokens.length; i++) {
@@ -149,7 +167,7 @@ export function testTitles(src: string): TestTitle[] {
     const first = tokens[k + 1];
     const end = closing(tokens, k);
     const enclosingSkipped = skippedUntil.length > 0;
-    if (first?.kind === "string") out.push({ title: first.text, runs: runs && !enclosingSkipped });
+    if (first?.kind === "string") out.push({ title: first.text, runs: runs && !enclosingSkipped, start: lineOf(t.at), end: lineOf(tokens[end]?.at ?? src.length) });
     if (!runs && t.text.endsWith("describe")) skippedUntil.push(end);
   }
   return out;

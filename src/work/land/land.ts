@@ -22,6 +22,7 @@ import { addWorktree, git, gitEnv, isClean, listWorktreesLocked, pruneWorktrees,
 import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, type DeletedDoc } from "../../knowledge/review/review.ts";
 import { ensureWatcher, pathCanonReads, timingOf } from "../watch/watch.ts";
 import { keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
+import { landingExecution, missingMessage, passesMeta, planClose, unconfirmedWording, wordingMessage } from "../execution/landing.ts";
 
 /**
  * Landing (design §6): queue → rebase onto main → floor → canon check → sources → review → before_land →
@@ -41,7 +42,7 @@ export interface LandOptions {
 
 export type LandOutcome =
   | { readonly kind: "landed"; readonly sha: string; readonly change: string | null; readonly finished: boolean }
-  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "config" | "config-key" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "lost-turn" | "no-floor" | "no-claim" | "lessons" | "on-main" | "environment"; readonly message: string; readonly findings?: readonly Finding[] }
+  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "config" | "config-key" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "lost-turn" | "no-floor" | "no-claim" | "lessons" | "on-main" | "environment" | "evidence" | "activate" | "rule-changed" | "passes"; readonly message: string; readonly findings?: readonly Finding[] }
   | { readonly kind: "timeout"; readonly ahead: number };
 
 /**
@@ -106,9 +107,14 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
       if (doc?.kind === "change" && doc.status === "open") {
         // reason: lessons are known when the work ends, so closing is where they are required; old closed changes stay valid (BR-2161, D-24)
         if (!hasLessons(doc.body)) return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
+        // reason: the evidence is known before the close commit, so a missing one refuses with no commit to take back (BR-2241, D-32)
+        const planned = planClose(ws.db, ws.config, wt, ws.config.main, corpus, doc);
+        if ("error" in planned) return early("environment", `the pass records could not be computed: ${planned.error}`);
+        if (planned.missing.length > 0) return early("evidence", missingMessage(subject, planned.missing));
         // reason: a file write or git commit that fails is an environment error, not a check's verdict (BR-2193).
         // setMeta fails before it writes, so the file is left as it is: whatever is in it now is someone else's edit (issue #80).
-        const s = setMeta(wt, doc, { status: "done" });
+        // reason: passes is replaced whole, so a record written by hand never survives the close (BR-2242)
+        const s = setMeta(wt, doc, { status: "done", passes: passesMeta(planned.records) });
         if (!s.ok) return early("environment", `the close commit could not be made: ${s.error.message}`);
         git(wt, "add", doc.path);
         const c = git(wt, "commit", "-q", "-m", closeSubject(subject));
@@ -364,6 +370,9 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const base = git(wt, "rev-parse", main);
   // reason: git failing is an environment error, not a check's verdict, so it pollutes no check in `canon stats` (BR-2193).
   if (!base.ok) return refuse("environment", base.error.message);
+  // The branch as it was before the rebase: what the close commit's pass records were computed on (BR-2244).
+  const before = git(wt, "rev-parse", "HEAD");
+  if (!before.ok) return refuse("environment", before.error.message);
   say(`rebase onto ${main} ${base.value.slice(0, 9)}`);
   const reb = git(wt, "rebase", "-q", base.value);
   if (!reb.ok) {
@@ -390,7 +399,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   // Landings waiting right behind this one are tested with it under one floor run (BR-2172, D-26); a batch that
   // does not land as a whole sends them back to land on their own, and this landing goes on alone (BR-2173).
   if (ws.config.landBatchMax > 1 && !floorDeferred && !isSolo(ws.db, entry)) {
-    const batched = await landBatch(ws, opts, say, { ...t, base: base.value, head: tested.value });
+    const batched = await landBatch(ws, opts, say, { ...t, base: base.value, head: tested.value, before: before.value });
     if (batched?.kind === "landed") return finishLanding(ws, opts, say, { entry, subject, sha: tested.value });
     if (batched?.kind === "lost") return batched.outcome;
     if (batched) return refuse(batched.reason, batched.message);
@@ -411,7 +420,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   }
 
   const head = tested;
-  const steps = await verifyChange(ws, opts, say, { wt, base: base.value, main: base.value, head: head.value, subject, branch: t.branch });
+  const steps = await verifyChange(ws, opts, say, { wt, base: base.value, main: base.value, head: head.value, before: before.value, subject, branch: t.branch });
   if (!steps.ok) return refuse(steps.reason, steps.message, steps.findings);
   const now = git(wt, "rev-parse", "HEAD");
   const edits = changesIn(wt);
@@ -433,7 +442,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   if (moved !== "moved") return refuse(moved.reason, moved.message);
 
   finishEntry(ws.db, entry, "landed", head.value);
-  ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, branch: t.branch, diff: fingerprint, ...(steps.reviewNotes ?? {}), ...(floorSkipped ? { floor_skipped: true } : {}), ...(floorDeferred ? { floor_deferred: true } : {}) });
+  ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, base: base.value, branch: t.branch, diff: fingerprint, ...(steps.reviewNotes ?? {}), ...(floorSkipped ? { floor_skipped: true } : {}), ...(floorDeferred ? { floor_deferred: true } : {}) });
   say(`landed ${head.value.slice(0, 9)} on ${main}`);
   // The background floor starts on the main this landing made, before after_land (BR-2218, BR-2219).
   if (floorDeferred) ensureWatcher(ws, say);
@@ -487,6 +496,8 @@ interface Link {
   readonly branch: string;
   /** The member's HEAD when it joined; its worktree must still be there when main moves (BR-2106). */
   readonly joined: string;
+  /** The change's branch before it was rebased for this landing: what its pass records were computed on (BR-2244). */
+  readonly before: string;
   readonly base: string;
   readonly head: string;
 }
@@ -498,7 +509,7 @@ interface Link {
  * Returns undefined when nothing joined or the batch fell back (members go back to wait and land on their own,
  * BR-2173); "landed" when main moved; a refusal only for main moving or the turn being lost meanwhile.
  */
-async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running; base: string; head: string }): Promise<{ kind: "landed" } | { kind: "refused"; reason: "main-moved" | "main-dirty" | "environment"; message: string } | { kind: "lost"; outcome: LandOutcome } | undefined> {
+async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running; base: string; head: string; before: string }): Promise<{ kind: "landed" } | { kind: "refused"; reason: "main-moved" | "main-dirty" | "environment"; message: string } | { kind: "lost"; outcome: LandOutcome } | undefined> {
   const main = ws.config.main;
   const members: { id: number; subject: string | null; worktree: string; branch: string; joined: string }[] = [];
   for (const c of batchCandidates(ws.db, t.entry, ws.config.landBatchMax - 1, ws.config.landerStaleMs, priorityNow(ws))) {
@@ -525,7 +536,7 @@ async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry:
     return undefined;
   }
   try {
-    const links: Link[] = [{ entry: t.entry, subject: t.subject, worktree: ws.root, branch: t.branch, joined: t.head, base: t.base, head: t.head }];
+    const links: Link[] = [{ entry: t.entry, subject: t.subject, worktree: ws.root, branch: t.branch, joined: t.head, before: t.before, base: t.base, head: t.head }];
     for (let i = 0; i < members.length; i++) {
       const m = members[i]!;
       const prev = links[links.length - 1]!.head;
@@ -540,7 +551,7 @@ async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry:
         members.splice(i);
         break;
       }
-      links.push({ entry: m.id, subject: m.subject, worktree: m.worktree, branch: m.branch, joined: m.joined, base: prev, head: top.value });
+      links.push({ entry: m.id, subject: m.subject, worktree: m.worktree, branch: m.branch, joined: m.joined, before: m.joined, base: prev, head: top.value });
     }
     if (members.length === 0) return undefined;
     const tip = links[links.length - 1]!.head;
@@ -567,7 +578,7 @@ async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry:
       const co = git(dir, "checkout", "-q", "--detach", l.head);
       if (!co.ok) return fallBack(`checkout of ${l.head.slice(0, 9)} failed: ${co.error.message}`);
       // reason: the whole batch moves main at once, so every member is compared with main, not the member before it (BR-2248)
-      const steps = await verifyChange(ws, opts, say, { wt: dir, base: l.base, main: t.base, head: l.head, subject: l.subject, branch: l.branch });
+      const steps = await verifyChange(ws, opts, say, { wt: dir, base: l.base, main: t.base, head: l.head, before: l.before, subject: l.subject, branch: l.branch });
       if (!steps.ok) return fallBack(`${l.subject ?? `entry ${l.entry}`} was refused in the batch (${steps.reason})`);
       notes[l.entry] = steps;
     }
@@ -610,7 +621,7 @@ async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry:
     for (const l of links) {
       const n = notes[l.entry];
       const reviewNotes = n?.ok ? n.reviewNotes : undefined;
-      ws.db.event(ws.actor, "land.ok", l.subject, { sha: l.head, branch: l.branch, diff: fingerprints.get(l.entry) ?? null, ...(reviewNotes ?? {}), ...(skip ? { floor_skipped: true } : {}), ...(l.entry !== t.entry ? { batched_by: t.entry } : { batch: links.slice(1).map((x) => x.entry) }) });
+      ws.db.event(ws.actor, "land.ok", l.subject, { sha: l.head, base: l.base, branch: l.branch, diff: fingerprints.get(l.entry) ?? null, ...(reviewNotes ?? {}), ...(skip ? { floor_skipped: true } : {}), ...(l.entry !== t.entry ? { batched_by: t.entry } : { batch: links.slice(1).map((x) => x.entry) }) });
       say(`landed ${l.head.slice(0, 9)} (${l.subject ?? `entry ${l.entry}`}) on ${main}`);
     }
     for (const l of links) afterLand(ws, say, { entry: l.entry, subject: l.subject, base: l.base, head: l.head, branch: l.branch });
@@ -666,7 +677,7 @@ type Steps = { readonly ok: true; readonly reviewNotes: { reviewed: string[]; no
  * `base` below it): canon check, decision sources, the rule and duplicate reviews, before_land (BR-2016,
  * BR-2009, BR-2111, BR-2143, BR-2057). A solo landing runs them in its worktree; a batch, per change (BR-2172).
  */
-async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: { wt: string; base: string; main: string; head: string; subject: string | null; branch: string }): Promise<Steps> {
+async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: { wt: string; base: string; main: string; head: string; before: string; subject: string | null; branch: string }): Promise<Steps> {
   const { wt, subject } = v;
   const base = { value: v.base };
   const head = { value: v.head };
@@ -682,7 +693,10 @@ async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: { wt:
   if (!landing.ok) return refuse("check", `canon check: cannot read canon/config.yaml of the landing tree: ${landing.error.message}`);
   const findings = check({ root: wt, ...read, testFiles: tests, floorSkipPaths: landing.value.floorSkipPaths });
   if (findings.length > 0) return refuse("check", `canon check: ${findings.length} finding(s)`, findings);
-
+  // Execution records (D-32): planned rules made active by their change only, pass records written only by canon, and
+  // still matching their rules after the rebase (BR-2240, BR-2242, BR-2244).
+  const execution = landingExecution({ db: ws.db, config: landing.value, wt, base: base.value, head: head.value, before: v.before, corpus: read.corpus, subject, main: ws.config.main });
+  if (!execution.ok) return refuse(execution.reason, execution.message);
 
   // Every added, edited or deleted file under canon/rules or canon/decisions is reviewed (BR-2009): rule and
   // decision documents by their new text, deleted ones by the text they had on main, domain READMEs whole.
@@ -718,16 +732,20 @@ async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: { wt:
   });
   const reviewed = [...changedDocs.map((d) => d.id), ...deleted.map((d) => `${d.id} (deleted)`), ...readmes.map((n) => `${n} README`), ...deletedReadmes.map((r) => `${r.path} (deleted)`)];
   let reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined;
-  if (reviewed.length > 0) {
+  // reason: a wording-only record needs the review's judgement even when no rule file changed in this landing (BR-2239)
+  if (execution.wording.length > 0 && !ws.config.review) return refuse("review", wordingMessage(execution.wording.map((q) => q.id), undefined, false));
+  if (reviewed.length > 0 || execution.wording.length > 0) {
     if (!ws.config.review) {
       say(`review: not configured — ${reviewed.join(", ")} land without a rule review`);
       ws.db.event(ws.actor, "review.skip", subject, { docs: reviewed });
     } else {
-      say(`review: ${reviewed.join(", ")}`);
-      const v = await runReview(ws.config.review, wt, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined }));
+      say(`review: ${[...reviewed, ...execution.wording.map((q) => `${q.id} (wording judgement)`)].join(", ")}`);
+      const v = await runReview(ws.config.review, wt, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording }));
       if (!v.ok) return refuse("review", `the rule review could not run: ${v.error.message}`);
-      ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings });
+      ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings, ...(execution.wording.length > 0 ? { wording: v.value.wording ?? {} } : {}) });
       if (v.value.verdict === "block") return refuse("review", `rule review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
+      const unconfirmed = unconfirmedWording(execution.wording, v.value.wording);
+      if (unconfirmed.length > 0) return refuse("review", wordingMessage(unconfirmed, v.value.wording, true));
       for (const f of v.value.findings) say(`review note: ${f}`);
       // reason: notes do not block and are not changes of their own; they wait on the document they name (BR-2145, D-21)
       reviewNotes = { reviewed: [...changedDocs.map((d) => d.id), ...deleted.map((d) => d.id)], notes: v.value.findings };

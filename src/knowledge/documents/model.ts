@@ -19,7 +19,8 @@ import type { DocType } from "./types.ts";
 /** Built-in kinds; a document of a type declared in config (D-2 §2) has kind "extra" and names its type. */
 export type Kind = "rule" | "decision" | "change" | "note" | "extra";
 
-export type RuleStatus = "active" | "retired";
+/** `planned`: designed, not yet executed; needs no test and blocks no landing (BR-2235, D-32). */
+export type RuleStatus = "active" | "retired" | "planned";
 export type DecisionStatus = "proposed" | "accepted" | "superseded";
 export type ChangeStatus = "open" | "done" | "dropped";
 
@@ -61,6 +62,18 @@ export interface Change extends Base {
   readonly status: ChangeStatus;
   /** Rule ids this change adds, edits or retires. */
   readonly rules: readonly string[];
+  /** Pass records the close commit wrote: rule id → behaviour hash and method (BR-2237, D-32). Empty when none. */
+  readonly passes: Readonly<Record<string, PassRecord>>;
+}
+
+/** How a rule's execution was verified (BR-2237): a test the change touched, an acceptance line, or a test that existed at migration. */
+export type PassMethod = "test" | "acceptance" | "migration";
+
+/** One pass record: the rule's behaviour hash when it passed, the method, and whether the review judged the edit wording only (BR-2243). */
+export interface PassRecord {
+  readonly hash: string;
+  readonly method: PassMethod;
+  readonly wording: boolean;
 }
 
 export interface Note extends Base {

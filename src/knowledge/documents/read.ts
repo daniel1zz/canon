@@ -1,6 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { parseDocFile, parseReadme } from "./docfile.ts";
+import { parsePasses } from "./behaviour.ts";
 import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type DecisionStatus, type Doc, type Domain, type Layout, type RuleStatus } from "./model.ts";
 import { BUILTIN_TYPES, type DocType } from "./types.ts";
 
@@ -150,7 +151,12 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: "`rules` must be a list of rule ids" });
           continue;
         }
-        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[] });
+        const passes = parsePasses(p.meta["passes"]);
+        if (typeof passes === "string") {
+          problems.push({ path, message: passes });
+          continue;
+        }
+        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes });
       } else if (type.name === "note") {
         docs.push({ kind: "note", ...common });
       } else {

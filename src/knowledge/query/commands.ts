@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 import { corpusOf, entry, fail, json, say, workspace, type DomainCommands } from "../../cli/command.ts";
 import { openNotes, renderNote } from "../review/notes.ts";
-import { amendedBy, contextFor, findDoc, isIdQuery, rawText, renderContext, renderSearch, search } from "./query.ts";
+import { amendedBy, contextFor, findDoc, isIdQuery, plannedMark, rawText, renderContext, renderSearch, search } from "./query.ts";
 
 /** `canon show`, `search`, `context`: reading the corpus. */
 
@@ -13,7 +13,8 @@ const show = defineCommand({
     const { corpus } = corpusOf(ws);
     const doc = findDoc(corpus, args.id);
     if (!doc) fail({ code: "not_found", message: `${args.id} does not exist` });
-    process.stdout.write(`${doc.path}\n\n${rawText(ws.root, doc)}`);
+    // reason: a planned rule is marked so it is not read as implemented (BR-2238, BR-2213)
+    process.stdout.write(`${doc.path}${plannedMark(doc) ? `  ${plannedMark(doc).trim()}` : ""}\n\n${rawText(ws.root, doc)}`);
     for (const d of amendedBy(corpus, doc.id)) say(`partly amended by ${d.id} ${d.title} (${d.path})`); // BR-2140
   },
 });

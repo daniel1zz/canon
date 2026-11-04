@@ -141,8 +141,10 @@ export function contextFor(corpus: Corpus, target: string, root?: string): Conte
     domains = withAncestors(corpus, corpus.domains.filter((d) => d.code.some((c) => isUnder(t, c) || isUnder(c, t))));
   }
   const names = new Set(domains.map((d) => d.name));
-  const active = (name: string) => corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status === "active" && d.domain === name);
-  const rules = corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status === "active" && names.has(d.domain));
+  // reason: a planned rule is part of the baseline that constrains execution, so it is listed with the active ones (BR-2007, BR-2238)
+  const current = (d: Doc): d is Rule => d.kind === "rule" && d.status !== "retired";
+  const active = (name: string) => corpus.docs.filter((d): d is Rule => current(d) && d.domain === name);
+  const rules = corpus.docs.filter((d): d is Rule => current(d) && names.has(d.domain));
   const imports: ImportedDomain[] = [];
   if (!targetDoc && root !== undefined && isFile(join(root, t))) {
     const via = new Map<string, string[]>();
@@ -240,8 +242,8 @@ function isUnder(path: string, dir: string): boolean {
 export function renderContext(root: string, ctx: Context, opts: { readonly full: boolean; readonly target?: string }): string {
   const out: string[] = [];
   const rulesOf = (rules: readonly Rule[]) => {
-    if (opts.full) for (const r of rules) out.push(`## ${r.id} ${r.title}\n\n${r.body.trim()}\n`);
-    else if (rules.length) out.push(`## Rules (${rules.length})\n\n${rules.map((r) => `- ${r.id} ${r.title}`).join("\n")}\n`);
+    if (opts.full) for (const r of rules) out.push(`## ${r.id}${plannedMark(r)} ${r.title}\n\n${r.body.trim()}\n`);
+    else if (rules.length) out.push(`## Rules (${rules.length})\n\n${rules.map((r) => `- ${r.id}${plannedMark(r)} ${r.title}`).join("\n")}\n`);
   };
   const amended = (id: string) => (ctx.amended.has(id) ? ` — partly amended by ${ctx.amended.get(id)!.join(", ")}` : "");
   if (ctx.target) out.push(`# ${ctx.target.id} ${ctx.target.title}${amended(ctx.target.id)}\n\n${ctx.target.body.trim()}\n`);
@@ -266,6 +268,9 @@ export function renderContext(root: string, ctx: Context, opts: { readonly full:
   else if (!opts.full && (ctx.rules.length || ctx.imports.some((i) => i.rules.length))) out.push(`Rules are listed by title. Read the ones you touch: canon show <id>; every rule's text: canon context ${opts.target ?? "<target>"} --full\n`);
   return out.join("\n");
 }
+
+/** ` [规划中]` after a planned rule's id, nothing otherwise (BR-2238). */
+export const plannedMark = (d: Doc): string => (d.kind === "rule" && d.status === "planned" ? " [规划中]" : "");
 
 /** Reads a document's raw file text (for `show`). */
 export function rawText(root: string, doc: Doc): string {
