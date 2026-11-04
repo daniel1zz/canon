@@ -460,6 +460,17 @@ describe("a passing main", () => {
     expect(existsSync(late)).toBe(true);
   });
 
+  test("BR-2285: an after_green that ignores SIGTERM is not waited for: the watcher exits 143 at once and its place is free while after_green still runs", async () => {
+    const started = Date.now();
+    const { root, dir } = await termedWhile((ready) => `hooks:\n  after_green: 'trap "" TERM; echo $$ > ${ready}.pid; touch ${ready}; while true; do sleep 0.1; done'\n`);
+    const pid = Number(readFileSync(join(dir, "ready.pid"), "utf8").trim());
+    const running = alive(pid);
+    if (running) process.kill(pid, "SIGKILL");
+    expect(running).toBe(true);
+    expect(watcherRows(root)).toEqual([]);
+    expect(Date.now() - started).toBeLessThan(9_000);
+  });
+
   test("BR-2285: a watcher stopped by SIGINT exits 130 and stops what after_green left running too", async () => {
     const { late } = await termedWhile(orphaning, { signal: "SIGINT" });
     expect(existsSync(late)).toBe(false);
