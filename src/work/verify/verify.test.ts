@@ -415,6 +415,14 @@ describe("canon work test always_tests", () => {
     expect(lastEvent(wt)).toMatchObject({ unmatched: 2 });
   });
 
+  test("BR-2297: with --all every test file still runs, the unmatched glob is still printed and exits 1", () => {
+    const { wt } = alwaysFixture('["src/gone.test.ts"]');
+    const r = canon(wt, "work", "test", "--all");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain('always_tests: "src/gone.test.ts" matches no test file');
+    expect(runs(wt)).toEqual(["src/b.test.ts", "src/c.test.ts", "src/d.test.ts", "src/e.test.ts", "src/f.test.ts"]);
+  });
+
   test("BR-2297: always_tests that is not a list of non-empty strings fails every command with exit 2", () => {
     const { wt } = fixture();
     for (const bad of ['"src/d.test.ts"', "[3]", '[""]']) {
