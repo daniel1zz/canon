@@ -2,12 +2,14 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { BRIEF_COMMAND, SNAPSHOT_COMMAND } from "./hook.ts";
+import { BRIEF_COMMAND, RECORD_COMMAND, SNAPSHOT_COMMAND } from "./hook.ts";
 import { CoordDb } from "../../work/db.ts";
 import { enqueue, tryTurn } from "../../work/land/queue/queue.ts";
 
 /** The PreToolUse entry canon installs (BR-2185); a project with canon's current settings has it. */
 const SNAPSHOT_ENTRY = { matcher: "Bash", hooks: [{ type: "command", command: SNAPSHOT_COMMAND }] };
+/** The PostToolUse entry canon installs (BR-2274); a project with canon's current settings has it. */
+const RECORD_ENTRY = { matcher: "AskUserQuestion", hooks: [{ type: "command", command: RECORD_COMMAND }] };
 /** The worktree setting canon installs (BR-2264); a project with canon's current settings has it. */
 const WORKTREE = { baseRef: "head" };
 
@@ -115,7 +117,7 @@ describe("finding and applying updates", () => {
     const text = git(root, "show", `main:${file}`);
     expect(text).toContain(`title: 更新 canon 装进项目的文件到版本 ${version}`);
     expect(text).toContain("## 为什么\n\n项目里 canon 装的文件（skill、会话开始时的 hook）落后于当前的 canon，按负责人的要求更新。");
-    expect(text).toContain("## 要改什么\n\n- skill canon-a/SKILL.md\n- hook: canon brief at session start (.claude/settings.json)\n- hook: canon snapshot take before each Bash call (.claude/settings.json)\n- setting: worktree.baseRef \"head\", so subagent worktrees start from local HEAD (.claude/settings.json)\n\n## 教训\n\n无。\n\n## 任务\n\n- [x] 由 `canon update` 安装并合入");
+    expect(text).toContain("## 要改什么\n\n- skill canon-a/SKILL.md\n- hook: canon brief at session start (.claude/settings.json)\n- hook: canon snapshot take before each Bash call (.claude/settings.json)\n- hook: canon human record after each answer to the question tool (.claude/settings.json)\n- setting: worktree.baseRef \"head\", so subagent worktrees start from local HEAD (.claude/settings.json)\n\n## 教训\n\n无。\n\n## 任务\n\n- [x] 由 `canon update` 安装并合入");
   });
 
   test("BR-2086: update lands as its own change through the normal landing, and is a no-op when current", () => {
@@ -248,7 +250,7 @@ describe("finding and applying updates", () => {
     expect(r.out).toContain("hook: canon brief at session start, older form");
     expect(canon(root, env, "install").code).toBe(0);
     const s = JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"));
-    expect(s).toEqual({ ...old, hooks: { SessionStart: [{ matcher: "startup", hooks: [{ type: "command", command: BRIEF_COMMAND }] }, old.hooks.SessionStart[1]], PreToolUse: [SNAPSHOT_ENTRY] }, worktree: WORKTREE });
+    expect(s).toEqual({ ...old, hooks: { SessionStart: [{ matcher: "startup", hooks: [{ type: "command", command: BRIEF_COMMAND }] }, old.hooks.SessionStart[1]], PreToolUse: [SNAPSHOT_ENTRY], PostToolUse: [RECORD_ENTRY] }, worktree: WORKTREE });
     canon(root, env, "install");
     expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual(s);
     expect(canon(root, env, "update", "--check").code).toBe(0);
@@ -341,7 +343,7 @@ describe("finding and applying updates", () => {
     }
   });
 
-  test("BR-2264: a worktree setting that is not an object is refused with 2 and the file is left as it was", () => {
+  test("BR-2264 BR-2084: a worktree setting that is not an object is refused with 2 and the file is left as it was", () => {
     const { root, env } = project();
     const s = { ...settingsOf(root), worktree: "head" };
     const text = JSON.stringify(s);
@@ -353,6 +355,40 @@ describe("finding and applying updates", () => {
     expect(readFileSync(join(root, ".claude/settings.json"), "utf8")).toBe(text);
   });
 
+  test("BR-2274 BR-2087: init adds the record hook after the question tool next to the user's own PostToolUse entries, once", () => {
+    const src = dir({ "canon-a/SKILL.md": "a\n" });
+    const root = mkdtempSync(join(tmpdir(), "canon-update-repo-"));
+    git(root, "init", "-q");
+    mkdirSync(join(root, ".claude"), { recursive: true });
+    const theirs = { matcher: "Write", hooks: [{ type: "command", command: "echo wrote" }] };
+    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify({ hooks: { PostToolUse: [theirs] } }));
+    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "init", "--floor", "true").code).toBe(0);
+    const s = JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"));
+    expect(s.hooks.PostToolUse).toEqual([theirs, RECORD_ENTRY]);
+    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "install").code).toBe(0);
+    expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual(s);
+  });
+
+  test("BR-2274 BR-2084: a project without the record hook is out of date until install adds it", () => {
+    const { root, env } = project();
+    expect(canon(root, env, "update", "--check").code).toBe(0);
+    const s = JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"));
+    delete s.hooks.PostToolUse;
+    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify(s));
+    const r = canon(root, env, "update", "--check");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("hook: canon human record after each answer to the question tool (.claude/settings.json)");
+    expect(canon(root, env, "install").code).toBe(0);
+    expect(canon(root, env, "update", "--check").code).toBe(0);
+  });
+
+  test("BR-2274: the record hook command never blocks: without canon on PATH it exits 0 with a systemMessage for the user", () => {
+    const empty = mkdtempSync(join(tmpdir(), "canon-no-path-"));
+    const r = Bun.spawnSync(["/bin/sh", "-c", RECORD_COMMAND], { cwd: empty, stdout: "pipe", stderr: "pipe", env: { PATH: empty } });
+    expect(r.exitCode).toBe(0);
+    expect(JSON.parse(r.stdout.toString()).systemMessage).toContain("this answer was not recorded");
+  });
+
   test("BR-2185: the snapshot hook command never blocks: without canon on PATH it exits 0 with a systemMessage for the user", () => {
     const empty = mkdtempSync(join(tmpdir(), "canon-no-path-"));
     const r = Bun.spawnSync(["/bin/sh", "-c", SNAPSHOT_COMMAND], { cwd: empty, stdout: "pipe", stderr: "pipe", env: { PATH: empty } });
@@ -362,7 +398,7 @@ describe("finding and applying updates", () => {
 
   test("BR-2130 BR-2084: the withdrawn pre-bash hook and actor allow rule are out of date and removed by install, leaving the file as it was before them", () => {
     const { root, env } = project();
-    const before = { hooks: { SessionStart: [{ hooks: [{ type: "command", command: BRIEF_COMMAND }] }], PreToolUse: [SNAPSHOT_ENTRY] }, model: "x", worktree: WORKTREE };
+    const before = { hooks: { SessionStart: [{ hooks: [{ type: "command", command: BRIEF_COMMAND }] }], PreToolUse: [SNAPSHOT_ENTRY], PostToolUse: [RECORD_ENTRY] }, model: "x", worktree: WORKTREE };
     const withdrawn = {
       ...before,
       hooks: { ...before.hooks, PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: "canon hook pre-bash 2>/dev/null || true" }] }, SNAPSHOT_ENTRY] },
@@ -385,7 +421,7 @@ describe("finding and applying updates", () => {
     writeFileSync(join(root, ".claude/settings.json"), JSON.stringify({ hooks: { SessionStart: start, PreToolUse: [] }, permissions: { allow: ["Bash(ls)", "Bash(export CANON_ACTOR='agent:*')"] } }));
     expect(canon(root, env, "install").code).toBe(0);
     // The empty list is kept by the removal (BR-2130); the same write then adds canon's snapshot entry to it (BR-2185).
-    expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual({ hooks: { SessionStart: start, PreToolUse: [SNAPSHOT_ENTRY] }, permissions: { allow: ["Bash(ls)"] }, worktree: WORKTREE });
+    expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual({ hooks: { SessionStart: start, PreToolUse: [SNAPSHOT_ENTRY], PostToolUse: [RECORD_ENTRY] }, permissions: { allow: ["Bash(ls)"] }, worktree: WORKTREE });
   });
 
   test("BR-2130: only canon's two withdrawn entries go; the user's hooks and allow rules, and containers that were already empty, stay", () => {
@@ -401,16 +437,16 @@ describe("finding and applying updates", () => {
     writeFileSync(join(root, ".claude/settings.json"), JSON.stringify(settings));
     expect(canon(root, env, "install").code).toBe(0);
     expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual({
-      hooks: { SessionStart: settings.hooks.SessionStart, PreToolUse: [{ matcher: "Bash", hooks: [mine] }, { matcher: "Read", hooks: [mine] }, SNAPSHOT_ENTRY] },
+      hooks: { SessionStart: settings.hooks.SessionStart, PreToolUse: [{ matcher: "Bash", hooks: [mine] }, { matcher: "Read", hooks: [mine] }, SNAPSHOT_ENTRY], PostToolUse: [RECORD_ENTRY] },
       permissions: { allow: ["Bash(ls)", "Bash(export CANON_ACTOR='agent:x')"], deny: [] },
       worktree: WORKTREE,
     });
-    const empty = { hooks: { SessionStart: settings.hooks.SessionStart, PreToolUse: [SNAPSHOT_ENTRY] }, permissions: { allow: [] }, worktree: WORKTREE };
+    const empty = { hooks: { SessionStart: settings.hooks.SessionStart, PreToolUse: [SNAPSHOT_ENTRY], PostToolUse: [RECORD_ENTRY] }, permissions: { allow: [] }, worktree: WORKTREE };
     writeFileSync(join(root, ".claude/settings.json"), JSON.stringify(empty));
     expect(canon(root, env, "update", "--check").code).toBe(0);
     expect(canon(root, env, "install").code).toBe(0);
     expect(JSON.parse(readFileSync(join(root, ".claude/settings.json"), "utf8"))).toEqual(empty);
-    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify({ hooks: { SessionStart: settings.hooks.SessionStart, PreToolUse: [SNAPSHOT_ENTRY] }, permissions: "all", worktree: WORKTREE }));
+    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify({ hooks: { SessionStart: settings.hooks.SessionStart, PreToolUse: [SNAPSHOT_ENTRY], PostToolUse: [RECORD_ENTRY] }, permissions: "all", worktree: WORKTREE }));
     expect(canon(root, env, "update", "--check").code).toBe(0);
   });
 

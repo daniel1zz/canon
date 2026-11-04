@@ -98,6 +98,8 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ["queue", "solo INTEGER"],
   // Until when an entry refused for a conflict keeps its place for its own next landing (BR-2177, D-29).
   ["queue", "keep_until TEXT"],
+  // Whether a relayed answer matched the session's latest record from Claude Code's question tool (BR-2276, D-45).
+  ["questions", "witness TEXT"],
 ];
 
 /**

@@ -5,7 +5,7 @@ import { findDoc } from "../../knowledge/query/query.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
 import { changeOffMain, mainCorpus } from "../session/session.ts";
 import type { Workspace } from "../workspace.ts";
-import { answer, answeredBy, ask, questions } from "./questions.ts";
+import { answer, answeredBy, ask, parseAsked, questions, recordAsked, witnessMark } from "./questions.ts";
 
 /**
  * The change `--change` names, as its id: a change on main or on its own change branch, matched in any case as
@@ -46,8 +46,17 @@ const human = defineCommand({
         const ws = workspace();
         const qs = questions(ws.db, args.all ? "all" : "pending");
         if (args.json) return json(qs);
-        for (const q of qs) say(`#${q.id} [${q.subject ?? "-"}] ${q.question}${q.options.length ? `  (${q.options.join(" | ")})` : ""}${q.answer ? `\n    → ${q.answer} (${answeredBy(q)})` : ""}`);
+        for (const q of qs) say(`#${q.id} [${q.subject ?? "-"}] ${q.question}${q.options.length ? `  (${q.options.join(" | ")})` : ""}${q.answer ? `\n    → ${q.answer} (${answeredBy(q)})${witnessMark(q)}` : ""}`);
         if (qs.length === 0) say("(nothing waiting)");
+      },
+    }),
+    record: defineCommand({
+      meta: { description: "Record what the human answered in Claude Code's question tool (run by the PostToolUse hook, reads its data on stdin)" },
+      args: {},
+      async run() {
+        const parsed = must(parseAsked(await Bun.stdin.text()));
+        const ws = workspace();
+        recordAsked(ws.db, parsed.actor, parsed.record);
       },
     }),
     answer: defineCommand({

@@ -23,6 +23,12 @@ export const BRIEF_COMMAND =
  */
 export const SNAPSHOT_COMMAND =
   `canon snapshot take --hook || echo '{"systemMessage":"canon snapshot take failed or canon is not on PATH: uncommitted work was not snapshotted before this Bash call"}'`;
+/**
+ * After each answer to Claude Code's question tool, a record of the questions and the human's answers (BR-2274, D-45).
+ * It only records: when canon fails or is not on PATH, the echo tells the user in a systemMessage and nothing is blocked.
+ */
+export const RECORD_COMMAND =
+  `canon human record || echo '{"systemMessage":"canon human record failed or canon is not on PATH: this answer was not recorded for canon"}'`;
 /** The form canon installed before BR-2087 required the fallback; found once and replaced in place. */
 const OLD_BRIEF_COMMAND = "canon brief";
 const SETTINGS = join(".claude", "settings.json");
@@ -62,6 +68,15 @@ const preToolUse = (settings: Settings | undefined): HookEntry[] => {
   const pre = (settings?.["hooks"] as Record<string, unknown> | undefined)?.["PreToolUse"];
   return Array.isArray(pre) ? (pre as HookEntry[]) : [];
 };
+
+const postToolUse = (settings: Settings | undefined): HookEntry[] => {
+  const post = (settings?.["hooks"] as Record<string, unknown> | undefined)?.["PostToolUse"];
+  return Array.isArray(post) ? (post as HookEntry[]) : [];
+};
+
+/** Whether the AskUserQuestion PostToolUse entry with canon's record command is there (BR-2274). */
+const hasRecord = (settings: Settings | undefined) =>
+  postToolUse(settings).some((e) => isObject(e) && e.matcher === "AskUserQuestion" && Array.isArray(e.hooks) && e.hooks.some((h) => h.command?.trim() === RECORD_COMMAND));
 
 /** Whether the Bash PreToolUse entry with canon's snapshot command is there (BR-2185). */
 const hasSnapshot = (settings: Settings | undefined) =>
@@ -145,6 +160,8 @@ export interface SettingsState {
   readonly retired: readonly Retired[];
   /** Whether `worktree.baseRef` is "head" (BR-2264). */
   readonly baseRef: boolean;
+  /** Whether the record hook after each answer to the question tool is installed (BR-2274). */
+  readonly record: boolean;
 }
 
 /** Which of canon's entries the project's settings have: `canon brief` in the current form, an older one or none, and any withdrawn ones. Reads only. */
@@ -153,7 +170,7 @@ export function hookStatus(root: string): Result<SettingsState> {
   if (!s.ok) return s;
   const base = baseRefState(s.value);
   if (base === "invalid") return NOT_OBJECT;
-  return ok({ brief: briefState(s.value), snapshot: hasSnapshot(s.value), retired: retiredIn(s.value), baseRef: base === "head" });
+  return ok({ brief: briefState(s.value), snapshot: hasSnapshot(s.value), retired: retiredIn(s.value), baseRef: base === "head", record: hasRecord(s.value) });
 }
 
 /**
@@ -169,7 +186,8 @@ export function planHook(root: string): Result<Settings | undefined> {
   const snapshot = hasSnapshot(s.value);
   const base = baseRefState(s.value);
   if (base === "invalid") return NOT_OBJECT;
-  if (state === "present" && snapshot && retired.length === 0 && base === "head") return ok(undefined);
+  const record = hasRecord(s.value);
+  if (state === "present" && snapshot && record && retired.length === 0 && base === "head") return ok(undefined);
   const settings = retired.length > 0 ? withoutRetired(s.value ?? {}) : { ...(s.value ?? {}) };
   if (state !== "present") {
     const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
@@ -183,6 +201,11 @@ export function planHook(root: string): Result<Settings | undefined> {
   if (!snapshot) {
     const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
     hooks["PreToolUse"] = [...preToolUse(settings), { matcher: "Bash", hooks: [{ type: "command", command: SNAPSHOT_COMMAND }] }];
+    settings["hooks"] = hooks;
+  }
+  if (!record) {
+    const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
+    hooks["PostToolUse"] = [...postToolUse(settings), { matcher: "AskUserQuestion", hooks: [{ type: "command", command: RECORD_COMMAND }] }];
     settings["hooks"] = hooks;
   }
   if (base !== "head") settings["worktree"] = { ...((settings["worktree"] as Settings | undefined) ?? {}), baseRef: "head" };

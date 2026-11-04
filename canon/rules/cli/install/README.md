@@ -7,5 +7,5 @@ canon 自带的项目级 skill、会话 hook、每次 Bash 调用前做快照的
 ## 术语
 
 - **canon 自带的 skill**：canon 仓库 `.claude/skills/canon-*` 下的 skill，装进项目的同名目录。
-- **过期**：项目里 canon 装的东西和当前 canon 带的版本不一致（缺少、内容不同、canon 已删掉，会话 hook 缺少或是旧形式、Bash 快照 hook 缺少、canon 撤回的 hook 或放行规则还在，或 git 守卫缺少、是旧内容或不是 canon 写的）；项目自己改过、canon 又没有新版本的文件不算（BR-2089）。
+- **过期**：项目里 canon 装的东西和当前 canon 带的版本不一致（缺少、内容不同、canon 已删掉，会话 hook 缺少或是旧形式、Bash 快照 hook 缺少、提问工具记录 hook 缺少、`worktree.baseRef` 缺少或不是 `"head"`、canon 撤回的 hook 或放行规则还在，或 git 守卫缺少、是旧内容或不是 canon 写的）；项目自己改过、canon 又没有新版本的文件不算（BR-2089）。
 - **git 守卫**：canon 写进仓库 hook 目录的 `reference-transaction` hook（`src/cli/install/githook.ts`），canon 进了 main 以后，拒绝 `canon work land` 以外让 main 指向新提交的操作（BR-2126）。

@@ -20,6 +20,17 @@
           }
         ]
       }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "AskUserQuestion",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "canon human record || echo '{\"systemMessage\":\"canon human record failed or canon is not on PATH: this answer was not recorded for canon\"}'"
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {

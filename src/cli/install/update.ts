@@ -44,7 +44,8 @@ export function assetsStatus(root: string, source: string): Result<AssetsStatus>
   };
   const snapshot = h.value.snapshot ? [] : ["hook: canon snapshot take before each Bash call (.claude/settings.json)"];
   const baseRef = h.value.baseRef ? [] : ['setting: worktree.baseRef "head", so subagent worktrees start from local HEAD (.claude/settings.json)'];
-  const hook = [...brief, ...snapshot, ...h.value.retired.map((r) => withdrawn[r]), ...baseRef];
+  const record = h.value.record ? [] : ["hook: canon human record after each answer to the question tool (.claude/settings.json)"];
+  const hook = [...brief, ...snapshot, ...record, ...h.value.retired.map((r) => withdrawn[r]), ...baseRef];
   const g = guardLine(root);
   if (!g.ok) return g;
   const outdated = [...s.value.outdated.map((f) => `skill ${f}`), ...hook, ...g.value.line];
