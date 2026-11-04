@@ -603,6 +603,7 @@ describe("a passing main", () => {
     });
     expect(lateAtExit).toBe(true);
     expect(out).not.toContain("SIGKILL");
+    expect(out).not.toContain("may not all have been stopped"); // the listings that stop and signal all worked
   });
 
   test("BR-2285: a process still listed 5 s after SIGKILL is reported as still running, and the watcher still exits 143 and gives up its place", async () => {
