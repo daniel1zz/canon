@@ -15,6 +15,22 @@ export type Kind = "skill" | "mcp" | "agent";
 export const KINDS: readonly Kind[] = ["skill", "mcp", "agent"];
 export const DEFAULT_DAYS = 30;
 
+/** Errors that mean a path was removed after it was listed: another session cleaning old records (BR-2265, issue #94). */
+const GONE = new Set(["ENOENT", "ENOTDIR"]);
+
+/** `f()`, or undefined when the path it reads was removed meanwhile; any other error is thrown. */
+function unlessGone<T>(f: () => T): T | undefined {
+  try {
+    return f();
+  } catch (e) {
+    if (GONE.has((e as NodeJS.ErrnoException).code ?? "")) return undefined;
+    throw e;
+  }
+}
+
+/** The text of a session file, or undefined when it was deleted after it was listed (BR-2265, issue #94). */
+export const readRecords = (file: string): string | undefined => unlessGone(() => readFileSync(file, "utf8"));
+
 /** Claude Code's directory name for a path: every character other than a letter or digit becomes `-` (D-40). */
 export const encodePath = (p: string) => p.replace(/[^A-Za-z0-9]/g, "-");
 
@@ -37,16 +53,16 @@ export function projectDirs(projects: string, at: Places): string[] {
   if (!existsSync(projects)) return [];
   const exact = encodePath(at.primary);
   const prefixes = [`${encodePath(at.worktrees)}-`, `${encodePath(at.canonDir)}-`];
-  return readdirSync(projects)
+  return (unlessGone(() => readdirSync(projects)) ?? [])
     .filter((d) => d === exact || prefixes.some((p) => d.startsWith(p)))
     .map((d) => join(projects, d))
-    .filter((d) => statSync(d).isDirectory())
+    .filter((d) => unlessGone(() => statSync(d).isDirectory()) === true)
     .sort();
 }
 
 function jsonlFiles(dir: string): string[] {
   const out: string[] = [];
-  for (const e of readdirSync(dir, { withFileTypes: true })) {
+  for (const e of unlessGone(() => readdirSync(dir, { withFileTypes: true })) ?? []) {
     const p = join(dir, e.name);
     if (e.isDirectory()) out.push(...jsonlFiles(p));
     else if (e.isFile() && e.name.endsWith(".jsonl")) out.push(p);
@@ -124,10 +140,10 @@ interface Parsed {
   readonly skipped: number;
 }
 
-function parse(file: string): Parsed {
+function parse(text: string): Parsed {
   const recs: Rec[] = [];
   let skipped = 0;
-  for (const line of readFileSync(file, "utf8").split("\n")) {
+  for (const line of text.split("\n")) {
     if (line.trim() === "") continue;
     try {
       const r = JSON.parse(line) as unknown;
@@ -209,7 +225,8 @@ function availableFrom(sessions: readonly { file: string; recs: Rec[] }[], since
 const COMMAND = /<command-name>\/?([^<\s]+)<\/command-name>/g;
 
 /** Reads this project's session records and reports uses and the long-unused available items (BR-2265, BR-2266). */
-export function usageReport(projects: string, at: Places, days: number, now: Date): Result<UsageReport> {
+/** `read` gives a session file's text, or undefined when it is gone; a test passes its own to remove paths mid-scan. */
+export function usageReport(projects: string, at: Places, days: number, now: Date, read: (file: string) => string | undefined = readRecords): Result<UsageReport> {
   const dirs = projectDirs(projects, at);
   if (dirs.length === 0) return err("not_found", `no session records of this project under ${projects} (looked for ${encodePath(at.primary)} and names starting ${encodePath(at.worktrees)}- or ${encodePath(at.canonDir)}-)`);
   let files = 0;
@@ -227,8 +244,11 @@ export function usageReport(projects: string, at: Places, days: number, now: Dat
   };
   for (const dir of dirs) {
     for (const file of jsonlFiles(dir)) {
+      const text = read(file);
+      // reason: a file removed after the listing is skipped, not a crash (BR-2265, issue #94)
+      if (text === undefined) continue;
       files++;
-      const p = parse(file);
+      const p = parse(text);
       skipped += p.skipped;
       // reason: only session files sit directly in a project directory; subagent records are not a session's listing (BR-2266)
       if (join(file, "..") === dir) sessions.push({ file, recs: p.recs });

@@ -1,9 +1,9 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { project, sh } from "../testkit.ts";
-import { encodePath, projectsDir, renderUsage, usageReport, type Places } from "./usage.ts";
+import { encodePath, projectsDir, readRecords, renderUsage, usageReport, type Places } from "./usage.ts";
 
 // reason: the CLI cases spawn canon, which spawns git; under load a spawn can take seconds (C-111)
 setDefaultTimeout(30_000);
@@ -107,6 +107,27 @@ describe("canon usage counts", () => {
     expect([readFileSync(file, "utf8"), statSync(file).mtimeMs]).toEqual(before);
     expect(readdirSync(dirname(file))).toEqual(["s.jsonl"]);
     expect(run({ CLAUDE_CONFIG_DIR: mkdtempSync(join(tmpdir(), "canon-usage-none-")) }).exitCode).toBe(3);
+  });
+});
+
+describe("canon usage while records are removed", () => {
+  test("BR-2265: a file or a directory deleted after it was listed is skipped, not a crash (issue #94)", () => {
+    const use = (n: string) => toolUse(daysAgo(1), "Skill", { skill: n });
+    const projects = records({ "-w-p/s1.jsonl": [use("a")], "-w-p/s2.jsonl": [use("b")], "-w-p-worktrees-C-1/s3.jsonl": [use("c")] });
+    // reason: the first read deletes the other session file (already listed) and the worktree directory (listed, not yet read)
+    let first = true;
+    const read = (file: string) => {
+      if (first) {
+        first = false;
+        rmSync(join(projects, "-w-p", file.endsWith("s1.jsonl") ? "s2.jsonl" : "s1.jsonl"));
+        rmSync(join(projects, "-w-p-worktrees-C-1"), { recursive: true });
+      }
+      return readRecords(file);
+    };
+    const r = usageReport(projects, AT, 30, NOW, read);
+    if (!r.ok) throw new Error(r.error.message);
+    expect([r.value.files, r.value.uses.length, r.value.dirs.length]).toEqual([1, 1, 2]);
+    expect(readRecords(join(projects, "nothing.jsonl"))).toBeUndefined();
   });
 });
 
