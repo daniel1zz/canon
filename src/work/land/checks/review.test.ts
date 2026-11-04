@@ -42,6 +42,20 @@ describe("rule review at land", () => {
     expect(sh(root, "rev-parse", "main")).toBe(before);
   });
 
+  test("BR-2253: the review.block event records the commit the reviewer saw", async () => {
+    const { root } = reviewedProject("block");
+    const s = startNew(root, "New rule");
+    const id = ["BR", 1].join("-");
+    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds are fine.\n`);
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "rule");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    const row = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'review.block'").get();
+    const seen = (JSON.parse(row!.detail) as { commit?: string }).commit;
+    expect(seen).toBe(sh(s.worktree, "rev-parse", "HEAD").trim());
+  });
+
   test("BR-2009: a reviewer that fails to run refuses the landing", async () => {
     const root = project();
     writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: "exit 3"\n`);

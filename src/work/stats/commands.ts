@@ -1,9 +1,8 @@
 import { defineCommand } from "citty";
 import { entry, fail, json, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
 import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "./stats.ts";
-import { pendingBlocks, pendingJson, recordVerdict, renderPending, renderRun, renderVerdictSummary, runVerdicts, verdictSummary } from "./verdict.ts";
+import { pendingBlocks, recordVerdict, renderPending, renderVerdictSummary, verdictSummary } from "./verdict.ts";
 import { dirname } from "node:path";
-import { REVIEW_NONE } from "../../knowledge/review/config-keys.ts";
 import { CoordDb } from "../db.ts";
 import { worktreesDir } from "../session/session.ts";
 import { DEFAULT_DAYS, projectsDir, renderUsage, usageReport } from "./usage.ts";
@@ -62,35 +61,18 @@ const events = defineCommand({
   },
 });
 
-/** `canon verdict`: whether each rule-review finding was real, judged blind by a model canon runs, or self-reported by a human (D-49). */
+/** `canon verdict`: whether each rule-review finding was real, recorded by hand and self-reported (D-49). */
 const verdict = defineCommand({
-  meta: { description: "Verdicts on rule-review findings: real, spurious or unclear; model verdicts are made blind by canon, human verdicts are self-reported" },
+  meta: { description: "Verdicts on rule-review findings: real, spurious or unclear; recorded by hand and self-reported" },
   subCommands: {
     pending: defineCommand({
-      meta: { description: "Review blocks of landed changes with a finding missing a model or human verdict, each finding's verdicts and the commit blocked" },
+      meta: { description: "Review blocks of landed changes with a finding that has no verdict yet, each finding's verdicts and the commit the review saw" },
       args: { json: { type: "boolean" } },
       run({ args }) {
         const ws = workspace();
-        const blocks = pendingBlocks(ws.db, ws.root);
-        if (args.json) return json(pendingJson(blocks));
+        const blocks = pendingBlocks(ws.db);
+        if (args.json) return json(blocks);
         say(renderPending(blocks));
-      },
-    }),
-    run: defineCommand({
-      meta: { description: "Judge up to --limit blocks with the project's review command, run on the blocked commit's tree alone; --dry-run shows what would be judged and the prompt sizes" },
-      args: {
-        limit: { type: "string", description: "How many blocks to judge (one judge command run each)" },
-        "dry-run": { type: "boolean", description: "Run nothing and write nothing: list the blocks and their prompt sizes" },
-      },
-      async run({ args }) {
-        const raw = args.limit === undefined ? "" : String(args.limit);
-        if (!/^[1-9]\d*$/.test(raw)) fail({ code: "invalid", message: `--limit must be how many blocks to judge (a whole number, 1 or more), got ${JSON.stringify(args.limit)}` });
-        const ws = workspace();
-        const command = ws.config.review;
-        if (!command || command === REVIEW_NONE) fail({ code: "io", message: "no judge command: canon verdict run uses the project's review command (canon/config.yaml `review`), and none is configured (or it is `none`)" });
-        const r = await runVerdicts(ws.db, ws.root, ws.actor, command, Number(raw), args["dry-run"] === true);
-        say(renderRun(r));
-        if (r.failure) fail({ code: "io", message: r.failure });
       },
     }),
     record: defineCommand({
@@ -104,7 +86,7 @@ const verdict = defineCommand({
       run({ args }) {
         const ws = workspace();
         const v = String(args.verdict);
-        const r = must(recordVerdict(ws.db, ws.root, ws.actor, String(args.block), String(args.finding), v, typeof args.reason === "string" ? args.reason : ""));
+        const r = must(recordVerdict(ws.db, ws.actor, String(args.block), String(args.finding), v, typeof args.reason === "string" ? args.reason : ""));
         say(`recorded a human verdict on finding ${String(args.finding)} of block ${String(args.block)} (${r.subject}): ${v}`);
       },
     }),

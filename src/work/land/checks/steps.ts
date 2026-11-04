@@ -154,7 +154,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       if (!at.ok) return refuse("environment", at.error.message);
       const v = await runReview(reviewer, at.value, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording }), limits);
       if (!v.ok) return refuse("review", `the rule review could not run: ${v.error.message}`);
-      ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings, ...(execution.wording.length > 0 ? { wording: v.value.wording ?? {} } : {}) });
+      ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings, commit: head.value, ...(execution.wording.length > 0 ? { wording: v.value.wording ?? {} } : {}) });
       if (v.value.verdict === "block") return refuse("review", `rule review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
       const unconfirmed = unconfirmedWording(execution.wording, v.value.wording);
       if (unconfirmed.length > 0) return refuse("review", wordingMessage(unconfirmed, v.value.wording, true));
@@ -174,7 +174,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       if (!at.ok) return refuse("environment", at.error.message);
       const v = await runReview(reviewer, at.value, duplicatePrompt(standing, standingText(wt, onMain.instructions), opts.guide), limits);
       if (!v.ok) return refuse("review", `the duplicate review could not run: ${v.error.message}`);
-      ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: standing, findings: v.value.findings });
+      ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: standing, findings: v.value.findings, commit: head.value });
       if (v.value.verdict === "block") return refuse("review", `duplicate review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
       for (const f of v.value.findings) say(`review note: ${f}`);
     }
