@@ -341,7 +341,7 @@ function spawnWatcher(ws: Workspace, command: string[]): Result<string> {
     const fd = openSync(log, "a");
     try {
       // reason: its own process group, so a signal to the command that started it (a tool timeout, Ctrl-C) does not stop it (BR-2219).
-      const p = Bun.spawn(command, { cwd: ws.primary, stdout: fd, stderr: fd, stdin: "ignore", detached: true });
+      const p = Bun.spawn(command, { cwd: ws.primary, stdout: fd, stderr: fd, stdin: "ignore", detached: true, env: { ...(process.env as Record<string, string>) } });
       p.unref();
     } finally {
       closeSync(fd);
