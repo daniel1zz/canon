@@ -256,6 +256,24 @@ describe("rule review at land", () => {
     expect(readFileSync(r.promptFile, "utf8")).toContain(id);
   });
 
+  test("BR-2143: with no reviewer on main, a change that sets one and edits CLAUDE.md is refused and its own reviewer is never called (#115)", async () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\n`);
+    writeFileSync(join(root, "CLAUDE.md"), "# Project\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "claude");
+    const r = reviewer(root);
+    const s = startNew(root, "Reviewer and CLAUDE.md");
+    writeFileSync(join(s.worktree, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n`);
+    writeFileSync(join(s.worktree, "CLAUDE.md"), "# Project\n\nnew\n");
+    sh(s.worktree, "commit", "-qam", "edit");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(out.kind === "refused" && out.message).toContain("CLAUDE.md");
+    expect(out.kind === "refused" && out.message).toContain("first, by itself");
+    expect(existsSync(r.promptFile)).toBe(false);
+  });
+
   test("BR-2143: a change that edits CLAUDE.md and drops it from instructions is still reviewed by main's list (#115)", async () => {
     const root = billingProject(`floor: "true"\ntests: []\n`);
     const strict = reviewer(root, `cat > /dev/null\necho '{"verdict":"block","findings":["stated twice"]}'`, "strict");
