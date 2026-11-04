@@ -28,7 +28,7 @@ const ruleText = (title: string) => `---\nid: ${rule}\ntitle: ${title}\nstatus: 
  * a.ts ← b.ts; b.test.ts imports a directly, c.test.ts through b, d.test.ts nothing, e.test.ts names the rule, f.test.ts
  * names it only in a skipped test.
  */
-function fixture(testCommand = "sh run.sh {file}") {
+function fixture(testCommand = "sh run.sh {file}", extra: Record<string, string> = {}) {
   const root = project();
   write(root, {
     "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "${testCommand}"\n`,
@@ -45,6 +45,7 @@ function fixture(testCommand = "sh run.sh {file}") {
     // reason: canon work test ends with canon check (BR-2227), so the rule the tests name must exist
     "canon/rules/core/README.md": "---\ncode: [src]\n---\n# core\n\n## 术语\n\n- **x**：y\n",
     [`canon/rules/core/${rule}.md`]: ruleText("x"),
+    ...extra,
   });
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "fixture");
@@ -121,6 +122,79 @@ describe("canon work test selection", () => {
     const r = canon(wt, "work", "test");
     expect(r.out).toMatch(/src\/c\.test\.ts\s+imports src\/a\.ts \(through src\/b\.ts\)/);
     expect(r.out.indexOf("imports src/a.ts")).toBeLessThan(r.out.indexOf("pass "));
+  });
+});
+
+/**
+ * The fixture plus a CLI: src/cli/main.ts imports the command table src/cli/tree.ts, which imports two command modules.
+ * src/a/commands.ts registers `work one` and imports src/a/a.ts; src/b/commands.ts registers `two`. Tests that spawn
+ * it: src/a/a.test.ts names `work one`, src/a/spaced.test.ts names it in one literal, src/b/b.test.ts names `two`,
+ * src/c/c.test.ts names no command. src/d/d.test.ts has a "two" literal but never builds the CLI's path.
+ */
+function cliFixture() {
+  const spawn = (dir: string, words: string) => `const MAIN = join(import.meta.dir, "..", "cli", "main.ts");\nBun.spawnSync(["bun", MAIN, ${words}]);\n`;
+  return fixture("sh run.sh {file}", {
+    "src/cli/main.ts": 'import "./tree.ts";\nimport "./strict.ts";\n',
+    "src/cli/strict.ts": "export const strict = 1;\n",
+    "src/cli/tree.ts": 'import "../a/commands.ts";\nimport "../b/commands.ts";\n',
+    "src/a/commands.ts": 'import "./a.ts";\nexport const aCommands = { commands: [entry("one", 10, one, "work")] };\n',
+    "src/a/a.ts": "export const one = 1;\n",
+    "src/b/commands.ts": '// entry("one", 1, x, "work") in a comment registers nothing\nexport const bCommands = { commands: [entry("two", 20, two)] };\n',
+    "src/a/a.test.ts": spawn("a", '"work", "one", "--json"'),
+    "src/a/spaced.test.ts": spawn("a", '..."work one --json".split(" ")'),
+    "src/b/b.test.ts": spawn("b", '"two"'),
+    "src/c/c.test.ts": spawn("c", '...process.argv'),
+    "src/d/d.test.ts": 'const args = ["two"];\n',
+  });
+}
+
+describe("canon work test selection: tests that spawn the CLI", () => {
+  test("BR-2157: a changed command module selects the tests that name its command, with the command in the reason", () => {
+    const { wt } = cliFixture();
+    write(wt, { "src/a/commands.ts": 'import "./a.ts";\nexport const aCommands = { commands: [entry("one", 10, one, "work")] }; // changed\n' });
+    expect(reasons(wt)).toEqual({
+      "src/a/a.test.ts": "drives canon work one (src/a/commands.ts changed)",
+      "src/a/spaced.test.ts": "drives canon work one (src/a/commands.ts changed)",
+    });
+  });
+
+  test("BR-2157: a file a command module imports selects the tests that name the command, and the chain is shown", () => {
+    const { wt } = cliFixture();
+    write(wt, { "src/a/a.ts": "export const one = 2;\n" });
+    expect(reasons(wt)).toEqual({
+      "src/a/a.test.ts": "drives canon work one (src/a/a.ts changed, through src/a/commands.ts)",
+      "src/a/spaced.test.ts": "drives canon work one (src/a/a.ts changed, through src/a/commands.ts)",
+    });
+  });
+
+  test("BR-2157: a change to another command's module selects neither the tests of this command nor tests naming no command", () => {
+    const { wt } = cliFixture();
+    write(wt, { "src/b/commands.ts": "export const bCommands = { commands: [entry(\"two\", 20, two)] }; // changed\n" });
+    expect(reasons(wt)).toEqual({ "src/b/b.test.ts": "drives canon two (src/b/commands.ts changed)" });
+  });
+
+  test("BR-2157: a change to the command table or to what the CLI's entry file imports selects every test that spawns the CLI", () => {
+    const { wt } = cliFixture();
+    write(wt, { "src/cli/strict.ts": "export const strict = 2;\n" });
+    const through = "runs the CLI (src/cli/strict.ts changed, through src/cli/main.ts)";
+    expect(reasons(wt)).toEqual({ "src/a/a.test.ts": through, "src/a/spaced.test.ts": through, "src/b/b.test.ts": through, "src/c/c.test.ts": through });
+    write(wt, { "src/cli/strict.ts": "export const strict = 1;\n", "src/cli/tree.ts": 'import "../a/commands.ts";\nimport "../b/commands.ts";\n// changed\n' });
+    const table = "runs the CLI (src/cli/tree.ts changed, through src/cli/main.ts)";
+    expect(reasons(wt)).toEqual({ "src/a/a.test.ts": table, "src/a/spaced.test.ts": table, "src/b/b.test.ts": table, "src/c/c.test.ts": table });
+  });
+
+  test("BR-2157: a test that names a command without spawning the CLI is not selected by that command's change", () => {
+    const { wt } = cliFixture();
+    write(wt, { "src/b/commands.ts": "export const bCommands = { commands: [entry(\"two\", 20, two)] }; // changed\n" });
+    expect(reasons(wt)["src/d/d.test.ts"]).toBeUndefined();
+  });
+
+  test("BR-2157: the CLI lists a spawning test with the command it drives", () => {
+    const { wt } = cliFixture();
+    write(wt, { "src/b/commands.ts": "export const bCommands = { commands: [entry(\"two\", 20, two)] }; // changed\n" });
+    const r = canon(wt, "work", "test");
+    expect(r.out).toMatch(/src\/b\/b\.test\.ts\s+drives canon two \(src\/b\/commands\.ts changed\)/);
+    expect(runs(wt)).toEqual(["src/b/b.test.ts"]);
   });
 });
 

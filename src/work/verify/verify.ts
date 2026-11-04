@@ -16,6 +16,7 @@ import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
 import { groupAlive, stopGroups } from "./stop-groups.ts";
 import { availableParallelism } from "node:os";
+import { commandsRegisteredIn, namesCommand, pathsBuiltFromDir, type CliDrive, type RegisteredCommand } from "./cli-tests.ts";
 import { jobCap, readCpu, startPool, type CpuSample, type CpuState, type FileResult, type Outcome } from "./pool.ts";
 import type { Workspace } from "../workspace.ts";
 
@@ -28,7 +29,7 @@ const JS_TS = /\.[cm]?[jt]sx?$/;
 
 export interface Selected {
   readonly file: string;
-  /** Why it runs: "changed", "imports …", "names BR-n", "always", or "--all". */
+  /** Why it runs: "changed", "imports …", "drives canon …", "runs the CLI …", "names BR-n", "always", or "--all". */
   readonly reasons: readonly string[];
 }
 
@@ -88,7 +89,8 @@ function changesOf(ws: Workspace): Result<{ base: string; changed: string[]; rul
 
 /**
  * The test files to run and why (BR-2157): changed test files; test files whose relative imports reach a changed
- * file, directly or through other source files (the import reading of `canon context`, BR-2119); test files whose
+ * file, directly or through other source files (the import reading of `canon context`, BR-2119); test files that
+ * spawn the CLI and name a command whose module, or a file that module imports, changed (D-60); test files whose
  * running titles name a touched rule. With `all`, every test file (BR-2159).
  */
 export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
@@ -116,6 +118,66 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
     return v;
   };
 
+  // The CLI a test spawns, found from the test's own text and the command table (D-60, BR-2157).
+  const tables = new Map<string, RegisteredCommand[]>();
+  const tableOf = (entry: string): RegisteredCommand[] => {
+    let t = tables.get(entry);
+    if (!t) {
+      t = [];
+      const seen = new Set([entry]);
+      const queue = [entry];
+      while (queue.length) {
+        const cur = queue.shift()!;
+        if (JS_TS.test(cur) && isFile(join(ws.root, cur))) t.push(...commandsRegisteredIn(cur, readFileSync(join(ws.root, cur), "utf8")));
+        for (const next of importsFrom(cur)) {
+          if (seen.has(next)) continue;
+          seen.add(next);
+          queue.push(next);
+        }
+      }
+      tables.set(entry, t);
+    }
+    return t;
+  };
+  const cliOf = (file: string, text: string): CliDrive | null => {
+    for (const entry of pathsBuiltFromDir(file, text)) {
+      if (!JS_TS.test(entry) || !isFile(join(ws.root, entry))) continue;
+      const table = tableOf(entry);
+      if (table.length) return { entry, driven: table.filter((c) => namesCommand(text, c.words)) };
+    }
+    return null;
+  };
+  /** The changed files a spawned CLI runs: from its entry file, and from the module of each command the test names. */
+  const cliReasons = (cli: CliDrive): string[] => {
+    const modules = new Set(tableOf(cli.entry).map((c) => c.module));
+    const seeds = new Map<string, string>([[cli.entry, "runs the CLI"]]);
+    for (const m of new Set(cli.driven.map((c) => c.module))) {
+      seeds.set(m, `drives ${cli.driven.filter((c) => c.module === m).map((c) => `canon ${c.words.join(" ")}`).join(", ")}`);
+    }
+    const out: string[] = [];
+    for (const [start, label] of seeds) {
+      const via = new Map<string, string | null>([[start, null]]);
+      const queue = [start];
+      const reached: string[] = changedSet.has(start) ? [start] : [];
+      while (queue.length) {
+        const cur = queue.shift()!;
+        for (const next of importsFrom(cur)) {
+          // reason: only the command table (a file that registers no command) imports every command module; following it would select each CLI test for each command's change. Commands import each other for helpers, and that is followed (D-60)
+          if (via.has(next) || (modules.has(next) && !modules.has(cur))) continue;
+          via.set(next, cur);
+          if (changedSet.has(next)) reached.push(next);
+          queue.push(next);
+        }
+      }
+      for (const target of reached) {
+        const chain: string[] = [];
+        for (let p = via.get(target) ?? null; p; p = via.get(p) ?? null) chain.unshift(p);
+        out.push(`${label} (${target} changed${chain.length ? `, through ${chain.join(" → ")}` : ""})`);
+      }
+    }
+    return out;
+  };
+
   const selected: Selected[] = [];
   for (const file of tests) {
     const reasons: string[] = [];
@@ -138,6 +200,11 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
       const chain: string[] = [];
       for (let p = via.get(target) ?? null; p && p !== file; p = via.get(p) ?? null) chain.unshift(p);
       reasons.push(`imports ${target}${chain.length ? ` (through ${chain.join(" → ")})` : ""}`);
+    }
+
+    if (JS_TS.test(file)) {
+      const cli = cliOf(file, readFileSync(join(ws.root, file), "utf8"));
+      if (cli) reasons.push(...cliReasons(cli));
     }
 
     if (ruleSet.size) {
@@ -239,7 +306,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   if (all) say(`canon work test --all: every test file, ${selected.length} (${against})`);
   else {
     say(`canon work test: ${selected.length} test file(s) related to this change (${against}; ${changed.length} changed file(s)${rules.length ? `; rules ${rules.join(", ")}` : ""})`);
-    say("Selected: changed test files, test files whose relative imports reach a changed file, test files whose titles name a touched rule, test files always_tests names.");
+    say("Selected: changed test files, test files whose relative imports reach a changed file, test files that spawn the CLI and drive a command whose code changed, test files whose titles name a touched rule, test files always_tests names.");
     const width = Math.max(0, ...selected.map((s) => s.file.length));
     for (const s of selected) say(`  ${s.file.padEnd(width)}  ${s.reasons.join("; ")}`);
     say("Not selected: tests that only read changed files at run time; canon work test --all runs every test file.");
