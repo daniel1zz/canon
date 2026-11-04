@@ -19,7 +19,7 @@ import type { DocType } from "./types.ts";
 /** Built-in kinds; a document of a type declared in config (D-2 §2) has kind "extra" and names its type. */
 export type Kind = "rule" | "decision" | "change" | "note" | "extra";
 
-/** `planned`: designed, not yet executed; needs no test and blocks no landing (BR-2235, D-32). */
+/** `planned`: designed, not yet executed; needs no test, so a missing test blocks no landing (BR-2235, D-32). */
 export type RuleStatus = "active" | "retired" | "planned";
 export type DecisionStatus = "proposed" | "accepted" | "superseded";
 export type ChangeStatus = "open" | "done" | "dropped";
