@@ -134,7 +134,7 @@ describe("the claim during a landing", () => {
     expect(readFileSync(tried, "utf8")).toContain("index.lock");
   });
 
-  test("BR-2258: while another git command holds the worktree's index lock, reopen leaves the branch, the index and the files as they are and says why", () => {
+  test("BR-2258 BR-2018: while another git command holds the worktree's index lock, reopen leaves the branch, the index and the files as they are and says why", () => {
     const root = project();
     const s = startNew(root, "Reopen locked");
     const path = sh(s.worktree, "diff", "--name-only", "main", "HEAD");
