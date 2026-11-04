@@ -1,5 +1,6 @@
 import { defineCommand } from "citty";
 import { MODELINE } from "../../config/reference/reference.ts";
+import { DEFAULT_REVIEW, REVIEW_NONE } from "../../knowledge/review/config-keys.ts";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { entry, EXIT, fail, must, say, workspace, type DomainCommands } from "../command.ts";
@@ -22,7 +23,7 @@ const init = defineCommand({
     reportInstall(must(installAssets(root, must(skillsSource()), false, branch)));
     const files: Record<string, string> = {
       "canon/product.md": "---\ntitle: 产品\n---\n# 产品\n\n## 目的\n\n## 使用者\n\n## 承诺\n\n## 不做的事\n",
-      "canon/config.yaml": `${MODELINE}\nmain: ${JSON.stringify(branch ?? "main")}\nfloor: ${JSON.stringify(args.floor ?? "")}\n`,
+      "canon/config.yaml": `${MODELINE}\nmain: ${JSON.stringify(branch ?? "main")}\nfloor: ${JSON.stringify(args.floor ?? "")}\n${REVIEW_COMMENT}\nreview: ${JSON.stringify(DEFAULT_REVIEW)}\n`,
     };
     for (const [p, text] of Object.entries(files)) {
       const full = join(root, p);
@@ -37,6 +38,10 @@ const init = defineCommand({
     if (!args.floor) say("set `floor` in canon/config.yaml before landing anything");
   },
 });
+
+/** The line above the reviewer init writes: what it reviews and how to turn it off on purpose (BR-2032, BR-2074). */
+// reason: canon/ documents are written in Chinese, like the product.md init writes (CLAUDE.md)
+const REVIEW_COMMENT = `# 合入时评审规则、决策和常驻说明的改动（从标准输入读提示，在标准输出给出结论 JSON）；没有配置时这样的合入被拒，有意不评审时写 review: ${REVIEW_NONE}`;
 
 /** The branch HEAD is on, also in a repository with no commits yet; a detached HEAD refuses with exit 4 (BR-2032). */
 function currentBranch(root: string): string {

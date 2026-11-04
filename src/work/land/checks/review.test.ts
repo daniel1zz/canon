@@ -4,6 +4,8 @@ import { join } from "node:path";
 import { land } from "../land.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
+const CLI = join(import.meta.dir, "../../../cli/main.ts");
+
 describe("rule review at land", () => {
   function reviewedProject(verdict: "ok" | "block") {
     const root = project();
@@ -59,23 +61,71 @@ describe("rule review at land", () => {
     expect(out.kind === "refused" && out.message).toContain("could not run");
   });
 
-  test("BR-2074: changed rule text without a configured reviewer lands with a notice and a review.skip event", async () => {
+  /** A project with the billing domain on main and canon/config.yaml set to `config` (no review key when it has none). */
+  function billingProject(config: string) {
     const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), config);
     mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
     writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
     mkdirSync(join(root, "src/billing"), { recursive: true });
     writeFileSync(join(root, "src/billing/.keep"), ""); // the domain's code path exists (BR-2079)
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "domain");
+    return root;
+  }
+  const skips = (root: string) => ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'review.skip'").get()?.n;
+  const id = ["BR", 1].join("-");
+  const addRule = (wt: string) => {
+    writeFileSync(join(wt, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds are fine.\n`);
+    sh(wt, "add", "-A");
+    sh(wt, "commit", "-qm", "rule");
+  };
+
+  test("BR-2074: changed rule text with no review key is refused with exit 1, reason review, naming the rule and both ways out", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    const before = sh(root, "rev-parse", "main");
     const s = startNew(root, "New rule");
-    const id = ["BR", 1].join("-");
-    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds are fine.\n`);
-    sh(s.worktree, "add", "-A");
-    sh(s.worktree, "commit", "-qm", "rule");
+    addRule(s.worktree);
+    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
+    expect(code).toBe(1);
+    const said = `${out}${err}`;
+    expect(said).toContain("land refused (review)");
+    expect(said).toContain(id);
+    expect(said).toContain("review: none");
+    expect(said).toContain('review: "claude -p --output-format text"');
+    expect(skips(root)).toBe(0);
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+  }, 30_000);
+
+  test("BR-2074: a deleted decision with review set empty is refused too; with no review key, code and change files alone land without a review", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\nreview: ""\n`);
+    const d = ["D", 1].join("-");
+    mkdirSync(join(root, "canon/decisions"), { recursive: true });
+    writeFileSync(join(root, `canon/decisions/${d}.md`), `---\nid: ${d}\ntitle: Old\nstatus: proposed\n---\n\n## 背景\n\nx\n`);
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "decision");
+    const s = startNew(root, "Drop decision");
+    sh(s.worktree, "rm", "-q", `canon/decisions/${d}.md`);
+    sh(s.worktree, "commit", "-qm", "drop");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(out.kind === "refused" && out.message).toContain(`${d} (deleted)`);
+    const code = startNew(billingProject(`floor: "true"\ntests: []\n`), "Code only");
+    writeFileSync(join(code.worktree, "src/billing/a.ts"), "export const a = 1;\n");
+    sh(code.worktree, "add", "-A");
+    sh(code.worktree, "commit", "-qm", "code");
+    expect((await land(ws(code.worktree), FAST, quiet)).kind).toBe("landed");
+  });
+
+  test("BR-2074: with review: none changed rule text lands with a review: none line and a review.skip event", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\nreview: none\n`);
+    const s = startNew(root, "New rule");
+    addRule(s.worktree);
     const lines: string[] = [];
     expect((await land(ws(s.worktree), FAST, (l) => lines.push(l))).kind).toBe("landed");
-    expect(lines.join("\n")).toContain("review: not configured");
-    expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'review.skip'").get()?.n).toBe(1);
+    expect(lines.join("\n")).toContain(`review: none — ${id}`);
+    expect(skips(root)).toBe(1);
   });
 
   test("BR-2009: changing only a domain README is reviewed, and a block refuses it", async () => {
@@ -223,18 +273,30 @@ describe("duplicate review of standing instructions at land", () => {
     expect(readFileSync(promptFile, "utf8")).toContain("# docs/agent.md (instruction file, loaded whole)");
   });
 
-  test("BR-2143: an edited CLAUDE.md without a configured reviewer lands with a notice and a review.skip event", async () => {
-    const root = project();
-    writeFileSync(join(root, "CLAUDE.md"), "# Project\n");
-    sh(root, "add", "-A");
-    sh(root, "commit", "-qm", "claude");
-    const s = startNew(root, "Edit CLAUDE.md");
-    writeFileSync(join(s.worktree, "CLAUDE.md"), "# Project\n\nnew\n");
-    sh(s.worktree, "commit", "-qam", "edit");
-    const lines: string[] = [];
-    expect((await land(ws(s.worktree), FAST, (l) => lines.push(l))).kind).toBe("landed");
-    expect(lines.join("\n")).toContain("review: not configured — CLAUDE.md");
-    expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'review.skip'").get()?.n).toBe(1);
+  test("BR-2143: an edited CLAUDE.md with no review key is refused with reason review; with review: none it lands with a review.skip event", async () => {
+    for (const review of ["", "review: none\n"]) {
+      const root = project();
+      writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\n${review}`);
+      writeFileSync(join(root, "CLAUDE.md"), "# Project\n");
+      sh(root, "add", "-A");
+      sh(root, "commit", "-qm", "claude");
+      const s = startNew(root, "Edit CLAUDE.md");
+      writeFileSync(join(s.worktree, "CLAUDE.md"), "# Project\n\nnew\n");
+      sh(s.worktree, "commit", "-qam", "edit");
+      const lines: string[] = [];
+      const out = await land(ws(s.worktree), FAST, (l) => lines.push(l));
+      const skipped = ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'review.skip'").get()?.n;
+      if (review === "") {
+        expect(out.kind === "refused" && out.reason).toBe("review");
+        expect(out.kind === "refused" && out.message).toContain("CLAUDE.md");
+        expect(out.kind === "refused" && out.message).toContain("review: none");
+        expect(skipped).toBe(0);
+      } else {
+        expect(out.kind).toBe("landed");
+        expect(lines.join("\n")).toContain("review: none — CLAUDE.md");
+        expect(skipped).toBe(1);
+      }
+    }
   });
 
   test("BR-2143: a duplicate reviewer that fails to run refuses the landing", async () => {

@@ -26,7 +26,7 @@ const testFile = (ns: number[], extra = "") => `${ns.map((n) => `it("${br(n)}: c
 function fixture(o: { files?: Record<string, string>; review?: string; timing?: string } = {}): string {
   const root = project();
   const files: Record<string, string> = {
-    "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\n${o.timing ? `floor_timing: ${o.timing}\n` : ""}${o.review ? `review: ${JSON.stringify(o.review)}\n` : ""}`,
+    "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\n${o.timing ? `floor_timing: ${o.timing}\n` : ""}review: ${JSON.stringify(o.review ?? "none")}\n`,
     "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n",
     [`canon/rules/billing/${br(1)}.md`]: ruleText(1),
     [`canon/rules/billing/${br(2)}.md`]: ruleText(2),
@@ -295,7 +295,7 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     const review = answer(root);
     if (review !== undefined) {
       writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: ["src/**/*.test.ts"]\nreview: ${JSON.stringify(review)}\n`);
-      sh(root, "commit", "-qam", "review");
+      sh(root, "commit", "-q", "--allow-empty", "-am", "review"); // the fixture may already hold this value
     }
     await migrated(root);
     const s = startNew(root, "Reword");
@@ -328,13 +328,16 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     }
   }, TIMED * 2);
 
-  test("BR-2239 BR-2074: with no review command the wording record is refused with reason review", async () => {
-    const { s } = await wordingProject(() => undefined);
-    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
-    const out = await land(ws(s.worktree), FINISH, quiet);
-    expect(out.kind === "refused" && out.reason).toBe("review");
-    expect(out.kind === "refused" && out.message).toContain("no review command");
-  }, TIMED);
+  test("BR-2239 BR-2074: with no review command, review unset or review: none, the wording record is refused with reason review", async () => {
+    // "" is unset (BR-2074); "none" is the explicit opt-out, which still leaves nobody to judge the wording
+    for (const review of ["", "none"]) {
+      const { s } = await wordingProject(() => review);
+      write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+      const out = await land(ws(s.worktree), FINISH, quiet);
+      expect(out.kind === "refused" && out.reason).toBe("review");
+      expect(out.kind === "refused" && out.message).toContain("no review command");
+    }
+  }, TIMED * 2);
 
   test("BR-2239 BR-2010: the review runs for the wording record even when this landing changes no rule file", async () => {
     const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`));

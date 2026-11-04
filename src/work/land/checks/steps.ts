@@ -10,6 +10,7 @@ import { findDoc } from "../../../knowledge/query/query.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
 import { git } from "../../../kernel/git.ts";
 import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, type DeletedDoc } from "../../../knowledge/review/review.ts";
+import { DEFAULT_REVIEW, REVIEW_NONE } from "../../../knowledge/review/config-keys.ts";
 import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
 import type { LandOptions, LandOutcome } from "../outcome.ts";
 import { checksAddedAndReviewed, checksAddedAndReviewedMessage, keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
@@ -94,15 +95,18 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   });
   const reviewed = [...changedDocs.map((d) => d.id), ...deleted.map((d) => `${d.id} (deleted)`), ...readmes.map((n) => `${n} README`), ...deletedReadmes.map((r) => `${r.path} (deleted)`)];
   let reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined;
+  // reason: `review: none` turns the reviews off on purpose; unset refuses, so they are never skipped silently (BR-2074, D-51)
+  const reviewer = ws.config.review === REVIEW_NONE ? undefined : ws.config.review;
   // reason: a wording-only record needs the review's judgement even when no rule file changed in this landing (BR-2239)
-  if (execution.wording.length > 0 && !ws.config.review) return refuse("review", wordingMessage(execution.wording.map((q) => q.id), undefined, false));
+  if (execution.wording.length > 0 && !reviewer) return refuse("review", wordingMessage(execution.wording.map((q) => q.id), undefined, false));
+  if (reviewed.length > 0 && !ws.config.review) return refuse("review", unconfiguredMessage(reviewed, "rule and decision changes"));
   if (reviewed.length > 0 || execution.wording.length > 0) {
-    if (!ws.config.review) {
-      say(`review: not configured — ${reviewed.join(", ")} land without a rule review`);
+    if (!reviewer) {
+      say(`review: ${REVIEW_NONE} — ${reviewed.join(", ")} land without a rule review`);
       ws.db.event(ws.actor, "review.skip", subject, { docs: reviewed });
     } else {
       say(`review: ${[...reviewed, ...execution.wording.map((q) => `${q.id} (wording judgement)`)].join(", ")}`);
-      const v = await runReview(ws.config.review, wt, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording }));
+      const v = await runReview(reviewer, wt, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording }));
       if (!v.ok) return refuse("review", `the rule review could not run: ${v.error.message}`);
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings, ...(execution.wording.length > 0 ? { wording: v.value.wording ?? {} } : {}) });
       if (v.value.verdict === "block") return refuse("review", `rule review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
@@ -118,12 +122,13 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   const touched = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=d", base.value, head.value);
   const standing = (touched.ok && touched.value !== "" ? touched.value.split("\n") : []).filter((p) => ws.config.instructions.includes(p) || SKILL_FILE.test(p));
   if (standing.length > 0) {
-    if (!ws.config.review) {
-      say(`review: not configured — ${standing.join(", ")} land without a duplicate review`);
+    if (!ws.config.review) return refuse("review", unconfiguredMessage(standing, "standing instruction changes"));
+    if (!reviewer) {
+      say(`review: ${REVIEW_NONE} — ${standing.join(", ")} land without a duplicate review`);
       ws.db.event(ws.actor, "review.skip", subject, { docs: standing });
     } else {
       say(`review: standing instructions ${standing.join(", ")}`);
-      const v = await runReview(ws.config.review, wt, duplicatePrompt(standing, standingText(wt, ws.config.instructions), opts.guide));
+      const v = await runReview(reviewer, wt, duplicatePrompt(standing, standingText(wt, ws.config.instructions), opts.guide));
       if (!v.ok) return refuse("review", `the duplicate review could not run: ${v.error.message}`);
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: standing, findings: v.value.findings });
       if (v.value.verdict === "block") return refuse("review", `duplicate review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
@@ -135,6 +140,15 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env: hookEnv, port: changePort(ws, subject) }, ws.config.hooks.before_land, say, true);
   if (failed) return refuse("hook", `before_land \`${failed.command}\` exited ${failed.exit}\n${failed.output}`);
   return { ok: true, reviewNotes };
+}
+
+/** Why a landing that needs a review is refused while `review` is unset, and the two ways out (BR-2074, BR-2143, D-51). */
+function unconfiguredMessage(docs: readonly string[], what: string): string {
+  return [
+    `review: not configured — ${docs.join(", ")} need a review and canon/config.yaml sets no \`review\``,
+    `  set a reviewer, a command that reads the review prompt on stdin and prints the verdict JSON on stdout: review: "${DEFAULT_REVIEW}"`,
+    `  or land ${what} unreviewed on purpose: review: ${REVIEW_NONE}`,
+  ].join("\n");
 }
 
 /** Whether two `<rev>:<path>` objects are the same blob, i.e. the same bytes. */

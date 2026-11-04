@@ -15,14 +15,17 @@ export function sh(cwd: string, ...args: string[]) {
   return r.value;
 }
 
-/** A repo whose floor passes unless a file named FAIL exists in the tree. */
+/**
+ * A repo whose floor passes unless a file named FAIL exists in the tree. It opts out of the rule review on purpose
+ * (`review: none`): unset would refuse every landing that changes a rule (BR-2074); tests of the review set their own.
+ */
 export function project(): string {
   const root = mkdtempSync(join(tmpdir(), "canon-next-work-"));
   sh(root, "init", "-q", "-b", "main");
   sh(root, "config", "user.email", "t@t");
   sh(root, "config", "user.name", "t");
   mkdirSync(join(root, "canon"), { recursive: true });
-  writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\n");
+  writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\nreview: none\n");
   writeFileSync(join(root, "app.txt"), "one\ntwo\nthree\n");
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "init");
