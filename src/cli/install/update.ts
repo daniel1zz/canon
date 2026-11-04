@@ -4,6 +4,7 @@ import { openWorkspace, type Workspace } from "../../work/workspace.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { REVIEW_WAYS_OUT } from "../../knowledge/review/config-keys.ts";
 import { git } from "../../kernel/git.ts";
+import { ensureExcluded, excludeMissing } from "../../kernel/exclude.ts";
 import { land } from "../../work/land/land.ts";
 import { start } from "../../work/session/session.ts";
 import { type Say } from "../../work/workspace.ts";
@@ -29,9 +30,14 @@ export interface AssetsStatus {
   readonly outdated: readonly string[];
   /** Skill files edited in this project; an update refuses them without --force. */
   readonly edited: readonly string[];
-  /** Only the git guard is out of date: it is not in the tree, so an update installs it without a change. */
-  readonly guardOnly: boolean;
+  /** Only things outside the tree are out of date (the git guard, the info/exclude line): an update writes them in place, without a change. */
+  readonly localOnly: boolean;
+  readonly guard: boolean;
+  readonly exclude: boolean;
 }
+
+/** The line git's info/exclude needs so Claude Code's subagent worktrees do not dirty the checkout (BR-2305). */
+export const WORKTREES_EXCLUDE = "/.claude/worktrees/";
 
 export function assetsStatus(root: string, source: string): Result<AssetsStatus> {
   const s = skillsStatus(root, source);
@@ -49,8 +55,12 @@ export function assetsStatus(root: string, source: string): Result<AssetsStatus>
   const hook = [...brief, ...snapshot, ...record, ...h.value.retired.map((r) => withdrawn[r]), ...baseRef];
   const g = guardLine(root);
   if (!g.ok) return g;
-  const outdated = [...s.value.outdated.map((f) => `skill ${f}`), ...hook, ...g.value.line];
-  return ok({ version: s.value.version, current: outdated.length === 0, outdated, edited: s.value.edited, guardOnly: s.value.outdated.length === 0 && hook.length === 0 && g.value.line.length > 0 });
+  const x = excludeMissing(root, WORKTREES_EXCLUDE);
+  if (!x.ok) return x;
+  const exclude = x.value ? [`git exclude: ${WORKTREES_EXCLUDE} in the repository's info/exclude, so Claude Code's subagent worktrees do not dirty the checkout`] : [];
+  const outdated = [...s.value.outdated.map((f) => `skill ${f}`), ...hook, ...g.value.line, ...exclude];
+  const local = g.value.line.length > 0 || x.value;
+  return ok({ version: s.value.version, current: outdated.length === 0, outdated, edited: s.value.edited, localOnly: s.value.outdated.length === 0 && hook.length === 0 && local, guard: g.value.line.length > 0, exclude: x.value });
 }
 
 /** The update-check line for the git guard (BR-2123, BR-2124). */
@@ -94,7 +104,7 @@ function preflight(root: string, source: string, force: boolean, mainBranch?: st
  * and by `canon update` in its worktree. `mainBranch` is for `canon init` before it writes canon/config.yaml: the guard
  * then protects the branch init is about to write there, not the default (BR-2032).
  */
-export function installAssets(root: string, source: string, force: boolean, mainBranch?: string): Result<InstallReport & { hook: boolean; guard: boolean }> {
+export function installAssets(root: string, source: string, force: boolean, mainBranch?: string): Result<InstallReport & { hook: boolean; guard: boolean; exclude: boolean }> {
   const p = preflight(root, source, force, mainBranch);
   if (!p.ok) return p;
   if (p.value.skills.conflicts.length > 0) return editedSkills(p.value.skills.conflicts, "run again with --force");
@@ -102,12 +112,14 @@ export function installAssets(root: string, source: string, force: boolean, main
   const hook = writeHook(root, p.value.settings);
   const guard = ensureGuard(root, p.value.main);
   if (!guard.ok) return guard;
-  return ok({ ...skills, hook, guard: guard.value });
+  const exclude = ensureExcluded(root, WORKTREES_EXCLUDE);
+  if (!exclude.ok) return exclude;
+  return ok({ ...skills, hook, guard: guard.value, exclude: exclude.value });
 }
 
 export type UpdateOutcome =
   | { readonly kind: "current"; readonly version: string }
-  | { readonly kind: "guard"; readonly version: string }
+  | { readonly kind: "local"; readonly version: string; readonly guard: boolean; readonly exclude: boolean }
   | { readonly kind: "landed"; readonly version: string; readonly change: string; readonly sha: string }
   | { readonly kind: "refused" | "timeout"; readonly change: string; readonly message: string };
 
@@ -123,11 +135,15 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
   const st = assetsStatus(ws.root, source);
   if (!st.ok) return st;
   if (st.value.current) return ok({ kind: "current", version: st.value.version });
-  if (st.value.guardOnly) {
-    // reason: the git hook lives outside the tree, so there is nothing to land; it is installed in place (BR-2086, BR-2123)
-    const guard = ensureGuard(ws.root, ws.config.main);
-    if (!guard.ok) return guard;
-    return ok({ kind: "guard", version: st.value.version });
+  if (st.value.localOnly) {
+    // reason: the git hook and the exclude line live outside the tree, so there is nothing to land; they are written in place (BR-2086, BR-2123, BR-2305)
+    if (st.value.guard) {
+      const guard = ensureGuard(ws.root, ws.config.main);
+      if (!guard.ok) return guard;
+    }
+    const exclude = ensureExcluded(ws.root, WORKTREES_EXCLUDE);
+    if (!exclude.ok) return exclude;
+    return ok({ kind: "local", version: st.value.version, guard: st.value.guard, exclude: st.value.exclude });
   }
   // Every refusal an install can make is made here, before a change or worktree exists (BR-2086, BR-2083).
   const p = preflight(ws.root, source, force);

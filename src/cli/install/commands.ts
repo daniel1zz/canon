@@ -7,7 +7,7 @@ import { entry, EXIT, fail, must, say, workspace, type DomainCommands } from "..
 import { git } from "../../kernel/git.ts";
 import type { Workspace } from "../../work/workspace.ts";
 import { skillsSource, type InstallReport } from "./install.ts";
-import { assetsStatus, installAssets, updateNotice, updateProject } from "./update.ts";
+import { assetsStatus, installAssets, updateNotice, updateProject, WORKTREES_EXCLUDE } from "./update.ts";
 import { uninstall as uninstallProject } from "./uninstall.ts";
 
 /** `canon init`, `install`, `update`: canon's own files in a project (D-9, D-10). */
@@ -50,14 +50,15 @@ function currentBranch(root: string): string {
   return fail({ code: "io", message: "HEAD is detached: check out the branch that is to be main, then run canon init again (it becomes `main` in canon/config.yaml)" });
 }
 
-function reportInstall(r: InstallReport & { hook: boolean; guard: boolean }) {
+function reportInstall(r: InstallReport & { hook: boolean; guard: boolean; exclude: boolean }) {
   for (const f of r.written) say(`skill ${f}`);
   for (const f of r.removed) say(`removed skill file ${f}`);
   for (const f of r.kept) say(`kept skill ${f} (edited in this project; canon has no newer version)`);
   if (r.hook) say("hooks: .claude/settings.json brought up to date (canon brief at session start; entries canon withdrew removed)");
   if (r.guard) say("git hook: main moves only through canon work land (reference-transaction; not tracked, nothing to commit)");
+  if (r.exclude) say(`git exclude: ${WORKTREES_EXCLUDE} added to the repository's info/exclude (not tracked, nothing to commit)`);
   const tracked = r.written.length + r.removed.length > 0 || r.hook;
-  say(tracked ? "canon project files installed; commit them with the project" : r.guard ? "canon project files installed" : "canon project files: up to date");
+  say(tracked ? "canon project files installed; commit them with the project" : r.guard || r.exclude ? "canon project files installed" : "canon project files: up to date");
 }
 
 /** Installs canon's project files (skills, session hook) into this tree, as `canon init` does (D-9, D-10). */
@@ -90,7 +91,10 @@ const update = defineCommand({
     const ws = workspace();
     const out = must(await updateProject(ws, must(skillsSource()), Boolean(args.force), ws.config.landTimeoutMs, say));
     if (out.kind === "current") return say(`canon project files: up to date (version ${out.version})`);
-    if (out.kind === "guard") return say(`git hook installed: main moves only through canon work land; canon project files are now up to date (version ${out.version})`);
+    if (out.kind === "local") {
+      const what = [out.guard ? "git hook installed: main moves only through canon work land" : "", out.exclude ? `git exclude: ${WORKTREES_EXCLUDE} added to info/exclude` : ""].filter(Boolean).join("; ");
+      return say(`${what}; canon project files are now up to date (version ${out.version})`);
+    }
     if (out.kind === "landed") return say(`updated to ${out.version} in ${out.change}, landed ${out.sha.slice(0, 9)}`);
     console.error(`canon: the update ${out.change} did not land: ${out.message}`);
     // reason: still queued is a timeout, not a refusal: the caller runs the landing again (BR-2022)
