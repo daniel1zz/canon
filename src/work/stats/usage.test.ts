@@ -100,7 +100,7 @@ describe("canon usage counts", () => {
       Bun.spawnSync([process.execPath, MAIN, "usage", ...args], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:test", ...env } });
     const ok = run({ CLAUDE_CONFIG_DIR: config });
     expect(ok.exitCode).toBe(0);
-    expect(ok.stdout.toString()).toContain("  skill a");
+    expect(ok.stdout.toString()).toContain("  skill other   a");
     expect([readFileSync(file, "utf8"), statSync(file).mtimeMs]).toEqual(before);
     expect(readdirSync(dirname(file))).toEqual(["s.jsonl"]);
     expect(run({ CLAUDE_CONFIG_DIR: mkdtempSync(join(tmpdir(), "canon-usage-none-")) }).exitCode).toBe(3);
@@ -189,7 +189,7 @@ describe("canon usage unused", () => {
     writeFileSync(join(primary, ".claude", "agents", "helper.md"), "x");
     writeFileSync(join(primary, ".mcp.json"), JSON.stringify({ mcpServers: { "my.srv": {} } }));
     const projects = records({
-      "-w-p/s1.jsonl": [
+      [`${encodePath(primary)}/s1.jsonl`]: [
         listing(daysAgo(1), { mine: "m", global: "g" }),
         attach(daysAgo(1), { type: "agent_listing_delta", isInitial: true, addedTypes: ["helper", "Plan"], addedLines: ["- helper: h", "- Plan: p"], removedTypes: [] }),
         attach(daysAgo(1), { type: "mcp_instructions_delta", addedNames: ["my.srv", "claude.ai Vercel"], addedBlocks: ["a", "b"], removedNames: [] }),
