@@ -13,6 +13,8 @@ tests:
   - "src/**/*.test.ts"
 # canon work test 运行一个测试文件的命令，{file} 换成它的路径（D-23）
 test_command: "bun test {file}"
+# canon work test 在测试之前跑一次（BR-2226）：和 floor 的类型检查那一步相同，类型错误不用等 floor 才发现（C-163 曾因此被拒）
+typecheck_command: "bunx tsc --noEmit -p tsconfig.json"
 # 每个会话开始时都会读到的文件：改了它们，合入时评审同一条要求是否写在多处（BR-2143）；工作说明的源码也算：
 # src/cli/guide.ts 拼接，各领域目录下的 guide.ts 写自己的条目（C-133），新增一个这样的文件时加在这里
 instructions:
