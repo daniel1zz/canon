@@ -212,7 +212,7 @@ describe("ports config", () => {
 });
 
 describe("no free port", () => {
-  test("BR-2269: a start when every port is held still starts, with an empty CANON_PORT in setup and after_start and the reason said once", () => {
+  test("BR-2269, BR-2267: a start when every port is held still starts, with an empty CANON_PORT in setup and after_start and the reason said once", () => {
     const p = base();
     const root = configured(`ports: ${p}-${p + 1}\nsetup: 'echo "[$CANON_PORT]" > port.txt'\nhooks:\n  after_start: 'echo "[$CANON_PORT]" > hook.txt'\n`);
     const a = start(ws(root), { title: "A" }, quiet);
