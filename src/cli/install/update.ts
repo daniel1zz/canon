@@ -1,7 +1,8 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openWorkspace, type Workspace } from "../../work/workspace.ts";
-import { ok, type Result } from "../../kernel/result.ts";
+import { err, ok, type Result } from "../../kernel/result.ts";
+import { REVIEW_WAYS_OUT } from "../../knowledge/review/config-keys.ts";
 import { git } from "../../kernel/git.ts";
 import { land } from "../../work/land/land.ts";
 import { start } from "../../work/session/session.ts";
@@ -132,6 +133,11 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
   const p = preflight(ws.root, source, force);
   if (!p.ok) return p;
   if (p.value.skills.conflicts.length > 0) return editedSkills(p.value.skills.conflicts, "run `canon update --force`");
+  // reason: a SKILL.md is a standing instruction, so landing it needs a review; refused here, before any change or worktree exists (BR-2086, BR-2143)
+  const skillFiles = st.value.outdated.filter((o) => o.startsWith("skill ") && o.endsWith("/SKILL.md") && p.value.skills.wanted.has(o.slice("skill ".length)));
+  if (skillFiles.length > 0 && !ws.config.review) {
+    return err("refused", [`canon update would change ${skillFiles.map((o) => o.slice("skill ".length)).join(", ")}, standing instructions the landing reviews, and canon/config.yaml sets no \`review\`; land the review setting first, then run canon update again`, ...REVIEW_WAYS_OUT].join("\n"));
+  }
   const started = start(ws, { title: `更新 canon 装进项目的文件到版本 ${st.value.version}` }, say);
   if (!started.ok) return started;
   const wt = started.value.worktree;

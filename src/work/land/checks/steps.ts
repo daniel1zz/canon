@@ -11,9 +11,10 @@ import { findDoc } from "../../../knowledge/query/query.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
 import { git } from "../../../kernel/git.ts";
 import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, type DeletedDoc } from "../../../knowledge/review/review.ts";
-import { DEFAULT_REVIEW, REVIEW_NONE } from "../../../knowledge/review/config-keys.ts";
+import { readReview, REVIEW_NONE, REVIEW_WAYS_OUT } from "../../../knowledge/review/config-keys.ts";
 import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
-import type { LandOptions, LandOutcome } from "../outcome.ts";
+import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
+import { parse } from "yaml";
 import { checksAddedAndReviewed, checksAddedAndReviewedMessage, keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
 
 /** Per-kind counts and the files involved, so `canon stats` can tell which checks are precise (BR-2094, P6). */
@@ -37,7 +38,7 @@ export type Steps = { readonly ok: true; readonly reviewNotes: { reviewed: strin
  * `base` below it): canon check, decision sources, the rule and duplicate reviews, before_land (BR-2016,
  * BR-2009, BR-2111, BR-2143, BR-2057). A solo landing runs them in its worktree; a batch, per change (BR-2172).
  */
-export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: { wt: string; base: string; main: string; head: string; before: string; subject: string | null; branch: string }): Promise<Steps> {
+export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: { wt: string; base: string; main: string; head: string; before: string; subject: string | null; branch: string; running: Running }): Promise<Steps> {
   const { wt, subject } = v;
   const base = { value: v.base };
   const head = { value: v.head };
@@ -98,18 +99,30 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   });
   const reviewed = [...changedDocs.map((d) => d.id), ...deleted.map((d) => `${d.id} (deleted)`), ...readmes.map((n) => `${n} README`), ...deletedReadmes.map((r) => `${r.path} (deleted)`)];
   let reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined;
+  // reason: the tree that becomes main decides whether and how to review, not the config this worktree read before the rebase (BR-2074)
+  const cfg = landing.value;
   // reason: `review: none` turns the reviews off on purpose; unset refuses, so they are never skipped silently (BR-2074, D-51)
-  const reviewer = ws.config.review === REVIEW_NONE ? undefined : ws.config.review;
+  const reviewer = cfg.review === REVIEW_NONE ? undefined : cfg.review;
+  const limits = { timeoutMs: cfg.reviewTimeoutMs, track: (r: { kill(): void } | undefined) => (v.running.review = r) };
+  // Standing instructions added or edited by this landing are reviewed for requirements stated twice (BR-2143).
+  const touched = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=d", base.value, head.value);
+  const standing = (touched.ok && touched.value !== "" ? touched.value.split("\n") : []).filter((p) => cfg.instructions.includes(p) || SKILL_FILE.test(p));
   // reason: a wording-only record needs the review's judgement even when no rule file changed in this landing (BR-2239)
   if (execution.wording.length > 0 && !reviewer) return refuse("review", wordingMessage(execution.wording.map((q) => q.id), undefined, false));
-  if (reviewed.length > 0 && !ws.config.review) return refuse("review", unconfiguredMessage(reviewed, "rule and decision changes"));
+  const needs = [...reviewed, ...standing];
+  if (needs.length > 0) {
+    const before = reviewOn(wt, v.main);
+    // reason: the text landing together with turning the review off is exactly what nobody would review (BR-2295)
+    if ((cfg.review === undefined || cfg.review === REVIEW_NONE) && cfg.review !== before) return refuse("review", turnedOffMessage(needs, before, cfg.review));
+    if (!cfg.review) return refuse("review", unconfiguredMessage(needs));
+  }
   if (reviewed.length > 0 || execution.wording.length > 0) {
     if (!reviewer) {
       say(`review: ${REVIEW_NONE} — ${reviewed.join(", ")} land without a rule review`);
       ws.db.event(ws.actor, "review.skip", subject, { docs: reviewed });
     } else {
       say(`review: ${[...reviewed, ...execution.wording.map((q) => `${q.id} (wording judgement)`)].join(", ")}`);
-      const v = await runReview(reviewer, wt, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording }));
+      const v = await runReview(reviewer, wt, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording }), limits);
       if (!v.ok) return refuse("review", `the rule review could not run: ${v.error.message}`);
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings, ...(execution.wording.length > 0 ? { wording: v.value.wording ?? {} } : {}) });
       if (v.value.verdict === "block") return refuse("review", `rule review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
@@ -121,17 +134,13 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
       if (v.value.findings.length > 0) say("review notes do not block and are not changes of their own: canon context shows them to whoever next changes these documents, who handles them then");
     }
   }
-  // Standing instructions added or edited by this landing are reviewed for requirements stated twice (BR-2143).
-  const touched = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=d", base.value, head.value);
-  const standing = (touched.ok && touched.value !== "" ? touched.value.split("\n") : []).filter((p) => ws.config.instructions.includes(p) || SKILL_FILE.test(p));
   if (standing.length > 0) {
-    if (!ws.config.review) return refuse("review", unconfiguredMessage(standing, "standing instruction changes"));
     if (!reviewer) {
       say(`review: ${REVIEW_NONE} — ${standing.join(", ")} land without a duplicate review`);
       ws.db.event(ws.actor, "review.skip", subject, { docs: standing });
     } else {
       say(`review: standing instructions ${standing.join(", ")}`);
-      const v = await runReview(reviewer, wt, duplicatePrompt(standing, standingText(wt, ws.config.instructions), opts.guide));
+      const v = await runReview(reviewer, wt, duplicatePrompt(standing, standingText(wt, cfg.instructions), opts.guide), limits);
       if (!v.ok) return refuse("review", `the duplicate review could not run: ${v.error.message}`);
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: standing, findings: v.value.findings });
       if (v.value.verdict === "block") return refuse("review", `duplicate review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
@@ -145,13 +154,30 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   return { ok: true, reviewNotes };
 }
 
-/** Why a landing that needs a review is refused while `review` is unset, and the two ways out (BR-2074, BR-2143, D-51). */
-function unconfiguredMessage(docs: readonly string[], what: string): string {
-  return [
-    `review: not configured — ${docs.join(", ")} need a review and canon/config.yaml sets no \`review\``,
-    `  set a reviewer, a command that reads the review prompt on stdin and prints the verdict JSON on stdout: review: "${DEFAULT_REVIEW}"`,
-    `  or land ${what} unreviewed on purpose: review: ${REVIEW_NONE}`,
-  ].join("\n");
+/** Why a landing that needs a review is refused while `review` is unset (BR-2074, BR-2143). */
+function unconfiguredMessage(docs: readonly string[]): string {
+  return [`review: not configured — ${docs.join(", ")} need a review and canon/config.yaml sets no \`review\``, ...REVIEW_WAYS_OUT].join("\n");
+}
+
+/** Why a landing that turns the review off, or removes it, may not carry text the review would read (BR-2295). */
+function turnedOffMessage(docs: readonly string[], before: string | undefined, now: string | undefined): string {
+  const was = before === undefined ? "unset" : JSON.stringify(before);
+  const is = now === undefined ? "removes `review`" : `sets \`review: ${now}\``;
+  return [`review: this landing ${is} (main has ${was}) and also changes ${docs.join(", ")}, which would then land unreviewed`, ...REVIEW_WAYS_OUT].join("\n");
+}
+
+/** The `review` value canon/config.yaml has at `rev`; undefined when it has none or the file is missing or unreadable. */
+function reviewOn(wt: string, rev: string): string | undefined {
+  const text = git(wt, "show", `${rev}:canon/config.yaml`);
+  if (!text.ok) return undefined;
+  try {
+    const raw = parse(text.value) as Record<string, unknown> | null;
+    const r = readReview(raw?.["review"] ?? null);
+    return r.ok ? r.value : undefined;
+  } catch {
+    // reason: main's config that does not parse sets no reviewer; the landing tree's own config was already validated
+    return undefined;
+  }
 }
 
 /** Whether two `<rev>:<path>` objects are the same blob, i.e. the same bytes. */

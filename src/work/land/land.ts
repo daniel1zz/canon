@@ -60,6 +60,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   // reason: registered before the close commit, so a signal while it is made or before the landing queues still takes it back (BR-2018).
   const onSignal = (signal: NodeJS.Signals) => {
     running.floor?.kill();
+    running.review?.kill(); // a reviewer left running would keep spending after the landing ended (BR-2296)
     // reason: process.exit skips the batch's finally, so its temporary worktree is removed here (BR-2099, BR-2172).
     if (entry !== undefined && existsSync(batchDir(ws, entry))) removeWorktree(ws.primary, "--force", batchDir(ws, entry));
     const aborted = rebaseInProgress(wt) && git(wt, "rebase", "--abort").ok;
@@ -313,7 +314,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   }
 
   const head = tested;
-  const steps = await verifyChange(ws, opts, say, { wt, base: base.value, main: base.value, head: head.value, before: before.value, subject, branch: t.branch });
+  const steps = await verifyChange(ws, opts, say, { wt, base: base.value, main: base.value, head: head.value, before: before.value, subject, branch: t.branch, running: t.running });
   if (!steps.ok) return refuse(steps.reason, steps.message, steps.findings);
   const now = git(wt, "rev-parse", "HEAD");
   const edits = changesIn(wt);

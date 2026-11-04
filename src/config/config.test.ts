@@ -92,6 +92,21 @@ describe("config validation", () => {
     expect([some.code, some.err.includes("or `all`")]).toEqual([2, true]);
   });
 
+  test("BR-2045 BR-2074 BR-2296: a review value that is almost none is a config error naming it; exactly none and blank are valid; review_timeout_minutes must be above 0", () => {
+    for (const yaml of ["review: None\n", 'review: "none "\n', "review: NONE\n"]) {
+      const r = canon(repo({ "canon/config.yaml": yaml }), "show", ["C", 1].join("-"));
+      expect([yaml, r.code, r.err.includes("exactly `review: none`")]).toEqual([yaml, 2, true]);
+    }
+    const none = readConfig(repo({ "canon/config.yaml": "review: none\n" }));
+    expect(none.ok && none.value.review).toBe("none");
+    const blank = readConfig(repo({ "canon/config.yaml": 'review: "   "\n' }));
+    expect(blank.ok && blank.value.review).toBeUndefined();
+    const fallback = readConfig(repo());
+    expect(fallback.ok && fallback.value.reviewTimeoutMs).toBe(20 * 60_000);
+    const zero = canon(repo({ "canon/config.yaml": "review_timeout_minutes: 0\n" }), "show", ["C", 1].join("-"));
+    expect([zero.code, zero.err.includes("review_timeout_minutes")]).toEqual([2, true]);
+  });
+
   test("BR-2045: a template for a type that is not declared is a config error", () => {
     const root = repo({ "canon/config.yaml": "main: main\n", "canon/templates/spec.md": "## x\n" });
     const r = canon(root, "check");

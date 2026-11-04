@@ -146,9 +146,37 @@ function deletedDomains(corpus: Corpus, deleted: readonly DeletedDoc[]): string[
   return [...out];
 }
 
-export async function runReview(command: string, cwd: string, prompt: string): Promise<Result<ReviewVerdict>> {
-  const proc = Bun.spawn(["sh", "-c", command], { cwd, stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe" });
-  const [out, errText, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+/** How a review run is bounded: its time limit, and where a signal handler finds it to stop it (BR-2296). */
+export interface ReviewLimits {
+  readonly timeoutMs: number;
+  /** Called with the running review's stopper when it starts, and with undefined when it has ended. */
+  readonly track?: (running: { kill(): void } | undefined) => void;
+}
+
+export async function runReview(command: string, cwd: string, prompt: string, limits: ReviewLimits): Promise<Result<ReviewVerdict>> {
+  // reason: its own process group, so a timeout or a signal stops the reviewer's children too (claude under sh), not only sh (BR-2296)
+  const proc = Bun.spawn(["sh", "-c", command], { cwd, stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe", detached: true });
+  const kill = () => {
+    try {
+      process.kill(-proc.pid, "SIGKILL");
+    } catch {
+      // reason: the group is already gone; nothing is left to stop
+    }
+  };
+  limits.track?.({ kill });
+  let timedOut = false;
+  const timer = setTimeout(() => {
+    timedOut = true;
+    kill();
+  }, limits.timeoutMs);
+  let out: string, errText: string, code: number;
+  try {
+    [out, errText, code] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
+  } finally {
+    clearTimeout(timer);
+    limits.track?.(undefined);
+  }
+  if (timedOut) return err("io", `review command did not finish within ${limits.timeoutMs / 60_000} minute(s) (review_timeout_minutes) and was stopped with its children`);
   if (code !== 0) return err("io", `review command exited ${code}: ${errText.trim().slice(0, 500)}`);
   const match = out.match(/\{[\s\S]*\}/);
   if (!match) return err("invalid", `review command printed no JSON: ${out.trim().slice(0, 300)}`);

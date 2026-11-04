@@ -78,16 +78,16 @@ describe("rule review prompt", () => {
 });
 
 describe("review command", () => {
-  const answer = (out: string) => runReview(`printf '%s' '${out}'`, tmpdir(), "prompt");
+  const answer = (out: string) => runReview(`printf '%s' '${out}'`, tmpdir(), "prompt", { timeoutMs: 60_000 });
 
   test("BR-2216: the prompt goes in on stdin; the verdict JSON may be surrounded by other text; missing findings are none", async () => {
     const dir = mkdtempSync(join(tmpdir(), "canon-review-cmd-"));
     const seen = join(dir, "stdin.txt");
-    const r = await runReview(`cat > ${seen}; echo 'Here is my answer: {"verdict":"block","findings":["BR-1 is vague"]} done'`, dir, "the prompt text");
+    const r = await runReview(`cat > ${seen}; echo 'Here is my answer: {"verdict":"block","findings":["BR-1 is vague"]} done'`, dir, "the prompt text", { timeoutMs: 60_000 });
     expect(r).toEqual({ ok: true, value: { verdict: "block", findings: ["BR-1 is vague"] } });
     expect(await Bun.file(seen).text()).toBe("the prompt text");
     expect(await answer('{"verdict":"ok"}')).toEqual({ ok: true, value: { verdict: "ok", findings: [] } });
-    await runReview(`pwd > ${join(dir, "cwd.txt")}; echo '{"verdict":"ok"}'`, dir, "p");
+    await runReview(`pwd > ${join(dir, "cwd.txt")}; echo '{"verdict":"ok"}'`, dir, "p", { timeoutMs: 60_000 });
     expect(realpathSync((await Bun.file(join(dir, "cwd.txt")).text()).trim())).toBe(realpathSync(dir)); // run in the given directory
   });
 
@@ -97,7 +97,7 @@ describe("review command", () => {
       expect(r.ok).toBe(false);
       expect(!r.ok && r.error.code).toBe("invalid");
     }
-    const failed = await runReview("echo boom >&2; exit 3", tmpdir(), "p");
+    const failed = await runReview("echo boom >&2; exit 3", tmpdir(), "p", { timeoutMs: 60_000 });
     expect(failed.ok).toBe(false);
     expect(!failed.ok && failed.error.message).toBe("review command exited 3: boom");
   });

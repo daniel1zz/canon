@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../land.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
@@ -81,7 +81,33 @@ describe("rule review at land", () => {
     sh(wt, "commit", "-qm", "rule");
   };
 
-  test("BR-2074: changed rule text with no review key is refused with exit 1, reason review, naming the rule and both ways out", async () => {
+  /** An executable reviewer script that saves its prompt and answers `verdict` (or runs `body` instead); returns its path and the prompt file. */
+  function reviewer(root: string, body?: string) {
+    const script = join(root, "..", `${root.split("/").pop()}-review.sh`);
+    const promptFile = `${script}.prompt`;
+    writeFileSync(script, `#!/bin/sh\n${body ?? `cat > ${promptFile}\necho '{"verdict":"ok","findings":[]}'`}\n`);
+    chmodSync(script, 0o755);
+    return { script, promptFile };
+  }
+  /** Commits canon/config.yaml on main directly, as a landing that only changes it would. */
+  const configOnMain = (root: string, config: string) => {
+    writeFileSync(join(root, "canon/config.yaml"), config);
+    sh(root, "commit", "-qam", "config");
+  };
+  /** Whether process `pid` is gone, waiting up to 3 s for it to be reaped. */
+  async function gone(pid: number): Promise<boolean> {
+    for (let i = 0; i < 30; i++) {
+      try {
+        process.kill(pid, 0);
+      } catch {
+        return true;
+      }
+      await Bun.sleep(100);
+    }
+    return false;
+  }
+
+  test("BR-2074 BR-2022: changed rule text with no review key is refused with exit 1, reason review, naming the rule, the reviewer command first and review: none as the owner's call", async () => {
     const root = billingProject(`floor: "true"\ntests: []\n`);
     const before = sh(root, "rev-parse", "main");
     const s = startNew(root, "New rule");
@@ -93,13 +119,16 @@ describe("rule review at land", () => {
     expect(said).toContain("land refused (review)");
     expect(said).toContain(id);
     expect(said).toContain("review: none");
-    expect(said).toContain('review: "claude -p --output-format text"');
+    expect(said.indexOf('review: "claude -p --output-format text"')).toBeGreaterThan(-1);
+    expect(said.indexOf('review: "claude -p --output-format text"')).toBeLessThan(said.indexOf("review: none"));
+    expect(said).toContain("canon human ask");
     expect(skips(root)).toBe(0);
     expect(sh(root, "rev-parse", "main")).toBe(before);
   }, 30_000);
 
-  test("BR-2074: a deleted decision with review set empty is refused too; with no review key, code and change files alone land without a review", async () => {
-    const root = billingProject(`floor: "true"\ntests: []\nreview: ""\n`);
+  test("BR-2074: a deleted decision with review set empty or blank is refused too; with no review key, code and change files alone land without a review", async () => {
+    for (const blank of ['""', '"   "']) {
+    const root = billingProject(`floor: "true"\ntests: []\nreview: ${blank}\n`);
     const d = ["D", 1].join("-");
     mkdirSync(join(root, "canon/decisions"), { recursive: true });
     writeFileSync(join(root, `canon/decisions/${d}.md`), `---\nid: ${d}\ntitle: Old\nstatus: proposed\n---\n\n## 背景\n\nx\n`);
@@ -111,6 +140,7 @@ describe("rule review at land", () => {
     const out = await land(ws(s.worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("review");
     expect(out.kind === "refused" && out.message).toContain(`${d} (deleted)`);
+    }
     const code = startNew(billingProject(`floor: "true"\ntests: []\n`), "Code only");
     writeFileSync(join(code.worktree, "src/billing/a.ts"), "export const a = 1;\n");
     sh(code.worktree, "add", "-A");
@@ -127,6 +157,99 @@ describe("rule review at land", () => {
     expect(lines.join("\n")).toContain(`review: none — ${id}`);
     expect(skips(root)).toBe(1);
   });
+
+  test("BR-2074: the tree being landed decides: main turned the review on after the worktree started with none, and the rule is reviewed", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\nreview: none\n`);
+    const s = startNew(root, "New rule");
+    const r = reviewer(root);
+    configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n`);
+    addRule(s.worktree);
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    expect(readFileSync(r.promptFile, "utf8")).toContain(id);
+    expect(skips(root)).toBe(0);
+  });
+
+  test("BR-2074: main configured a reviewer after an old worktree started without the key: not refused as unconfigured, the rule is reviewed", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    const s = startNew(root, "New rule");
+    const r = reviewer(root);
+    configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n`);
+    addRule(s.worktree);
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    expect(readFileSync(r.promptFile, "utf8")).toContain(id);
+  });
+
+  test("BR-2295: turning the review off or removing it in a landing that also changes a rule or a decision is refused, reviewer command first, then the owner's call", async () => {
+    for (const next of ["review: none\n", ""]) {
+      const root = billingProject(`floor: "true"\ntests: []\n`);
+      const r = reviewer(root);
+      configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n`);
+      const before = sh(root, "rev-parse", "main");
+      const s = startNew(root, "Off and rule");
+      writeFileSync(join(s.worktree, "canon/config.yaml"), `floor: "true"\ntests: []\n${next}`);
+      addRule(s.worktree);
+      const out = await land(ws(s.worktree), FAST, quiet);
+      expect(out.kind === "refused" && out.reason).toBe("review");
+      const message = out.kind === "refused" ? out.message : "";
+      expect(message).toContain(id);
+      expect(message.indexOf("claude -p --output-format text")).toBeGreaterThan(-1);
+      expect(message.indexOf("claude -p --output-format text")).toBeLessThan(message.indexOf("canon human ask"));
+      expect(sh(root, "rev-parse", "main")).toBe(before);
+      expect(existsSync(r.promptFile)).toBe(false);
+    }
+  });
+
+  test("BR-2295: adding review: none while changing CLAUDE.md is refused; review: none alone lands; with none already on main a rule lands unreviewed", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    writeFileSync(join(root, "CLAUDE.md"), "# Project\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "claude");
+    const both = startNew(root, "Off and CLAUDE.md");
+    writeFileSync(join(both.worktree, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: none\n`);
+    writeFileSync(join(both.worktree, "CLAUDE.md"), "# Project\n\nnew\n");
+    sh(both.worktree, "commit", "-qam", "both");
+    const refused = await land(ws(both.worktree), FAST, quiet);
+    expect(refused.kind === "refused" && refused.reason).toBe("review");
+    expect(refused.kind === "refused" && refused.message).toContain("CLAUDE.md");
+    const alone = startNew(root, "Off alone");
+    writeFileSync(join(alone.worktree, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: none\n`);
+    sh(alone.worktree, "commit", "-qam", "off");
+    expect((await land(ws(alone.worktree), FAST, quiet)).kind).toBe("landed");
+    const later = startNew(root, "Rule after");
+    addRule(later.worktree);
+    expect((await land(ws(later.worktree), FAST, quiet)).kind).toBe("landed");
+    expect(skips(root)).toBe(1);
+  });
+
+  test("BR-2296: a reviewer past review_timeout_minutes is stopped with its children and the landing is refused with reason review", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    const pidFile = join(root, "..", `${root.split("/").pop()}-child.pid`);
+    const r = reviewer(root, `sleep 30 &\necho $! > ${pidFile}\nwait`);
+    configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\nreview_timeout_minutes: 0.1\n`);
+    const s = startNew(root, "New rule");
+    addRule(s.worktree);
+    const started = Date.now();
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(Date.now() - started).toBeLessThan(25_000); // the limit is 6 s; the reviewer would sleep 30 s
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(out.kind === "refused" && out.message).toContain("did not finish within");
+    expect(await gone(Number(readFileSync(pidFile, "utf8").trim()))).toBe(true);
+  }, 30_000);
+
+  test("BR-2296 BR-2099: canon work land stopped by SIGTERM while the reviewer runs exits 143 and stops the reviewer", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    const pidFile = join(root, "..", `${root.split("/").pop()}-reviewer.pid`);
+    const r = reviewer(root, `echo $$ > ${pidFile}\nexec sleep 30`);
+    configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n`);
+    const s = startNew(root, "New rule");
+    addRule(s.worktree);
+    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    for (let i = 0; i < 200 && !existsSync(pidFile); i++) await Bun.sleep(100);
+    const pid = Number(readFileSync(pidFile, "utf8").trim());
+    p.kill("SIGTERM");
+    expect(await p.exited).toBe(143);
+    expect(await gone(pid)).toBe(true);
+  }, 40_000);
 
   test("BR-2009: changing only a domain README is reviewed, and a block refuses it", async () => {
     const { root, promptFile } = reviewedProject("block");
@@ -290,6 +413,7 @@ describe("duplicate review of standing instructions at land", () => {
         expect(out.kind === "refused" && out.reason).toBe("review");
         expect(out.kind === "refused" && out.message).toContain("CLAUDE.md");
         expect(out.kind === "refused" && out.message).toContain("review: none");
+        expect(out.kind === "refused" && out.message).toContain("canon human ask");
         expect(skipped).toBe(0);
       } else {
         expect(out.kind).toBe("landed");
