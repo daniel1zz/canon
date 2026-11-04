@@ -1,6 +1,6 @@
 # 合入（work/land）
 
-`canon work land` 怎样把一个变更安全地变成 main：先排队，一次只有一个合入者；轮到后 rebase 到 main，在这棵树上跑 floor、`canon check`、规则评审和 `before_land`；全部通过、worktree 期间没变，才用比较并交换移动 main（只改了项目声明的 `floor_skip_paths` 下文件的合入不跑 floor）；之后在后台跑 `after_land`。配了 `land_batch_max` 时，轮到的合入者把紧跟在后面的几个等着的合入一起测，只跑一次 floor，不整体通过就退回各自单独合入（D-26）。合入者进程不在了或被信号终止，它的轮次立刻让出。因冲突被拒的合入在 `land_keep_place_minutes` 内重新合入时回到原来的排队位置，等它解决冲突时后面的照常合入（D-29）。
+`canon work land` 怎样把一个变更安全地变成 main：先排队，一次只有一个合入者；轮到后 rebase 到 main，在这棵树上跑 floor、`canon check`、规则评审和 `before_land`（在 canon 自己的仓库里，`canon check` 之前还要确认没有同一次合入里新增又用上的配置键，BR-2248）；全部通过、worktree 期间没变，才用比较并交换移动 main（只改了项目声明的 `floor_skip_paths` 下文件的合入不跑 floor）；之后在后台跑 `after_land`。配了 `land_batch_max` 时，轮到的合入者把紧跟在后面的几个等着的合入一起测，只跑一次 floor，不整体通过就退回各自单独合入（D-26）。合入者进程不在了或被信号终止，它的轮次立刻让出。因冲突被拒的合入在 `land_keep_place_minutes` 内重新合入时回到原来的排队位置，等它解决冲突时后面的照常合入（D-29）。
 
 不管：评审怎么判断（`knowledge/review`）、检查查什么（`knowledge/check`）。
 

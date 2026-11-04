@@ -21,6 +21,7 @@ import { hasLessons, LESSONS_SECTION } from "../../knowledge/documents/templates
 import { git, gitEnv, isClean, listWorktrees } from "../../kernel/git.ts";
 import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, type DeletedDoc } from "../../knowledge/review/review.ts";
 import { ensureWatcher, pathCanonReads, timingOf } from "../watch/watch.ts";
+import { keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
 
 /**
  * Landing (design §6): queue → rebase onto main → floor → canon check → sources → review → before_land →
@@ -40,7 +41,7 @@ export interface LandOptions {
 
 export type LandOutcome =
   | { readonly kind: "landed"; readonly sha: string; readonly change: string | null; readonly finished: boolean }
-  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "config" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "lost-turn" | "no-floor" | "no-claim" | "lessons" | "on-main" | "environment"; readonly message: string; readonly findings?: readonly Finding[] }
+  | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "config" | "config-key" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "lost-turn" | "no-floor" | "no-claim" | "lessons" | "on-main" | "environment"; readonly message: string; readonly findings?: readonly Finding[] }
   | { readonly kind: "timeout"; readonly ahead: number };
 
 /**
@@ -410,7 +411,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   }
 
   const head = tested;
-  const steps = await verifyChange(ws, opts, say, { wt, base: base.value, head: head.value, subject, branch: t.branch });
+  const steps = await verifyChange(ws, opts, say, { wt, base: base.value, main: base.value, head: head.value, subject, branch: t.branch });
   if (!steps.ok) return refuse(steps.reason, steps.message, steps.findings);
   const now = git(wt, "rev-parse", "HEAD");
   const edits = changesIn(wt);
@@ -565,7 +566,8 @@ async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry:
     for (const l of links) {
       const co = git(dir, "checkout", "-q", "--detach", l.head);
       if (!co.ok) return fallBack(`checkout of ${l.head.slice(0, 9)} failed: ${co.error.message}`);
-      const steps = await verifyChange(ws, opts, say, { wt: dir, base: l.base, head: l.head, subject: l.subject, branch: l.branch });
+      // reason: the whole batch moves main at once, so every member is compared with main, not the member before it (BR-2248)
+      const steps = await verifyChange(ws, opts, say, { wt: dir, base: l.base, main: t.base, head: l.head, subject: l.subject, branch: l.branch });
       if (!steps.ok) return fallBack(`${l.subject ?? `entry ${l.entry}`} was refused in the batch (${steps.reason})`);
       notes[l.entry] = steps;
     }
@@ -664,11 +666,15 @@ type Steps = { readonly ok: true; readonly reviewNotes: { reviewed: string[]; no
  * `base` below it): canon check, decision sources, the rule and duplicate reviews, before_land (BR-2016,
  * BR-2009, BR-2111, BR-2143, BR-2057). A solo landing runs them in its worktree; a batch, per change (BR-2172).
  */
-async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: { wt: string; base: string; head: string; subject: string | null; branch: string }): Promise<Steps> {
+async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: { wt: string; base: string; main: string; head: string; subject: string | null; branch: string }): Promise<Steps> {
   const { wt, subject } = v;
   const base = { value: v.base };
   const head = { value: v.head };
   const refuse = (reason: StepFailure["reason"], message: string, findings?: readonly Finding[]): StepFailure => ({ ok: false, reason, message, ...(findings ? { findings } : {}) });
+  // A config key added to canon's code and used in canon/config.yaml in one landing breaks every older canon (BR-2248).
+  const added = keysAddedAndUsed(wt, v.main, v.head);
+  if (!added.ok) return refuse("environment", added.error.message);
+  if (added.value.length > 0) return refuse("config-key", keysAddedAndUsedMessage(added.value, v.main));
   const read = readCorpus(wt, ws.config.types, ws.config);
   const tests = testFilesFor(wt, ws.config);
   // reason: the tree that is landing decides which paths may skip the floor (BR-2164), so it decides which test reads matter (BR-2181)
