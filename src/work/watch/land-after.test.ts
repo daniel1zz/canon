@@ -237,6 +237,18 @@ describe("landing while main is failing", () => {
     expect(r.out).toContain(`being fixed in ${fix}`);
   });
 
+  test("BR-2306: with --finish the two lines come before the lessons reminder, which stays last", async () => {
+    const root = await redProject();
+    const s = startNew(root, "Finishes on red");
+    commitFile(s.worktree, "new.txt", "x\n");
+    const r = canon(s.worktree, "work", "land", "--finish");
+    expect(r.code).toBe(0);
+    const lines = r.out.trimEnd().split("\n");
+    expect(lines.at(-1)).toStartWith("lessons:");
+    expect(lines.findIndex((l) => l.startsWith("main is failing floor since"))).toBeLessThan(lines.length - 1);
+    expect(lines.some((l) => l.includes("nobody is fixing it yet"))).toBe(true);
+  });
+
   test("BR-2306: a refused landing says it too, on stderr, with the exit code unchanged", async () => {
     const root = await redProject();
     const s = startNew(root, "Refused on red");
