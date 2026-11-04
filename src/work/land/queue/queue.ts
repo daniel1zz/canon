@@ -309,8 +309,9 @@ export function settleLocked(db: CoordDb, entryId: number, staleMs = QUEUE_STALE
   const row = db.db.query<{ state: string; batch: number | null }, [number]>("SELECT state, batch FROM queue WHERE id = ?").get(entryId);
   if (row?.state !== "landing" || row.batch === null) return "settled";
   const leader = db.db.query<{ state: string; heartbeat: string; pid: number | null; pid_start: string | null }, [number]>("SELECT state, heartbeat, pid, pid_start FROM queue WHERE id = ?").get(row.batch);
-  // reason: the process probe runs before the transaction, so it never holds the write lock (as in tryTurn).
-  const gone = !leader || leader.pid === null || leader.pid_start === null || isGone({ pid: leader.pid, start: leader.pid_start }) === true;
+  // reason: the process probe runs before the transaction, so it never holds the write lock (as in tryTurn). A leader
+  // with no process recorded is judged by its heartbeat alone, as tryTurn does: it may be alive and moving main (issue #96).
+  const gone = !leader || (leader.pid !== null && leader.pid_start !== null && isGone({ pid: leader.pid, start: leader.pid_start }) === true);
   const fresh = iso(new Date(now().getTime() - staleMs));
   return db.db
     .transaction((): "locked" | "settled" => {

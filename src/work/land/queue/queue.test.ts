@@ -127,6 +127,20 @@ describe("batches", () => {
     expect(settleLocked(d, n)).toBe("settled"); // not in a batch: nothing to wait for
   });
 
+  test("BR-2099: a leader whose queue row has no process recorded is not taken for gone; while it beats, its locked member stays locked", () => {
+    const d = db();
+    const me = selfProcess();
+    const lead = enqueue(d, "/wt/a", "C-1", "x"); // ps could not be read when it queued: no pid
+    const m = enqueue(d, "/wt/b", "C-2", "x", me);
+    expect(tryTurn(d, lead).mine).toBe(true);
+    expect(joinBatch(d, lead, m, "h1")).toBe(true);
+    expect(lockBatch(d, lead, [m])).toBe(true);
+    expect(settleLocked(d, m)).toBe("locked");
+    expect(failIfActive(d, m, "killed", me)).toBe(false);
+    d.db.query("UPDATE queue SET heartbeat = ? WHERE id = ?").run(new Date(Date.now() - QUEUE_STALE_MS - 1000).toISOString(), lead); // it stopped beating
+    expect(settleLocked(d, m)).toBe("settled");
+  });
+
   test("BR-2173: a member does not wait behind a leader whose process is gone or that stopped beating (issue #41)", () => {
     const d = db();
     const me = selfProcess();
