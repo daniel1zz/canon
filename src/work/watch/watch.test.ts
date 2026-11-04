@@ -64,6 +64,43 @@ const briefAfterGuide = (cwd: string) => {
   return r.out.slice(WORKFLOW_GUIDE.length).replace(/^\n/, "");
 };
 
+/** Runs `run` with `bin` first on PATH (or PATH as given when `path` is passed) and CANON_WATCH_HANDOFF as given. */
+async function withPath<T>(bin: string, handoff: string | undefined, run: () => Promise<T>, path?: string): Promise<T> {
+  const old = process.env["PATH"];
+  process.env["PATH"] = path ?? `${bin}:${old}`;
+  if (handoff) process.env["CANON_WATCH_HANDOFF"] = handoff;
+  try {
+    return await run();
+  } finally {
+    process.env["PATH"] = old;
+    delete process.env["CANON_WATCH_HANDOFF"];
+  }
+}
+
+/**
+ * A directory with a `canon` that exits `reads` for `config --schema` and, for `floor watch`, writes its directory
+ * and CANON_WATCH_HANDOFF (`none` when unset) to `started`. With `real`, `floor watch` runs this source's canon too.
+ */
+function fakeCanon(root: string, reads = 0, real = false) {
+  const bin = `${root}-bin`;
+  mkdirSync(bin, { recursive: true });
+  const started = join(bin, "started");
+  writeFileSync(
+    join(bin, "canon"),
+    `#!/bin/sh\nif [ "$1" = config ]; then exit ${reads}; fi\nif [ "$1 $2" = "floor watch" ]; then printf '%s %s\\n' "$(pwd -P)" "\${CANON_WATCH_HANDOFF-none}" >> ${started}; fi\n${real ? `exec bun ${MAIN} "$@"\n` : ""}`,
+    { mode: 0o755 },
+  );
+  return { bin, started };
+}
+
+/** PATH without any directory that has a `canon` in it. */
+const pathWithoutCanon = () => (process.env["PATH"] ?? "").split(":").filter((d) => d !== "" && !existsSync(join(d, "canon"))).join(":");
+
+const eventsOf = (root: string, kind: string) =>
+  ws(root).db.db.query<{ id: number; detail: string }, [string]>("SELECT id, detail FROM events WHERE kind = ? ORDER BY id").all(kind).map((r) => ({ id: r.id, ...(JSON.parse(r.detail) as { sha: string; to?: string }) }));
+
+const hookExits = (root: string) => ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'hook.run' ORDER BY id").all().map((r) => (JSON.parse(r.detail) as { exit: number }).exit);
+
 describe("canon floor watch", () => {
   test("BR-2219: tests main's latest commit in a temporary worktree, logs to watch-<sha>.log, records the result and removes the worktree", async () => {
     const { root, tested } = watched();
@@ -161,6 +198,124 @@ describe("canon floor watch", () => {
     expect(results(root)).toEqual([]);
     expect(said[0]).toContain("not `after`");
   });
+
+  test("BR-2219: a setup that exits 1 runs no floor and records floor.fail with why `setup exited 1`; main is failing", async () => {
+    const { root, tested } = watched(`setup: "exit 1"\n`);
+    const a = sh(root, "rev-parse", "main");
+    const r = await watch(ws(root), quiet);
+    expect(r.ok && r.value.tested.map((t) => [t.sha, t.passed])).toEqual([[a, false]]);
+    expect(tested()).toEqual([]);
+    const fail = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'floor.fail'").all().map((x) => JSON.parse(x.detail) as { sha: string; exit: number; why: string });
+    expect(fail.map((f) => [f.sha, f.exit, f.why])).toEqual([[a, 1, "setup exited 1"]]);
+    expect(redMain(ws(root).db)?.sha).toBe(a);
+  });
+});
+
+describe("a watcher hands off after every rebuild", () => {
+  test("BR-2251: a pass whose after_green exits 0 records floor.handoff and starts PATH's canon in the primary checkout without CANON_WATCH_HANDOFF, then ends", async () => {
+    const { root } = watched(`hooks:\n  after_green: "true"\n`);
+    const a = sh(root, "rev-parse", "main");
+    const { bin, started } = fakeCanon(root);
+    // reason: a value inherited from an earlier BR-2250 handoff must not reach the new watcher.
+    const r = await withPath(bin, "0".repeat(40), () => watch(ws(root), quiet));
+    expect(r.ok && r.value.tested.map((t) => [t.sha, t.passed])).toEqual([[a, true]]);
+    const pass = eventsOf(root, "floor.pass");
+    const handoff = eventsOf(root, "floor.handoff");
+    expect(handoff.map((h) => [h.sha, h.to])).toEqual([[a, join(bin, "canon")]]);
+    expect(handoff[0]!.id).toBeGreaterThan(pass[0]!.id);
+    await until(() => existsSync(started));
+    expect(readFileSync(started, "utf8").trim()).toBe(`${realpathSync(root)} none`);
+    expect(watcherRows(root)).toEqual([]);
+  });
+
+  test("BR-2251: when main moved to B while A was tested, the watcher that rebuilt does not test B; the started canon tests B and hands off again only after B passes", async () => {
+    const { root, hold, tested } = watched(`hooks:\n  after_green: "true"\n`);
+    const a = sh(root, "rev-parse", "main");
+    const { bin, started } = fakeCanon(root, 0, true);
+    writeFileSync(hold, "");
+    let b = "";
+    const r = await withPath(bin, undefined, async () => {
+      const running = watch(ws(root), quiet);
+      await until(() => tested().length === 1);
+      b = commit(root, "b.txt", "b\n");
+      rmSync(hold);
+      const done = await running;
+      // The real canon started from PATH tests B, hands off once more, and the one it starts finds B tested.
+      await until(() => eventsOf(root, "floor.handoff").length === 2 && existsSync(started) && readFileSync(started, "utf8").trim().split("\n").length === 2);
+      await until(() => watcherRows(root).length === 0);
+      return done;
+    });
+    expect(r.ok && r.value.tested.map((t) => t.sha)).toEqual([a]);
+    expect(tested()).toEqual([a, b]);
+    expect(results(root).map((x) => [x.kind, x.sha])).toEqual([["floor.pass", a], ["floor.pass", b]]);
+    const kinds = ws(root).db.db.query<{ kind: string; detail: string }, []>("SELECT kind, detail FROM events WHERE kind IN ('floor.pass', 'floor.handoff') ORDER BY id").all().map((x) => [x.kind, (JSON.parse(x.detail) as { sha: string }).sha]);
+    expect(kinds).toEqual([["floor.pass", a], ["floor.handoff", a], ["floor.pass", b], ["floor.handoff", b]]);
+    // The last one started found main's latest commit tested: no third handoff.
+    await Bun.sleep(500);
+    expect(eventsOf(root, "floor.handoff")).toHaveLength(2);
+  });
+
+  test("BR-2251: a watcher started on an already tested main does nothing and hands off nothing", async () => {
+    const { root } = watched(`hooks:\n  after_green: "true"\n`);
+    const { bin, started } = fakeCanon(root);
+    await withPath(bin, undefined, () => watch(ws(root), quiet));
+    await until(() => existsSync(started));
+    const again = await withPath(bin, undefined, () => watch(ws(root), quiet));
+    expect(again.ok && again.value).toEqual({ ran: false, tested: [] });
+    expect(eventsOf(root, "floor.handoff")).toHaveLength(1);
+    expect(readFileSync(started, "utf8").trim().split("\n")).toHaveLength(1);
+  });
+
+  test("BR-2251: without after_green there is no handoff: the same watcher goes on to main's latest commit", async () => {
+    const { root, hold, tested } = watched();
+    const a = sh(root, "rev-parse", "main");
+    const { bin, started } = fakeCanon(root);
+    writeFileSync(hold, "");
+    const r = await withPath(bin, undefined, async () => {
+      const running = watch(ws(root), quiet);
+      await until(() => tested().length === 1);
+      const c = commit(root, "c.txt", "c\n");
+      rmSync(hold);
+      return { c, done: await running };
+    });
+    expect(r.done.ok && r.done.value.tested.map((t) => t.sha)).toEqual([a, r.c]);
+    expect(eventsOf(root, "floor.handoff")).toEqual([]);
+    expect(existsSync(started)).toBe(false);
+  });
+
+  test("BR-2251: an after_green that exits 1 is no rebuild: no handoff, and the same watcher tests main's latest commit", async () => {
+    const { root, hold, tested } = watched(`hooks:\n  after_green: exit 1\n`);
+    const a = sh(root, "rev-parse", "main");
+    const { bin, started } = fakeCanon(root);
+    writeFileSync(hold, "");
+    const r = await withPath(bin, undefined, async () => {
+      const running = watch(ws(root), quiet);
+      await until(() => tested().length === 1);
+      const c = commit(root, "c.txt", "c\n");
+      rmSync(hold);
+      return { c, done: await running };
+    });
+    expect(r.done.ok && r.done.value.tested.map((t) => t.sha)).toEqual([a, r.c]);
+    expect(hookExits(root)).toEqual([1, 1]);
+    expect(eventsOf(root, "floor.handoff")).toEqual([]);
+    expect(existsSync(started)).toBe(false);
+  });
+
+  test("BR-2251: an after_green that exits 0 with no canon on PATH: no handoff, and the same watcher tests main's latest commit", async () => {
+    const { root, hold, tested } = watched(`hooks:\n  after_green: "true"\n`);
+    const a = sh(root, "rev-parse", "main");
+    writeFileSync(hold, "");
+    const r = await withPath("", undefined, async () => {
+      const running = watch(ws(root), quiet);
+      await until(() => tested().length === 1);
+      const c = commit(root, "c.txt", "c\n");
+      rmSync(hold);
+      return { c, done: await running };
+    }, pathWithoutCanon());
+    expect(r.done.ok && r.done.value.tested.map((t) => t.sha)).toEqual([a, r.c]);
+    expect(hookExits(root)).toEqual([0, 0]);
+    expect(eventsOf(root, "floor.handoff")).toEqual([]);
+  });
 });
 
 describe("a failing main", () => {
@@ -224,7 +379,8 @@ describe("a passing main", () => {
   test("BR-2222: after_green runs in the temporary worktree at the passed commit with CANON_GREEN and CANON_PRIMARY, and its exit code is recorded", async () => {
     const { root } = watched(`hooks:\n  after_green: 'echo "$CANON_GREEN" > green.txt && pwd > "$CANON_PRIMARY.where" && cp green.txt "$CANON_PRIMARY.green"'\n`);
     const a = sh(root, "rev-parse", "main");
-    await watch(ws(root), quiet);
+    // reason: a passing after_green hands off to PATH's canon (BR-2251); a fake one keeps a real canon from starting here.
+    await withPath(fakeCanon(root).bin, undefined, () => watch(ws(root), quiet));
     const primary = realpathSync(root);
     expect(readFileSync(`${primary}.green`, "utf8")).toBe(`${a}\n`);
     // The worktree is gone by now, so its path is compared as written: the git common dir's canon/watch.
@@ -247,7 +403,7 @@ describe("a passing main", () => {
   test("BR-2222: a failure on C leaves refs/canon/green where it was and does not run after_green", async () => {
     const { root } = watched(`hooks:\n  after_green: "true"\n`);
     const a = sh(root, "rev-parse", "main");
-    await watch(ws(root), quiet);
+    await withPath(fakeCanon(root).bin, undefined, () => watch(ws(root), quiet));
     const c = commit(root, "FAIL", "x\n");
     await watch(ws(root), quiet);
     expect(results(root).map((x) => [x.kind, x.sha])).toEqual([["floor.pass", a], ["floor.fail", c]]);
@@ -313,27 +469,8 @@ describe("a watcher older than main's config", () => {
     writeFileSync(join(root, "canon/config.yaml"), `${config}future_key: 1\n`);
     sh(root, "commit", "-qam", "config with a key from newer canon");
     writeFileSync(join(root, "canon/config.yaml"), config);
-    const bin = `${root}-bin`;
-    mkdirSync(bin, { recursive: true });
-    const started = join(bin, "started");
-    writeFileSync(
-      join(bin, "canon"),
-      `#!/bin/sh\nif [ "$1" = config ]; then exit ${reads}; fi\nif [ "$1 $2" = "floor watch" ]; then printf '%s %s\\n' "$(pwd -P)" "$CANON_WATCH_HANDOFF" > ${started}; fi\n`,
-      { mode: 0o755 },
-    );
+    const { bin, started } = fakeCanon(root, reads);
     return { root, sha: sh(root, "rev-parse", "main"), bin, started };
-  }
-
-  async function withPath<T>(bin: string, handoff: string | undefined, run: () => Promise<T>): Promise<T> {
-    const path = process.env["PATH"];
-    process.env["PATH"] = `${bin}:${path}`;
-    if (handoff) process.env["CANON_WATCH_HANDOFF"] = handoff;
-    try {
-      return await run();
-    } finally {
-      process.env["PATH"] = path;
-      delete process.env["CANON_WATCH_HANDOFF"];
-    }
   }
 
   const staleEvents = (root: string) =>
@@ -359,6 +496,16 @@ describe("a watcher older than main's config", () => {
     expect(redMain(ws(root).db)?.sha).toBe(sha);
     expect(staleEvents(root)).toEqual([]);
     expect(existsSync(started)).toBe(false);
+  });
+
+  test("BR-2250: when PATH has no canon, it is main's failure: floor.fail and no floor.stale", async () => {
+    const { root, sha } = stale(0);
+    const r = await withPath("", undefined, () => watch(ws(root), quiet), pathWithoutCanon());
+    expect(r.ok && r.value.tested.map((t) => [t.sha, t.passed])).toEqual([[sha, false]]);
+    const fail = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'floor.fail'").all().map((x) => JSON.parse(x.detail) as { sha: string; why: string });
+    expect(fail.map((f) => [f.sha, f.why])).toEqual([[sha, "its canon/config.yaml cannot be read"]]);
+    expect(redMain(ws(root).db)?.sha).toBe(sha);
+    expect(staleEvents(root)).toEqual([]);
   });
 
   test("BR-2250: a watcher handed this commit already does not hand it off again: floor.fail", async () => {

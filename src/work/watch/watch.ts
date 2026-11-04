@@ -14,7 +14,8 @@ import { clearRedMain, recordFailure } from "./redmain.ts";
 /**
  * Merge-then-test (D-31): with `floor_timing: after`, landings move main without the floor and `canon floor watch`
  * tests main's latest commit in the background, one run at a time, in a temporary worktree (BR-2219). A failure is
- * recorded for a fix change (BR-2220); a pass moves refs/canon/green and runs after_green (BR-2222).
+ * recorded for a fix change (BR-2220); a pass moves refs/canon/green and runs after_green (BR-2222). After an
+ * after_green that rebuilt PATH's canon the watcher hands the next test to that canon and ends (BR-2251).
  */
 
 /** The last commit the background floor passed on (BR-2222). */
@@ -110,9 +111,14 @@ export interface Watched {
   readonly tested: readonly { readonly sha: string; readonly passed: boolean; readonly log: string }[];
   /** The commit handed to PATH's canon because this watcher's code could not read its config (BR-2250). */
   readonly handedOff?: string;
+  /** The passed commit after whose rebuild the next test went to PATH's canon (BR-2251). */
+  readonly rebuiltAt?: string;
 }
 
 type Tested = { readonly sha: string; readonly passed: boolean; readonly log: string };
+
+/** One tested commit, and whether after_green ran and every command of it exited 0 (BR-2251). */
+type TestedHere = Tested & { readonly stale?: string; readonly rebuilt?: boolean };
 
 /** What a signal must stop: the setup or floor running now. */
 interface Running {
@@ -167,7 +173,31 @@ export async function watch(ws: Workspace, say: Say): Promise<Result<Watched>> {
           say(`floor watch: this watcher's canon is older than ${ws.config.main} ${tip.value.slice(0, 9)}'s canon/config.yaml; ${r.value.stale} tests it in the background (log: ${started.value})`);
           return ok({ ran: results.length > 0, tested: results, handedOff: tip.value });
         }
-        results.push(r.value);
+        results.push({ sha: r.value.sha, passed: r.value.passed, log: r.value.log });
+        if (!r.value.rebuilt) continue;
+        const bin = pathCanon();
+        if (!bin) {
+          say("floor watch: after_green passed but canon is not on PATH, so this watcher goes on testing (BR-2251)");
+          continue;
+        }
+        // reason: the place is given up before PATH's canon starts, or it would find this watcher alive and end (BR-2251).
+        releaseWatcher(ws.db, self);
+        mine = false;
+        const started = spawnWatcher(ws, [bin, "floor", "watch"]);
+        if (!started.ok) {
+          say(`floor watch: ${started.error.message}; this watcher goes on testing (BR-2251)`);
+          // reason: another watcher took the place meanwhile; it tests main's latest commit (BR-2219).
+          if (!claimWatcher(ws.db, self)) return ok({ ran: true, tested: results });
+          mine = true;
+          continue;
+        }
+        try {
+          ws.db.event(ws.actor, "floor.handoff", null, { sha: tip.value, to: bin, log: started.value });
+        } catch (e) {
+          return err("io", `${bin} tests ${ws.config.main} from now on, but the handoff after ${tip.value.slice(0, 9)} cannot be recorded (${(e as Error).message})`);
+        }
+        say(`floor watch: after_green rebuilt from ${ws.config.main} ${tip.value.slice(0, 9)}; ${bin} tests from now on (log: ${started.value})`);
+        return ok({ ran: true, tested: results, rebuiltAt: tip.value });
       }
       releaseWatcher(ws.db, self);
       mine = false;
@@ -199,7 +229,7 @@ async function runLogged(command: string, cwd: string, fd: number, running: Runn
  * Tests one commit (BR-2219): a fresh detached worktree at it, setup, then the floor, both into `watch-<sha12>.log`;
  * records floor.pass or floor.fail, then the pass (BR-2222) or the failure (BR-2220); removes the worktree last.
  */
-async function testCommit(ws: Workspace, say: Say, sha: string, running: Running): Promise<Result<Tested & { readonly stale?: string }>> {
+async function testCommit(ws: Workspace, say: Say, sha: string, running: Running): Promise<Result<TestedHere>> {
   const dir = watchDir(ws.db);
   const log = logFile(ws.db, `watch-${sha.slice(0, 12)}.log`);
   rmSync(dir, { recursive: true, force: true });
@@ -276,7 +306,8 @@ async function testCommit(ws: Workspace, say: Say, sha: string, running: Running
     if (!recorded.ok) return recorded;
     if (config.ok && config.value.floorTiming === "after" && config.value.hooks.after_green.length > 0) {
       const env = { CANON_GREEN: sha, CANON_PRIMARY: ws.primary };
-      await runHooks({ db: ws.db, actor: ws.actor, event: "after_green", change: null, cwd: dir, env }, config.value.hooks.after_green, say, false);
+      const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "after_green", change: null, cwd: dir, env }, config.value.hooks.after_green, say, false);
+      return ok({ sha, passed, log, rebuilt: failed === undefined });
     }
     return ok({ sha, passed, log });
   } finally {
@@ -325,15 +356,21 @@ export function ensureWatcher(ws: Workspace, say: Say): string | undefined {
   return started.value;
 }
 
-/** Starts `command` (a `canon floor watch`) detached in the primary checkout with its output in watch.log; returns the log. */
+/**
+ * Starts `command` (a `canon floor watch`) detached in the primary checkout with its output in watch.log; returns the
+ * log. CANON_WATCH_HANDOFF is set only by `env`: one inherited from this watcher's own start would wrongly stop the new
+ * watcher from handing off a commit it was never handed (BR-2250, BR-2251).
+ */
 function spawnWatcher(ws: Workspace, command: string[], env?: Record<string, string>): Result<string> {
   const log = logFile(ws.db, "watch.log");
+  const inherited = { ...(process.env as Record<string, string>) };
+  delete inherited[HANDOFF_ENV];
   try {
     mkdirSync(dirname(log), { recursive: true });
     const fd = openSync(log, "a");
     try {
       // reason: its own process group, so a signal to the command that started it (a tool timeout, Ctrl-C) does not stop it (BR-2219).
-      const p = Bun.spawn(command, { cwd: ws.primary, stdout: fd, stderr: fd, stdin: "ignore", detached: true, ...(env ? { env: { ...(process.env as Record<string, string>), ...env } } : {}) });
+      const p = Bun.spawn(command, { cwd: ws.primary, stdout: fd, stderr: fd, stdin: "ignore", detached: true, env: { ...inherited, ...env } });
       p.unref();
     } finally {
       closeSync(fd);
