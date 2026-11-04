@@ -1,6 +1,7 @@
 import { defineCommand } from "citty";
-import { entry, fail, json, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { entry, fail, json, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
 import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "./stats.ts";
+import { pendingBlocks, recordVerdict, renderPending, renderVerdictSummary, verdictSummary } from "./verdict.ts";
 import { eventsSince, lastEventId, parseSince, renderEvents, renderWindow, windowSummary } from "./window.ts";
 
 /** `canon stats` and `canon events`: what the event table recorded. */
@@ -26,6 +27,9 @@ const stats = defineCommand({
     if (args.json) return json(window ? { since, checks: s, window } : s);
     if (window) say(`${renderWindow(window)}\n`);
     say(renderStats(s));
+    // reason: verdicts are text-only; the --json fields are fixed (BR-2202, BR-2255)
+    const verdicts = renderVerdictSummary(verdictSummary(ws.db, since ?? 0, until));
+    if (verdicts) say(`\n${verdicts}`);
     const searches = searchStats(ws.db, since ?? 0, until);
     if (searches.searches > 0) say(`\n${renderSearchStats(searches)}`);
     // reason: the shared code line is the last one (BR-2121, issue #70)
@@ -53,4 +57,36 @@ const events = defineCommand({
   },
 });
 
-export const statsCommands: DomainCommands = { commands: [entry("stats", 140, stats), entry("events", 150, events)] };
+/** `canon verdict`: whether a rule-review block named a real problem, judged by someone outside the change (D-35). */
+const verdict = defineCommand({
+  meta: { description: "Verdicts on rule-review blocks: real problem or wording changed just to pass, judged by an executor outside the change" },
+  subCommands: {
+    pending: defineCommand({
+      meta: { description: "Review blocks of landed changes your judge kind (agent or human) has not judged, with the commit blocked and the commit landed" },
+      args: { json: { type: "boolean" } },
+      run({ args }) {
+        const ws = workspace();
+        const blocks = pendingBlocks(ws.db, ws.root, ws.actor);
+        if (args.json) return json(blocks);
+        say(renderPending(blocks));
+      },
+    }),
+    record: defineCommand({
+      meta: { description: "Record a verdict on one review block: real (the block named a real problem) or wording (only reworded to pass)" },
+      args: {
+        refusal: { type: "positional", required: true, description: "Event id of the land.refuse with reason review" },
+        verdict: { type: "positional", required: true, description: "real | wording" },
+        reason: { type: "string", description: "What in the code before and after the block shows it" },
+      },
+      run({ args }) {
+        const ws = workspace();
+        const id = String(args.refusal);
+        if (!/^\d+$/.test(id)) fail({ code: "invalid", message: `the refusal must be an event id (a whole number), got ${JSON.stringify(args.refusal)}` });
+        const r = must(recordVerdict(ws.db, ws.actor, Number(id), String(args.verdict), typeof args.reason === "string" ? args.reason : ""));
+        say(`recorded a ${r.judge} verdict on refusal ${id} (${r.subject}): ${String(args.verdict)}`);
+      },
+    }),
+  },
+});
+
+export const statsCommands: DomainCommands = { commands: [entry("stats", 140, stats), entry("events", 150, events), entry("verdict", 152, verdict)] };
