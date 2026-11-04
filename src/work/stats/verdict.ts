@@ -40,11 +40,6 @@ const reviewBlocks = (db: CoordDb, since: number, until: number) => rows(db, `SE
 
 const verdictsUpTo = (db: CoordDb, until: number) => rows(db, `SELECT ${COLS} FROM events WHERE kind = 'review.verdict' AND id <= ? ORDER BY id`, until);
 
-/** Whether `actor` wrote any event about `subject` other than a verdict: a guard against mistakes, not impersonation (BR-2254). */
-function isAuthor(db: CoordDb, subject: string, actor: string): boolean {
-  return db.db.query<{ n: number }, [string, string]>("SELECT COUNT(*) AS n FROM events WHERE subject = ? AND actor = ? AND kind != 'review.verdict'").get(subject, actor)!.n > 0;
-}
-
 /**
  * The commit in `base..sha` whose own diff from `base`, outside canon/changes, has the fingerprint `diff`: the
  * same patch-id the landing computed when it refused (BR-2068, src/work/land/worktree-state.ts ownDiffId).
@@ -145,7 +140,6 @@ export function recordVerdict(db: CoordDb, root: string, actor: string, blockId:
     if (n > findingsOf(b).length) return err("not_found", `block ${block} has ${findingsOf(b).length} finding(s), not ${n}`);
     // reason: canon cannot verify who a human is, so the one thing it enforces is that a Claude Code session never records one (BR-2023, D-49)
     if (actor.startsWith("agent:")) return err("refused", `${actor} is an agent: agent verdicts are made blind by canon verdict run (BR-2290), not typed in`);
-    if (isAuthor(db, b.subject, actor)) return err("refused", `${actor} wrote events about ${b.subject}; judge a change you took no part in (BR-2254)`);
     const dup = verdictsUpTo(db, Number.MAX_SAFE_INTEGER).find((v) => v.detail["block"] === block && v.detail["finding"] === n && v.detail["judge"] === "human");
     if (dup) return err("conflict", `finding ${n} of block ${block} already has a human verdict (event ${dup.id}, ${dup.detail["verdict"]})`);
     db.event(actor, "review.verdict", b.subject, { block, refusal: j?.refusal ?? null, finding: n, verdict, judge: "human", reason: why, before: j?.before ?? null });

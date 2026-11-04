@@ -182,6 +182,25 @@ describe("canon usage unused", () => {
     ]);
   });
 
+  test("BR-2266: an unused item the project's own files define is scope project, any other is scope other, and the output says other items were judged here only", () => {
+    const primary = mkdtempSync(join(tmpdir(), "canon-usage-primary-"));
+    mkdirSync(join(primary, ".claude", "skills", "mine"), { recursive: true });
+    mkdirSync(join(primary, ".claude", "agents"), { recursive: true });
+    writeFileSync(join(primary, ".claude", "agents", "helper.md"), "x");
+    writeFileSync(join(primary, ".mcp.json"), JSON.stringify({ mcpServers: { "my.srv": {} } }));
+    const projects = records({
+      "-w-p/s1.jsonl": [
+        listing(daysAgo(1), { mine: "m", global: "g" }),
+        attach(daysAgo(1), { type: "agent_listing_delta", isInitial: true, addedTypes: ["helper", "Plan"], addedLines: ["- helper: h", "- Plan: p"], removedTypes: [] }),
+        attach(daysAgo(1), { type: "mcp_instructions_delta", addedNames: ["my.srv", "claude.ai Vercel"], addedBlocks: ["a", "b"], removedNames: [] }),
+      ],
+    });
+    const r = usageReport(projects, { ...AT, primary }, 30, NOW);
+    if (!r.ok) throw new Error(r.error.message);
+    expect(r.value.unused.map((u) => `${u.kind}:${u.name}:${u.scope}`).sort()).toEqual(["agent:Plan:other", "agent:helper:project", "mcp:claude_ai_Vercel:other", "mcp:my_srv:project", "skill:global:other", "skill:mine:project"]);
+    expect(renderUsage(r.value)).toContain("scope other = user, plugin, account or built-in: judged on this project's sessions only");
+  });
+
   test("BR-2266: a server removed later in the session is not available; MCP names match tool names; subagent listings are not used", () => {
     const projects = records({
       "-w-p/s1.jsonl": [

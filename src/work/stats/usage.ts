@@ -90,6 +90,8 @@ export interface Available {
 export interface Unused extends Available {
   /** The latest use, or null when never used. */
   readonly last: string | null;
+  /** `project` when this project's own files define the item; otherwise `other`: user, plugin, account or built-in, judged on this project's sessions only (BR-2266, D-57). */
+  readonly scope: "project" | "other";
 }
 
 export interface UsageReport {
@@ -222,6 +224,19 @@ function availableFrom(sessions: readonly { file: string; recs: Rec[] }[], since
   return listed === 0 ? null : { sessions: inWindow.length, items: [...items.values()] };
 }
 
+/** Whether the project's own files define the item: `.claude/skills/<name>`, `.claude/agents/<name>.md`, or a server in `.mcp.json` (BR-2266). */
+export function inProject(primary: string, kind: Kind, name: string): boolean {
+  if (kind === "skill") return existsSync(join(primary, ".claude", "skills", name));
+  if (kind === "agent") return existsSync(join(primary, ".claude", "agents", `${name}.md`));
+  try {
+    const servers = (JSON.parse(readFileSync(join(primary, ".mcp.json"), "utf8")) as { mcpServers?: Record<string, unknown> }).mcpServers ?? {};
+    return Object.keys(servers).some((k) => serverKey(k) === name);
+  } catch {
+    // reason: no readable .mcp.json means no project-defined server; the item is then reported as `other`, which only adds a warning (BR-2266)
+    return false;
+  }
+}
+
 const COMMAND = /<command-name>\/?([^<\s]+)<\/command-name>/g;
 
 /** Reads this project's session records and reports uses and the long-unused available items (BR-2265, BR-2266). */
@@ -291,7 +306,7 @@ export function usageReport(projects: string, at: Places, days: number, now: Dat
   const uses = [...counts.values()].sort((a, b) => KINDS.indexOf(a.kind) - KINDS.indexOf(b.kind) || b.uses - a.uses || a.name.localeCompare(b.name));
   const lastOf = (a: Available) => counts.get(`${a.kind}\0${a.name}`)?.last ?? null;
   const unused = available
-    .map((a) => ({ ...a, last: lastOf(a) }))
+    .map((a) => ({ ...a, last: lastOf(a), scope: inProject(at.primary, a.kind, a.name) ? ("project" as const) : ("other" as const) }))
     .filter((a) => a.last === null || a.last < since)
     .sort((a, b) => b.size - a.size || a.name.localeCompare(b.name));
   return ok({ projects, dirs, files, skipped, uses, listing: listing?.sessions ?? null, available, days, since, unused });
@@ -314,9 +329,10 @@ export function renderUsage(r: UsageReport): string {
     return lines.join("\n");
   }
   lines.push(`available: injected in ${r.listing} session(s) in the last ${r.days} days`, `unused for ${r.days} days (not used since ${when(r.since)}), by injected size in characters:`);
-  lines.push(`  ${"kind".padEnd(5)} ${"name".padEnd(nw)} ${"size".padStart(7)}  ${"last used".padEnd(16)}  last injected`);
-  for (const u of r.unused) lines.push(`  ${u.kind.padEnd(5)} ${u.name.padEnd(nw)} ${String(u.size).padStart(7)}  ${when(u.last).padEnd(16)}  ${when(u.injected ?? null)}`);
+  lines.push(`  ${"kind".padEnd(5)} ${"scope".padEnd(7)} ${"name".padEnd(nw)} ${"size".padStart(7)}  ${"last used".padEnd(16)}  last injected`);
+  for (const u of r.unused) lines.push(`  ${u.kind.padEnd(5)} ${u.scope.padEnd(7)} ${u.name.padEnd(nw)} ${String(u.size).padStart(7)}  ${when(u.last).padEnd(16)}  ${when(u.injected ?? null)}`);
   if (r.unused.length === 0) lines.push("  (none)");
   lines.push(`total: ${r.unused.length} item(s), ${r.unused.reduce((n, u) => n + u.size, 0)} characters`);
+  lines.push("scope other = user, plugin, account or built-in: judged on this project's sessions only, so other projects may use it and a built-in one cannot be removed");
   return lines.join("\n");
 }

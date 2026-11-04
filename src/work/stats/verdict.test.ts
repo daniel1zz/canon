@@ -151,11 +151,10 @@ describe("canon verdict record", () => {
     expect(verdictRows(db).length).toBe(2);
   });
 
-  test("BR-2254: an agent, the author, a missing block or finding and bad input write nothing, checked in order", () => {
+  test("BR-2254: an agent, a missing block or finding and bad input write nothing, checked in order", () => {
     const db = setup();
     const codes = [
       recordVerdict(db, "/nonexistent", "agent:b", "2", "1", "real", "r"),
-      recordVerdict(db, "/nonexistent", "human:alice", "2", "1", "real", "r"),
       recordVerdict(db, "/nonexistent", "human:bob", "2", "4", "real", "r"),
       recordVerdict(db, "/nonexistent", "human:bob", "3", "1", "real", "r"),
       recordVerdict(db, "/nonexistent", "human:bob", "999", "1", "real", "r"),
@@ -167,7 +166,7 @@ describe("canon verdict record", () => {
       recordVerdict(db, "/nonexistent", "agent:b", "999", "1", "maybe", "r"),
       recordVerdict(db, "/nonexistent", "agent:b", "999", "1", "real", "r"),
     ].map(code);
-    expect(codes).toEqual(["refused", "refused", "not_found", "not_found", "not_found", "invalid", "invalid", "invalid", "invalid", "invalid", "invalid", "not_found"]);
+    expect(codes).toEqual(["refused", "not_found", "not_found", "not_found", "invalid", "invalid", "invalid", "invalid", "invalid", "invalid", "not_found"]);
     expect(verdictRows(db).length).toBe(0);
   });
 

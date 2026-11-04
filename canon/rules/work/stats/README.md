@@ -1,6 +1,6 @@
 # 检查统计（work/stats）
 
-`canon stats` 从事件表算出每个检查运行了多少次、拒绝了多少次、拒绝之后发生了什么，用来判断一个检查值不值得留（P6）；`canon check` 的拒绝按发现种类拆开。`canon stats --since <事件编号>` 只看某个编号之后的事件，并给出这段时间的并发摘要；`canon events` 列出原始事件。两者用来核对一次并发运行，不靠 agent 自己报的数字。`canon usage` 读本项目的 Claude Code 会话记录（只读），统计 skill、MCP 服务、子 agent 类型用了几次，列出注入了却很久没用的项和它们的注入量，供人决定去掉什么（D-40）。评审拦截之后作者一定会改文字，指纹说明不了拦得对不对，所以按每条评审意见另做判定（D-49）：`canon verdict pending` 列出待判定的意见，`canon verdict run` 让项目的判定命令只看拦截时的代码给出 `model` 判定，`canon verdict record` 记人自报的 `human` 判定，`canon stats` 分开报告两者。
+`canon stats` 从事件表算出每个检查运行了多少次、拒绝了多少次、拒绝之后发生了什么，用来判断一个检查值不值得留（P6）；`canon check` 的拒绝按发现种类拆开。`canon stats --since <事件编号>` 只看某个编号之后的事件，并给出这段时间的并发摘要；`canon events` 列出原始事件。两者用来核对一次并发运行，不靠 agent 自己报的数字。`canon usage` 读本项目的 Claude Code 会话记录（只读），统计 skill、MCP 服务、子 agent 类型用了几次，列出注入了却很久没用的项、它们的范围（本项目自己定义的还是别处的）和注入量，供人决定去掉什么（D-57）。评审拦截之后作者一定会改文字，指纹说明不了拦得对不对，所以按每条评审意见另做判定（D-49）：`canon verdict pending` 列出待判定的意见，`canon verdict run` 让项目的判定命令只看拦截时的代码给出 `model` 判定，`canon verdict record` 记人自报的 `human` 判定，`canon stats` 分开报告两者。
 
 ## 术语
 
