@@ -150,6 +150,13 @@ export function ensureGuard(root: string, main: string, beforeReplace?: () => vo
  * its place; anyone else's goes back and the install refuses (BR-2124). Only canon's files are ever deleted.
  */
 function replaceOld(root: string, main: string, tmp: string, path: string): Result<boolean> {
+  // reason: the old guard can only come back by an exclusive link, so a directory without hard links is found before it
+  // is moved; otherwise it would stay aside and leave main unguarded after canon exits (BR-2124, #93)
+  const probe = `${path}.canon-${process.pid}.probe`;
+  rmSync(probe, { force: true });
+  const linkable = placeExclusive(tmp, probe);
+  rmSync(probe, { force: true });
+  if (!linkable.ok) return linkable;
   const aside = `${path}.canon-${process.pid}.old`;
   try {
     renameSync(path, aside);
