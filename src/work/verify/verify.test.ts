@@ -243,8 +243,8 @@ describe("canon work test runs", () => {
   });
 
   test("BR-2158: a failing file shows only the last 40 lines of its output, and the summary counts files, passes, failures and time", () => {
-    const { wt } = fixture("sh lines.sh {file}");
-    write(wt, { "lines.sh": 'case "$1" in *c.test.ts) seq 1 50; exit 3;; esac\n', "src/a.ts": "export const a = 2;\n" });
+    const { wt } = fixture();
+    write(wt, { "run.sh": 'case "$1" in *c.test.ts) seq 1 50; exit 3;; esac\n', "src/a.ts": "export const a = 2;\n" });
     const r = canon(wt, "work", "test");
     expect(r.code).toBe(1);
     expect(r.out).toMatch(/FAIL\s+\d+\.\ds\s+src\/c\.test\.ts \(exit 3\)/);
