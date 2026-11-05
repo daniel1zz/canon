@@ -222,7 +222,7 @@ export function standingText(root: string, instructions: readonly string[]): Sta
   return { files, skills };
 }
 
-export function duplicatePrompt(changed: readonly string[], standing: StandingText, guide: string | undefined): string {
+export function duplicatePrompt(changed: readonly string[], standing: StandingText, guide: string | undefined, changedSkills: readonly { path: string; text: string }[] = []): string {
   const parts: string[] = [
     "You review the standing instructions of a project: text loaded into every AI coding session at start. The same requirement written in two places drifts apart, and the reader no longer knows which one holds.",
     "Block when one requirement (an instruction, a condition or a qualifier) is stated in two standing texts below, or twice in one of them, in any wording or language, and at least one of the two places is in a changed file.",
@@ -236,5 +236,7 @@ export function duplicatePrompt(changed: readonly string[], standing: StandingTe
   if (guide !== undefined) parts.push(`# canon brief workflow guide (printed at the start of every session)\n\n${guide.trim()}\n`);
   for (const f of standing.files) parts.push(`# ${f.path} (instruction file, loaded whole)\n\n${f.text.trim()}\n`);
   if (standing.skills.length) parts.push(`# Skill descriptions (each loaded into every session)\n\n${standing.skills.map((s) => `- ${s.path}: ${s.description}`).join("\n")}`);
+  // reason: the reviewer runs in main's tree (BR-2216), so a changed skill's body must travel in the prompt, or it reads main's old text (#122)
+  for (const f of changedSkills) parts.push(`# ${f.path} (changed in this landing, full new text)\n\n${f.text.trim()}\n`);
   return parts.join("\n");
 }

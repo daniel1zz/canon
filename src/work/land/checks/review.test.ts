@@ -590,13 +590,16 @@ describe("duplicate review of standing instructions at land", () => {
     expect(sh(root, "rev-parse", "main")).toBe(before);
   });
 
-  test("BR-2143: an edited skill is reviewed and an ok verdict lands", async () => {
+  test("BR-2143: an edited skill is reviewed with its new full text in the prompt and an ok verdict lands", async () => {
     const { root, promptFile } = standingProject("ok");
     const s = startNew(root, "Edit skill");
-    writeFileSync(join(s.worktree, ".claude/skills/x/SKILL.md"), "---\nname: x\ndescription: Use when writing or reviewing tests\n---\nbody\n");
+    writeFileSync(join(s.worktree, ".claude/skills/x/SKILL.md"), "---\nname: x\ndescription: Use when writing or reviewing tests\n---\nnew body line\n");
     sh(s.worktree, "commit", "-qam", "skill");
     expect((await land(ws(s.worktree), { ...FAST, guide: GUIDE }, quiet)).kind).toBe("landed");
     expect(readFileSync(promptFile, "utf8")).toContain("# Changed in this landing: .claude/skills/x/SKILL.md");
+    // the reviewer runs in main's tree, so the changed body travels in the prompt, not from main's old file (#122)
+    expect(readFileSync(promptFile, "utf8")).toContain("# .claude/skills/x/SKILL.md (changed in this landing, full new text)");
+    expect(readFileSync(promptFile, "utf8")).toContain("new body line");
   });
 
   test("BR-2143 BR-2231: with instructions configured, only the listed files trigger the review; code alone and deletions never do; a listed file cannot be deleted while listed", async () => {

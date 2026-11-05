@@ -1,3 +1,5 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Say, Workspace } from "../../workspace.ts";
 import { changeIdsOnBranches } from "../../session/inflight.ts";
 import { readConfig } from "../../../config/config.ts";
@@ -173,7 +175,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       say(`review: standing instructions ${standing.join(", ")}`);
       const at = tree.get();
       if (!at.ok) return refuse("environment", at.error.message);
-      const v = await runReview(reviewer, at.value, duplicatePrompt(standing, standingText(wt, onMain.instructions), opts.guide), limits);
+      const v = await runReview(reviewer, at.value, duplicatePrompt(standing, standingText(wt, onMain.instructions), opts.guide, standing.filter((p) => SKILL_FILE.test(p)).map((path) => ({ path, text: readFileSync(join(wt, path), "utf8") }))), limits);
       if (!v.ok) return refuse("review", couldNotRun("duplicate", v.error.message, at.value, mainAt));
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: standing, findings: v.value.findings, commit: head.value });
       if (v.value.verdict === "block") return refuse("review", `duplicate review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
