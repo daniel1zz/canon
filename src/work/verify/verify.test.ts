@@ -781,7 +781,7 @@ describe("canon work test stops on a signal", () => {
     expect(lastEvent(wt)).toMatchObject({ signal: "SIGTERM", files: 0, failed: 0 });
     const kids = readdirSync(wt).filter((f) => f.startsWith("kids.")).map((f) => Number(readFileSync(join(wt, f), "utf8").trim()));
     expect(kids).toHaveLength(2);
-    for (const pid of kids) expect(() => process.kill(pid, 0)).toThrow(); // the files' own children are gone too
+    for (const pid of kids) await waitGone(pid, "the file's own child"); // the files' own children are gone too (a killed process is gone a moment later, not at the instant its parent exits)
   });
 
   test("BR-2304: SIGHUP is handled like SIGTERM and exits 129; SIGINT exits 130", async () => {
@@ -993,7 +993,7 @@ describe("canon work test stops its process tree on a real signal", () => {
     expect(alive(pid)).toBe(true);
     proc.kill("SIGTERM");
     expect(await proc.exited).toBe(143);
-    expect(alive(pid)).toBe(false);
+    await waitGone(pid, "the test file's child"); // a killed process is gone a moment later, not at the instant canon exits
     const out = await new Response(proc.stdout).text();
     expect(out).toMatch(/stopped by SIGTERM: 1 test file\(s\) were running, 1 not started/);
     expect(out).not.toContain("canon check:");
@@ -1009,6 +1009,6 @@ describe("canon work test stops its process tree on a real signal", () => {
     proc.kill("SIGINT");
     expect(await proc.exited).toBe(143);
     expect(performance.now() - t0).toBeLessThan(8000); // not the 10 s grace period
-    expect(alive(pid)).toBe(false);
+    await waitGone(pid, "the test file's child, which ignored SIGTERM"); // SIGKILLed: gone a moment later, not at the instant canon exits
   }, 30_000);
 });
