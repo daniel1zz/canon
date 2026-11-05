@@ -7,3 +7,4 @@
 - **发现（finding）**：一条检查结果，带种类（如 `ref-dangling`）、文件和说明。
 - **提示（hint）**：写在标准错误上、以 `hint ` 开头的一行，不算发现，不改变退出码。
 - **测试标题**：`test`、`it`、`describe` 的第一个参数；只有会运行的测试标题里的规则编号才算这条规则有测试。
+- **共享代码**：`shared` 列出的、不属于任何业务领域的代码（共享内核，BR-2116）；`code_root` 和 `shared` 写在 `canon/config.yaml`，声明在 `src/knowledge/check/config-keys.ts`。
