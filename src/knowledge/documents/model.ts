@@ -1,5 +1,5 @@
 /**
- * The knowledge model: four kinds of durable documents, each one Markdown file with YAML front matter,
+ * The knowledge model: five kinds of durable documents, each one Markdown file with YAML front matter,
  * living under `canon/` in the repository and changing through ordinary commits (design §1).
  *
  *   canon/product.md                       purpose, users, non-goals, promises
@@ -8,6 +8,7 @@
  *   canon/decisions/D-<n>-<slug>.md        why a non-trivial choice was made (P2)
  *   canon/changes/C-<n>-<slug>.md          one unit of intended work (P3)
  *   canon/notes/N-<n>-<slug>.md            research, retros, references
+ *   canon/releases/R-<n>.md                a version's PRD: goal, scope, what it leaves out (D-61)
  *
  * One file per document so concurrent sessions only conflict when they edit the same document
  * (prototype: one file per rule 0% false conflicts vs 53% for a shared append-only file).
@@ -17,12 +18,14 @@
 import type { DocType } from "./types.ts";
 
 /** Built-in kinds; a document of a type declared in config (D-2 §2) has kind "extra" and names its type. */
-export type Kind = "rule" | "decision" | "change" | "note" | "extra";
+export type Kind = "rule" | "decision" | "change" | "note" | "release" | "extra";
 
 /** `planned`: designed, not yet executed; needs no test, so a missing test blocks no landing (BR-2235, D-32). */
 export type RuleStatus = "active" | "retired" | "planned";
 export type DecisionStatus = "proposed" | "accepted" | "superseded";
 export type ChangeStatus = "open" | "done" | "dropped";
+/** `shipped`: the release was sent out; `shipped_at` then names the main commit it was (D-61). */
+export type ReleaseStatus = "planned" | "active" | "shipped";
 
 interface Base {
   readonly id: string;
@@ -40,6 +43,10 @@ export interface Rule extends Base {
   readonly untested?: string;
   /** Code lists the rule names items of instead of copying them; `canon check` compares the two (BR-2180). */
   readonly lists?: readonly CodeList[];
+  /** The release that introduces this behaviour (`release: R-n`); a rule without it belongs to no release (D-61). */
+  readonly release?: string;
+  /** Later releases that change this behaviour (`changed_in`); only with `release` (D-61). */
+  readonly changedIn?: readonly string[];
 }
 
 /** A rule's `lists` entry: the constant `name` in `file` holds each of `items` as a string literal (BR-2180). */
@@ -80,6 +87,13 @@ export interface Note extends Base {
   readonly kind: "note";
 }
 
+/** A version's PRD (`canon/releases/R-n.md`, D-61). `shippedAt` is the full commit id `canon release ship` wrote; present exactly when shipped. */
+export interface Release extends Base {
+  readonly kind: "release";
+  readonly status: ReleaseStatus;
+  readonly shippedAt?: string;
+}
+
 /** A document of a type the project declared in `canon/config.yaml` (BR-2050). */
 export interface Extra extends Base {
   readonly kind: "extra";
@@ -88,7 +102,7 @@ export interface Extra extends Base {
   readonly status: string | undefined;
 }
 
-export type Doc = Rule | Decision | Change | Note | Extra;
+export type Doc = Rule | Decision | Change | Note | Release | Extra;
 
 /** The type name of a document: its kind for built-ins, the declared name otherwise. */
 export const typeNameOf = (d: Doc): string => (d.kind === "extra" ? d.type : d.kind);

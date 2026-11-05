@@ -1,5 +1,5 @@
 /**
- * Document types (D-2 §2, D-3). Four are built in and cannot be removed or reshaped; a project may
+ * Document types (D-2 §2, D-3, D-61). Five are built in and cannot be removed or reshaped; a project may
  * declare more in `canon/config.yaml` under `types:`. Every reader of the corpus (ids, check, search,
  * context, allocation) works from this list, so a declared type behaves like a built-in one.
  */
@@ -28,10 +28,12 @@ export const BUILTIN_TYPES: readonly DocType[] = [
   { name: "decision", prefix: "D", dir: "decisions", statuses: ["proposed", "accepted", "superseded"], defaultStatus: "proposed", fields: [], sections: ["背景", "方案", "决定", "后果"], builtin: true },
   { name: "change", prefix: "C", dir: "changes", statuses: ["open", "done", "dropped"], defaultStatus: "open", fields: [], sections: ["为什么", "要改什么", "任务"], builtin: true },
   { name: "note", prefix: "N", dir: "notes", statuses: undefined, defaultStatus: undefined, fields: [], sections: [], builtin: true },
+  // reason: built in, not declared, because only canon's code can write `shipped_at`, run `canon release` and freeze a shipped release (D-61)
+  { name: "release", prefix: "R", dir: "releases", statuses: ["planned", "active", "shipped"], defaultStatus: "planned", fields: [], sections: ["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"], builtin: true },
 ];
 
 /** Front-matter keys canon itself owns; a declared field may not reuse one. */
-export const RESERVED_FIELDS = new Set(["id", "title", "status", "untested", "lists", "supersedes", "rules", "code", "passes"]);
+export const RESERVED_FIELDS = new Set(["id", "title", "status", "untested", "lists", "supersedes", "rules", "code", "passes", "release", "changed_in", "shipped_at"]);
 
 /** Directories under canon/ that are not document types. */
 export const RESERVED_DIRS = new Set(["templates"]);

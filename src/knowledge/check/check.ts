@@ -10,6 +10,7 @@ import { BACKLOG_FILE, readBacklog } from "../documents/backlog.ts";
 import { testTitles } from "./test-titles.ts";
 import { historyOf, pathFindings } from "./paths.ts";
 import { listFindings } from "./lists.ts";
+import { releaseFindings } from "../releases/check.ts";
 import { skipReadFindings } from "./skip-reads.ts";
 import { EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, RULE_SECTION, section } from "../documents/templates.ts";
 
@@ -47,6 +48,7 @@ export type CheckRule =
   | "path-missing" // a current document names, in backticks, a repository path that was moved or deleted
   | "list-mismatch" // a rule's `lists` front matter disagrees with its text or with the code (BR-2180)
   | "test-reads-skip-path" // a test reads a file of the repository under floor_skip_paths (BR-2181)
+  | "release-frozen" // a shipped release's 目标, 范围, 不做 or its set of tagged rules differs from what it was at `shipped_at` (D-61)
   | "template-unfilled"; // a rule, decision, change, declared-type document or domain README still holds a template placeholder line
 
 export interface CheckInput {
@@ -178,6 +180,7 @@ export function check(input: CheckInput): Finding[] {
   findings.push(...instructionFindings(input.root));
   if (codeRoot !== undefined) findings.push(...layoutFindings(input.root, input.corpus));
   for (const f of pathFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "path-missing", message: f.message });
+  findings.push(...releaseFindings(input.root, input.corpus));
   for (const f of listFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "list-mismatch", message: f.message });
   for (const f of skipReadFindings(input.root, testFiles, input.floorSkipPaths ?? [])) findings.push({ path: f.path, rule: "test-reads-skip-path", message: f.message });
   return findings;

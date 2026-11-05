@@ -2,7 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { parseDocFile, parseReadme } from "./docfile.ts";
 import { parsePasses } from "./behaviour.ts";
-import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type DecisionStatus, type Doc, type Domain, type Layout, type RuleStatus } from "./model.ts";
+import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type DecisionStatus, type Doc, type Domain, type Layout, type ReleaseStatus, type RuleStatus } from "./model.ts";
 import { BUILTIN_TYPES, type DocType } from "./types.ts";
 
 /** A file under canon/ that does not fit the model. `canon check` reports these; reading never stops on one. */
@@ -63,6 +63,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
   };
 
   const ruleType = types.find((t) => t.name === "rule")!;
+  const releasePrefix = types.find((t) => t.name === "release")?.prefix ?? "R";
   const rulesDir = join(base, ruleType.dir);
   const ruleFile = new RegExp(`^${ruleType.prefix}-\\d+\\.md$`);
   // reason: a domain may hold subdomains as subdirectories; each level is a domain of its own (BR-2113)
@@ -105,6 +106,11 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         problems.push({ path: rel(full), message: lists });
         continue;
       }
+      const tags = releaseTags(p.meta, releasePrefix);
+      if (typeof tags === "string") {
+        problems.push({ path: rel(full), message: tags });
+        continue;
+      }
       docs.push({
         kind: "rule",
         id,
@@ -115,6 +121,8 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         status: p.status as RuleStatus,
         ...(typeof untested === "string" ? { untested } : {}),
         ...(lists.length > 0 ? { lists } : {}),
+        ...(tags.release !== undefined ? { release: tags.release } : {}),
+        ...(tags.changedIn.length > 0 ? { changedIn: tags.changedIn } : {}),
       });
     }
     for (const sub of listDirs(dir)) walk(`${domain}/${sub}`, domain);
@@ -157,6 +165,19 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           continue;
         }
         docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes });
+      } else if (type.name === "release") {
+        const shippedAt = p.meta["shipped_at"];
+        const shipped = p.status === "shipped";
+        // reason: a shipped release names the main commit it was, a release not shipped names none: `shipped_at` is how the freeze is checked (D-61)
+        if (shipped && !(typeof shippedAt === "string" && /^[0-9a-f]{40}$/.test(shippedAt))) {
+          problems.push({ path, message: "a shipped release needs `shipped_at`: the full 40-character commit id `canon release ship` wrote (D-61)" });
+          continue;
+        }
+        if (!shipped && shippedAt !== undefined) {
+          problems.push({ path, message: `\`shipped_at\` is only for a shipped release; ${id} is ${String(p.status)} (D-61)` });
+          continue;
+        }
+        docs.push({ kind: "release", ...common, status: p.status as ReleaseStatus, ...(shipped ? { shippedAt: shippedAt as string } : {}) });
       } else if (type.name === "note") {
         docs.push({ kind: "note", ...common });
       } else {
@@ -181,6 +202,19 @@ function listDirs(dir: string): string[] {
 function listFiles(dir: string): string[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir).filter((n) => n.endsWith(".md") && statSync(join(dir, n)).isFile()).sort();
+}
+
+/** A rule's `release` and `changed_in` front matter (D-61), or the problem with it; whether the ids name releases is `canon check`'s to say. */
+function releaseTags(meta: Record<string, unknown>, prefix: string): { release: string | undefined; changedIn: string[] } | string {
+  const id = new RegExp(`^${prefix}-\\d+$`);
+  const release = meta["release"];
+  const changed = meta["changed_in"];
+  if (release !== undefined && (typeof release !== "string" || !id.test(release))) return `\`release\` must be one release id such as ${prefix}-1 (D-61)`;
+  if (changed !== undefined && (!Array.isArray(changed) || changed.length === 0 || changed.some((c) => typeof c !== "string" || !id.test(c)))) {
+    return `\`changed_in\` must be a non-empty list of release ids such as [${prefix}-2] (D-61)`;
+  }
+  if (changed !== undefined && release === undefined) return "`changed_in` needs `release`: a rule that belongs to no release has no later release to change it (D-61)";
+  return { release: release as string | undefined, changedIn: (changed as string[] | undefined) ?? [] };
 }
 
 /** A rule's `lists` front matter (BR-2180), or the problem with it. */

@@ -6,6 +6,7 @@ import { referenceCommands } from "../config/reference/commands.ts";
 import { checkCommands } from "../knowledge/check/commands.ts";
 import { documentCommands } from "../knowledge/documents/commands.ts";
 import { queryCommands } from "../knowledge/query/commands.ts";
+import { releaseCommands } from "../knowledge/releases/commands.ts";
 import { workCommands } from "../work/commands.ts";
 import { dropCommands } from "../work/drop/commands.ts";
 import { executionCommands } from "../work/execution/commands.ts";
@@ -33,6 +34,7 @@ export const main = defineCommand({
     checkCommands,
     documentCommands,
     queryCommands,
+    releaseCommands,
     executionCommands,
     workCommands,
     sessionCommands,

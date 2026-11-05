@@ -52,6 +52,8 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
   const parts: string[] = [
     "You review changes to a project's rules and decisions. Rules are the current truth of what the product must do; decisions record why.",
     "Block only for: a rule that contradicts another active rule (in any domain: see the rule index) or an accepted decision; a rule a test cannot decide (vague, no boundary, examples that do not pin the boundary); a decision without the options it rejected.",
+    // reason: a release's 不做 and 范围 are promises the tagged rules must keep (D-61, BR-2009)
+    "A release is a version's PRD; the rules whose front matter says `release: R-n` are its behaviour. Block a rule tagged with a release that does something that release's 不做 excludes or lies outside its 范围; block a release whose 不做 contradicts its own 范围 or a rule tagged with it. Only a rule or release changed in this landing can be blocked for it.",
     "A changed decision that replaces only part of an accepted decision must list it in `amends:` (one that replaces a whole decision uses `supersedes:`); block a decision that says it changes part of another decision without listing it in `amends:`.",
     "Do not block for wording, style or formatting.",
     "One rule is one trigger (one command, event or kind of input) and one outcome (D-5). The error cases, exit codes and boundaries of the same trigger belong in that rule as examples, and a definition table (such as a list of exit codes) is one rule: do not suggest splitting those. Suggest a split only when a rule covers two different triggers, or two outcomes that could change independently; never block for it.",
@@ -92,6 +94,19 @@ ${q.examples.trim()}
     const links = d.kind === "decision" ? [...(d.supersedes ? [`supersedes: ${d.supersedes}`] : []), ...(d.amends.length ? [`amends: ${d.amends.join(", ")}`] : [])] : [];
     parts.push(`## ${d.id} ${d.title} (${d.kind}${"status" in d ? `, ${d.status}` : ""})\n\n${links.map((l) => `${l}\n`).join("")}${links.length ? "\n" : ""}${d.body.trim()}\n`);
   }
+  // reason: the review of a rule tagged with a release must see that release's 范围 and 不做, and that of a release the rules tagged with it (D-61, BR-2009)
+  const releaseIds = new Set<string>();
+  for (const d of changed) {
+    if (d.kind === "release") releaseIds.add(d.id);
+    else if (d.kind === "rule" && d.release !== undefined) releaseIds.add(d.release);
+  }
+  const changedIds = new Set(changed.map((d) => d.id));
+  for (const id of [...releaseIds].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))) {
+    const release = corpus.docs.find((d) => d.kind === "release" && d.id === id);
+    if (!release || release.kind !== "release") continue;
+    const tagged = corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status !== "retired" && d.release === id);
+    parts.push(`# Release ${release.id} ${release.title} (${release.status})${changedIds.has(id) ? " (new text shown above)" : ""}\n\n${changedIds.has(id) ? "" : `${release.body.trim()}\n\n`}Rules tagged ${id}:\n${tagged.length ? tagged.map((r) => `- ${r.id} [${r.domain}]${r.status === "planned" ? " [规划中]" : ""} ${r.title}`).join("\n") : "(none)"}\n`);
+  }
   const change = extras.change;
   if (change?.kind === "change") {
     const lessons = section(change.body, LESSONS_SECTION);
@@ -124,7 +139,7 @@ ${q.examples.trim()}
   }
   // reason: planned rules constrain execution too, so a contradiction with one is found as well (BR-2036, BR-2235)
   const index = corpus.docs.filter((d) => d.kind === "rule" && d.status !== "retired");
-  parts.push(`# Rule index (every active and planned rule, all domains)\n\n${index.map((r) => `- ${r.id} [${r.kind === "rule" ? r.domain : ""}]${r.kind === "rule" && r.status === "planned" ? " [规划中]" : ""} ${r.title}`).join("\n")}`);
+  parts.push(`# Rule index (every active and planned rule, all domains)\n\n${index.map((r) => `- ${r.id} [${r.kind === "rule" ? r.domain : ""}]${r.kind === "rule" && r.status === "planned" ? " [规划中]" : ""}${r.kind === "rule" && r.release ? ` [${r.release}]` : ""} ${r.title}`).join("\n")}`);
   const accepted = corpus.docs.filter((d) => d.kind === "decision" && d.status === "accepted");
   if (accepted.length) parts.push(`# Accepted decisions\n\n${accepted.map((d) => `- ${d.id} ${d.title}`).join("\n")}`);
   return parts.join("\n");

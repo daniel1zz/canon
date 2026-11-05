@@ -500,6 +500,29 @@ tests: []
     expect(sh(root, "rev-parse", "main")).toBe(before);
   });
 
+  test("BR-2009: a release document changed on its own is reviewed with its new text; a block refuses the landing, an ok lets it land", async () => {
+    const release = (not: string) => `---\nid: ${["R", 1].join("-")}\ntitle: MVP\nstatus: active\n---\n\n${["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"].map((h) => `## ${h}\n\n${h === "不做" ? not : `${h}的内容`}\n`).join("\n")}`;
+    const blocked = reviewedProject("block");
+    const before = sh(blocked.root, "rev-parse", "main");
+    const s = startNew(blocked.root, "A release");
+    mkdirSync(join(s.worktree, "canon/releases"), { recursive: true });
+    writeFileSync(join(s.worktree, `canon/releases/${["R", 1].join("-")}.md`), release("不做退款的部分退款"));
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "release");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(readFileSync(blocked.promptFile, "utf8")).toContain("不做退款的部分退款");
+    expect(sh(blocked.root, "rev-parse", "main")).toBe(before);
+    const fine = reviewedProject("ok");
+    const t = startNew(fine.root, "A release");
+    mkdirSync(join(t.worktree, "canon/releases"), { recursive: true });
+    writeFileSync(join(t.worktree, `canon/releases/${["R", 1].join("-")}.md`), release("不做退款的部分退款"));
+    sh(t.worktree, "add", "-A");
+    sh(t.worktree, "commit", "-qm", "release");
+    expect((await land(ws(t.worktree), FAST, quiet)).kind).toBe("landed");
+    expect(readFileSync(fine.promptFile, "utf8")).toContain("# Changed documents (new text)");
+  });
+
   test("BR-2009: deleting a rule file is reviewed with the text it had on main, and a block refuses it", async () => {
     const { root, promptFile } = reviewedProject("ok");
     const id = ["BR", 1].join("-");

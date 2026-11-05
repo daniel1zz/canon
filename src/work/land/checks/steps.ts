@@ -92,12 +92,12 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   const execution = landingExecution({ db: ws.db, config: landing.value, wt, base: base.value, head: head.value, before: v.before, corpus: read.corpus, subject, main: ws.config.main });
   if (!execution.ok) return refuse(execution.reason, execution.message);
 
-  // Every added, edited or deleted file under canon/rules or canon/decisions is reviewed (BR-2009): rule and
-  // decision documents by their new text, deleted ones by the text they had on main, domain READMEs whole.
+  // Every added, edited or deleted file under canon/rules, canon/decisions or canon/releases is reviewed (BR-2009): rule,
+  // release and decision documents by their new text, deleted ones by the text they had on main, domain READMEs whole.
   // core.quotePath=false: git otherwise prints non-ASCII paths quoted and octal-escaped, which match no document.
   // A file only moved, with identical content, is neither changed nor deleted: moving 74 rules into
   // subdomains must not re-review all of them (BR-2009). git pairs exact renames; the blobs are compared too.
-  const knowledge = git(wt, "-c", "core.quotePath=false", "diff", "--name-status", "--find-renames=100%", base.value, head.value, "--", "canon/rules", "canon/decisions");
+  const knowledge = git(wt, "-c", "core.quotePath=false", "diff", "--name-status", "--find-renames=100%", base.value, head.value, "--", "canon/rules", "canon/decisions", "canon/releases");
   const entries: { status: string; path: string }[] = [];
   const renamed: string[] = [];
   for (const l of knowledge.ok && knowledge.value !== "" ? knowledge.value.split("\n") : []) {
