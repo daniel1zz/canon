@@ -214,6 +214,10 @@ function releaseTags(meta: Record<string, unknown>, prefix: string): { release: 
     return `\`changed_in\` must be a non-empty list of release ids such as [${prefix}-2] (D-61)`;
   }
   if (changed !== undefined && release === undefined) return "`changed_in` needs `release`: a rule that belongs to no release has no later release to change it (D-61)";
+  // reason: a release is changed only by a later one: R-2 may change R-1's rule, R-1 may not change its own (D-61, BR-2322)
+  const num = (v: string) => Number(v.split("-")[1]);
+  const early = release !== undefined ? (changed as string[] | undefined)?.find((c) => num(c) <= num(release)) : undefined;
+  if (early !== undefined) return `\`changed_in\` names ${early}, which is not later than \`release\` ${release as string}: a release is changed only by a later one (D-61)`;
   return { release: release as string | undefined, changedIn: (changed as string[] | undefined) ?? [] };
 }
 

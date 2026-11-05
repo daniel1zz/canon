@@ -34,6 +34,8 @@ describe("config validation", () => {
     ["a reshaped built-in type", "types:\n  rule:\n    prefix: R\n", "built-in type rule"],
     ["a reserved field", "types:\n  rule:\n    fields: [status]\n", "canon owns"],
     ["a duplicate prefix", "types:\n  spec:\n    prefix: D\n    dir: specs\n", "already the prefix"],
+    ["a type that takes the prefix R", "types:\n  spec:\n    prefix: R\n    dir: specs\n", "is the prefix of canon's built-in release type"],
+    ["a type that takes the directory releases", "types:\n  spec:\n    prefix: SP\n    dir: releases\n", "is the directory of canon's built-in release type"],
     ["a default outside the statuses", "types:\n  spec:\n    prefix: SP\n    dir: specs\n    statuses: [draft]\n    default: done\n", "default"],
     ["an unknown hook event", "hooks:\n  before_start: x\n", "unknown hook event"],
     ["invalid YAML", "floor: [\n", "not valid YAML"],

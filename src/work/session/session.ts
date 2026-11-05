@@ -188,7 +188,7 @@ export function changeOffMain(ws: Workspace, id: string): Result<{ doc: Change; 
 }
 
 /** The corpus as committed on a branch, or as it stands in the worktree that has the branch checked out. */
-function corpusOf(ws: Workspace, ref: string): Result<Corpus> {
+export function corpusOf(ws: Workspace, ref: string): Result<Corpus> {
   const main = ref;
   const wts = listWorktreesLocked(ws.primary);
   if (!wts.ok) return wts;

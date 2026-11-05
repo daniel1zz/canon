@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { RECORD_COMMAND } from "../../cli/install/hook.ts";
 import { land } from "../../work/land/land.ts";
@@ -112,6 +112,50 @@ describe("canon release ship: the owner's recorded answer", () => {
   });
 });
 
+describe("canon release ship: the owner's words, not only the agent's answer", () => {
+  test("BR-2331 BR-2021: the owner chose no in the question tool and the agent records yes over it: the answer is refused (exit 1), so ship still finds no yes", () => {
+    const root = fixture();
+    const q = question(1);
+    const n = Number(/#(\d+)/.exec(agent(root, "human", "ask", q, "--option", "yes,no").out)![1]);
+    const data = { session_id: SESSION, tool_name: "AskUserQuestion", tool_response: { questions: [{ question: q }], answers: { [q]: "no" } } };
+    expect(canon(root, "agent:test", ["human", "record"], { stdin: JSON.stringify(data) }).code).toBe(0);
+    const lie = agent(root, "human", "answer", String(n), "yes", "--relayed", "no");
+    expect(lie.code).toBe(1);
+    expect(agent(root, "human", "pending").out).toContain(`#${n}`); // still unanswered
+    const r = agent(root, "release", "ship", R(1));
+    expect([r.code, r.err.includes("no answered question names")]).toEqual([1, true]);
+  });
+
+  test("BR-2331: an answer whose relayed words are not yes is refused by ship even when the record holds it (a row that got past the answer check)", () => {
+    const root = fixture();
+    ask(root, question(1), "no");
+    const db = ws(root).db.db;
+    db.query("UPDATE questions SET answer = 'yes'").run(); // the stored answer says yes; the words the owner said stay no
+    const r = agent(root, "release", "ship", R(1));
+    expect(r.code).toBe(1);
+    expect(r.err).toContain(`the owner's relayed words are "no", not yes`);
+  });
+
+  test("BR-2331: only yes and 是 confirm; y, 确认 and 同意 do not, YES does, and 是 relayed with the question tool's record does", () => {
+    const refusedFor = (word: string) => {
+      const root = fixture();
+      // a question without options, so the word is recorded as typed: the vocabulary is ship's to judge
+      const q = question(1);
+      const n = Number(/#(\d+)/.exec(agent(root, "human", "ask", q).out)![1]);
+      const data = { session_id: SESSION, tool_name: "AskUserQuestion", tool_response: { questions: [{ question: q }], answers: { [q]: word } } };
+      expect(canon(root, "agent:test", ["human", "record"], { stdin: JSON.stringify(data) }).code).toBe(0);
+      expect(agent(root, "human", "answer", String(n), word, "--relayed", word).code).toBe(0);
+      return agent(root, "release", "ship", R(1), "--timeout", "5");
+    };
+    for (const word of ["y", "确认", "同意"]) {
+      const r = refusedFor(word);
+      expect([word, r.code, r.err.includes("not yes")]).toEqual([word, 1, true]);
+    }
+    // the words that count get past the owner check; the floor is not what is tested, so see that the refusal is not about the answer
+    for (const word of ["YES", "是"]) expect([word, refusedFor(word).err.includes("not yes")]).toEqual([word, false]);
+  });
+});
+
 describe("canon release ship: what must be passed", () => {
   test("BR-2333 BR-2331: with no yes recorded, planned, waiting-for-rerun and untagged cases are refused with the rules listed; unknown is 3, shipped is 5", () => {
     const planned = fixture({ [`canon/rules/billing/${BR(3)}.md`]: ruleText(3, `release: ${R(1)}\n`, "planned") });
@@ -211,7 +255,7 @@ describe("canon release ship: shipping and the landing gate", () => {
     expect(hand.kind === "refused" && [hand.reason, hand.message.includes(`canon release ship ${R(1)}`)]).toEqual(["release", true]);
     const created = await fail("new shipped", { [`canon/releases/${R(2)}.md`]: releaseText(2, `status: shipped\nshipped_at: ${sha}\n`) });
     // reason: a release that never existed cannot name a commit that held it, so canon check refuses it before the release gate does (BR-2325)
-    expect(created.kind === "refused" && ["check", "release"].includes(created.reason)).toBe(true);
+    expect(created.kind === "refused" && [created.reason, created.findings?.map((f) => f.rule)]).toEqual(["check", ["release-frozen"]]);
     const ok = await fail("move to active", { [`canon/releases/${R(1)}.md`]: releaseText(1, "status: planned\n") });
     expect(ok.kind).toBe("landed");
     // R-1 shipped on main through the command; then the three ways to undo it
@@ -228,12 +272,95 @@ describe("canon release ship: shipping and the landing gate", () => {
       sh(s.worktree, "commit", "-qm", title);
       return land(ws(s.worktree), FAST, quiet);
     };
+    // reason: deleting a release that rules still name is ref-dangling, and a shipped_at that names no commit holding it is release-frozen: canon check refuses those first; only an unship reaches the release gate
+    const expected = { unship: ["release", undefined], delete: ["check", ["ref-dangling"]], move: ["check", ["release-frozen"]] } as const;
     for (const [title, change] of [["unship", (t: string) => t.replace("status: shipped", "status: active").replace(/shipped_at: .*\n/, "")], ["delete", () => null], ["move", (t: string) => t.replace(/shipped_at: .*/, `shipped_at: ${"b".repeat(40)}`)]] as const) {
       const out = await attempt(title, change);
-      // reason: a deleted release that rules still name is ref-dangling, and a shipped_at that names no commit holding it is release-frozen: canon check refuses those first; the release gate holds the rest
-      expect([title, out.kind === "refused" && (title === "unship" ? out.reason === "release" : ["check", "release"].includes(out.reason))]).toEqual([title, true]);
+      const rules = out.kind === "refused" ? [...new Set(out.findings?.map((f) => f.rule))] : undefined;
+      expect([title, out.kind === "refused" && out.reason, out.kind === "refused" && (rules?.length ? rules : undefined)]).toEqual([title, expected[title][0], expected[title][1]]);
     }
     const fine = await attempt("edit success criteria", (t) => t.replace("成功标准的内容", "成功标准改了"));
     expect(fine.kind).toBe("landed");
+  });
+});
+
+describe("canon release ship: conditions checked again when the change lands", () => {
+  /** Ships R-1 while main's floor fails, so the ship change is committed but not landed; then main is repaired. Returns the ship change's worktree. */
+  function stuckShip(): { root: string; worktree: string } {
+    const root = fixture();
+    write(root, { FAIL: "x\n" });
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "floor fails");
+    ask(root, question(1), "yes");
+    expect(agent(root, "release", "ship", R(1), "--timeout", "5").code).toBe(1);
+    const block = sh(root, "worktree", "list", "--porcelain").split("\n\n").find((b) => b.includes("branch refs/heads/change/"))!;
+    const worktree = block.split("\n")[0]!.slice("worktree ".length);
+    sh(root, "rm", "-q", "FAIL");
+    sh(root, "commit", "-qm", "floor repaired");
+    return { root, worktree };
+  }
+  const land = (worktree: string) => canon(worktree, "agent:test", ["work", "land", "--finish", "--timeout", "5"]);
+  const shipped = (root: string) => sh(root, "show", `main:canon/releases/${R(1)}.md`).includes("status: shipped");
+  const rule1 = (root: string) => join(root, `canon/rules/billing/${BR(1)}.md`);
+
+  test("BR-2335: a rule that became waiting for rerun after ship started refuses the landing with reason release, also on a direct land --finish; once it passes again the landing goes through", () => {
+    const { root, worktree } = stuckShip();
+    const original = readFileSync(rule1(root), "utf8");
+    writeFileSync(rule1(root), original.replace("规则1的行为。", "规则1的行为变了。"));
+    sh(root, "commit", "-qam", "rule 1 changes");
+    for (let attempt = 0; attempt < 2; attempt++) {
+      const r = land(worktree);
+      expect([r.code, r.err.includes("release")]).toEqual([1, true]);
+      expect(r.err).toContain(`${BR(1)} 规则1: 待重新执行`);
+      expect(r.err).not.toContain(`${BR(2)} `);
+      expect(r.err).toContain(`canon release ship ${R(1)}`);
+      expect(shipped(root)).toBe(false);
+    }
+    writeFileSync(rule1(root), original);
+    sh(root, "commit", "-qam", "rule 1 as it was");
+    const again = land(worktree);
+    expect([again.code, shipped(root)]).toEqual([0, true]);
+  });
+
+  test("BR-2335: a no the owner gave after ship started refuses the landing with reason release; a later yes lets a direct land --finish through", () => {
+    const { root, worktree } = stuckShip();
+    ask(root, question(1), "no");
+    const r = land(worktree);
+    expect([r.code, r.err.includes("release"), r.err.includes("confirmation no longer stands")]).toEqual([1, true, true]);
+    expect(shipped(root)).toBe(false);
+    expect(land(worktree).code).toBe(1);
+    ask(root, question(1), "yes");
+    const again = land(worktree);
+    expect([again.code, shipped(root)]).toEqual([0, true]);
+  });
+
+  test("BR-2335: nothing changed after ship started: the landing goes through (BR-2334)", () => {
+    const { root, worktree } = stuckShip();
+    const r = land(worktree);
+    expect([r.code, shipped(root)]).toEqual([0, true]);
+  });
+});
+
+describe("the landing gate from the command line", () => {
+  test("BR-2332: a hand-written shipped release is refused by `canon work land --finish` itself (exit 1, reason release) and main keeps the old text; the same landing without it succeeds", () => {
+    const root = fixture();
+    const sha = sh(root, "rev-parse", "HEAD").trim();
+    const s = startNew(root, "hand written");
+    const changeFile = join(s.worktree, "canon/changes", readdirSync(join(s.worktree, "canon/changes")).find((f) => f.startsWith(`${s.change}`))!);
+    writeFileSync(changeFile, readFileSync(changeFile, "utf8").replace("- [ ]", "- [x]"));
+    write(s.worktree, { [`canon/releases/${R(1)}.md`]: releaseText(1, `status: shipped\nshipped_at: ${sha}\n`) });
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "hand written");
+    const r = canon(s.worktree, "agent:a", ["work", "land", "--finish", "--timeout", "5"]);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain(`canon release ship ${R(1)}`);
+    expect(r.err).toContain("release");
+    expect(sh(root, "show", `main:canon/releases/${R(1)}.md`)).not.toContain("status: shipped");
+    // the same change with an edit that is not a shipping lands through the same entry point
+    write(s.worktree, { [`canon/releases/${R(1)}.md`]: releaseText(1, "status: planned\n") });
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "planned instead");
+    const ok = canon(s.worktree, "agent:a", ["work", "land", "--finish", "--timeout", "5"]);
+    expect([ok.code, sh(root, "show", `main:canon/releases/${R(1)}.md`).includes("status: planned")]).toEqual([0, true]);
   });
 });

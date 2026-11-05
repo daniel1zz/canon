@@ -2,62 +2,16 @@ import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { git } from "../../kernel/git.ts";
 import { ok, type Result } from "../../kernel/result.ts";
-import type { CoordDb } from "../../work/db.ts";
-import { STATE_LABEL, executionStates, type ExecutionState } from "../../work/execution/state.ts";
+import { executionStates } from "../../work/execution/state.ts";
 import { land } from "../../work/land/land.ts";
-import { start, mainCorpus } from "../../work/session/session.ts";
+import { corpusOf, start } from "../../work/session/session.ts";
 import { openWorkspace, type Say, type Workspace } from "../../work/workspace.ts";
 import { findDoc } from "../query/query.ts";
 import type { Release } from "../documents/model.ts";
 import { setMeta } from "../documents/write.ts";
-import { releaseStatuses } from "./status.ts";
+import { ownerConfirmation, shipBlockers } from "./gate.ts";
 
 /** `canon release ship R-n` (D-61): the conditions, the owner's recorded answer, and the change that lands the snapshot. */
-
-/** The rules tagged with a release that are not passed, each as a line saying what is wrong (empty when it may ship). */
-export function shipBlockers(corpus: Parameters<typeof releaseStatuses>[0], states: ReadonlyMap<string, ExecutionState>, id: string): string[] {
-  const status = releaseStatuses(corpus, states).find((s) => s.release.id === id);
-  if (!status) return [`${id} is not a release`];
-  if (status.rules.length === 0) return [`no rule is tagged ${id}: there is no behaviour to ship (a rule says \`release: ${id}\` in its front matter)`];
-  return status.rules.filter((r) => r.state !== "passed").map((r) => `${r.id} ${r.title}: ${STATE_LABEL[r.state]}${r.change ? ` (${r.change})` : ""}`);
-}
-
-/** The text a question must contain to be about shipping `id`: `ship R-3`, whole (R-3 does not match R-30). */
-export const shipQuestion = (id: string): RegExp => new RegExp(`\\bship ${id}(?![0-9])`, "i");
-
-/** What the owner has answered about shipping a release, or why there is no usable answer. */
-export type Confirmation = { readonly ok: true; readonly question: number } | { readonly ok: false; readonly message: string };
-
-const YES = /^(yes|y|是|确认|同意)$/i;
-
-interface Row {
-  readonly id: number;
-  readonly question: string;
-  readonly answer: string;
-  readonly answered_by: string | null;
-  readonly relayed: string | null;
-  readonly witness: string | null;
-}
-
-/**
- * The most recently answered question that names `ship <id>` decides (BR-2331, D-61): a later `no` revokes an earlier `yes`.
- * It counts when it was answered yes by a human at a terminal, or relayed by an agent whose words match what Claude Code's
- * question tool recorded (witness `match`, BR-2276). Anything else, including no such question, is a refusal that says how to fix it.
- */
-export function ownerConfirmation(db: CoordDb, id: string): Confirmation {
-  const rows = db.db
-    .query<Row, []>("SELECT id, question, answer, answered_by, relayed, witness FROM questions WHERE answer IS NOT NULL ORDER BY answered_at DESC, id DESC")
-    .all()
-    .filter((r) => shipQuestion(id).test(r.question));
-  const how = `ask the owner in the conversation with the question tool, copying the question word for word: canon human ask "ship ${id}: <what ships, the rules and the commit>?" --option yes,no ; then record their words: canon human answer <n> yes --relayed "<their words>"`;
-  const latest = rows[0];
-  if (!latest) return { ok: false, message: `${id} needs the owner's confirmation: no answered question names \`ship ${id}\`; ${how}` };
-  if (!YES.test(latest.answer.trim())) return { ok: false, message: `the owner did not confirm shipping ${id}: question #${latest.id} was answered ${JSON.stringify(latest.answer)}, not yes; ${how}` };
-  const byHuman = latest.answered_by?.startsWith("human:") === true && latest.relayed === null;
-  if (byHuman || (latest.relayed !== null && latest.witness === "match")) return { ok: true, question: latest.id };
-  // reason: a relay canon cannot tie to the question tool's record is an agent's word, not the owner's (BR-2276, D-61)
-  return { ok: false, message: `question #${latest.id} (ship ${id}) was answered yes, but the answer is not the owner's: ${latest.relayed === null ? `${latest.answered_by} is not a human` : `the relayed words do not match Claude Code's question-tool record (${latest.witness ?? "not checked"}, BR-2276)`}; ${how}` };
-}
 
 export type ShipOutcome =
   | { readonly kind: "refused"; readonly code: "refused" | "not_found" | "conflict"; readonly message: string }
@@ -70,7 +24,10 @@ export type ShipOutcome =
  * release, lands it, and tags `release/<id>` at `shipped_at`. A tag that cannot be made is reported, not undone.
  */
 export async function shipRelease(ws: Workspace, id: string, timeoutMs: number, say: Say): Promise<Result<ShipOutcome>> {
-  const onMain = mainCorpus(ws);
+  // reason: main's commit is taken first and every check reads the rules at that commit, so "what ships" is one commit (D-61, BR-2335)
+  const sha = git(ws.primary, "rev-parse", `refs/heads/${ws.config.main}`);
+  if (!sha.ok) return sha;
+  const onMain = corpusOf(ws, sha.value);
   if (!onMain.ok) return onMain;
   const doc = findDoc(onMain.value, id);
   const refuse = (code: "refused" | "not_found" | "conflict", message: string): Result<ShipOutcome> => ok({ kind: "refused", code, message });
@@ -80,8 +37,6 @@ export async function shipRelease(ws: Workspace, id: string, timeoutMs: number, 
   if (blockers.length > 0) return refuse("refused", `${doc.id} cannot ship yet (every rule tagged with it must be passed):\n${blockers.map((b) => `  - ${b}`).join("\n")}`);
   const confirmed = ownerConfirmation(ws.db, doc.id);
   if (!confirmed.ok) return refuse("refused", confirmed.message);
-  const sha = git(ws.primary, "rev-parse", `refs/heads/${ws.config.main}`);
-  if (!sha.ok) return sha;
 
   const started = start(ws, { title: `发布 ${doc.id}：${doc.title}` }, say);
   if (!started.ok) return started;

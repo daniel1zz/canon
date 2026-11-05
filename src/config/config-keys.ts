@@ -174,8 +174,16 @@ function readTypes(v: unknown): Result<DocType[]> {
     const statuses = decl["statuses"];
     const dflt = decl["default"];
     if (typeof prefix !== "string" || !/^[A-Z][A-Z0-9]*$/.test(prefix)) return err("invalid", `\`${at}.prefix\` must be uppercase letters and digits, e.g. SP`);
+    // reason: the release type is built in (D-61), so a project that declared R or releases before upgrading needs to know to rename, not that "another type" has the prefix (BR-2045)
+    const release = types.find((t) => t.builtin && t.name === "release");
+    if (release && prefix === release.prefix) {
+      return err("invalid", `\`${at}.prefix\`: ${prefix} is the prefix of canon's built-in release type (canon/${release.dir}/${release.prefix}-n.md, D-61), so no declared type can use it; to migrate, give \`${name}\` another prefix and rename its documents' ids (and every reference to them) to match`);
+    }
     if (types.some((t) => t.prefix === prefix)) return err("invalid", `\`${at}.prefix\`: ${prefix} is already the prefix of another type`);
     if (typeof dir !== "string" || !/^[a-z0-9][a-z0-9-]*$/.test(dir)) return err("invalid", `\`${at}.dir\` must be a directory name under canon/`);
+    if (release && dir === release.dir) {
+      return err("invalid", `\`${at}.dir\`: canon/${dir} is the directory of canon's built-in release type (D-61), so no declared type can use it; to migrate, rename \`${name}\`'s directory (git mv canon/${dir} canon/<other>) and set \`${at}.dir\` to the new name`);
+    }
     if (RESERVED_DIRS.has(dir) || types.some((t) => t.dir === dir)) return err("invalid", `\`${at}.dir\`: canon/${dir} is already used`);
     if (statuses !== undefined && (!Array.isArray(statuses) || statuses.length === 0 || statuses.some((s) => typeof s !== "string" || s === ""))) {
       return err("invalid", `\`${at}.statuses\` must be a non-empty list of statuses`);

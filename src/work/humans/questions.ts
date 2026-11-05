@@ -53,11 +53,12 @@ export function questions(db: CoordDb, which: "pending" | "all"): Question[] {
  * direct answer (issue #56).
  *
  * The write is atomic: two answers racing for one question cannot both succeed (BR-2040). A relay is compared with the
- * question tool's records of the relaying session (`ctx`, BR-2276); the comparison never refuses.
+ * question tool's records of the relaying session (`ctx`, BR-2276); the comparison never refuses. A question with options
+ * takes a relay only when the words are one of them and the answer is that same option (BR-2021).
  */
 export function answer(db: CoordDb, id: number, text: string, by: string, relayed: string | undefined, tty: boolean, ctx: WitnessContext): Result<void> {
   const quote = relayed?.trim();
-  const refuse = (reason: string, code: "invalid" | "not_found" | "conflict", message: string): Result<void> => {
+  const refuse = (reason: string, code: "invalid" | "not_found" | "conflict" | "refused", message: string): Result<void> => {
     db.event(by, "human.answer.refuse", String(id), { reason });
     return err(code, message);
   };
@@ -68,8 +69,16 @@ export function answer(db: CoordDb, id: number, text: string, by: string, relaye
     return refuse("not-human-no-relay", "invalid", `${by} is not a human; an agent records a human's answer only with --relayed "<the human's own words>" (BR-2021)`);
   }
   const tx = db.db.transaction((): Result<void> => {
-    const q = db.db.query<{ answer: string | null; question: string }, [number]>("SELECT answer, question FROM questions WHERE id = ?").get(id);
+    const q = db.db.query<{ answer: string | null; question: string; options: string }, [number]>("SELECT answer, question, options FROM questions WHERE id = ?").get(id);
     if (!q) return err("not_found", `no question #${id}`);
+    // reason: the answer an agent types is its own claim; with options it must be the option the human's words name, or a relayed no could be stored as yes (BR-2021)
+    const options = JSON.parse(q.options) as string[];
+    if (quote && !by.startsWith("human:") && q.answer === null && options.length > 0) {
+      const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
+      if (!options.some((o) => same(o, quote)) || !same(text, quote)) {
+        return err("refused", `question #${id} offers the options ${options.join(" | ")}: the recorded answer must be the option the human's words name, and the words must be that option (answer ${JSON.stringify(text)}, relayed ${JSON.stringify(quote)}); nothing recorded`);
+      }
+    }
     const witness = quote ? witnessFor(db, q.question, quote, ctx) : null;
     const r = db.db.query("UPDATE questions SET answer = ?, answered_by = ?, relayed = ?, witness = ?, answered_at = ? WHERE id = ? AND answer IS NULL").run(text, by, quote || null, witness, iso(now()), id);
     if (r.changes === 0) return err("conflict", `question #${id} is already answered`);
@@ -77,7 +86,10 @@ export function answer(db: CoordDb, id: number, text: string, by: string, relaye
     return ok(undefined);
   });
   const done = tx.immediate();
-  if (!done.ok) return refuse(done.error.code === "not_found" ? "not-found" : "answered", done.error.code === "not_found" ? "not_found" : "conflict", done.error.message);
+  if (!done.ok) {
+    const { code } = done.error;
+    return code === "refused" ? refuse("option-mismatch", "refused", done.error.message) : refuse(code === "not_found" ? "not-found" : "answered", code === "not_found" ? "not_found" : "conflict", done.error.message);
+  }
   return done;
 }
 

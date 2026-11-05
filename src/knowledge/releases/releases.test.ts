@@ -143,10 +143,16 @@ describe("release files and rule tags", () => {
       [rulePath(2)]: ruleFile(2, { release: "v1" }),
       [rulePath(3)]: ruleFile(3, { changed_in: `[${R(2)}]` }),
       [rulePath(4)]: ruleFile(4, { release: R(1), changed_in: "[]" }),
+      [rulePath(5)]: ruleFile(5, { release: R(1), changed_in: `[${R(1)}]` }),
+      [rulePath(6)]: ruleFile(6, { release: R(2), changed_in: `[${R(1)}]` }),
+      [rulePath(7)]: ruleFile(7, { release: R(2), changed_in: `[${R(3)}, ${R(1)}]` }),
+      [rulePath(8)]: ruleFile(8, { release: R(2), changed_in: `[${R(10)}]` }), // by number, not as text: 10 is later than 2
     });
     const invalid = findings(bad).filter((f) => f.rule === "file-invalid");
-    expect(invalid.map((f) => f.path).sort()).toEqual([1, 2, 3, 4].map(rulePath).sort());
+    expect(invalid.map((f) => f.path).sort()).toEqual([1, 2, 3, 4, 5, 6, 7].map(rulePath).sort());
     expect(invalid.find((f) => f.path === rulePath(3))!.message).toContain("needs `release`");
+    expect(invalid.find((f) => f.path === rulePath(5))!.message).toContain(`\`changed_in\` names ${R(1)}, which is not later than \`release\` ${R(1)}`);
+    expect(invalid.find((f) => f.path === rulePath(7))!.message).toContain(`names ${R(1)}`);
   });
 
   test("BR-2323: a tag that names no release is ref-dangling and says which key; an unreadable release does not exist", () => {

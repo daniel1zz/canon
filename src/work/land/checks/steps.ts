@@ -93,7 +93,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   const execution = landingExecution({ db: ws.db, config: landing.value, wt, base: base.value, head: head.value, before: v.before, corpus: read.corpus, subject, main: ws.config.main });
   if (!execution.ok) return refuse(execution.reason, execution.message);
   // A release becomes shipped only through `canon release ship`, and stays shipped (BR-2332, D-61).
-  const releases = landingReleases({ db: ws.db, wt, base: base.value, head: head.value, corpus: read.corpus, subject });
+  const releases = landingReleases({ primary: ws.primary, timing: ws.config.floorTiming, db: ws.db, wt, base: base.value, head: head.value, corpus: read.corpus, subject });
   if (!releases.ok) return refuse("release", releases.message);
 
   // Every added, edited or deleted file under canon/rules, canon/decisions or canon/releases is reviewed (BR-2009): rule,
