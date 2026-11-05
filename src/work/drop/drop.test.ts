@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { processOf } from "../claims/liveness.ts";
 import { claims } from "../claims/claims.ts";
 import { drop } from "./drop.ts";
-import { writeSchemaFile } from "../../config/reference/reference.ts";
+import { writeSchemaFile } from "../../invocation/reference/reference.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 import { stop } from "../session/session.ts";
 import { handoffs } from "../session/handoffs.ts";
@@ -18,7 +18,7 @@ function released<T extends { worktree: string }>(s: T): T {
 }
 import { land } from "../land/land.ts";
 
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 
 /** The canon CLI as `actor`, outside Claude Code. */
 function canon(cwd: string, actor: string, ...args: string[]) {
@@ -176,7 +176,7 @@ describe("dropping a change", () => {
     // A stand-in for lsof: while drop waits for it, another session tries to start the change.
     const bin = mkdtempSync(join(tmpdir(), "canon-racelsof-"));
     const out = join(bin, "start-exit");
-    const main = join(import.meta.dir, "..", "..", "cli", "main.ts");
+    const main = join(import.meta.dir, "..", "..", "invocation", "main.ts");
     writeFileSync(join(bin, "lsof"), `#!/bin/sh\ncd ${JSON.stringify(root)} && CANON_ACTOR=agent:b bun ${JSON.stringify(main)} work start ${s.change} >/dev/null 2>&1; echo $? > ${JSON.stringify(out)}\nexit 0\n`, { mode: 0o755 });
     const path = process.env["PATH"];
     process.env["PATH"] = `${bin}:${path}`;

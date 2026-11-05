@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { entry, json, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { entry, json, say, workspace, type DomainCommands } from "../command.ts";
 import { modelineHint, renderConfig, schemaText, viewConfig, writeSchemaFile } from "./reference.ts";
 
 /** `canon config`: every key canon/config.yaml can set, with its value here (BR-2174), or the JSON Schema (BR-2175). */

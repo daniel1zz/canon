@@ -4,14 +4,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { installSkills, MANIFEST, skillsSource, versionOf } from "./install.ts";
 import { BRIEF_COMMAND } from "./hook.ts";
-import { BUILTIN_TYPES, idsIn } from "../../knowledge/documents/types.ts";
-import { stripCode } from "../../knowledge/documents/model.ts";
-import { WORKFLOW_GUIDE } from "../guide.ts";
+import { BUILTIN_TYPES, idsIn } from "../knowledge/documents/types.ts";
+import { stripCode } from "../knowledge/documents/model.ts";
+import { WORKFLOW_GUIDE } from "../invocation/guide.ts";
 
 // reason: these tests spawn the canon CLI, and one compiles it; at load a spawn alone can take seconds (C-111)
 setDefaultTimeout(60_000);
 
-const MAIN = join(import.meta.dir, "..", "main.ts");
+const MAIN = join(import.meta.dir, "..", "invocation", "main.ts");
 
 function dir(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "canon-skills-"));
@@ -208,7 +208,7 @@ describe("installing stays inside the project", () => {
 
 describe("text canon ships into other projects", () => {
   test("BR-2096: shipped skills and the workflow guide name no canon document ids outside code", () => {
-    const skills = join(import.meta.dir, "..", "..", "..", ".claude", "skills");
+    const skills = join(import.meta.dir, "..", "..", ".claude", "skills");
     const offending: string[] = [];
     for (const rel of new Bun.Glob("canon-*/**/*").scanSync({ cwd: skills })) {
       for (const id of idsIn(BUILTIN_TYPES, stripCode(readFileSync(join(skills, rel), "utf8")))) offending.push(`${rel}: ${id}`);

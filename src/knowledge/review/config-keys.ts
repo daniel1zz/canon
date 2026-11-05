@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { configKey, MINUTE, optionalString, positiveNumber, positiveValue, REL_DIR, relPath } from "../../config/key.ts";
+import { configKey, MINUTE, optionalString, positiveNumber, positiveValue, REL_DIR, relPath } from "../../invocation/key.ts";
 
 /** The `review` value that turns the rule and duplicate reviews off on purpose; unset refuses instead (BR-2074, D-51). */
 export const REVIEW_NONE = "none";

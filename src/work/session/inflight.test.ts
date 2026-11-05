@@ -8,7 +8,7 @@ import { project, sh, startNew, ws } from "../testkit.ts";
 // reason: each case spawns the CLI several times (work start, stop, change list, brief); under load one spawn takes seconds (C-111)
 setDefaultTimeout(60_000);
 
-const MAIN = join(import.meta.dir, "../../cli/main.ts");
+const MAIN = join(import.meta.dir, "../../invocation/main.ts");
 const id = (n: number) => ["C", n].join("-");
 
 function canon(cwd: string, ...args: string[]) {

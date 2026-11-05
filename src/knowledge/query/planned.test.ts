@@ -5,7 +5,7 @@ import { project, sh } from "../../work/testkit.ts";
 import { readCorpus } from "../documents/read.ts";
 import { contextFor, renderContext } from "./query.ts";
 
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 const br = (n: number) => ["BR", n].join("-");
 
 function canon(cwd: string, ...args: string[]) {

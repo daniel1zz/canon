@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { project, sh } from "../testkit.ts";
 import { encodePath, projectsDir, readRecords, renderUsage, usageReport, type Places } from "./usage.ts";
 
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 const AT: Places = { primary: "/w/p", worktrees: "/w/p.worktrees", canonDir: "/w/p/.git/canon" };
 const NOW = new Date("2026-11-04T12:00:00.000Z");
 const daysAgo = (n: number) => new Date(NOW.getTime() - n * 86_400_000).toISOString();

@@ -3,8 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { BRIEF_COMMAND, RECORD_COMMAND, SNAPSHOT_COMMAND } from "./hook.ts";
-import { CoordDb } from "../../work/db.ts";
-import { enqueue, tryTurn } from "../../work/land/queue/queue.ts";
+import { CoordDb } from "../work/db.ts";
+import { enqueue, tryTurn } from "../work/land/queue/queue.ts";
 
 /** The PreToolUse entry canon installs (BR-2185); a project with canon's current settings has it. */
 const SNAPSHOT_ENTRY = { matcher: "Bash", hooks: [{ type: "command", command: SNAPSHOT_COMMAND }] };
@@ -13,7 +13,7 @@ const RECORD_ENTRY = { matcher: "AskUserQuestion", hooks: [{ type: "command", co
 /** The worktree setting canon installs (BR-2264); a project with canon's current settings has it. */
 const WORKTREE = { baseRef: "head" };
 
-const MAIN = join(import.meta.dir, "..", "main.ts");
+const MAIN = join(import.meta.dir, "..", "invocation", "main.ts");
 
 function dir(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "canon-update-"));

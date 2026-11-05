@@ -1,5 +1,5 @@
 import { err, ok } from "../../kernel/result.ts";
-import { configKey, MINUTE } from "../../config/key.ts";
+import { configKey, MINUTE } from "../../invocation/key.ts";
 
 /** When the floor runs relative to main moving (D-31): before, the default, or after in the background. */
 export type FloorTiming = "before" | "after";

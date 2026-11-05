@@ -7,7 +7,7 @@ import { testFilesFor } from "../knowledge/check/tests.ts";
 import { readCorpus } from "../knowledge/documents/read.ts";
 import { readConfig } from "./config.ts";
 
-const MAIN = join(import.meta.dir, "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "main.ts");
 const br = (n: number) => ["BR", n].join("-");
 
 function repo(files: Record<string, string> = {}): string {
@@ -61,8 +61,8 @@ describe("config validation", () => {
 
   test("BR-2151: instructions default to CLAUDE.md, accept relative file paths and refuse anything else", () => {
     expect(readConfig(repo()).ok && (readConfig(repo()) as { value: { instructions: readonly string[] } }).value.instructions).toEqual(["CLAUDE.md"]);
-    const good = readConfig(repo({ "canon/config.yaml": "instructions: [CLAUDE.md, src/cli/guide.ts]\n" }));
-    expect(good.ok && good.value.instructions).toEqual(["CLAUDE.md", "src/cli/guide.ts"]);
+    const good = readConfig(repo({ "canon/config.yaml": "instructions: [CLAUDE.md, src/invocation/guide.ts]\n" }));
+    expect(good.ok && good.value.instructions).toEqual(["CLAUDE.md", "src/invocation/guide.ts"]);
     for (const yaml of ["instructions: CLAUDE.md\n", "instructions: [/etc/CLAUDE.md]\n", "instructions: [../CLAUDE.md]\n", "instructions: [docs/]\n"]) {
       const r = readConfig(repo({ "canon/config.yaml": yaml }));
       expect(!r.ok && r.error.message).toContain("`instructions` must be a list");

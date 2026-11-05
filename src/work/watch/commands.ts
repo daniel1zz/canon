@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { entry, EXIT, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { entry, EXIT, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { watch } from "./watch.ts";
 
 /** `canon floor watch`: the background floor of merge-then-test (D-31). */

@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { err, ok } from "../../kernel/result.ts";
-import { configKey, optionalString, stringValue } from "../../config/key.ts";
+import { configKey, optionalString, stringValue } from "../../invocation/key.ts";
 
 /** Build output, dependency and cache directories of common toolchains: rebuilt by `setup` or a build, never hand-made. */
 export const DEFAULT_REGENERABLE: readonly string[] = [

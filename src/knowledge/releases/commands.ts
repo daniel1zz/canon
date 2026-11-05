@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { corpusOf, entry, EXIT, fail, json, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { corpusOf, entry, EXIT, fail, json, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { executionStates } from "../../work/execution/state.ts";
 import type { Release } from "../documents/model.ts";
 import { findDoc } from "../query/query.ts";

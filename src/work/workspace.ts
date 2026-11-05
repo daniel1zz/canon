@@ -1,7 +1,7 @@
 import { userInfo } from "node:os";
 import { CoordDb } from "./db.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
-import { readConfig, type Config } from "../config/config.ts";
+import { readConfig, type Config } from "../invocation/config.ts";
 import { listWorktreesLocked, toplevel } from "../kernel/git.ts";
 
 /**

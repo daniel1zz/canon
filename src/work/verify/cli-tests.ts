@@ -18,9 +18,9 @@ export interface CliDrive {
   readonly driven: readonly RegisteredCommand[];
 }
 
-// entry("name", rank, command) and entry("name", rank, command, "group"), as src/cli/command.ts defines them (C-132)
+// entry("name", rank, command) and entry("name", rank, command, "group"), as src/invocation/command.ts defines them (C-132)
 const ENTRY_CALL = /\bentry\(\s*"([^"]+)"\s*,\s*\d+\s*,\s*[\w.]+\s*(?:,\s*"([^"]+)"\s*)?\)/g;
-// join(import.meta.dir, "..", "cli", "main.ts") or resolve(...): a path written only from string literals
+// join(import.meta.dir, "..", "invocation", "main.ts") or resolve(...): a path written only from string literals
 const DIR_PATH = /\b(?:join|resolve)\(\s*import\.meta\.dir((?:\s*,\s*(?:"[^"\n]*"|'[^'\n]*'))+)\s*\)/g;
 
 /** The repo paths a test builds from `import.meta.dir` and string literals, the way tests name the CLI's entry file. */

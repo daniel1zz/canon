@@ -1,4 +1,4 @@
-import type { Config } from "../../config/config.ts";
+import type { Config } from "../../invocation/config.ts";
 import { git } from "../../kernel/git.ts";
 import { behaviourHash, formatPass, parsePasses } from "../../knowledge/documents/behaviour.ts";
 import { parseDocFile } from "../../knowledge/documents/docfile.ts";

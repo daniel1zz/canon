@@ -7,7 +7,7 @@ import { planUnhook, RECORD_COMMAND, SNAPSHOT_COMMAND } from "./hook.ts";
 // reason: every test drives the canon CLI through spawned processes, a landing included (C-111)
 setDefaultTimeout(60_000);
 
-const MAIN = join(import.meta.dir, "..", "main.ts");
+const MAIN = join(import.meta.dir, "..", "invocation", "main.ts");
 
 function dir(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "canon-uninstall-"));

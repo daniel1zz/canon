@@ -7,7 +7,7 @@ import { watchDir } from "./watch.ts";
 // reason: these tests start real `canon floor watch` processes, which take seconds under load
 setDefaultTimeout(90_000);
 
-const MAIN = join(import.meta.dir, "../../cli/main.ts");
+const MAIN = join(import.meta.dir, "../../invocation/main.ts");
 
 /** A project in after mode whose floor appends the tested commit to `runs` and fails while a file FAIL is in the tree. */
 function batched(thresholds: { quiet?: number; untested?: number; age?: number } = {}) {

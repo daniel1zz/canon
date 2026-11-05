@@ -9,7 +9,7 @@
   "scripts": {
     "test": "sh scripts/test.sh",
     "typecheck": "tsc --noEmit -p tsconfig.json",
-    "build": "bun build --compile src/cli/main.ts --outfile dist/canon"
+    "build": "bun build --compile src/invocation/main.ts --outfile dist/canon"
   },
   "dependencies": {
     "citty": "^0.1.6",

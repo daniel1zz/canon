@@ -1,16 +1,16 @@
 import { readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { openWorkspace, type Workspace } from "../../work/workspace.ts";
-import { err, ok, type Result } from "../../kernel/result.ts";
-import { REVIEW_WAYS_OUT } from "../../knowledge/review/config-keys.ts";
-import { git } from "../../kernel/git.ts";
-import { ensureExcluded, excludeMissing } from "../../kernel/exclude.ts";
-import { land } from "../../work/land/land.ts";
-import { start } from "../../work/session/session.ts";
-import { type Say } from "../../work/workspace.ts";
+import { openWorkspace, type Workspace } from "../work/workspace.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
+import { REVIEW_WAYS_OUT } from "../knowledge/review/config-keys.ts";
+import { git } from "../kernel/git.ts";
+import { ensureExcluded, excludeMissing } from "../kernel/exclude.ts";
+import { land } from "../work/land/land.ts";
+import { start } from "../work/session/session.ts";
+import { type Say } from "../work/workspace.ts";
 import { hookStatus, planHook, writeHook, type Settings } from "./hook.ts";
 import { ensureGuard, foreignGuard, guardStatus } from "./githook.ts";
-import { readConfig } from "../../config/config.ts";
+import { readConfig } from "../invocation/config.ts";
 import { applySkills, editedSkills, planSkills, skillsStatus, type InstallReport, type SkillsPlan } from "./install.ts";
 
 /**

@@ -8,7 +8,7 @@ import { backlogNotes, check, noteLine } from "../../knowledge/check/check.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { testTitles } from "../../knowledge/check/test-titles.ts";
 import { budgetHint, sessionText } from "../../knowledge/check/session-text.ts";
-import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
+import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { importedPaths } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { idsIn } from "../../knowledge/documents/types.ts";

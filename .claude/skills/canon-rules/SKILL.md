@@ -71,7 +71,7 @@ Never write a guess as if it were settled.
 
 Component exists + tests green ≠ the user can reach it. The failure seen again and again: every unit test passes, and the command was never registered, the hook never called, the route never mounted.
 
-- Every user-facing rule has at least one test that drives the behaviour from the real entry point: the CLI command as a user types it (for canon itself, `bun src/cli/main.ts ...` in a throwaway repo), the HTTP route, the hook as the host invokes it. A test of the inner function proves the function, not the wiring.
+- Every user-facing rule has at least one test that drives the behaviour from the real entry point: the CLI command as a user types it (for canon itself, `bun src/invocation/main.ts ...` in a throwaway repo), the HTTP route, the hook as the host invokes it. A test of the inner function proves the function, not the wiring.
 - Assert on the externally observable result (exit code, output, file content, row state), not on an internal return value.
 - Purely internal behaviour with no entry point of its own is exempt, but then it is probably not a rule.
 

@@ -1,10 +1,10 @@
 import { defineCommand } from "citty";
-import { writeSchemaFile } from "../../config/reference/reference.ts";
-import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
-import { takesMany } from "../../cli/strict.ts";
-import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
-import { noticeUpdates } from "../../cli/install/commands.ts";
-import { backgroundNotice, settleBackgroundHooks } from "../../work/hooks/hooks.ts";
+import { writeSchemaFile } from "../../invocation/reference/reference.ts";
+import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { takesMany } from "../../invocation/strict.ts";
+import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
+import { noticeUpdates } from "../../install/commands.ts";
+import { backgroundNotice, settleBackgroundHooks } from "../hooks/hooks.ts";
 import { git } from "../../kernel/git.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { backlogAt } from "../../knowledge/documents/backlog.ts";

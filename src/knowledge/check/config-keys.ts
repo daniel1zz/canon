@@ -1,5 +1,5 @@
 import { err, ok } from "../../kernel/result.ts";
-import { configKey, REL_DIR, relPath } from "../../config/key.ts";
+import { configKey, REL_DIR, relPath } from "../../invocation/key.ts";
 
 /** canon/config.yaml keys of `canon check`: which files are tests and where each domain's code lives (C-135, D-63). */
 export const checkKeys = {

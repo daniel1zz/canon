@@ -7,7 +7,7 @@ import { behaviourHash } from "../documents/behaviour.ts";
 // reason: each case spawns canon several times; a loaded machine took longer than bun's 5 s default (as in documents.test.ts)
 setDefaultTimeout(30_000);
 
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 const id = (p: string, n: number) => [p, n].join("-");
 const R = (n: number) => id("R", n);
 const BR = (n: number) => id("BR", n);

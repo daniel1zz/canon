@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { configKey, type JsonSchema } from "../../config/key.ts";
+import { configKey, type JsonSchema } from "../../invocation/key.ts";
 import { templateFor } from "./templates.ts";
 import { BUILTIN_TYPES, RESERVED_DIRS, RESERVED_FIELDS, type DocType } from "./types.ts";
 

@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
-const MAIN = join(import.meta.dir, "..", "main.ts");
+const MAIN = join(import.meta.dir, "..", "invocation", "main.ts");
 
 function canon(cwd: string, ...args: string[]) {
   const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:test" } });

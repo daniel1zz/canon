@@ -237,7 +237,7 @@ describe("only the holder works in its worktree", () => {
 
 describe("the claim names the session again when a landing ends", () => {
   const pidOf = (root: string, change: string) => ws(root).db.db.query<{ pid: number | null }, [string]>("SELECT pid FROM claims WHERE subject = ?").get(change)?.pid;
-  const CLI = join(import.meta.dir, "../../cli/main.ts");
+  const CLI = join(import.meta.dir, "../../invocation/main.ts");
 
   /** A change whose claim names a live stand-in session process, outside Claude Code (so land keeps that process, BR-2100). */
   async function withSession(body: (root: string, s: { change: string; worktree: string }, session: number) => Promise<void>, config?: string) {

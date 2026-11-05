@@ -13,7 +13,7 @@ import { configSchema, MODELINE, SCHEMA_FILE, schemaText, writeSchemaFile } from
 // reason: these tests spawn the canon CLI and land changes in real repositories, which is what they test.
 setDefaultTimeout(60_000);
 
-const MAIN = join(import.meta.dir, "../../cli/main.ts");
+const MAIN = join(import.meta.dir, "../main.ts");
 
 function canon(cwd: string, ...args: string[]) {
   const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:test" } });

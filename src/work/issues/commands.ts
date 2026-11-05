@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { entry, json, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { entry, json, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { ISSUE_LIMIT, issueStatus, LIMIT_NOTE, renderIssues } from "./issues.ts";
 
 /** Open GitHub issues and the commits on main that name them as fixed; read only (BR-2168, BR-2170, BR-2225). */

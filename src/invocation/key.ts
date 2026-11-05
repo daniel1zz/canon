@@ -2,7 +2,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 
 /**
  * One key of `canon/config.yaml`, declared by the domain that uses it in `config-keys.ts` in its own directory;
- * src/config/config.ts only composes and validates them, so a new key never edits a shared file (C-135, D-15).
+ * src/invocation/config.ts only composes and validates them, so a new key never edits a shared file (C-135, D-15).
  */
 export interface ConfigKey<T> {
   /** Its name in canon/config.yaml. */

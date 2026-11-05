@@ -5,7 +5,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { ensureGuard, GUARD_HEADER, guardScript } from "./githook.ts";
 
-const MAIN = join(import.meta.dir, "..", "main.ts");
+const MAIN = join(import.meta.dir, "..", "invocation", "main.ts");
 
 function dir(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "canon-guard-src-"));

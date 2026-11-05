@@ -9,7 +9,7 @@ import { watch } from "./watch.ts";
 // reason: each case spawns the CLI, which under load takes seconds per run (C-111)
 setDefaultTimeout(90_000);
 
-const MAIN = join(import.meta.dir, "../../cli/main.ts");
+const MAIN = join(import.meta.dir, "../../invocation/main.ts");
 const env = { ...process.env, CANON_ACTOR: "agent:a" };
 
 function canon(cwd: string, ...args: string[]) {

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { holdClaim, takeClaim } from "../claims/claims.ts";
 import { processOf, type Proc } from "../claims/liveness.ts";
 import { ask } from "../humans/questions.ts";
-import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
+import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { noticeOverlaps } from "./overlap.ts";
 import { LESSON_REMINDER, stop } from "./session.ts";
 import { project, sh, startNew, ws } from "../testkit.ts";
@@ -12,7 +12,7 @@ import { project, sh, startNew, ws } from "../testkit.ts";
 // reason: these cases spawn the CLI, which under load can take seconds per run (C-111)
 setDefaultTimeout(60_000);
 
-const MAIN = join(import.meta.dir, "../../cli/main.ts");
+const MAIN = join(import.meta.dir, "../../invocation/main.ts");
 
 function canon(cwd: string, ...args: string[]) {
   const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });

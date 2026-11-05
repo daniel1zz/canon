@@ -1,5 +1,5 @@
 import type { Workspace } from "../workspace.ts";
-import { readConfig } from "../../config/config.ts";
+import { readConfig } from "../../invocation/config.ts";
 import { nowMs } from "../../kernel/clock.ts";
 import { git } from "../../kernel/git.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";

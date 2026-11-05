@@ -1,4 +1,4 @@
-import type { DomainCommands } from "../cli/command.ts";
+import type { DomainCommands } from "../invocation/command.ts";
 
 /** `canon work`: the group its subdomains (session, land, verify, drop) and config (after-land) add their subcommands to. */
 export const workCommands: DomainCommands = {

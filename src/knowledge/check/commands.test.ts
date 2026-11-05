@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import { appendFileSync, mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
+import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { project } from "../../work/testkit.ts";
 
-const MAIN = join(import.meta.dir, "../../cli/main.ts");
+const MAIN = join(import.meta.dir, "../../invocation/main.ts");
 // Fixture ids are assembled at runtime, so the ids in fixture strings never count as references here (BR-2004).
 const id = (prefix: string, n: number) => [prefix, n].join("-");
 

@@ -1,6 +1,6 @@
 # 快照（work/snapshots）
 
-让 worktree 里没提交的工作不会彻底丢掉（P4）：每次 Bash 调用前，canon 装进项目的 hook 把未提交的工作存成快照，之后不管是 `git checkout <文件>`、`rm`、脚本覆盖文件还是别的什么弄丢了，都能从快照里找回（D-30）。只记录、不拦截任何命令：canon 不判断 agent 怎么干活。hook 怎样装进项目属于 `cli/install`（BR-2185）。
+让 worktree 里没提交的工作不会彻底丢掉（P4）：每次 Bash 调用前，canon 装进项目的 hook 把未提交的工作存成快照，之后不管是 `git checkout <文件>`、`rm`、脚本覆盖文件还是别的什么弄丢了，都能从快照里找回（D-30）。只记录、不拦截任何命令：canon 不判断 agent 怎么干活。hook 怎样装进项目属于 `install`（BR-2185）。
 
 ## 术语
 

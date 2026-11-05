@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 // Ids are assembled at runtime so this file does not itself name rules when canon check scans the repo.
 const id = (p: string, n: number) => [p, n].join("-");
 

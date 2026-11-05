@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { readConfig } from "../../config/config.ts";
+import { readConfig } from "../../invocation/config.ts";
 import { check } from "../../knowledge/check/check.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { enqueue, finishEntry, tryTurn } from "./queue/queue.ts";
@@ -10,7 +10,7 @@ import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
 // reason: these tests drive a spawned `canon work land` and wait out queue polls on purpose (C-111).
 const TIMED = 30_000;
-const CLI = join(import.meta.dir, "../../cli/main.ts");
+const CLI = join(import.meta.dir, "../../invocation/main.ts");
 
 async function canonIn(cwd: string, ...args: string[]) {
   const p = Bun.spawn(["bun", CLI, ...args], { cwd, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });

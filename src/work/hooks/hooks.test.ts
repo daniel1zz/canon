@@ -147,7 +147,7 @@ describe("lifecycle hooks", () => {
 });
 
 describe("background hook exit codes", () => {
-  const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+  const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
   const brief = (cwd: string) =>
     Bun.spawnSync(["bun", MAIN, "brief"], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:test" } }).stdout.toString();
   const exits = (root: string) =>

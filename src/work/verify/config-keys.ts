@@ -1,5 +1,5 @@
 import { err, ok } from "../../kernel/result.ts";
-import { configKey, optionalString, stringValue } from "../../config/key.ts";
+import { configKey, optionalString, stringValue } from "../../invocation/key.ts";
 
 /** Where `test_command` takes the test file's path (BR-2160). */
 export const FILE_PLACEHOLDER = "{file}";

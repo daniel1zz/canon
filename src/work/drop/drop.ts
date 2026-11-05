@@ -6,7 +6,7 @@ import { dropHandoff } from "../session/handoffs.ts";
 import { holdClaim, unholdClaim } from "../claims/claims.ts";
 import { err, ok, type CanonError, type Result } from "../../kernel/result.ts";
 import { git, gitEnv, ignoredPaths, listWorktreesLocked, removeWorktree, unregenerable, withWorktreeLock } from "../../kernel/git.ts";
-import { GENERATED_DIR } from "../../config/reference/reference.ts";
+import { GENERATED_DIR } from "../../invocation/reference/reference.ts";
 import { processesIn } from "../../kernel/process.ts";
 import { clearFixChange } from "../watch/redmain.ts";
 import { describeOccupants, worktreesDir } from "../session/session.ts";

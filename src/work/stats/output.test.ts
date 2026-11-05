@@ -7,7 +7,7 @@ import { project, sh } from "../testkit.ts";
 import { computeStats, readRegularFile, renderStats, sharedShare } from "./stats.ts";
 import { renderWindow, windowSummary } from "./window.ts";
 
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 const ZERO = { changed: 0, same: 0, abandoned: 0, pending: 0, unknown: 0 };
 
 function canon(cwd: string, ...args: string[]) {

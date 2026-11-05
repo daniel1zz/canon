@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
+import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { processReaper, project, quiet, runsUntilKilled, sh, startNew, ws } from "../testkit.ts";
 import { redMain } from "./redmain.ts";
 import { GREEN_REF, watch, watchDir } from "./watch.ts";
@@ -9,7 +9,7 @@ import { GREEN_REF, watch, watchDir } from "./watch.ts";
 // reason: these tests run real floors in temporary worktrees and spawn `canon floor watch`, which take seconds under load
 setDefaultTimeout(90_000);
 
-const MAIN = join(import.meta.dir, "../../cli/main.ts");
+const MAIN = join(import.meta.dir, "../../invocation/main.ts");
 
 // reason: watchers run detached in their own groups and outlive the test body, so every one the test starts is killed
 // in afterEach (pass or fail), the ones `canon brief` starts included (they are in the watcher table); a SIGKILLed runner

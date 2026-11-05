@@ -91,7 +91,7 @@ describe("the claim names the lander while it lands", () => {
       expect(tryTurn(other.db, ahead).mine).toBe(true);
       const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: "agent:a" };
       delete env["CLAUDECODE"];
-      const lander = Bun.spawn(["bun", join(import.meta.dir, "../../../cli/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env });
+      const lander = Bun.spawn(["bun", join(import.meta.dir, "../../../invocation/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env });
       for (let i = 0; i < 200 && pidOf(root, s.change) !== lander.pid; i++) await Bun.sleep(50);
       expect(pidOf(root, s.change)).toBe(lander.pid);
       expect(takeClaim(other.db, s.change, s.worktree, "agent:b").ok).toBe(false);
@@ -115,7 +115,7 @@ describe("the claim names the lander while it lands", () => {
       expect(tryTurn(other.db, ahead).mine).toBe(true);
       const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: "agent:a" };
       delete env["CLAUDECODE"];
-      const lander = Bun.spawn(["bun", join(import.meta.dir, "../../../cli/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env });
+      const lander = Bun.spawn(["bun", join(import.meta.dir, "../../../invocation/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env });
       for (let i = 0; i < 200 && pidOf(root, s.change) !== lander.pid; i++) await Bun.sleep(50);
       expect(pidOf(root, s.change)).toBe(lander.pid);
       lander.kill("SIGKILL");
@@ -138,7 +138,7 @@ describe("the claim names the lander while it lands", () => {
 });
 
 describe("a lander killed by a signal", () => {
-  const CLI = join(import.meta.dir, "../../../cli/main.ts");
+  const CLI = join(import.meta.dir, "../../../invocation/main.ts");
   const entryOf = (root: string) => ws(root).db.db.query<{ id: number; state: string; result: string | null }, []>("SELECT id, state, result FROM queue ORDER BY id DESC LIMIT 1").get();
   const until = async (what: () => boolean) => {
     for (let i = 0; i < 200 && !what(); i++) await Bun.sleep(50);

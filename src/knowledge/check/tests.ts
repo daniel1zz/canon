@@ -1,4 +1,4 @@
-import type { Config } from "../../config/config.ts";
+import type { Config } from "../../invocation/config.ts";
 import { findTestFiles } from "./check.ts";
 
 /** Test files scanned for rule ids: the configured globs, or every *.test.* / *.spec.* file. */

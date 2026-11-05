@@ -8,7 +8,7 @@ import { project } from "../../work/testkit.ts";
 
 // Fixture ids are assembled at runtime, so only test titles name rules (BR-2005).
 const README = "---\ncode: [src/billing]\n---\n# Billing\n\n## 术语\n\n- **退款**：钱退回\n";
-const MAIN = join(import.meta.dir, "../../cli/main.ts");
+const MAIN = join(import.meta.dir, "../../invocation/main.ts");
 const br = (n: number) => ["BR", n].join("-");
 
 function repo(files: Record<string, string>): string {

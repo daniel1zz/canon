@@ -1,6 +1,6 @@
 import { defineCommand } from "citty";
-import { entry, EXIT, fail, say, workspace, type DomainCommands } from "../../cli/command.ts";
-import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
+import { entry, EXIT, fail, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { LESSON_REMINDER } from "../session/session.ts";
 import { redMainLandingLines } from "../watch/redmain.ts";
 import { land } from "./land.ts";

@@ -8,7 +8,7 @@ import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
 // reason: drives a spawned `canon work land` (C-111).
 const TIMED = 30_000;
-const CLI = join(import.meta.dir, "../../cli/main.ts");
+const CLI = join(import.meta.dir, "../../invocation/main.ts");
 
 const reasons = (root: string) => ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'land.refuse' ORDER BY id").all().map((e) => JSON.parse(e.detail).reason as string);
 

@@ -29,14 +29,14 @@ test_command: "sh scripts/test.sh {file}"
 # 找法：测试里递归读真实仓库 src/ 的是第一个（grep readdirSync、Bun.Glob、scanSync，C-281）；第二个读随 canon 发出的 skill（BR-2096）。新增这样的测试时加在这里
 always_tests:
   - "src/work/session/worktree-lock-callers.test.ts"
-  - "src/cli/install/install.test.ts"
+  - "src/install/install.test.ts"
 # canon work test 在测试之前跑一次（BR-2226）：和 floor 的类型检查那一步相同，类型错误不用等 floor 才发现（C-163 曾因此被拒）
 typecheck_command: "bunx tsc --noEmit -p tsconfig.json"
 # 每个会话开始时都会读到的文件：改了它们，合入时评审同一条要求是否写在多处（BR-2143）；工作说明的源码也算：
-# src/cli/guide.ts 拼接，各领域目录下的 guide.ts 写自己的条目（C-133），新增一个这样的文件时加在这里
+# src/invocation/guide.ts 拼接，各领域目录下的 guide.ts 写自己的条目（C-133），新增一个这样的文件时加在这里
 instructions:
   - CLAUDE.md
-  - src/cli/guide.ts
+  - src/invocation/guide.ts
   - src/knowledge/documents/guide.ts
   - src/knowledge/query/guide.ts
   - src/knowledge/review/guide.ts
@@ -81,7 +81,7 @@ hooks:
   after_green:
     # main 的后台 floor 通过后，从这个测过的提交重新构建主 checkout 的 dist/canon（PATH 上的 canon），
     # 不从没测过的 main 构建：合入了把命令行弄坏的变更时，修复变更还能用旧的 canon 合进来（D-31、BR-2222）
-    - 'bun build --compile src/cli/main.ts --outfile "$CANON_PRIMARY/dist/canon"'
+    - 'bun build --compile src/invocation/main.ts --outfile "$CANON_PRIMARY/dist/canon"'
 # 每个检查的复审日期（BR-2069）：到期后 `canon stats` 把它列为待复审
 check_reviews:
   on-main: "2027-02-03"

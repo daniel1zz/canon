@@ -13,7 +13,7 @@ import { ws } from "../../work/testkit.ts";
 // their suites) one such case took over bun's 5 s default, as in backlog.test.ts and drop.test.ts (C-111, C-238)
 setDefaultTimeout(30_000);
 
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 // Ids are assembled at runtime so this file does not itself name documents when canon check scans the repo.
 const id = (p: string, n: number) => [p, n].join("-");
 

@@ -6,7 +6,7 @@ import { land } from "../land.ts";
 
 // reason: these tests start the real CLI and kill it with SIGKILL, so they wait out real processes (C-111 gave TIMED to such tests).
 const TIMED = 60_000;
-const CLI = join(import.meta.dir, "../../../cli/main.ts");
+const CLI = join(import.meta.dir, "../../../invocation/main.ts");
 
 type Proc = ReturnType<typeof Bun.spawn>;
 const spawnCanon = (cwd: string, args: string[], env: Record<string, string> = {}): Proc =>

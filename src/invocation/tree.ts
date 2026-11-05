@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 import { assemble } from "./command.ts";
-import { installCommands } from "./install/commands.ts";
-import { referenceCommands } from "../config/reference/commands.ts";
+import { installCommands } from "../install/commands.ts";
+import { referenceCommands } from "./reference/commands.ts";
 import { checkCommands } from "../knowledge/check/commands.ts";
 import { documentCommands } from "../knowledge/documents/commands.ts";
 import { queryCommands } from "../knowledge/query/commands.ts";

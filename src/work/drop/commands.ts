@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { entry, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { entry, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { mainCorpus } from "../session/session.ts";
 import { drop } from "./drop.ts";

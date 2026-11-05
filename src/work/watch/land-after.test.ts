@@ -11,7 +11,7 @@ import { watch } from "./watch.ts";
 // reason: a landing in after mode starts the background floor, a spawned `canon floor watch`; these tests wait for it
 setDefaultTimeout(60_000);
 
-const MAIN = join(import.meta.dir, "../../cli/main.ts");
+const MAIN = join(import.meta.dir, "../../invocation/main.ts");
 
 function canon(cwd: string, ...args: string[]) {
   const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });

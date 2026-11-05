@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
-import { err, ok, type Result } from "../../kernel/result.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
 
 /**
  * canon's Claude Code skills are project-level (D-9): they are copied into `<project>/.claude/skills/canon-*`
@@ -33,7 +33,7 @@ const sha = (text: Buffer | string) => createHash("sha256").update(text).digest(
 export function skillsSource(env: Record<string, string | undefined> = process.env): Result<string> {
   const explicit = env["CANON_SKILLS_SOURCE"];
   const candidates = explicit ? [explicit] : [
-    join(import.meta.dir, "..", "..", "..", ".claude", "skills"),
+    join(import.meta.dir, "..", "..", ".claude", "skills"),
     join(dirname(realpathSync(process.execPath)), "..", ".claude", "skills"),
   ].filter((c): c is string => typeof c === "string" && c !== "");
   for (const c of candidates) {

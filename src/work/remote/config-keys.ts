@@ -1,5 +1,5 @@
 import { err, ok } from "../../kernel/result.ts";
-import { configKey, positiveNumber, positiveValue } from "../../config/key.ts";
+import { configKey, positiveNumber, positiveValue } from "../../invocation/key.ts";
 
 /** A git remote name: it is passed to git as an argument, so it never starts with `-` and has no white space. */
 export const REMOTE_NAME = /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;

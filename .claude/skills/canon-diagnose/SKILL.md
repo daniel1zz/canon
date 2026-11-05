@@ -17,7 +17,7 @@ Ways to build one, roughly in this order:
 
 1. A **failing test** at whatever seam reaches the bug (unit, integration, end to end).
 2. An **HTTP script** against a running dev server.
-3. A **CLI invocation** with a fixture input, diffing output against a known-good snapshot (for canon itself: a throwaway git repo plus `bun src/cli/main.ts ...`).
+3. A **CLI invocation** with a fixture input, diffing output against a known-good snapshot (for canon itself: a throwaway git repo plus `bun src/invocation/main.ts ...`).
 4. A **headless browser script** asserting on DOM, console or network.
 5. **Replay a captured trace** (request, payload, event log) through the code path in isolation.
 6. A **throwaway harness**: the smallest subset of the system that reaches the code path in one call.

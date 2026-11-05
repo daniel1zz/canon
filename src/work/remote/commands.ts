@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { entry, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { entry, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { sync } from "./remote.ts";
 
 /** `canon sync`: fast-forward main to the configured remote's main, never merging (D-38). */

@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { project, sh, ws } from "../../work/testkit.ts";
 
 /** `canon show`, `search` and `context` driven through the real command line. */
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 const id = (prefix: string, n: number) => [prefix, n].join("-");
 
 function canon(cwd: string, ...args: string[]) {

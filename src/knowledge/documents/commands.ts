@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import type { Doc, Kind } from "./model.ts";
 import { readBacklog } from "./backlog.ts";
 import { listedChanges, marksOf } from "../../work/session/inflight.ts";

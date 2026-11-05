@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { configKey } from "../../config/key.ts";
+import { configKey } from "../../invocation/key.ts";
 import { CHECKS } from "./checks.ts";
 
 /** canon/config.yaml keys of `canon stats` (C-135). */

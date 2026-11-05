@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { corpusOf, entry, fail, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { corpusOf, entry, fail, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { progressLines } from "./progress.ts";
 import { executionStates } from "./state.ts";
 

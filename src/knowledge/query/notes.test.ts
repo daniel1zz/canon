@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { project, sh, ws } from "../../work/testkit.ts";
 
 /** The open review notes `canon context` prints, driven through the real command line (BR-2146). */
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 const id = (prefix: string, n: number) => [prefix, n].join("-");
 
 function canon(cwd: string, ...args: string[]) {

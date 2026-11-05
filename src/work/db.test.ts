@@ -7,7 +7,7 @@ import { addColumns, CoordDb } from "./db.ts";
 import { questions } from "./humans/questions.ts";
 import { project, startNew, ws } from "./testkit.ts";
 
-const MAIN = join(import.meta.dir, "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "invocation", "main.ts");
 
 function canon(cwd: string, ...args: string[]) {
   const r = Bun.spawnSync([process.execPath, MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:test" } });

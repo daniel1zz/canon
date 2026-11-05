@@ -1,12 +1,12 @@
 import { defineCommand } from "citty";
-import { MODELINE } from "../../config/reference/reference.ts";
-import { DEFAULT_REVIEW, REVIEW_NONE } from "../../knowledge/review/config-keys.ts";
+import { MODELINE } from "../invocation/reference/reference.ts";
+import { DEFAULT_REVIEW, REVIEW_NONE } from "../knowledge/review/config-keys.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { entry, EXIT, fail, must, say, workspace, type DomainCommands } from "../command.ts";
-import { firstCommitStep, git, mainIsUnborn } from "../../kernel/git.ts";
-import type { Workspace } from "../../work/workspace.ts";
+import { entry, EXIT, fail, must, say, workspace, type DomainCommands } from "../invocation/command.ts";
+import { firstCommitStep, git, mainIsUnborn } from "../kernel/git.ts";
+import type { Workspace } from "../work/workspace.ts";
 import { skillsSource, type InstallReport } from "./install.ts";
 import { assetsStatus, installAssets, updateNotice, updateProject, WORKTREES_EXCLUDE } from "./update.ts";
 import { uninstall as uninstallProject } from "./uninstall.ts";

@@ -12,7 +12,7 @@ import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
 // under load that alone came within 0.4 s of the 5 s default (C-111), so they get room, not the rest of the file.
 const TIMED = 30_000;
-const CLI = join(import.meta.dir, "../../../cli/main.ts");
+const CLI = join(import.meta.dir, "../../../invocation/main.ts");
 const until = async (what: () => boolean, tries = 400) => {
   for (let i = 0; i < tries && !what(); i++) await Bun.sleep(25);
   expect(what()).toBe(true);

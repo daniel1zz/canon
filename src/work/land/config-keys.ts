@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { configKey, MINUTE, optionalString, positiveNumber, positiveValue, REL_DIR, relPath, stringValue } from "../../config/key.ts";
+import { configKey, MINUTE, optionalString, positiveNumber, positiveValue, REL_DIR, relPath, stringValue } from "../../invocation/key.ts";
 
 /** canon/config.yaml keys of landing (C-135). */
 export const landKeys = {

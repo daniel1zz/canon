@@ -1,7 +1,7 @@
 import { closeSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { Say, Workspace } from "../../workspace.ts";
-import { readConfig, type Config } from "../../../config/config.ts";
+import { readConfig, type Config } from "../../../invocation/config.ts";
 import { testFilesFor } from "../../../knowledge/check/tests.ts";
 import { git } from "../../../kernel/git.ts";
 import type { Running } from "../outcome.ts";

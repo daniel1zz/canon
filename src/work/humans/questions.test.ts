@@ -5,9 +5,9 @@ import { join } from "node:path";
 import { CoordDb } from "../db.ts";
 import { answer, ask, parseAsked, questions, recordAsked, witnessMark, type AskedRecord, type WitnessContext } from "./questions.ts";
 import { project, sh, startNew, ws } from "../testkit.ts";
-import { RECORD_COMMAND } from "../../cli/install/hook.ts";
+import { RECORD_COMMAND } from "../../install/hook.ts";
 
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 
 /** Runs the canon CLI as `actor` outside Claude Code; `tty` gives it a terminal through script(1). */
 function canon(cwd: string, actor: string, tty: boolean, ...args: string[]) {

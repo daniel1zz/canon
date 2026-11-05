@@ -6,7 +6,7 @@ import { readCorpus } from "../../knowledge/documents/read.ts";
 import { project, sh } from "../testkit.ts";
 import { executionStates } from "./state.ts";
 
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 const br = (n: number) => ["BR", n].join("-");
 const GREEN = ["refs", "canon", "green"].join("/");
 

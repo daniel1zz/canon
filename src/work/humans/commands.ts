@@ -1,11 +1,11 @@
 import { defineCommand } from "citty";
-import { entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
 import { changeOffMain, mainCorpus } from "../session/session.ts";
 import type { Workspace } from "../workspace.ts";
-import { hookStatus } from "../../cli/install/hook.ts";
+import { hookStatus } from "../../install/hook.ts";
 import { answer, answeredBy, ask, parseAsked, questions, recordActor, recordAsked, refuseRecord, witnessMark } from "./questions.ts";
 
 /**

@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { corpusOf, entry, fail, json, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { corpusOf, entry, fail, json, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { openNotes, renderNote } from "../review/notes.ts";
 import { amendedBy, contextFor, findDoc, isIdQuery, plannedMark, rawText, releaseMark, renderContext, renderSearch, search } from "./query.ts";
 

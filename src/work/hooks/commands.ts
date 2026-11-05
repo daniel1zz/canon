@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { entry, EXIT, fail, json, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { entry, EXIT, fail, json, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { describeAttempt, openAttempts } from "../land/queue/interrupted.ts";
 import { AFTER_LAND_WAIT_MS, batchState, renderAfterLand, settleBackgroundHooks, waitBackgroundHooks } from "./hooks.ts";
 

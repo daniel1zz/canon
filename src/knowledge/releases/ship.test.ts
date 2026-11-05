@@ -1,7 +1,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { RECORD_COMMAND } from "../../cli/install/hook.ts";
+import { RECORD_COMMAND } from "../../install/hook.ts";
 import { land } from "../../work/land/land.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../work/testkit.ts";
 import { behaviourHash } from "../documents/behaviour.ts";
@@ -10,7 +10,7 @@ import { parseDocFile } from "../documents/docfile.ts";
 // reason: a ship spawns canon, opens a change and lands it; a loaded machine took longer than bun's 5 s default
 setDefaultTimeout(60_000);
 
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 const id = (p: string, n: number) => [p, n].join("-");
 const R = (n: number) => id("R", n);
 const BR = (n: number) => id("BR", n);

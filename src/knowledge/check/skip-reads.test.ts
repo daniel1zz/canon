@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { readCorpus } from "../documents/read.ts";
 import { check } from "./check.ts";
 
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 // reason: fixture sources are assembled from pieces, so this file does not itself read like a test that reads the
 // repository's own canon/rules or canon/notes when canon check scans it (BR-2181)
 const META = ["import", "meta", "dir"].join(".");
@@ -38,7 +38,7 @@ const TESTS: Record<string, string> = {
     "",
   ].join("\n"),
   "src/a/clean.test.ts": [
-    `const MAIN = join(${META}, "..", "cli", "main.ts");`,
+    `const MAIN = join(${META}, "..", "invocation", "main.ts");`,
     `const root = mkdtempSync(join(tmpdir(), "x-"));`,
     `writeFileSync(join(root, "${RULES}/x/BR-1.md"), "");`,
     `const out = join(${META}, "..", "..", "..", "..", "${RULES}");`,

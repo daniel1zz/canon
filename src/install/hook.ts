@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 import { symlinkOnPath } from "./install.ts";
-import { err, ok, type Result } from "../../kernel/result.ts";
+import { err, ok, type Result } from "../kernel/result.ts";
 
 /**
  * The hooks canon puts into a project: at session start Claude Code runs `canon brief` (BR-2087, D-10), so a new

@@ -1,6 +1,6 @@
 import { defineCommand } from "citty";
-import { corpusOf, entry, EXIT, json, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
-import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
+import { corpusOf, entry, EXIT, json, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { backlogNotes, check, domainNameNotes, noteLine } from "./check.ts";
 import { changeIdsOnBranches, listedBefore } from "../../work/session/inflight.ts";
 import { budgetHint, sessionText, sizeLines } from "./session-text.ts";

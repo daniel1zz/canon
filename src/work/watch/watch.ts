@@ -3,9 +3,9 @@ import { dirname, join } from "node:path";
 import { parse } from "yaml";
 import type { CoordDb } from "../db.ts";
 import type { Say, Workspace } from "../workspace.ts";
-import { readConfig } from "../../config/config.ts";
-import { logFile, runHooks } from "../../work/hooks/hooks.ts";
-import { noPort } from "../../work/hooks/ports.ts";
+import { readConfig } from "../../invocation/config.ts";
+import { logFile, runHooks } from "../hooks/hooks.ts";
+import { noPort } from "../hooks/ports.ts";
 import { nowMs } from "../../kernel/clock.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { addWorktree, git, pruneWorktrees, removeWorktree } from "../../kernel/git.ts";
@@ -391,7 +391,7 @@ function markGreen(ws: Workspace, sha: string, say: Say): void {
 
 /** The command that runs this canon: the compiled binary itself, or bun with the CLI's source file. */
 function canonCommand(): string[] {
-  const source = join(import.meta.dir, "..", "..", "cli", "main.ts");
+  const source = join(import.meta.dir, "..", "..", "invocation", "main.ts");
   // reason: a compiled canon embeds its sources under /$bunfs and is started as itself (BR-2219).
   return import.meta.dir.startsWith("/$bunfs") || !existsSync(source) ? [process.execPath] : [process.execPath, source];
 }

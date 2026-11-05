@@ -1,4 +1,4 @@
-import { configKey, HOUR, positiveNumber, positiveValue } from "../../config/key.ts";
+import { configKey, HOUR, positiveNumber, positiveValue } from "../../invocation/key.ts";
 
 /** canon/config.yaml keys of claims (C-135). */
 export const claimKeys = {

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { defineCommand } from "citty";
-import { entry, EXIT, fail, json, say, type DomainCommands } from "../../cli/command.ts";
+import { entry, EXIT, fail, json, say, type DomainCommands } from "../../invocation/command.ts";
 import { git } from "../../kernel/git.ts";
 import { changedFiles, leftOut, snapshotKey, snapshots, takeSnapshot } from "./snapshot.ts";
 

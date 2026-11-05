@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { configKey, type JsonSchema } from "../../config/key.ts";
+import { configKey, type JsonSchema } from "../../invocation/key.ts";
 import { readPorts, type PortRange } from "./ports.ts";
 
 export type HookEvent = "after_start" | "before_land" | "after_land" | "after_stop" | "after_green";

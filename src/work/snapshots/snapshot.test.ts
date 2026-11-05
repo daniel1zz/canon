@@ -7,7 +7,7 @@ import { git } from "../../kernel/git.ts";
 import { project, sh } from "../testkit.ts";
 import { MAX_FILE_BYTES, snapshotKey, snapshots, takeSnapshot } from "./snapshot.ts";
 
-const MAIN = join(import.meta.dir, "../../cli/main.ts");
+const MAIN = join(import.meta.dir, "../../invocation/main.ts");
 
 function canon(cwd: string, stdin: string | undefined, ...args: string[]) {
   const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: stdin === undefined ? "ignore" : new TextEncoder().encode(stdin), env: { ...process.env, CANON_ACTOR: "agent:test" } });

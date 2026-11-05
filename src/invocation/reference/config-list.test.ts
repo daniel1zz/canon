@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { project, sh } from "../../work/testkit.ts";
 import { SCHEMA_FILE } from "./reference.ts";
 
-const MAIN = join(import.meta.dir, "../../cli/main.ts");
+const MAIN = join(import.meta.dir, "../main.ts");
 
 function canon(cwd: string, ...args: string[]) {
   const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:test" } });

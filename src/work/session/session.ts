@@ -5,7 +5,7 @@ import type { Say, Workspace } from "../workspace.ts";
 import { deletionOf, holdClaim, liveClaims, unholdClaim, releaseClaim, releaseOwnClaim, renewClaim, takeClaim } from "../claims/claims.ts";
 import { writeHandoff } from "./handoffs.ts";
 import { sessionProcess } from "../claims/liveness.ts";
-import { runHooksSync } from "../../work/hooks/hooks.ts";
+import { runHooksSync } from "../hooks/hooks.ts";
 import { noticeOverlaps } from "./overlap.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { slugify, type Change, type Corpus } from "../../knowledge/documents/model.ts";
@@ -13,9 +13,9 @@ import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { createDoc, highestNumber } from "../../knowledge/documents/write.ts";
 import { worktreesDirOf } from "./config-keys.ts";
-import { noPort, portFor, type PortLookup } from "../../work/hooks/ports.ts";
+import { noPort, portFor, type PortLookup } from "../hooks/ports.ts";
 import { firstCommitStep, mainIsUnborn, addWorktree, git, ignoredPaths, isClean, listWorktreesLocked, removeWorktree, unregenerable, type WorktreeInfo } from "../../kernel/git.ts";
-import { GENERATED_DIR } from "../../config/reference/reference.ts";
+import { GENERATED_DIR } from "../../invocation/reference/reference.ts";
 import { processesIn, type Occupant } from "../../kernel/process.ts";
 
 /**

@@ -9,7 +9,7 @@ import { ws } from "../../work/testkit.ts";
 setDefaultTimeout(60_000);
 
 const SCRIPT = join(import.meta.dir, "../../../scripts/code-review.ts");
-const MAIN = join(import.meta.dir, "../../cli/main.ts");
+const MAIN = join(import.meta.dir, "../../invocation/main.ts");
 
 const sh = (cwd: string, ...args: string[]) => {
   const r = git(cwd, ...args);

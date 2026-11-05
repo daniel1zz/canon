@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { project, sh } from "../testkit.ts";
 import { fixedIn } from "./issues.ts";
 
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 const GIT = Bun.which("git")!;
 const change = (n: number) => ["C", n].join("-");
 

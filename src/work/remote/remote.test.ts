@@ -3,14 +3,14 @@ import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { land } from "../land/land.ts";
-import { ensureGuard } from "../../cli/install/githook.ts";
+import { ensureGuard } from "../../install/githook.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 import { pushMain } from "./remote.ts";
 
 setDefaultTimeout(60_000);
 
-const MAIN = join(import.meta.dir, "../../cli/main.ts");
+const MAIN = join(import.meta.dir, "../../invocation/main.ts");
 
 function canon(cwd: string, ...args: string[]) {
   const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });

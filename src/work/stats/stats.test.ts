@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
-import { readConfig } from "../../config/config.ts";
+import { readConfig } from "../../invocation/config.ts";
 import { drop } from "../drop/drop.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 import { land } from "../land/land.ts";

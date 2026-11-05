@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { claims, holdClaim, takeClaim } from "../claims/claims.ts";
 import { processOf } from "../claims/liveness.ts";
 import { clean, start, stop } from "./session.ts";
-import { writeSchemaFile } from "../../config/reference/reference.ts";
+import { writeSchemaFile } from "../../invocation/reference/reference.ts";
 import { land } from "../land/land.ts";
 import { addWorktree, git, listWorktreesLocked, withWorktreeLock } from "../../kernel/git.ts";
 
@@ -14,7 +14,7 @@ import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 describe("work start", () => {
   test("BR-2022: start of a change that is nowhere exits 3; when git cannot read main it exits 4, naming main (issue #77)", () => {
     const root = project();
-    const cli = () => Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "start", "C-99"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const cli = () => Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", "C-99"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
     expect(cli().exitCode).toBe(3);
     sh(root, "checkout", "-q", "-b", "other"); // no worktree has main out, so it is read from git
     writeFileSync(join(root, "canon/config.yaml"), "main: nope\nfloor: test ! -e FAIL\ntests: []\n");
@@ -29,7 +29,7 @@ describe("work start", () => {
     sh(root, "config", "user.email", "t@t");
     sh(root, "config", "user.name", "t");
     const cli = (...args: string[]) => {
-      const r = Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), ...args], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+      const r = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), ...args], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
       return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
     };
     expect(cli("init", "--floor", "true").code).toBe(0);
@@ -94,7 +94,7 @@ describe("work start", () => {
     const started = start(ws(root, "agent:a"), { change: "C-1" }, quiet);
     if (!started.ok) throw new Error(started.error.message);
     const s = started.value;
-    const cli = (actor: string) => Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "start", s.change], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: actor } });
+    const cli = (actor: string) => Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", s.change], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: actor } });
     const other = cli("agent:b");
     expect(other.exitCode).toBe(5);
     expect(other.stderr.toString()).toContain("claimed by agent:a");
@@ -111,7 +111,7 @@ describe("work start", () => {
     const root = project();
     const s = startNew(root, "Held here");
     const before = sh(root, "rev-parse", "main");
-    const cli = (actor: string, ...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", ...args], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: actor } });
+    const cli = (actor: string, ...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", ...args], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: actor } });
     for (const args of [["stop", "--release", "--next", "x"], ["stop", "--next", "x"], ["land", "--finish"]]) {
       const r = cli("agent:b", ...args);
       expect(r.exitCode).toBe(5);
@@ -131,7 +131,7 @@ describe("work start", () => {
     const db = ws(root).db;
     const before = claims(db)[0]!.expires_at;
     // A second subagent of the same session has the same actor (BR-2023): in the holder's worktree it is the holder.
-    const r = Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "stop", "--next", "x"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const r = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "stop", "--next", "x"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
     expect(r.exitCode).toBe(0);
     expect(claims(db).map((c) => [c.subject, c.actor])).toEqual([[s.change, "agent:a"]]);
     expect(claims(db)[0]!.expires_at >= before).toBe(true);
@@ -173,7 +173,7 @@ describe("work start", () => {
     sh(s.worktree, "commit", "-qm", "wip");
     const db = ws(root).db;
     const expire = () => db.db.query("UPDATE claims SET expires_at = ?").run(new Date(Date.now() - 60_000).toISOString());
-    const cli = (actor: string) => Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "start", s.change], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: actor } });
+    const cli = (actor: string) => Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", s.change], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: actor } });
 
     const held = cli("agent:b"); // agent:a's claim is live
     expect(held.exitCode).toBe(5);
@@ -538,7 +538,7 @@ describe("concurrent starts", () => {
     sh(root, "fetch", "-q", "origin");
     expect(sh(root, "rev-parse", "--verify", "refs/remotes/origin/main")).not.toBe("");
     const procs = Array.from({ length: 8 }, (_, i) =>
-      Bun.spawn(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "start", "--title", `Parallel ${i}`], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: `agent:p${i}` } }),
+      Bun.spawn(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", "--title", `Parallel ${i}`], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: `agent:p${i}` } }),
     );
     const results = await Promise.all(procs.map(async (p) => ({ code: await p.exited, err: await new Response(p.stderr).text() })));
     expect(results.filter((r) => r.code !== 0)).toEqual([]);
@@ -553,7 +553,7 @@ describe("concurrent starts", () => {
     const root = project();
     sh(root, "config", "branch.autoSetupMerge", "always"); // git then tracks even a local start point
     const procs = Array.from({ length: 8 }, (_, i) =>
-      Bun.spawn(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "start", "--title", `Always ${i}`], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: `agent:a${i}` } }),
+      Bun.spawn(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", "--title", `Always ${i}`], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: `agent:a${i}` } }),
     );
     const results = await Promise.all(procs.map(async (p) => ({ code: await p.exited, err: await new Response(p.stderr).text() })));
     expect(results.filter((r) => r.code !== 0)).toEqual([]);
@@ -591,7 +591,7 @@ describe("concurrent starts", () => {
     expect(readFileSync(h.mark, "utf8")).toBe("in");
   };
   const cliStart = (root: string, title: string) =>
-    Bun.spawn(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "start", "--title", title], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:w" } });
+    Bun.spawn(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", "--title", title], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:w" } });
 
   test("BR-2223: a start while another canon process is midway through creating a worktree waits for it and succeeds", async () => {
     const root = project();
@@ -674,7 +674,7 @@ describe("clean named changes", () => {
     return s;
   }
   const cli = (cwd: string, ...args: string[]) => {
-    const r = Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), "work", "clean", ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const r = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "clean", ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
     return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
   };
 

@@ -6,7 +6,7 @@ import { CoordDb } from "../db.ts";
 import { project, sh } from "../testkit.ts";
 import { pendingBlocks, recordVerdict, renderPending, renderVerdictSummary, verdictSummary } from "./verdict.ts";
 
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 
 function canon(cwd: string, actor: string, ...args: string[]) {
   const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: actor };

@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite";
 import { currentActor } from "./workspace.ts";
 import { project, startNew, ws } from "./testkit.ts";
 
-const MAIN = join(import.meta.dir, "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "invocation", "main.ts");
 
 const value = (r: ReturnType<typeof currentActor>) => (r.ok ? r.value : `error:${r.error.code}`);
 

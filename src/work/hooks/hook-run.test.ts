@@ -3,11 +3,11 @@ import { noPort } from "./ports.ts";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { start } from "../session/session.ts";
-import { readConfig } from "../../config/config.ts";
+import { readConfig } from "../../invocation/config.ts";
 import { logFile, runHooks, runHooksInBackground, runHooksSync, waitBackgroundHooks, type HookContext } from "./hooks.ts";
 import { project, quiet, sh, startNew, ws } from "../testkit.ts";
 
-const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 
 function ctxFor(root: string, event: HookContext["event"] = "after_start"): HookContext {
   return { db: ws(root).db, actor: "agent:a", event, change: "C-1", cwd: root, env: {}, port: noPort };

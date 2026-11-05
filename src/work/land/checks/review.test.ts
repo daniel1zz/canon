@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { land } from "../land.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
-const CLI = join(import.meta.dir, "../../../cli/main.ts");
+const CLI = join(import.meta.dir, "../../../invocation/main.ts");
 
 describe("rule review at land", () => {
   function reviewedProject(verdict: "ok" | "block") {

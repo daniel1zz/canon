@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { entry, fail, json, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { entry, fail, json, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "./stats.ts";
 import { pendingBlocks, recordVerdict, renderPending, renderVerdictSummary, verdictSummary } from "./verdict.ts";
 import { dirname } from "node:path";

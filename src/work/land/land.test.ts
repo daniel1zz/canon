@@ -7,7 +7,7 @@ import { readCorpus } from "../../knowledge/documents/read.ts";
 import { clean, stop } from "../session/session.ts";
 import { land } from "./land.ts";
 import { LAND_MARKER } from "./finish/finish.ts";
-import { ensureGuard } from "../../cli/install/githook.ts";
+import { ensureGuard } from "../../install/githook.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
 describe("work land", () => {
