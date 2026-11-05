@@ -23,6 +23,6 @@ Fixes #130：负责人在提问工具里多选时，`canon human answer` 只接�
 
 ## 任务
 
-- [ ] 改 BR-2021
-- [ ] 加 multi 列、`--multi`、答案检查
-- [ ] 测试（含真实 CLI）
+- [x] 改 BR-2021
+- [x] 加 multi 列、`--multi`、答案检查
+- [x] 测试（含真实 CLI）
