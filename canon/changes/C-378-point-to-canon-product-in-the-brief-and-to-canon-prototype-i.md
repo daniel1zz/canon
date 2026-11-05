@@ -1,8 +1,11 @@
 ---
 id: C-378
 title: Point to canon-product in the brief and to canon-prototype in canon-design
-status: open
-rules: [BR-2090]
+status: done
+rules:
+  - BR-2090
+passes:
+  BR-2090: 49659c327f4b68ab test
 ---
 
 ## 为什么
