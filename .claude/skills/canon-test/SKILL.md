@@ -30,16 +30,16 @@ Now read the code, hunting for places where it goes beyond or against the rule. 
 | Type assertion | `as any`, `as unknown as`, `!` | Feed the case the assertion hides (the value really is null). |
 | Early return | `if (x) return` with no else | Exercise the other path: intended, or a missing case? |
 
-## 3. Vertical slices, one test at a time
+## 3. Vertical slices, one rule at a time
 
-Do not write all the tests first and then all the code. Tests written in bulk test imagined behaviour and lock in structure before you understand it.
+Do not write every test of the change first and then all the code. Tests written in bulk test imagined behaviour and lock in structure before you understand it.
 
 ```
-RIGHT:  test1 → impl1,  test2 → impl2,  test3 → impl3 ...
-WRONG:  test1..test5,   then impl1..impl5
+RIGHT:  rule1 tests → impl1,  rule2 tests → impl2 ...
+WRONG:  every test of the change,  then all the code
 ```
 
-Each cycle: write one test → run it and **watch it fail for the expected reason** (the assertion, not an import error) → write the minimum code to pass → run it green → next. Each test responds to what the previous cycle taught you. Refactor only when green, re-running after each step.
+The unit of a cycle is one rule: its `## 例子` were written together, before any code, so writing their tests together adds nothing imagined. Each cycle: write the tests for every example of one rule (and the refusals it implies) → run them once and **check that each new test fails for the expected reason** (the assertion, not an import or load error; a test that passes already, or fails for another reason, is looked at before going on) → write the minimum code to pass → run them green → next rule. The next rule's tests respond to what this cycle taught you. One test per cycle is still right for a rule whose behaviour you do not understand yet. Refactor only when green, re-running after each step.
 
 Testing code that already exists still needs the red: break the input or revert the fix and watch the test catch it.
 
