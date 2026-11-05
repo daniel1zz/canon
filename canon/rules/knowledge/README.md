@@ -6,6 +6,7 @@
 - `knowledge/check`：`canon check` 的各项检查。
 - `knowledge/query`：搜索和 `canon context`。
 - `knowledge/review`：合入时对规则、决策文字的 AI 评审，以及合入后的代码评审脚本。
+- `knowledge/releases`：版本文档、规则的 `release` 标签、版本的检查、进度和发布。
 
 ## 术语
 

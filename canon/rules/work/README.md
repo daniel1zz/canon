@@ -12,6 +12,10 @@
 - `work/stats`：每个检查的运行和拒绝统计。
 - `work/issues`：列出项目开着的 GitHub issue，标出 main 上已写明修复的。
 - `work/verify`：合入前的验证，`canon work test`。
+- `work/execution`：规则的执行记录：变更合入时每条执行的规则要有证据，规则的执行状态由行为哈希和通过记录算出。
+- `work/hooks`：项目配置的生命周期 hook 命令和每个变更的端口 `CANON_PORT`，`canon work after-land`。
+- `work/remote`：合入后把 main 推到项目配置的远端，`canon sync` 能快进时拉下来。
+- `work/snapshots`：每次 Bash 调用前把未提交的工作存成快照，弄丢后能找回。
 - `work/watch`：先合后测（`floor_timing: after`）：main 上的后台测试、main 没通过时的记录和修复变更。
 
 ## 术语
