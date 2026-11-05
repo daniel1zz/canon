@@ -21,7 +21,7 @@ If the behaviour clearly belongs to an existing domain, skip this skill and writ
 DDD has two notions: a subdomain (a part of the business, problem space) and a bounded context (the boundary inside which one model and one vocabulary hold, solution space). In canon one domain is both, because code mirrors domains and the README `## 术语` is the vocabulary. Aim for one-to-one. When it does not fit:
 
 - One context would cover several subdomains: keep one domain and make the subdomains its sub-domains (`<domain>/<sub>`), as long as they share one vocabulary. If their vocabularies differ, they are separate domains.
-- One subdomain would be split across contexts: pick one owner domain. The other domain refers to the owner's rules and terms and imports only what the owner publishes; do not copy the rules.
+- One subdomain would be split across contexts: pick one owner domain. The other domain refers to the owner's rules and terms (imports: section 11); do not copy the rules.
 
 ## 3. Discover
 
@@ -73,8 +73,7 @@ Anti-patterns:
 - Big ball of mud / god domain: one domain that everything touches and no vocabulary fits. Mark it, split by language and change, do not model it finely.
 - Splitting for hypothetical reuse: two domains because "someone may reuse this". Split on today's language and change, not on a guess.
 - Splitting by team only: the org chart is not a vocabulary boundary.
-- CRUD-per-entity domains: `customers`, `orders`, `invoices`, each with create/read/update/delete rules.
-- Technical layers dressed as capabilities. Counter-example: `ingestion`, `processing`, `reporting` for an analytics product. Each is a pipeline stage, and "a report is wrong" touches all three. Correction: cut by what the business decides: `usage-metering` (core: what counts as usage), `billing` (supporting), `export` (generic, uses a library). Stages become code inside each domain.
+- Counter-example, a division that looks like capabilities but is layers: `ingestion`, `processing`, `reporting` for an analytics product. Each is a pipeline stage, and "a report is wrong" touches all three. Correction: cut by what the business decides: `usage-metering` (core: what counts as usage), `billing` (supporting), `export` (generic, uses a library). Stages become code inside each domain.
 
 ## 8. Context map: who depends on whom
 
@@ -95,10 +94,10 @@ Put one `依赖：` line in each README naming upstream domains. It is a hint ke
 
 Stop dividing and start writing rules when all hold:
 
-- every product promise and capability maps to a domain (cross-cutting qualities are mapped onto several);
+- every product promise and capability maps to a domain (qualities: section 3);
 - every domain is classed core, supporting or generic;
-- no domain has a technical-layer name;
-- no glossary term is defined differently in two domains unless listed as a known context difference;
+- every domain name passes section 6;
+- section 4 left no unresolved term conflict (resolved or listed as a known context difference);
 - every behaviour in the PRD fits exactly one domain.
 
 ## 10. Record it
