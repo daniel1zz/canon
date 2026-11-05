@@ -342,7 +342,7 @@ tests: []
 `);
     const out = join(root, "..", `${root.split("/").pop()}-probe`);
     mkdirSync(out, { recursive: true });
-    const body = (tag: string) => `#!/bin/sh\n{ echo "${tag}"; pwd -P; cat CLAUDE.md; cat .claude/settings.json; ls .claude/skills; } >> ${out}/seen.txt\ncat > /dev/null\necho '{"verdict":"${tag === "main-script" ? "ok" : "block"}","findings":["changed script ran"]}'\n`;
+    const body = (tag: string) => `#!/bin/sh\n{ echo "${tag}"; pwd -P; cat CLAUDE.md; cat .claude/settings.json; ls .claude/skills; } >> ${out}/seen.txt\ncat >> ${out}/prompts.txt\necho '{"verdict":"${tag === "main-script" ? "ok" : "block"}","findings":["changed script ran"]}'\n`;
     mkdirSync(join(root, "scripts"), { recursive: true });
     writeFileSync(join(root, "scripts/review.sh"), body("main-script"));
     chmodSync(join(root, "scripts/review.sh"), 0o755);
@@ -374,6 +374,8 @@ tests: []
     expect(seen).toContain('{"main":true}');
     expect(seen).toMatch(/^old$/m);
     expect(seen).not.toMatch(/^new$/m);
+    // the reviewer's directory has only main's skills, so the changed skill's new text reaches it through the prompt (#122)
+    expect(readFileSync(join(out, "prompts.txt"), "utf8")).toContain("# .claude/skills/new/SKILL.md (changed in this landing, full new text)");
     const cwds = [...seen.matchAll(/^main-script\n(.*)$/gm)].map((m) => m[1]!);
     expect(cwds[0]).toBe(cwds[1]); // one temporary worktree for both
     expect(cwds[0]).toContain("/review/");
