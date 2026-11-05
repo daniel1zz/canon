@@ -1007,6 +1007,33 @@ describe("canon work test selection: command modules, strings and a CLI that can
     expect(reasons(wt)["src/c/c.test.ts"]).toBe("runs the CLI (src/cli/strict.ts changed, through src/cli/main.ts)");
   });
 
+  test("BR-2157: a changed data file under a path a module spells from its own location selects the tests that import the module and the tests that drive its command, with the path in the reason", () => {
+    const readSkills = 'import { join } from "node:path";\nexport const dir = join(import.meta.dir, "..", "..", ".claude", "skills");\n';
+    const { wt } = cliFixture({
+      "src/a/a.ts": readSkills,
+      "src/i/i.test.ts": 'import "../a/a.ts";\n',
+      ".claude/skills/canon-test/SKILL.md": "skill\n",
+      "canon/notes/n.md": "note\n",
+    });
+    write(wt, { ".claude/skills/canon-test/SKILL.md": "skill changed\n" });
+    const r = reasons(wt);
+    const note = "reads .claude/skills (.claude/skills/canon-test/SKILL.md changed, via src/a/a.ts";
+    expect(r["src/i/i.test.ts"]).toBe(`${note})`);
+    expect(r["src/a/a.test.ts"]).toBe(`drives canon work one (${note}, through src/a/commands.ts)`);
+    expect(r["src/b/b.test.ts"]).toBeUndefined();
+    expect(r["src/d/d.test.ts"]).toBeUndefined();
+  });
+
+  test("BR-2157: a changed markdown file nothing reads by a spelled path selects no test, and a path that names a code file or the repo root is not a data read", () => {
+    const { wt } = cliFixture({
+      "src/a/a.ts": 'import { join } from "node:path";\nexport const x = [join(import.meta.dir, "..", ".."), join(import.meta.dir, "..", "b", "commands.ts")];\n',
+      "src/i/i.test.ts": 'import "../a/a.ts";\n',
+      "canon/notes/n.md": "note\n",
+    });
+    write(wt, { "canon/notes/n.md": "note changed\n", "README.md": "changed\n" });
+    expect(reasons(wt)).toEqual({});
+  });
+
   test("BR-2157: the selection output says how many tests spawn the CLI and how many commands are known", () => {
     const { wt } = cliFixture();
     write(wt, { "src/b/commands.ts": "export const bCommands = { commands: [entry(\"two\", 20, two)] }; // changed\n" });

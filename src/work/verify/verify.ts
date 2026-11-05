@@ -16,6 +16,7 @@ import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
 import { groupAlive, stopGroups } from "./stop-groups.ts";
 import { availableParallelism } from "node:os";
+import { readersOfChanged, type DataRead } from "./data-reads.ts";
 import { commandsRegisteredIn, namesCommand, pathsBuiltFromDir, type CliDrive, type RegisteredCommand } from "./cli-tests.ts";
 import { jobCap, readCpu, startPool, type CpuSample, type CpuState, type FileResult, type Outcome } from "./pool.ts";
 import type { Workspace } from "../workspace.ts";
@@ -29,7 +30,7 @@ const JS_TS = /\.[cm]?[jt]sx?$/;
 
 export interface Selected {
   readonly file: string;
-  /** Why it runs: "changed", "imports …", "drives canon …", "runs the CLI …", "names BR-n", "always", or "--all". */
+  /** Why it runs: "changed", "imports …", "reads … (… changed)", "drives canon …", "runs the CLI …", "names BR-n", "always", or "--all". */
   readonly reasons: readonly string[];
 }
 
@@ -144,7 +145,8 @@ function changesOf(ws: Workspace): Result<{ base: string; changed: string[]; rul
  * The test files to run and why (BR-2157): changed test files; test files whose relative imports reach a changed
  * file, directly or through other source files (the import reading of `canon context`, BR-2119); test files that
  * spawn the CLI and name a command whose module, or a file that module imports, changed (D-60); test files whose
- * running titles name a touched rule. With `all`, every test file (BR-2159).
+ * running titles name a touched rule; source files that read a changed data file by a path they spell from their own
+ * location (`reads …`, #117) count as reached like a changed file. With `all`, every test file (BR-2159).
  */
 export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
   const ch = changesOf(ws);
@@ -171,6 +173,14 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
     return v;
   };
 
+  // reason: a module that reads a data file by a path it spells from its own location is not importing it; it counts as reaching the file, so a changed .claude/skills file selects the install tests (#117, D-60)
+  const sourceTexts = new Map<string, string>();
+  const listed = paths(ws.root, "ls-files", "--cached", "--others", "--exclude-standard");
+  if (!listed.ok) return listed;
+  for (const f of listed.value) if (JS_TS.test(f) && isFile(join(ws.root, f))) sourceTexts.set(f, readFileSync(join(ws.root, f), "utf8"));
+  const readers = readersOfChanged(sourceTexts, changed);
+  const readNote = (m: string, r: DataRead) => `reads ${r.path} (${r.changed[0]}${r.changed.length > 1 ? ` and ${r.changed.length - 1} more` : ""} changed, via ${m}`;
+
   const reader = cliReader(ws.root, importsFrom);
   const { tableOf, cliOf } = reader;
   /** The changed files a spawned CLI runs: from its entry file, and from the module of each command the test names. */
@@ -185,6 +195,7 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
       const via = new Map<string, string | null>([[start, null]]);
       const queue = [start];
       const reached: string[] = changedSet.has(start) ? [start] : [];
+      const readHit: string[] = readers.has(start) ? [start] : [];
       while (queue.length) {
         const cur = queue.shift()!;
         for (const next of importsFrom(cur)) {
@@ -192,6 +203,7 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
           if (via.has(next) || (modules.has(next) && !modules.has(cur))) continue;
           via.set(next, cur);
           if (changedSet.has(next)) reached.push(next);
+          if (readers.has(next)) readHit.push(next);
           queue.push(next);
         }
       }
@@ -199,6 +211,11 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
         const chain: string[] = [];
         for (let p = via.get(target) ?? null; p; p = via.get(p) ?? null) chain.unshift(p);
         out.push(`${label} (${target} changed${chain.length ? `, through ${chain.join(" → ")}` : ""})`);
+      }
+      for (const target of readHit) {
+        const chain: string[] = [];
+        for (let p = via.get(target) ?? null; p; p = via.get(p) ?? null) chain.unshift(p);
+        out.push(`${label} (${readNote(target, readers.get(target)!)}${chain.length ? `, through ${chain.join(" → ")}` : ""})`);
       }
     }
     return out;
@@ -213,14 +230,21 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
     const via = new Map<string, string | null>([[file, null]]);
     const queue = [file];
     const reached: string[] = [];
+    const readHit: string[] = readers.has(file) ? [file] : [];
     while (queue.length) {
       const cur = queue.shift()!;
       for (const next of importsFrom(cur)) {
         if (via.has(next)) continue;
         via.set(next, cur);
         if (changedSet.has(next)) reached.push(next);
+        if (readers.has(next)) readHit.push(next);
         queue.push(next);
       }
+    }
+    for (const target of readHit) {
+      const chain: string[] = [];
+      for (let p = via.get(target) ?? null; p && p !== file; p = via.get(p) ?? null) chain.unshift(p);
+      reasons.push(`${readNote(target, readers.get(target)!)}${chain.length ? `, through ${chain.join(" → ")}` : ""})`);
     }
     for (const target of reached) {
       const chain: string[] = [];
