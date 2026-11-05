@@ -221,7 +221,7 @@ export function check(input: CheckInput): Finding[] {
         ...(noReport.length > 0 ? [`${noReport.length} test file(s) have no report: run canon work test --all`] : []),
         ...(emptyReport.length > 0 ? [`reports with no testcase: ${listed(emptyReport)}`] : []),
       ];
-      findings.push({ path: rule.path, rule: "rule-untested", message: `${rule.id} has no running test whose name names it and no \`untested:\` reason${why.length ? ` (${why.join("; ")})` : ""}` });
+      findings.push({ path: rule.path, rule: "rule-untested", message: `${rule.id} has no running test whose title names it and no \`untested:\` reason${why.length ? ` (${why.join("; ")})` : ""}` });
     }
   }
   findings.push(...structureFindings(input.root, input.corpus));

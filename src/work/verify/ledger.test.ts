@@ -26,7 +26,7 @@ function fixture(testCommand = "sh run.sh {file} {report}") {
   write(root, {
     "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "${testCommand}"\n`,
     "run.sh": 'cp "$1" "$2" 2>/dev/null\nif grep -q FAILME "$1"; then echo "boom in $1"; exit 1; fi\n',
-    "src/a.test.ts": suite("BR-7: x"),
+    "src/a.test.ts": suite("seven: x"),
   });
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "fixture");
@@ -46,8 +46,8 @@ describe("canon work test records the reports its test_command writes", () => {
     expect(first[0]!.path).toBe("src/a.test.ts");
     expect(first[0]!.blob).toBe(sh(wt, "hash-object", "src/a.test.ts"));
     expect(first[0]!.source).toBe("test_command");
-    expect(JSON.parse(first[0]!.cases)).toEqual([{ suites: ["s"], classname: "", name: "BR-7: x", runs: true, line: 3 }]);
-    write(wt, { "src/a.test.ts": suite("BR-7: x", "BR-8: y") });
+    expect(JSON.parse(first[0]!.cases)).toEqual([{ suites: ["s"], classname: "", name: "seven: x", runs: true, line: 3 }]);
+    write(wt, { "src/a.test.ts": suite("seven: x", "eight: y") });
     expect(canon(wt, "work", "test", "--all").code).toBe(0);
     const second = rows(wt);
     expect(second.map((x) => x.blob)).toEqual([first[0]!.blob, sh(wt, "hash-object", "src/a.test.ts")]);
@@ -73,13 +73,13 @@ describe("canon work test records the reports its test_command writes", () => {
 
   test("BR-2337: a failing test with a skipped testcase exits 1 and is still recorded, the skipped one not running", () => {
     const wt = fixture();
-    write(wt, { "src/a.test.ts": `${suite("BR-7: x", "!BR-9: later")}<!-- FAILME -->` });
+    write(wt, { "src/a.test.ts": `${suite("seven: x", "!nine: later")}<!-- FAILME -->` });
     const r = canon(wt, "work", "test", "--all");
     expect(r.code).toBe(1);
     expect(r.out).toContain("boom in src/a.test.ts");
     const recorded = rows(wt);
     expect(recorded.length).toBe(1);
-    expect(JSON.parse(recorded[0]!.cases).map((c: { name: string; runs: boolean }) => [c.name, c.runs])).toEqual([["BR-7: x", true], ["BR-9: later", false]]);
+    expect(JSON.parse(recorded[0]!.cases).map((c: { name: string; runs: boolean }) => [c.name, c.runs])).toEqual([["seven: x", true], ["nine: later", false]]);
   });
 
   test("BR-2337: a command that writes no report fails with the file named and records nothing", () => {

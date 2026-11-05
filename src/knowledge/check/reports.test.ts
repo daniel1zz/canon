@@ -45,7 +45,7 @@ describe("canon check reads the ledger of test reports", () => {
     const r = canon(root, "check");
     expect(r.code).toBe(1);
     expect(r.out).toContain(`rule-untested`);
-    expect(r.out).toContain(`${br(2)} has no running test whose name names it`);
+    expect(r.out).toContain(`${br(2)} has no running test whose title names it`);
     expect(r.out).toContain("1 test file(s) have no report: run canon work test --all");
     expect(r.out).not.toContain(`${br(1)} has no`);
     record(root, "src/billing/b.test.ts", `${br(2)}: y`);

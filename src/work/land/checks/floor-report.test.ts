@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { project, quiet, sh, startNew, ws } from "../../testkit.ts";
 import { watch } from "../../watch/watch.ts";
 
+// Test names carry no rule id: the project has no rules, and a name that names a missing rule is a finding at landing (BR-2004).
 // reason: these tests land a change through the spawned CLI, which waits out queue polls (C-111).
 const TIMED = 30_000;
 const CLI = join(import.meta.dir, "../../../invocation/main.ts");
@@ -52,7 +53,7 @@ const logOf = (err: string) => readFileSync(err.match(/full log: ([^)]+)\)/)![1]
 
 describe("the floor's report is recorded per test file", () => {
   test("BR-2339: a landing whose floor writes a report with file on each testcase records one row per matching test file, from the landed tree", async () => {
-    const { root, wt } = fixture(report(tc("BR-1: x", "src/a.test.ts"), tc("BR-2: y", "src/a.test.ts", true), tc("BR-3: z", "src/b.test.ts"), tc("other", "scripts/x.ts")));
+    const { root, wt } = fixture(report(tc("first: x", "src/a.test.ts"), tc("second: y", "src/a.test.ts", true), tc("third: z", "src/b.test.ts"), tc("other", "scripts/x.ts")));
     const r = await canonIn(wt, "work", "land");
     expect(r.code).toBe(0);
     const got = rows(root);
@@ -60,7 +61,7 @@ describe("the floor's report is recorded per test file", () => {
       ["src/a.test.ts", "floor", sh(root, "rev-parse", "main:src/a.test.ts")],
       ["src/b.test.ts", "floor", sh(root, "rev-parse", "main:src/b.test.ts")],
     ]);
-    expect(JSON.parse(got[0]!.cases).map((c: { name: string; runs: boolean }) => [c.name, c.runs])).toEqual([["BR-1: x", true], ["BR-2: y", false]]);
+    expect(JSON.parse(got[0]!.cases).map((c: { name: string; runs: boolean }) => [c.name, c.runs])).toEqual([["first: x", true], ["second: y", false]]);
   }, TIMED);
 
   test("BR-2339: a floor that passes without writing the report refuses the landing and the log says so", async () => {
@@ -76,7 +77,7 @@ describe("the floor's report is recorded per test file", () => {
   }, TIMED);
 
   test("BR-2339: a testcase without file refuses the landing, names the way out and records nothing", async () => {
-    const { root, wt } = fixture(report(tc("BR-1: x", "src/a.test.ts"), tc("BR-2: y")));
+    const { root, wt } = fixture(report(tc("first: x", "src/a.test.ts"), tc("second: y")));
     const r = await canonIn(wt, "work", "land");
     expect(r.code).toBe(1);
     const log = logOf(r.err);
@@ -86,7 +87,7 @@ describe("the floor's report is recorded per test file", () => {
   }, TIMED);
 
   test("BR-2339: a file outside the repository and a report that is not XML refuse the landing", async () => {
-    const outside = fixture(report(tc("BR-1: x", "/etc/passwd")));
+    const outside = fixture(report(tc("first: x", "/etc/passwd")));
     const a = await canonIn(outside.wt, "work", "land");
     expect(a.code).toBe(1);
     expect(logOf(a.err)).toContain("outside the repository");
@@ -108,7 +109,7 @@ describe("the floor's report is recorded per test file", () => {
   }, TIMED);
 
   test("BR-2339: a floor without {report} lands as before and records nothing", async () => {
-    const { root, wt } = fixture(report(tc("BR-1: x", "src/a.test.ts")), "true");
+    const { root, wt } = fixture(report(tc("first: x", "src/a.test.ts")), "true");
     const r = await canonIn(wt, "work", "land");
     expect(r.code).toBe(0);
     expect(rows(root)).toEqual([]);
@@ -120,7 +121,7 @@ describe("the floor's report is recorded per test file", () => {
       "canon/config.yaml": 'floor: "sh f.sh {report}"\ntests: ["src/**/*.test.ts"]\nreview: none\nfloor_timing: after\nfloor_quiet_minutes: 0\n',
       "f.sh": 'cp report.xml "$1"\n',
       "src/a.test.ts": "a\n",
-      "report.xml": report(tc("BR-1: x", "src/a.test.ts")),
+      "report.xml": report(tc("first: x", "src/a.test.ts")),
     });
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "fixture");

@@ -3,6 +3,7 @@ import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../land.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
+import { recordReport } from "../../verify/ledger.ts";
 
 describe("floor skip for landings that change only declared paths", () => {
   function skipProject(config: string) {
@@ -92,6 +93,8 @@ describe("floor skip for landings that change only declared paths", () => {
     const meta = ["import", "meta", "dir"].join(".");
     const notes = ["canon", "notes"].join("/");
     commitFile(s.worktree, "src/a.test.ts", `const ROOT = join(${meta}, "..");\nconst t = readFileSync(join(ROOT, "${notes}/N-1.md"));\n`);
+    // the test's report, as canon work test would have recorded it (BR-2337): without it canon check names the file (BR-2344)
+    recordReport(ws(root).db, "src/a.test.ts", sh(s.worktree, "hash-object", "src/a.test.ts"), [], "test_command");
     writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: ["src/**/*.test.ts"]\nfloor_skip_paths: [canon/changes, ${notes}]\n`);
     sh(root, "commit", "-qam", "skip notes");
     const out = await land(ws(s.worktree), FAST, quiet); // the workspace was opened on the config without canon/notes
