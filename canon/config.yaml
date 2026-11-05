@@ -2,7 +2,8 @@
 main: main
 # 必须在 main 的代码树上执行成功；floor_timing: after 下合入不跑它，main 前移后在后台跑（canon floor watch）
 # 测试经过 scripts/test.sh：统一的测试超时，git 只读脚本写的固定配置，本机 git 设置改变不了结果（C-247）
-floor: "bun install --frozen-lockfile && bunx tsc --noEmit -p tsconfig.json && sh scripts/test.sh --parallel=4"
+floor: "bun install --frozen-lockfile && bunx tsc --noEmit -p tsconfig.json && sh scripts/test.sh --parallel=4 --reporter=junit --reporter-outfile={report}"
+# {report} 换成一个临时路径，bun 把 JUnit XML 写到那里；canon 读它，按每个 testcase 的 file 给每个测试文件记账（D-64、BR-2339）
 # 先合后测（D-31、BR-2218）：开发阶段合入不等 floor，main 没通过时由 canon work start --fix-main 开的变更向前修
 floor_timing: after
 # floor_timing: after 下后台全量测试按批运行（D-59、BR-2311）：main 安静 floor_quiet_minutes 分钟、没测过的合入达到 floor_max_untested 个、
@@ -24,7 +25,8 @@ shared:
 tests:
   - "src/**/*.test.ts"
 # canon work test 运行一个测试文件的命令，{file} 换成它的路径（D-23）；和 floor 一样经过 scripts/test.sh（C-247）
-test_command: "sh scripts/test.sh {file}"
+# {report} 换成一个临时路径，bun 把 JUnit XML 写到那里；canon 读它，按“文件路径 + 内容哈希”记账（D-64、BR-2337）
+test_command: "sh scripts/test.sh {file} --reporter=junit --reporter-outfile={report}"
 # canon work test 每次都跑（BR-2297）：读遍 src/ 的测试，改动不导入它、也不碰它点名的规则时照样能弄坏它（C-240 弄坏 BR-2223 那次，C-262）。
 # 找法：测试里递归读真实仓库 src/ 的是第一个（grep readdirSync、Bun.Glob、scanSync，C-281）；第二个读随 canon 发出的 skill（BR-2096）。新增这样的测试时加在这里
 always_tests:

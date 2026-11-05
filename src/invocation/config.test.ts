@@ -72,6 +72,8 @@ describe("config validation", () => {
   test("BR-2160: test_command must be a string holding {file}, and a script it names must exist", () => {
     const good = readConfig(repo({ "canon/config.yaml": 'test_command: "npx vitest run {file}"\n' }));
     expect(good.ok && good.value.testCommand).toBe("npx vitest run {file}");
+    const reported = readConfig(repo({ "canon/config.yaml": 'test_command: "bun test {file} --reporter=junit --reporter-outfile={report}"\n' }));
+    expect(reported.ok && reported.value.testCommand).toBe("bun test {file} --reporter=junit --reporter-outfile={report}");
     const none = readConfig(repo());
     expect(none.ok && none.value.testCommand).toBeUndefined();
     for (const [yaml, message] of [

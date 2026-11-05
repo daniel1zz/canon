@@ -8,7 +8,7 @@ export const FILE_PLACEHOLDER = "{file}";
 export const verifyKeys = {
   testCommand: configKey<string | undefined>({
     key: "test_command",
-    doc: "Shell command `canon work test` runs once per selected test file, `{file}` replaced by its path (BR-2160, D-23).",
+    doc: "Shell command `canon work test` runs once per selected test file, `{file}` replaced by its path; a `{report}` in it is replaced by the path the command writes a JUnit XML report to, which canon records (BR-2160, BR-2337, D-23, D-64).",
     default: undefined,
     schema: { anyOf: [{ type: "null" }, { type: "string", maxLength: 0 }, { type: "string", pattern: "\\{file\\}" }] },
     read: (v) => {

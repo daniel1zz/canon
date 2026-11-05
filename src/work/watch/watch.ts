@@ -14,6 +14,7 @@ import type { FloorTiming } from "./config-keys.ts";
 import { plan, untestedLine } from "./batch.ts";
 import { clearRedMain, fixLandedIn, recordFailure } from "./redmain.ts";
 import { stopStarted } from "./stop.ts";
+import { floorWithReport } from "../land/checks/floor.ts";
 
 /**
  * Merge-then-test (D-31): with `floor_timing: after`, landings move main without the floor and `canon floor watch`
@@ -335,7 +336,7 @@ async function testCommit(ws: Workspace, say: Say, sha: string): Promise<Result<
           code = setup;
           why = `setup exited ${setup}`;
         } else {
-          code = await runLogged(config.value.floor, dir, fd);
+          code = await floorWithReport(ws.db, config.value, dir, config.value.floor, (command) => runLogged(command, dir, fd), (line) => writeSync(fd, `${line}\n`));
           why = `floor exited ${code}`;
         }
       }

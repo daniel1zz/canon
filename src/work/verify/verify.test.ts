@@ -252,6 +252,11 @@ describe("canon work test runs", () => {
     expect(commandFor("bun test {file}", "src/it's.test.ts")).toBe(`bun test 'src/it'\\''s.test.ts'`);
   });
 
+  test("BR-2160: {file} and {report} are replaced, each quoted for the shell", () => {
+    expect(commandFor("bun test {file} --reporter-outfile={report}", "src/a.test.ts", "/tmp/r x/report.xml")).toBe("bun test 'src/a.test.ts' --reporter-outfile='/tmp/r x/report.xml'");
+    expect(commandFor("bun test {file} --reporter-outfile={report}", "src/a.test.ts")).toBe("bun test 'src/a.test.ts' --reporter-outfile={report}");
+  });
+
   test("BR-2159: --all runs every test file even when nothing is related", () => {
     const { wt } = fixture();
     const r = canon(wt, "work", "test", "--all");

@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<testsuites name="bun test" tests="7" assertions="0" failures="1" skipped="2" time="0.014511">
+  <testsuite name="c.test.ts" file="c.test.ts" tests="6" assertions="0" failures="1" skipped="2" time="0.0068" hostname="localhost">
+    <testsuite name="BR-1" file="c.test.ts" line="3" tests="2" assertions="0" failures="0" skipped="1" time="0" hostname="localhost">
+      <testcase name="first" classname="BR-1" time="0.000007" file="c.test.ts" line="4" assertions="0" />
+      <testcase name="second" classname="BR-1" time="0" file="c.test.ts" line="5" assertions="0">
+        <skipped />
+      </testcase>
+    </testsuite>
+    <testcase name="BR-2: later" classname="" time="0" file="c.test.ts" line="7" assertions="0">
+      <skipped message="TODO" />
+    </testcase>
+    <testcase name="BR-3: each one" classname="" time="0.000004" file="c.test.ts" line="8" assertions="0" />
+    <testcase name="BR-3: each two" classname="" time="0" file="c.test.ts" line="8" assertions="0" />
+    <testcase name="BR-4: fails" classname="" time="0.002711" file="c.test.ts" line="9" assertions="0">
+      <failure type="Error" message="x">Error: x&#10;      at c.test.ts:9:48&#10;</failure>
+    </testcase>
+  </testsuite>
+  <testsuite name="d.test.ts" file="d.test.ts" tests="1" assertions="0" failures="0" skipped="0" time="0.000197" hostname="localhost">
+    <testcase name="plain" classname="" time="0.000006" file="d.test.ts" line="2" assertions="0" />
+  </testsuite>
+</testsuites>

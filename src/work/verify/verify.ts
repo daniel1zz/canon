@@ -1,9 +1,12 @@
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { changeIdsOnBranches, listedBefore } from "../session/inflight.ts";
 import { basename, join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
 import { FILE_PLACEHOLDER } from "./config-keys.ts";
+import { readReport, REPORT_PLACEHOLDER } from "./report.ts";
+import { recordReport } from "./ledger.ts";
 import { backlogNotes, check, noteLine } from "../../knowledge/check/check.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { testTitles } from "../../knowledge/check/test-titles.ts";
@@ -274,9 +277,37 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
   return ok({ base, changed, rules, decisions, unmatched, selected, cli: reader.counts() });
 }
 
-/** `test_command` with `{file}` replaced by the path, quoted for sh. */
-export function commandFor(template: string, file: string): string {
-  return template.replaceAll(FILE_PLACEHOLDER, `'${file.replaceAll("'", `'\\''`)}'`);
+const quoted = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
+
+/** `test_command` with `{file}` replaced by the path and `{report}` by the report path, quoted for sh. */
+export function commandFor(template: string, file: string, report?: string): string {
+  const withFile = template.replaceAll(FILE_PLACEHOLDER, quoted(file));
+  return report === undefined ? withFile : withFile.replaceAll(REPORT_PLACEHOLDER, quoted(report));
+}
+
+/**
+ * Runs `test_command` for one test file. When it holds `{report}`, the JUnit report the command writes is read and
+ * recorded for the file at its content's blob hash (BR-2337, D-64); a command that wrote no usable report fails,
+ * whatever its own exit code, and nothing is recorded.
+ */
+async function runTestFile(ws: Workspace, template: string, file: string, groups: Set<number>): Promise<Outcome> {
+  if (!template.includes(REPORT_PLACEHOLDER)) return runShell(ws.root, commandFor(template, file), groups);
+  const dir = mkdtempSync(join(tmpdir(), "canon-report-"));
+  try {
+    const report = join(dir, "report.xml");
+    const r = await runShell(ws.root, commandFor(template, file, report), groups);
+    // reason: a run stopped by a signal has no verdict, so no report is expected of it (BR-2304)
+    if (r.signalled) return r;
+    const cases = readReport(report);
+    const problem = !cases.ok ? (cases.error.code === "not_found" ? `${file}: the test command wrote no report (it must write JUnit XML to ${REPORT_PLACEHOLDER})` : `${file}: the report is not valid JUnit XML: ${cases.error.message}`) : undefined;
+    if (problem !== undefined || !cases.ok) return { ...r, exitCode: r.exitCode === 0 ? 1 : r.exitCode, output: `${r.output}${r.output.endsWith("\n") || r.output === "" ? "" : "\n"}canon: ${problem}\n` };
+    const blob = git(ws.root, "hash-object", "--", file);
+    if (!blob.ok) return { ...r, exitCode: r.exitCode === 0 ? 1 : r.exitCode, output: `${r.output}\ncanon: cannot hash ${file}: ${blob.error.message}\n` };
+    recordReport(ws.db, file, blob.value, cases.value, "test_command");
+    return r;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 /**
@@ -445,7 +476,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
     else say(`test files: up to ${cap} at once (${setting}), another one only while at least 1 CPU is idle`);
 
     const pool = startPool({
-      files, cap, first, run: (file) => runShell(ws.root, commandFor(testCommand, file), groups), readCpu: deps.readCpu, tickMs: deps.tickMs, graceMs: deps.graceMs, say,
+      files, cap, first, run: (file) => runTestFile(ws, testCommand, file, groups), readCpu: deps.readCpu, tickMs: deps.tickMs, graceMs: deps.graceMs, say,
       stopping: () => signal !== undefined,
       onEnd: (r) => {
         show(r, false);
@@ -469,7 +500,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
         if (signal !== undefined) return;
         let busy = 1;
         running = () => busy;
-        const r = await runShell(ws.root, commandFor(testCommand, f), groups);
+        const r = await runTestFile(ws, testCommand, f, groups);
         busy = 0;
         if (signal !== undefined) return;
         rerunAlone.push(f);

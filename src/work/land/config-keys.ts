@@ -17,7 +17,7 @@ export const landKeys = {
   }),
   floor: configKey<string | undefined>({
     key: "floor",
-    doc: "Shell command that must exit 0 on the exact tree that becomes main (required to land).",
+    doc: "Shell command that must exit 0 on the exact tree that becomes main (required to land). A `{report}` in it is replaced by the path the command writes a JUnit XML report to, every testcase with a `file`; canon records it for each test file (BR-2339, D-64).",
     default: undefined,
     schema: optionalString,
     read: stringValue("floor"),

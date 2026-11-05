@@ -86,6 +86,16 @@ CREATE TABLE IF NOT EXISTS red_main (
   fix_start  TEXT,
   updated_at TEXT NOT NULL
 );
+-- What each test file held when a report was read: one row per path and git blob hash, the last few per path kept (BR-2337, D-64).
+CREATE TABLE IF NOT EXISTS test_reports (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  path        TEXT NOT NULL,
+  blob        TEXT NOT NULL,           -- git blob hash of the file's content
+  cases       TEXT NOT NULL,           -- JSON list of testcases: suites, classname, name, runs, line
+  source      TEXT NOT NULL CHECK (source IN ('test_command','floor')),
+  recorded_at TEXT NOT NULL,
+  UNIQUE (path, blob)
+);
 `;
 
 /** Columns added after the first schema, as `table`, `column definition`. */
