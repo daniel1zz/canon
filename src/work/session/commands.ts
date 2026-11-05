@@ -1,6 +1,6 @@
 import { defineCommand } from "citty";
 import { writeSchemaFile } from "../../invocation/reference/reference.ts";
-import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { AS_ARG, corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { takesMany } from "../../invocation/strict.ts";
 import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { noticeUpdates } from "../../install/commands.ts";
@@ -33,9 +33,10 @@ const startCmd = defineCommand({
     title: { type: "string" },
     rules: { type: "string", description: "Rule ids the new change touches" },
     "fix-main": { type: "boolean", description: "Open the one change that fixes main's failing background floor (floor_timing: after, BR-2221)" },
+    ...AS_ARG,
   },
   run({ args }) {
-    const ws = workspace();
+    const ws = workspace(args.as);
     const fixMain = Boolean(args["fix-main"]);
     if (fixMain && (args.change || args.title || args.rules)) fail({ code: "invalid", message: "--fix-main opens its own change; give no change id, --title or --rules with it" });
     if (!fixMain && !args.change && !args.title) fail({ code: "invalid", message: "give a change id, --title for a new change, or --fix-main" });
@@ -48,9 +49,9 @@ const startCmd = defineCommand({
 
 const stopCmd = defineCommand({
   meta: { description: "Hand off: record the next step for whoever continues this change" },
-  args: { next: { type: "string", required: true }, note: { type: "string" }, release: { type: "boolean", description: "Release the claim too" } },
+  args: { next: { type: "string", required: true }, note: { type: "string" }, release: { type: "boolean", description: "Release the claim too" }, ...AS_ARG },
   run({ args }) {
-    const ws = workspace();
+    const ws = workspace(args.as);
     const subject = must(stop(ws, String(args.next), typeof args.note === "string" ? args.note : undefined, Boolean(args.release), say));
     say(`${subject}: handoff recorded${args.release ? ", claim released" : ""}`);
     say(LESSON_REMINDER);

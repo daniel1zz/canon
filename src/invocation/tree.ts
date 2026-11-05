@@ -7,6 +7,7 @@ import { documentCommands } from "../knowledge/documents/commands.ts";
 import { queryCommands } from "../knowledge/query/commands.ts";
 import { releaseCommands } from "../knowledge/releases/commands.ts";
 import { workCommands } from "../work/commands.ts";
+import { claimCommands } from "../work/claims/commands.ts";
 import { dropCommands } from "../work/drop/commands.ts";
 import { executionCommands } from "../work/execution/commands.ts";
 import { hooksCommands } from "../work/hooks/commands.ts";
@@ -42,6 +43,7 @@ export const main = defineCommand({
     verifyCommands,
     watchCommands,
     remoteCommands,
+    claimCommands,
     dropCommands,
     humanCommands,
     statsCommands,

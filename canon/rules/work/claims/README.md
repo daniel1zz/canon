@@ -1,6 +1,6 @@
 # 认领（work/claims）
 
-同一个变更同一时间只能由一个 worktree 里的一个执行者在做。认领有租约（默认 12 小时），持有者的 `canon work land` 和不带 `--release` 的 `canon work stop` 会续期（租约有效时 `canon work start` 总是被拒绝，BR-2011）；在 Claude Code 里还记下会话进程（pid 和 UTC 启动时间），进程已经不在时认领可以立刻被接手，不用等租约到期（D-11）。执行者只到会话一级，同一个会话的几个 agent 靠各自的 worktree 分开（D-18）。
+同一个变更同一时间只能由一个 worktree 里的一个执行者在做。认领有租约（默认 12 小时），持有者的 `canon work land` 和不带 `--release` 的 `canon work stop` 会续期（租约有效时 `canon work start` 总是被拒绝，BR-2011）；在 Claude Code 里还记下会话进程（pid 和 UTC 启动时间），进程已经不在时认领可以立刻被接手，不用等租约到期（D-11）。不带 `--as` 的调用，执行者只到会话一级，同一个会话的几个 agent 靠各自的 worktree 分开（D-18）；子 agent 带 `--as <自己的 agent_id>`，执行者是 `agent:<会话>:<agent_id>`，主会话和别的子 agent 进不了它持有的 worktree 的 `land`、`stop`，子 agent 结束后主会话用 `canon work take` 接手（D-62）。
 
 不管：认领在开始、合入、放弃时怎么被使用，那些在各自的子领域里。
 

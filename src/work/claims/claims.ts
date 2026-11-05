@@ -37,8 +37,13 @@ export function takeClaim(db: CoordDb, subject: string, holder: string, actor: s
     const gone = cur !== null && !binds && new Date(cur.expires_at) > now();
     if (binds) {
       db.event(actor, "claim.refuse", subject, { reason: "held", by: cur.worktree, actor: cur.holder, until: cur.expires_at });
+      const sub = subagentOf(actor, cur.holder);
       const own =
-        cur.holder === actor ? `; it is in progress in that worktree: if you did not start it in this conversation, pick another change (whoever started it continues there)` : "";
+        sub !== undefined
+          ? `; it is held by your subagent ${sub}: if that subagent has finished, run \`canon work take ${subject} --from ${sub}\`, otherwise pick another change`
+          : cur.holder === actor
+            ? `; it is in progress in that worktree: if you did not start it in this conversation, pick another change (whoever started it continues there)`
+            : "";
       return err(
         "conflict",
         `${subject} is claimed by ${cur.holder} in ${cur.worktree} until ${cur.expires_at}${own}; it frees when the holder runs \`canon work stop --release\` there or the lease expires`,
@@ -72,7 +77,9 @@ export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs
     if (!cur) return ok(undefined);
     if (cur.holder !== actor && bindsStill(cur)) {
       db.event(actor, "claim.refuse", cur.subject, { reason: "held", by: worktree, actor: cur.holder, until: cur.expires_at });
-      return err("conflict", `${cur.subject} in ${worktree} is claimed by ${cur.holder} until ${cur.expires_at}; only that session can renew, stop, release or land it`);
+      const sub = subagentOf(actor, cur.holder);
+      const who = sub !== undefined ? `, a subagent of this session: do not work in this worktree unless you are that subagent; if it has finished, run \`canon work take ${cur.subject} --from ${sub}\`` : "";
+      return err("conflict", `${cur.subject} in ${worktree} is claimed by ${cur.holder} until ${cur.expires_at}; only that holder can renew, stop, release or land it${who}`);
     }
     const expires = iso(new Date(now().getTime() + leaseMs));
     // reason: while a landing of this worktree is in the queue, the claim names that lander, and the holder's own
@@ -91,6 +98,38 @@ export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs
     db.db.query("UPDATE claims SET holder = ?, expires_at = ?, pid = ?, pid_start = ?, version = version + 1 WHERE subject = ?").run(actor, expires, pid, pidStart, cur.subject);
     db.event(actor, cur.holder === actor ? "claim.renew" : "claim.take", cur.subject, { worktree, ...(cur.holder === actor ? {} : { from: cur.holder }) });
     return ok({ subject: cur.subject, holder: worktree, actor, expires_at: expires });
+  });
+  return tx.immediate();
+}
+
+/**
+ * The agent id of a subagent of this session that holds a claim: the holder is `<actor>:<id>` while the actor is a
+ * session-level `agent:<session>` (BR-2023, D-62). Undefined for any other pair.
+ */
+function subagentOf(actor: string, holder: string): string | undefined {
+  return /^agent:[^:]+$/.test(actor) && holder.startsWith(`${actor}:`) ? holder.slice(actor.length + 1) : undefined;
+}
+
+/**
+ * The main session takes back the claim a subagent of the same session holds (`canon work take`, BR-2336): the holder
+ * becomes the session-level actor and the lease starts again. It does not know whether the subagent has finished (the
+ * subagent and the main session share one process, so the process probe cannot tell, D-11, D-62); a subagent that
+ * still runs finds its next `land` or `stop` refused, loudly (BR-2104).
+ */
+export function handOverClaim(db: CoordDb, subject: string, actor: string, from: string, leaseMs = CLAIM_LEASE_MS, owner?: Proc): Result<Claim> {
+  const tx = db.db.transaction((): Result<Claim> => {
+    const cur = db.db.query<{ holder: string; worktree: string | null }, [string]>("SELECT holder, worktree FROM claims WHERE subject = ?").get(subject);
+    const refuse = (message: string, extra: Record<string, unknown> = {}): Result<Claim> => {
+      db.event(actor, "claim.refuse", subject, { reason: "handover", from, actor: cur?.holder ?? null, ...extra });
+      return err("conflict", message);
+    };
+    if (!cur) return refuse(`${subject} has no claim; there is nothing to take over`);
+    if (subagentOf(actor, cur.holder) !== from) return refuse(`${subject} is claimed by ${cur.holder}, not by a subagent ${from} of this session (${actor}); only a subagent of this session can be taken over; nothing changed`);
+    if (isHold(cur.worktree)) return refuse(`${subject}'s worktree is being deleted by \`canon work clean\` or \`canon work drop\` right now; nothing changed`);
+    const expires = iso(new Date(now().getTime() + leaseMs));
+    db.db.query("UPDATE claims SET holder = ?, expires_at = ?, pid = ?, pid_start = ?, version = version + 1 WHERE subject = ?").run(actor, expires, owner?.pid ?? null, owner?.start ?? null, subject);
+    db.event(actor, "claim.handover", subject, { from, by: "main-session", worktree: cur.worktree });
+    return ok({ subject, holder: cur.worktree ?? "", actor, expires_at: expires });
   });
   return tx.immediate();
 }

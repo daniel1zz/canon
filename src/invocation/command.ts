@@ -23,8 +23,12 @@ export function must<T>(r: Result<T>): T {
   return r.value;
 }
 
-export function workspace(): Workspace {
-  return must(openWorkspace(process.cwd()));
+/** `--as <agent id>` on the commands that take or use a claim (BR-2023, D-62). */
+export const AS_ARG = { as: { type: "string", description: "Subagent: your own agent id; acts as agent:<session>:<id> (Claude Code only)" } } as const;
+
+/** The workspace of the current directory; `as` is the value of `--as`, absent when it was not given. */
+export function workspace(as?: unknown): Workspace {
+  return must(openWorkspace(process.cwd(), as === undefined ? undefined : typeof as === "string" ? as : ""));
 }
 
 /** The corpus of this worktree, read with the project's declared types. */

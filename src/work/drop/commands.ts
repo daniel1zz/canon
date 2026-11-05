@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { entry, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { AS_ARG, entry, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { mainCorpus } from "../session/session.ts";
 import { drop } from "./drop.ts";
@@ -9,9 +9,9 @@ import { BACKLOG_FILE, backlogAt } from "../../knowledge/documents/backlog.ts";
 
 const dropCmd = defineCommand({
   meta: { description: "Drop a change's worktree, branch and claim; archives anything that would be lost to refs/canon/archive first" },
-  args: { change: { type: "positional", required: true } },
+  args: { change: { type: "positional", required: true }, ...AS_ARG },
   run({ args }) {
-    const ws = workspace();
+    const ws = workspace(args.as);
     must(drop(ws, String(args.change), say));
     const onMain = mainCorpus(ws);
     const doc = onMain.ok ? findDoc(onMain.value, String(args.change)) : undefined;

@@ -163,3 +163,22 @@ describe("canon events", () => {
     expect(renderEvents([])).toBe("(no events)");
   });
 });
+
+describe("subagent actors and the hook and handover counts", () => {
+  test("BR-2155: each subagent with its own name is an actor, the main session another; handovers and hook skips are counted", () => {
+    const d = db();
+    d.event("agent:s", "start.ok", "C-1", {});
+    d.event("agent:s:a", "start.ok", "C-2", {});
+    d.event("agent:s:b", "start.ok", "C-3", {});
+    d.event("agent:s", "claim.handover", "C-2", { from: "a", by: "main-session" });
+    d.event("agent:s:b", "hook.skip", null, { reason: "unparsable" });
+    d.event("agent:s", "hook.skip", null, { reason: "bad-input" });
+    const w = windowSummary(d, 0);
+    expect(w.actors).toEqual(["agent:s", "agent:s:a", "agent:s:b"]);
+    expect([w.claimHandovers, w.hookSkips]).toEqual([1, 2]);
+    const text = renderWindow(w);
+    expect(text).toContain("actors (3): agent:s, agent:s:a, agent:s:b");
+    expect(text).toContain("claim handovers: 1; hook skips: 2");
+    expect(windowSummary(d, 5).hookSkips).toBe(1);
+  });
+});

@@ -89,6 +89,10 @@ export interface WindowSummary {
   readonly conflicts: { readonly total: number; readonly early: number; readonly keptPlace: number; readonly resolveMedianMs: number | null };
   readonly overlapNotices: number;
   readonly claimRefusals: number;
+  /** Claims the main session took back from a subagent (`claim.handover`, BR-2336). */
+  readonly claimHandovers: number;
+  /** Bash calls the PreToolUse hook let through without checking (`hook.skip`, D-62). */
+  readonly hookSkips: number;
   readonly actors: readonly string[];
   readonly worktrees: readonly string[];
 }
@@ -125,6 +129,8 @@ export function windowSummary(db: CoordDb, since: number, until = lastEventId(db
     conflicts: { total: conflicts.length, early: conflicts.filter((r) => r.detail["early"] === true).length, keptPlace: resolves.length, resolveMedianMs: median(resolves) },
     overlapNotices: of("overlap.notice").length,
     claimRefusals: of("claim.refuse").length,
+    claimHandovers: of("claim.handover").length,
+    hookSkips: of("hook.skip").length,
     actors: [...new Set(rows.map((r) => r.actor))].sort(),
     worktrees: [...new Set(rows.flatMap((r) => (r.worktree ? [r.worktree] : [])))].sort(),
   };
@@ -140,7 +146,7 @@ export function renderWindow(w: WindowSummary): string {
     `  landings: ${w.landings.ok} ok, ${total} refused${total ? ` (${refused.map(([r, c]) => `${r} ${c}`).join(", ")})` : ""}, ${w.landings.lost} lost, ${w.landings.killed} killed`,
     `  queue waits: ${w.waits.count} turn(s), median ${secs(w.waits.medianMs)}, max ${secs(w.waits.maxMs)}`,
     `  conflicts: ${w.conflicts.total} (${w.conflicts.early} predicted before the turn); ${w.conflicts.keptPlace} landed again at their kept place, median resolve ${secs(w.conflicts.resolveMedianMs)}`,
-    `  overlap notices: ${w.overlapNotices}; claim refusals: ${w.claimRefusals}`,
+    `  overlap notices: ${w.overlapNotices}; claim refusals: ${w.claimRefusals}; claim handovers: ${w.claimHandovers}; hook skips: ${w.hookSkips}`,
     `  actors (${w.actors.length}): ${w.actors.join(", ") || "-"}`,
     `  worktrees (${w.worktrees.length}): ${w.worktrees.join(", ") || "-"}`,
   ].join("\n");

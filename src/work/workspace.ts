@@ -18,24 +18,38 @@ export interface Workspace {
   readonly actor: string;
 }
 
+/** What `--as` may be: a Claude Code agent id or any other plain name (BR-2023). */
+const AS_NAME = /^[A-Za-z0-9_-]+$/;
+
 /**
- * Who is acting (BR-2023): CANON_ACTOR when set; inside a Claude Code session (CLAUDECODE=1) the agent
- * named by its session id; otherwise the OS user as a human. An agent is never recorded as a human.
+ * Who is acting (BR-2023): `--as <name>` inside a Claude Code session makes it `agent:<session>:<name>`; else
+ * CANON_ACTOR when set; inside a Claude Code session (CLAUDECODE=1) the agent named by its session id; otherwise
+ * the OS user as a human. An agent is never recorded as a human.
  */
-export function currentActor(env: Record<string, string | undefined> = process.env): Result<string> {
+export function currentActor(env: Record<string, string | undefined> = process.env, as?: string): Result<string> {
   const inAgent = env["CLAUDECODE"] === "1";
   const explicit = env["CANON_ACTOR"]?.trim();
+  const session = env["CLAUDE_CODE_SESSION_ID"]?.trim().slice(0, 8) || "unknown";
+  if (as !== undefined) {
+    if (!AS_NAME.test(as)) return err("invalid", `--as ${JSON.stringify(as)}: a name is letters, digits, - and _ only`);
+    if (!inAgent) return err("invalid", "--as is only for agents running in a Claude Code session; it is not set outside one");
+    if (explicit) return err("invalid", `--as ${as} and CANON_ACTOR=${explicit} both name the actor; give one of them`);
+    return ok(`agent:${session}:${as}`);
+  }
   if (explicit) {
     if (inAgent && !explicit.startsWith("agent:")) return err("invalid", `CANON_ACTOR=${explicit} inside a Claude Code session: an agent session can only act as agent:<name>`);
     return ok(explicit);
   }
-  if (inAgent) return ok(`agent:${env["CLAUDE_CODE_SESSION_ID"]?.trim().slice(0, 8) || "unknown"}`);
+  if (inAgent) return ok(`agent:${session}`);
   return ok(`human:${userInfo().username}`);
 }
 
-export function openWorkspace(cwd: string): Result<Workspace> {
+export function openWorkspace(cwd: string, as?: string): Result<Workspace> {
   const root = toplevel(cwd);
   if (!root.ok) return root;
+  // reason: a bad --as is refused before the coordination DB is opened, so nothing is written (BR-2023)
+  const actor = currentActor(process.env, as);
+  if (!actor.ok) return actor;
   const config = readConfig(root.value);
   if (!config.ok) return config;
   const dbPath = CoordDb.pathFor(root.value);
@@ -47,8 +61,6 @@ export function openWorkspace(cwd: string): Result<Workspace> {
   if (!wts.ok) return wts;
   const primary = wts.value[0]?.path;
   if (!primary) return err("io", "git reports no worktrees");
-  const actor = currentActor();
-  if (!actor.ok) return actor;
   return ok({ root: root.value, primary, db: db.value, config: config.value, actor: actor.value });
 }
 
