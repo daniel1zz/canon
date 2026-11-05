@@ -1,8 +1,10 @@
 ---
 id: C-382
 title: Rules guidance lists open choices; landing notices proposed decisions
-status: open
+status: done
 rules: []
+passes:
+  BR-2355: 9b9e6c678907ce38 test
 ---
 
 ## 为什么
