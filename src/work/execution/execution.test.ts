@@ -220,9 +220,12 @@ describe("evidence from the report's lines (BR-2241, D-64)", () => {
   }, TIMED);
 
   test("BR-2241: a changed test file with no report for its content gives no evidence, and canon check names the missing report", async () => {
-    const { out } = await run({ lines: true, record: false, edit: (t) => t.replace("toBe(1)", "toBe(1); // output 10") });
-    expect(out.kind === "refused" && out.reason).toBe("check");
-    expect(out.kind === "refused" && (out.findings ?? []).map((f) => f.rule)).toContain("test-report-missing");
+    const { s, out } = await run({ lines: true, record: false, edit: (t) => t.replace("toBe(1)", "toBe(1); // output 10") });
+    expect(out.kind === "refused" && out.reason).toBe("evidence");
+    expect(out.kind === "refused" && out.message).toContain("canon work test has recorded a report for its current content");
+    const r = Bun.spawnSync(["bun", join(import.meta.dir, "..", "..", "invocation", "main.ts"), "check"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    expect(r.exitCode).toBe(1);
+    expect(r.stdout.toString()).toContain("test-report-missing");
   }, TIMED);
 });
 

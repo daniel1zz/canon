@@ -30,7 +30,7 @@ export function missingMessage(change: string, missing: readonly Missing[]): str
   const lines = missing.map((m) =>
     `  - ${m.id}: change a line in a running test whose title names ${m.id}${m.untested ? `, or, as it has untested:, add a line "- ${m.id}：<怎么验的> → <看到了什么>" under ## 验收 in ${change}` : ""}`,
   );
-  return `${change} executes ${missing.length} rule(s) with no evidence of this execution (BR-2241, D-32): each rule it executes, the ones in its rules: and every one its landings changed the ## 规则 or ## 例子 of, that is active and has no pass record of its current text needs one:\n${lines.join("\n")}\nA rule that only changed wording since it last passed needs no evidence when its ## 例子 is unchanged (BR-2243). Commit, then land --finish again.`;
+  return `${change} executes ${missing.length} rule(s) with no evidence of this execution (BR-2241, D-32): each rule it executes, the ones in its rules: and every one its landings changed the ## 规则 or ## 例子 of, that is active and has no pass record of its current text needs one:\n${lines.join("\n")}\nA rule that only changed wording since it last passed needs no evidence when its ## 例子 is unchanged (BR-2243). A changed test file only gives evidence once canon work test has recorded a report for its current content (BR-2241, BR-2344). Commit, then land --finish again.`;
 }
 
 export type LandingExecution =
