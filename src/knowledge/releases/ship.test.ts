@@ -113,12 +113,13 @@ describe("canon release ship: the owner's recorded answer", () => {
 });
 
 describe("canon release ship: what must be passed", () => {
-  test("BR-2333: planned, waiting-for-rerun and untagged cases are refused with the rules listed; unknown is 3, shipped is 5", () => {
+  test("BR-2333 BR-2331: with no yes recorded, planned, waiting-for-rerun and untagged cases are refused with the rules listed; unknown is 3, shipped is 5", () => {
     const planned = fixture({ [`canon/rules/billing/${BR(3)}.md`]: ruleText(3, `release: ${R(1)}\n`, "planned") });
     const a = agent(planned, "release", "ship", R(1));
     expect(a.code).toBe(1);
     expect(a.err).toContain(`${BR(3)} 规则3: 规划中`);
     expect(a.err).not.toContain(BR(1));
+    expect(a.err).not.toContain("canon human ask"); // the rules come before the owner's yes
     const rerun = fixture({ [`canon/rules/billing/${BR(4)}.md`]: ruleText(4, `release: ${R(1)}\n`), [`canon/rules/billing/${BR(5)}.md`]: ruleText(5, `release: ${R(1)}\n`, "planned") });
     const b = agent(rerun, "release", "ship", R(1));
     expect(b.err).toContain(`${BR(4)} 规则4: 待重新执行`);
