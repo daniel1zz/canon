@@ -35,8 +35,10 @@ Say the classification in the domain README or the decision. Keep the core small
 
 ## 4. Name
 
-- Name a domain by a business capability noun the owner would say aloud ("退款", "install", "claims").
-- Never by a technical layer or placeholder: cli, api, config, db, ui, utils, common, core, shared. Never by a command name or a screen: a capability has several entry points.
+The brief's rule applies (business capability, not command name or technical layer). Beyond it:
+
+- Placeholder and layer names are out: cli, api, config, db, ui, utils, common, core, shared. A technical-layer domain cuts one capability across every directory, so each product change touches all of them; a `common` domain grows until it is the biggest and nobody owns it.
+- A screen is not a capability either; one capability has several entry points.
 - Not one domain per entity (order, user, invoice): a business rule crosses entities and would have no home.
 - Subdomains split a domain by what it is about, not by step number or size.
 
@@ -78,15 +80,6 @@ Record the division as a decision: `canon decision new --title "..."`. List ever
 - Move the code directory and its tests with it, and the README `## 术语` entries that go with the rules. All in one change, so `canon check` is green at every commit.
 - Update the references that name the old path, then run `canon check` and `canon work test`.
 - Rule ids in tests and comments do not change.
-
-## Anti-patterns
-
-- Technical-layer domains (`cli`, `config`, `api`): the business capability is cut across every layer, so one product change touches every directory.
-- A `common` or `utils` dumping ground: it grows until it is the biggest domain and nobody owns it.
-- Splitting by command or screen: three commands, one capability, three domains.
-- One entity, one domain (CRUD partitioning).
-- Splitting because the domain is big, with no signal from section 6.
-- A README without terms, or terms copied unchanged into several domains.
 
 ## Example
 
