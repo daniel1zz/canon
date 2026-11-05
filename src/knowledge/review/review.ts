@@ -46,6 +46,8 @@ export interface ReviewExtras {
   readonly change?: Doc | undefined;
   /** Rules the closing change recorded as wording-only edits; the review must judge each (BR-2239). */
   readonly wording?: readonly WordingQuestion[];
+  /** The architecture overview, when the project has one with content: its text, and the diff this landing makes to it (empty when it does not touch it) (BR-2009, D-65). */
+  readonly architecture?: { readonly text: string; readonly diff: string };
 }
 
 export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras = {}): string {
@@ -55,6 +57,8 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
     // reason: a release's 不做 and 范围 are promises the tagged rules must keep (D-61, BR-2009)
     "A release is a version's PRD; the rules whose front matter says `release: R-n` are its behaviour. Block a rule tagged with a release that does something that release's 不做 excludes or lies outside its 范围; block a release whose 不做 contradicts its own 范围 or a rule tagged with it. Only a rule or release changed in this landing can be blocked for it.",
     "A changed decision that replaces only part of an accepted decision must list it in `amends:` (one that replaces a whole decision uses `supersedes:`); block a decision that says it changes part of another decision without listing it in `amends:`.",
+    // reason: the overview is a reader's entry, so only a text this landing wrote into it can be blocked, never the overview as it stood (BR-2009, D-65)
+    "When an architecture overview is shown below, it is where readers start, not the judge: where it disagrees with the active rules and accepted decisions, they win. Block for it only when the part of the overview this landing changed (its diff is shown) contradicts an active rule or an accepted decision. When a rule or decision changed in this landing makes a statement in the overview wrong, add a note (never block for it) naming the overview section.",
     "Do not block for wording, style or formatting.",
     "One rule is one trigger (one command, event or kind of input) and one outcome (D-5). The error cases, exit codes and boundaries of the same trigger belong in that rule as examples, and a definition table (such as a list of exit codes) is one rule: do not suggest splitting those. Suggest a split only when a rule covers two different triggers, or two outcomes that could change independently; never block for it.",
     "Write the findings in the language the documents are written in.",
@@ -93,6 +97,11 @@ ${q.examples.trim()}
     // reason: the body has no front matter, so the reviewer could not see what a decision supersedes or amends (BR-2141)
     const links = d.kind === "decision" ? [...(d.supersedes ? [`supersedes: ${d.supersedes}`] : []), ...(d.amends.length ? [`amends: ${d.amends.join(", ")}`] : [])] : [];
     parts.push(`## ${d.id} ${d.title} (${d.kind}${"status" in d ? `, ${d.status}` : ""})\n\n${links.map((l) => `${l}\n`).join("")}${links.length ? "\n" : ""}${d.body.trim()}\n`);
+  }
+  if (extras.architecture) {
+    const { text, diff } = extras.architecture;
+    parts.push(`# Architecture overview (canon/architecture.md, ${diff.trim() === "" ? "not changed in this landing" : "changed in this landing; the diff follows the text"})\n\n${text.trim()}\n`);
+    if (diff.trim() !== "") parts.push(`## Diff of the overview in this landing\n\n${diff.trim()}\n`);
   }
   // reason: the review of a rule tagged with a release must see that release's 范围 and 不做, and that of a release the rules tagged with it (D-61, BR-2009)
   const releaseIds = new Set<string>();

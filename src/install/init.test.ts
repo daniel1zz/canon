@@ -48,6 +48,18 @@ describe("canon init names main after the current branch", () => {
     expect(canon(root, "check").code).toBe(0);
   });
 
+  test("BR-2032: init writes canon/architecture.md with only its three headings and never overwrites one; canon check accepts it", () => {
+    const root = repo("main");
+    expect(canon(root, "init", "--floor", "true").code).toBe(0);
+    const overview = join(root, "canon/architecture.md");
+    expect(readFileSync(overview, "utf8")).toBe("---\ntitle: 架构总览\n---\n# 架构总览\n\n## 上下文\n\n## 容器\n\n## 主要流程\n");
+    expect(canon(root, "check").code).toBe(0);
+    writeFileSync(overview, "mine\n");
+    const again = canon(root, "init", "--floor", "true");
+    expect(again.out).toContain("exists canon/architecture.md");
+    expect(readFileSync(overview, "utf8")).toBe("mine\n");
+  });
+
   test("BR-2032: a repository with no commits yet uses its unborn branch", () => {
     const root = repo("dev");
     expect(canon(root, "init").code).toBe(0);

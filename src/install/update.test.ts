@@ -92,6 +92,44 @@ describe("finding and applying updates", () => {
     expect(readFileSync(join(root, ".claude/skills/canon-a/SKILL.md"), "utf8")).toBe("a v1\n"); // discovery never updates
   });
 
+  test("BR-2084 BR-2085: a project without canon/architecture.md is out of date: --check lists it, brief and work start say so", () => {
+    const { root, env } = project();
+    git(root, "rm", "-q", "canon/architecture.md");
+    commitOnMain(root, "no overview");
+    git(root, "reset", "-q", "--hard", "main");
+    const r = canon(root, env, "update", "--check");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("file canon/architecture.md: missing");
+    expect(canon(root, env, "brief").out.split("\n").filter((l) => l.includes("out of date"))).toEqual([expect.stringContaining("1 item(s)")]);
+    expect(existsSync(join(root, "canon/architecture.md"))).toBe(false); // discovery never writes it
+  });
+
+  test("BR-2086: update writes the headings-only template for a missing overview in a change and lands it; once there, a second update does nothing", () => {
+    const { root, env } = project();
+    git(root, "rm", "-q", "canon/architecture.md");
+    commitOnMain(root, "no overview");
+    git(root, "reset", "-q", "--hard", "main");
+    const r = canon(root, env, "update");
+    expect(r.out + r.err).toMatch(/updated to \w+ in C-\d+, landed/);
+    expect(r.code).toBe(0);
+    expect(git(root, "show", "main:canon/architecture.md")).toBe("---\ntitle: 架构总览\n---\n# 架构总览\n\n## 上下文\n\n## 容器\n\n## 主要流程");
+    expect(canon(root, env, "update", "--check").code).toBe(0);
+    expect(canon(root, env, "update").out).toContain("up to date");
+  });
+
+  test("BR-2086: update never overwrites an overview the project has, and does not list it as out of date", () => {
+    const { src, root, env } = project();
+    const mine = "---\ntitle: 架构总览\n---\n# 架构总览\n\n## 容器\n\n- `src/app`\n";
+    writeFileSync(join(root, "canon/architecture.md"), mine);
+    git(root, "add", "-A");
+    commitOnMain(root, "my overview");
+    git(root, "reset", "-q", "--hard", "main");
+    writeFileSync(join(src, "canon-a/SKILL.md"), "a v2\n");
+    expect(canon(root, env, "update", "--check").out).not.toContain("architecture.md");
+    expect(canon(root, env, "update").code).toBe(0);
+    expect(git(root, "show", "main:canon/architecture.md")).toBe(mine.trim());
+  });
+
   test("BR-2085 BR-2195: when the skills source is missing or the manifest is broken, brief says it cannot check, and why", () => {
     const { root, env } = project();
     const missing = canon(root, { CANON_SKILLS_SOURCE: join(root, "no-such-skills") }, "brief");

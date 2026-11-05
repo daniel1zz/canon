@@ -9,7 +9,7 @@ import { firstCommitStep, git, mainIsUnborn } from "../kernel/git.ts";
 import type { Workspace } from "../work/workspace.ts";
 import { REPORT_UPDATE_NOTE } from "../work/verify/report.ts";
 import { skillsSource, type InstallReport } from "./install.ts";
-import { assetsStatus, installAssets, updateNotice, updateProject, WORKTREES_EXCLUDE } from "./update.ts";
+import { ARCHITECTURE_TEMPLATE, assetsStatus, installAssets, updateNotice, updateProject, WORKTREES_EXCLUDE } from "./update.ts";
 import { uninstall as uninstallProject } from "./uninstall.ts";
 
 /** `canon init`, `install`, `update`: canon's own files in a project (D-9, D-10). */
@@ -25,6 +25,7 @@ const init = defineCommand({
     reportInstall(must(installAssets(root, must(skillsSource()), false, branch)));
     const files: Record<string, string> = {
       "canon/product.md": "---\ntitle: 产品\n---\n# 产品\n\n## 目的\n\n## 使用者\n\n## 承诺\n\n## 不做的事\n",
+      "canon/architecture.md": ARCHITECTURE_TEMPLATE,
       "canon/config.yaml": `${MODELINE}\nmain: ${JSON.stringify(branch ?? "main")}\nfloor: ${JSON.stringify(args.floor ?? "")}\n${TESTS_COMMENT}\ntests: []\n${REVIEW_COMMENT}\nreview: ${JSON.stringify(DEFAULT_REVIEW)}\n`,
     };
     for (const [p, text] of Object.entries(files)) {

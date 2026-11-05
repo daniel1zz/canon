@@ -42,6 +42,83 @@ describe("rule review at land", () => {
     expect(sh(root, "rev-parse", "main")).toBe(before);
   });
 
+  describe("the architecture overview as review input (D-65)", () => {
+    const OVERVIEW = "canon/architecture.md";
+    const withOverview = (body: string) => `---\ntitle: 架构总览\n---\n# 架构总览\n\n${body}`;
+    const rule = (text: string) => `---\nid: ${["BR", 1].join("-")}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\n${text}\n\n## 例子\n\n- a → b\n`;
+    function overviewProject(body: string | undefined) {
+      const { root, promptFile } = reviewedProject("ok");
+      if (body !== undefined) writeFileSync(join(root, OVERVIEW), withOverview(body));
+      sh(root, "add", "-A");
+      sh(root, "commit", "-qm", "overview", "--allow-empty");
+      return { root, promptFile };
+    }
+
+    test("BR-2009: a landing that changes a rule gets the overview in the review's context, marked as not changed; the prompt says the rules win and only its changed text can block", async () => {
+      const { root, promptFile } = overviewProject("## 容器\n\n- 账单：`src/billing`。\n");
+      const s = startNew(root, "New rule");
+      writeFileSync(join(s.worktree, "canon/rules/billing/BR-1.md"), rule("Refunds are paid in 30 days."));
+      sh(s.worktree, "add", "-A");
+      sh(s.worktree, "commit", "-qm", "rule");
+      expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+      const prompt = readFileSync(promptFile, "utf8");
+      expect(prompt).toContain("# Architecture overview (canon/architecture.md, not changed in this landing)");
+      expect(prompt).toContain("- 账单：`src/billing`。");
+      expect(prompt).toContain("Block for it only when the part of the overview this landing changed");
+      expect(prompt).not.toContain("## Diff of the overview in this landing");
+    });
+
+    test("BR-2009: a landing that changes a rule and the overview shows the reviewer the overview's diff", async () => {
+      const { root, promptFile } = overviewProject("## 容器\n\n- 账单：`src/billing`。\n");
+      const s = startNew(root, "Rule and overview");
+      writeFileSync(join(s.worktree, "canon/rules/billing/BR-1.md"), rule("Refunds are paid in 30 days."));
+      writeFileSync(join(s.worktree, OVERVIEW), withOverview("## 容器\n\n- 账单：`src/billing`，退款 30 天内到账。\n"));
+      sh(s.worktree, "add", "-A");
+      sh(s.worktree, "commit", "-qm", "rule and overview");
+      expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+      const prompt = readFileSync(promptFile, "utf8");
+      expect(prompt).toContain("changed in this landing; the diff follows the text");
+      expect(prompt).toContain("## Diff of the overview in this landing");
+      expect(prompt).toContain("+- 账单：`src/billing`，退款 30 天内到账。");
+    });
+
+    test("BR-2009: a block verdict on a landing that changes the overview and a rule refuses it", async () => {
+      const { root } = reviewedProject("block");
+      writeFileSync(join(root, OVERVIEW), withOverview("## 容器\n\n- 账单。\n"));
+      sh(root, "add", "-A");
+      sh(root, "commit", "-qm", "overview");
+      const s = startNew(root, "Rule and overview");
+      writeFileSync(join(s.worktree, "canon/rules/billing/BR-1.md"), rule("Refunds are paid in 30 days."));
+      writeFileSync(join(s.worktree, OVERVIEW), withOverview("## 容器\n\n- 账单：退款随时到账。\n"));
+      sh(s.worktree, "add", "-A");
+      sh(s.worktree, "commit", "-qm", "rule and overview");
+      const out = await land(ws(s.worktree), FAST, quiet);
+      expect(out.kind === "refused" && out.reason).toBe("review");
+    });
+
+    test("BR-2009: with only headings, or no overview at all, the prompt has no overview section", async () => {
+      for (const body of ["", undefined]) {
+        const { root, promptFile } = overviewProject(body);
+        const s = startNew(root, "New rule");
+        writeFileSync(join(s.worktree, "canon/rules/billing/BR-1.md"), rule("Refunds are paid in 30 days."));
+        sh(s.worktree, "add", "-A");
+        sh(s.worktree, "commit", "-qm", "rule");
+        expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+        expect(readFileSync(promptFile, "utf8")).not.toContain("# Architecture overview");
+      }
+    });
+
+    test("BR-2009: a landing that changes only the overview is not reviewed", async () => {
+      const { root, promptFile } = overviewProject("## 容器\n\n- 账单。\n");
+      const s = startNew(root, "Overview only");
+      writeFileSync(join(s.worktree, OVERVIEW), withOverview("## 容器\n\n- 账单：`src/billing`。\n"));
+      sh(s.worktree, "add", "-A");
+      sh(s.worktree, "commit", "-qm", "overview");
+      expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+      expect(existsSync(promptFile)).toBe(false);
+    });
+  });
+
   test("BR-2253: the review.block event records the commit the reviewer saw", async () => {
     const { root } = reviewedProject("block");
     const s = startNew(root, "New rule");

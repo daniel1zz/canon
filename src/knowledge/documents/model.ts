@@ -3,6 +3,7 @@
  * living under `canon/` in the repository and changing through ordinary commits (design §1).
  *
  *   canon/product.md                       purpose, users, non-goals, promises
+ *   canon/architecture.md                  hand-written overview: context, containers, main flows (D-65); not a document, no id
  *   canon/rules/<domain>/README.md         domain scope, code directories, Terms
  *   canon/rules/<domain>/BR-<n>.md         one rule per file: the current truth (P1)
  *   canon/decisions/D-<n>-<slug>.md        why a non-trivial choice was made (P2)

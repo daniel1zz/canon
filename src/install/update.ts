@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openWorkspace, type Workspace } from "../work/workspace.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
@@ -11,6 +11,7 @@ import { type Say } from "../work/workspace.ts";
 import { hookStatus, planHook, writeHook, type Settings } from "./hook.ts";
 import { ensureGuard, foreignGuard, guardStatus } from "./githook.ts";
 import { readConfig } from "../invocation/config.ts";
+import { ARCHITECTURE_FILE } from "../knowledge/check/architecture.ts";
 import { applySkills, editedSkills, planSkills, skillsStatus, type InstallReport, type SkillsPlan } from "./install.ts";
 
 /**
@@ -34,6 +35,19 @@ export interface AssetsStatus {
   readonly localOnly: boolean;
   readonly guard: boolean;
   readonly exclude: boolean;
+  /** The project has no canon/architecture.md (D-65); an update writes the template in a change. */
+  readonly architecture: boolean;
+}
+
+/** What `canon init` and `canon update` write into canon/architecture.md: the headings only, so no check of it applies yet (D-65, BR-2032). */
+export const ARCHITECTURE_TEMPLATE = "---\ntitle: 架构总览\n---\n# 架构总览\n\n## 上下文\n\n## 容器\n\n## 主要流程\n";
+
+/** Writes the template when the project has no overview; never touches an existing file (BR-2086). True when it wrote it. */
+export function ensureArchitecture(root: string): boolean {
+  const full = join(root, ARCHITECTURE_FILE);
+  if (existsSync(full)) return false;
+  writeFileSync(full, ARCHITECTURE_TEMPLATE);
+  return true;
 }
 
 /** The line git's info/exclude needs so Claude Code's subagent worktrees do not dirty the checkout (BR-2305). */
@@ -59,9 +73,12 @@ export function assetsStatus(root: string, source: string): Result<AssetsStatus>
   const x = excludeMissing(root, WORKTREES_EXCLUDE);
   if (!x.ok) return x;
   const exclude = x.value ? [`git exclude: ${WORKTREES_EXCLUDE} in the repository's info/exclude, so Claude Code's subagent worktrees do not dirty the checkout`] : [];
-  const outdated = [...s.value.outdated.map((f) => `skill ${f}`), ...hook, ...g.value.line, ...exclude];
+  const missingOverview = !existsSync(join(root, ARCHITECTURE_FILE));
+  const overview = missingOverview ? [`file ${ARCHITECTURE_FILE}: missing, a template with only its headings`] : [];
+  const outdated = [...s.value.outdated.map((f) => `skill ${f}`), ...hook, ...overview, ...g.value.line, ...exclude];
   const local = g.value.line.length > 0 || x.value;
-  return ok({ version: s.value.version, current: outdated.length === 0, outdated, edited: s.value.edited, localOnly: s.value.outdated.length === 0 && hook.length === 0 && local, guard: g.value.line.length > 0, exclude: x.value });
+  // reason: the overview is a tracked file, so its absence is never a local-only update (BR-2086)
+  return ok({ version: s.value.version, current: outdated.length === 0, outdated, edited: s.value.edited, localOnly: s.value.outdated.length === 0 && hook.length === 0 && !missingOverview && local, guard: g.value.line.length > 0, exclude: x.value, architecture: missingOverview });
 }
 
 /** The update-check line for the git guard (BR-2123, BR-2124). */
@@ -160,6 +177,7 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
   const wt = started.value.worktree;
   const installed = installAssets(wt, source, force);
   if (!installed.ok) return installed;
+  const overview = ensureArchitecture(wt);
 
   const changeDir = join(wt, "canon", "changes");
   const file = readdirSync(changeDir).find((f) => f === `${started.value.change}.md` || f.startsWith(`${started.value.change}-`))!;
@@ -169,7 +187,7 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
     join(changeDir, file),
     `${head}\n## 为什么\n\n项目里 canon 装的文件（skill、会话开始时的 hook）落后于当前的 canon，按负责人的要求更新。\n\n## 要改什么\n\n${st.value.outdated.map((o) => `- ${o}`).join("\n")}\n\n## 教训\n\n无。\n\n## 任务\n\n- [x] 由 \`canon update\` 安装并合入\n`,
   );
-  for (const args of [["add", "-A", ".claude", "canon/changes"], ["commit", "-q", "-m", `Update canon project files to ${st.value.version} (${started.value.change})`]]) {
+  for (const args of [["add", "-A", ".claude", "canon/changes", ...(overview ? [ARCHITECTURE_FILE] : [])], ["commit", "-q", "-m", `Update canon project files to ${st.value.version} (${started.value.change})`]]) {
     const r = git(wt, ...args);
     if (!r.ok) return r;
   }

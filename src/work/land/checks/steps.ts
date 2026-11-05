@@ -17,6 +17,7 @@ import { git } from "../../../kernel/git.ts";
 import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, type DeletedDoc } from "../../../knowledge/review/review.ts";
 import { REVIEW_NONE, REVIEW_WAYS_OUT, reviewKeys } from "../../../knowledge/review/config-keys.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
+import { ARCHITECTURE_FILE, hasContent, overviewText } from "../../../knowledge/check/architecture.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
 import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
 import { reviewTree } from "./review-tree.ts";
@@ -165,7 +166,12 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       say(`review: ${[...reviewed, ...execution.wording.map((q) => `${q.id} (wording judgement)`)].join(", ")}`);
       const at = tree.get();
       if (!at.ok) return refuse("environment", at.error.message);
-      const v = await runReview(reviewer, at.value, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording }), limits);
+      // reason: the overview is read as context and never makes a landing that only touches it a review (BR-2009, D-65)
+      const overview = overviewText(wt);
+      const overviewDiff = overview !== undefined && hasContent(overview) ? git(wt, "diff", "--no-color", base.value, head.value, "--", ARCHITECTURE_FILE) : undefined;
+      if (overviewDiff && !overviewDiff.ok) return refuse("environment", overviewDiff.error.message);
+      const architecture = overviewDiff?.ok ? { text: overview!, diff: overviewDiff.value } : undefined;
+      const v = await runReview(reviewer, at.value, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording, ...(architecture ? { architecture } : {}) }), limits);
       if (!v.ok) return refuse("review", couldNotRun("rule", v.error.message, at.value, mainAt));
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings, commit: head.value, ...(execution.wording.length > 0 ? { wording: v.value.wording ?? {} } : {}) });
       if (v.value.verdict === "block") return refuse("review", `rule review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
