@@ -1,12 +1,6 @@
 # 知识（knowledge）
 
-`canon/` 下长期保存的文档，以及让它们保持真实的检查。按子领域分：
-
-- `knowledge/documents`：文档的格式、编号、模板、状态变化。
-- `knowledge/check`：`canon check` 的各项检查。
-- `knowledge/query`：搜索和 `canon context`。
-- `knowledge/review`：合入时对规则、决策文字的 AI 评审，以及合入后的代码评审脚本。
-- `knowledge/releases`：版本文档、规则的 `release` 标签、版本的检查、进度和发布。
+`canon/` 下长期保存的文档，以及让它们保持真实的检查。按子领域分，子领域见 `canon rule domains`；部件和数据在哪见 `canon/architecture.md`。
 
 ## 术语
 
