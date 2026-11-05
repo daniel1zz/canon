@@ -528,6 +528,8 @@ describe("subdomains from the CLI", () => {
     expect(r.code).toBe(0);
     expect(r.out).toContain("code: src/billing");
     expect(readFileSync(join(root, "canon/rules/billing/README.md"), "utf8")).toStartWith("# billing");
+    // BR-2115: a name ending in a technical-layer word is created all the same, with a hint (BR-2317)
+    expect([canon(root, "rule", "domain", "config").code, existsSync(join(root, "canon/rules/config/README.md"))]).toEqual([0, true]);
   });
 
   test("BR-2317: a domain named after a technical layer is still created, exit 0, with a hint naming the word; other names get none", () => {
@@ -582,6 +584,7 @@ describe("subdomains from the CLI", () => {
     mkdirSync(join(root, "src/billing"), { recursive: true });
     canon(root, "rule", "domain", "billing", "--code", "src/billing");
     canon(root, "rule", "domain", "billing/refunds");
+    expect(canon(root, "rule", "domains").out.split("\n").find((l) => l.includes("billing/refunds"))).not.toContain("technical layer");
     // reason: written directly, not by 26 `rule new` processes, which outran the 5 s test timeout under load
     let next = 1;
     const add = (n: number) => {
