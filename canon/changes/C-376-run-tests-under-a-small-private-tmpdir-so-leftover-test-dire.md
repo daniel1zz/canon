@@ -2,7 +2,7 @@
 id: C-376
 title: Run tests under a small private TMPDIR so leftover test directories
   cannot slow every process (#126)
-status: open
+status: done
 rules: []
 ---
 
