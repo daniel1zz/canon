@@ -1,8 +1,13 @@
 ---
 id: C-380
 title: supersedes accepts a list of ids, refuses other shapes
-status: open
-rules: [BR-2027, BR-2230]
+status: done
+rules:
+  - BR-2027
+  - BR-2230
+passes:
+  BR-2027: 4ac65d4d17d571fe test
+  BR-2230: 2fd1fed49eae1678 test
 ---
 
 ## 为什么
