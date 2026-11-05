@@ -12,6 +12,7 @@ export const LAND_STAGES: readonly (readonly string[])[] = [
   ["config-key"],
   ["check"],
   ["activate", "rule-changed", "passes"],
+  ["release"],
   ["source"],
   ["review"],
   ["hook"],

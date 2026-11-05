@@ -16,6 +16,7 @@ import { git } from "../../../kernel/git.ts";
 import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, type DeletedDoc } from "../../../knowledge/review/review.ts";
 import { REVIEW_NONE, REVIEW_WAYS_OUT, reviewKeys } from "../../../knowledge/review/config-keys.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
+import { landingReleases } from "../../../knowledge/releases/landing.ts";
 import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
 import { reviewTree } from "./review-tree.ts";
 import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
@@ -91,6 +92,9 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   // still matching their rules after the rebase (BR-2240, BR-2242, BR-2244).
   const execution = landingExecution({ db: ws.db, config: landing.value, wt, base: base.value, head: head.value, before: v.before, corpus: read.corpus, subject, main: ws.config.main });
   if (!execution.ok) return refuse(execution.reason, execution.message);
+  // A release becomes shipped only through `canon release ship`, and stays shipped (BR-2332, D-61).
+  const releases = landingReleases({ db: ws.db, wt, base: base.value, head: head.value, corpus: read.corpus, subject });
+  if (!releases.ok) return refuse("release", releases.message);
 
   // Every added, edited or deleted file under canon/rules, canon/decisions or canon/releases is reviewed (BR-2009): rule,
   // release and decision documents by their new text, deleted ones by the text they had on main, domain READMEs whole.

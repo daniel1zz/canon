@@ -1,9 +1,10 @@
 import { defineCommand } from "citty";
-import { corpusOf, entry, fail, json, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { corpusOf, entry, EXIT, fail, json, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
 import { executionStates } from "../../work/execution/state.ts";
 import type { Release } from "../documents/model.ts";
 import { findDoc } from "../query/query.ts";
 import { createDoc } from "../documents/write.ts";
+import { shipRelease } from "./ship.ts";
 import { detailLines, releaseStatuses, statusJson, summaryLine } from "./status.ts";
 
 /** `canon release`: a version's PRD document and what hangs on it (D-61). */
@@ -50,6 +51,25 @@ const release = defineCommand({
           for (const s of all) say(summaryLine(s));
           if (all.length === 0) say("(no releases)");
         }
+      },
+    }),
+    ship: defineCommand({
+      meta: { description: "Ship a release: needs every rule tagged with it passed and the owner's recorded yes (a canon human question naming `ship R-n`); lands status shipped and shipped_at as a change of its own, then tags release/R-n" },
+      args: { id: { type: "positional", required: true, description: "The release id (R-1)" }, timeout: { type: "string", description: "Minutes to wait in the landing queue (default: land_timeout_minutes, 60)" } },
+      async run({ args }) {
+        const minutes = args.timeout === undefined ? undefined : Number(args.timeout);
+        if (minutes !== undefined && (!Number.isFinite(minutes) || minutes <= 0)) fail({ code: "invalid", message: `--timeout must be a positive number of minutes, got ${JSON.stringify(args.timeout)}` });
+        const ws = workspace();
+        const out = must(await shipRelease(ws, String(args.id).trim().toUpperCase(), minutes === undefined ? ws.config.landTimeoutMs : minutes * 60_000, say));
+        if (out.kind === "refused") fail({ code: out.code, message: out.message });
+        if (out.kind === "not-landed") {
+          console.error(`canon: shipping ${args.id} (${out.change}) did not land: ${out.message}`);
+          // reason: still queued is a timeout, not a refusal: the caller runs the landing again (BR-2022)
+          process.exit(out.timeout ? EXIT.timeout : EXIT.refused);
+        }
+        say(`shipped ${String(args.id).toUpperCase()} at ${out.shippedAt.slice(0, 9)} in ${out.change}, landed ${out.sha.slice(0, 9)}`);
+        if (out.tag) say(`tag ${out.tag} -> ${out.shippedAt.slice(0, 9)}`);
+        else console.error(`canon: warning: the tag release/${String(args.id).toUpperCase()} was not made (${out.tagProblem}); the record in the release document is landed and stands`);
       },
     }),
   },
