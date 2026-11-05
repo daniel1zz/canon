@@ -136,6 +136,13 @@ describe("canon check session text sizes", () => {
     expect(sizeLines(canon(root, "check").err)).toEqual([]);
   });
 
+  test("BR-2256 BR-2090: the work guide counts the overview line when the project has canon/architecture.md", () => {
+    const root = clean();
+    write(root, { "canon/architecture.md": "---\ntitle: 架构总览\n---\n# 架构总览\n" });
+    const line = Buffer.byteLength("- Read canon/architecture.md first.\n", "utf8");
+    expect(sizeLines(canon(root, "check", "--sizes").err)).toContain(`session-text work guide: ${guideBytes + line} bytes`);
+  });
+
   test("BR-2256: no CLAUDE.md has no line; a linked CLAUDE.md is not read; a budget is named; --json keeps stdout to the array", () => {
     const root = clean();
     write(root, { "AGENTS.md": "y".repeat(500), "canon/config.yaml": "tests: []\nsession_text_budget: 12000\n" });

@@ -25,7 +25,7 @@ DDD has two notions: a subdomain (a part of the business, problem space) and a b
 
 ## 3. Discover
 
-1. Existing project: read `canon/product.md`, then `canon search` notes and rules. New project: `canon search` finds nothing; start from the PRD or `product.md`.
+1. Existing project: read `canon/product.md` and `canon/architecture.md` (which container each domain's code belongs to), then `canon search` notes and rules. New project: `canon search` finds nothing; start from the PRD or `product.md`.
 2. List what the product does as capabilities (verb + object a user would say) and what it reacts to as past-tense events with the commands that cause them. A rule is one trigger and one outcome: your triggers and outcomes are the raw material.
 3. Cluster what changes together and shares a vocabulary; separate what changes for different reasons or uses one word in two senses. The few events everything else waits for mark the seams.
 4. Product promises that are cross-cutting qualities ("documents never lie", "safe under concurrency") are not domains. Map each onto the domains whose rules must deliver it; a quality with its own domain becomes a layer.

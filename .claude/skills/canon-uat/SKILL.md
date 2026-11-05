@@ -1,6 +1,6 @@
 ---
 name: canon-uat
-description: "Use when a feature or change is done and needs acceptance: does the product actually do what its rules promise, driven through its real entry point (CLI or web)? Also when tests pass but the product still feels broken. Triggers: 'acceptance', 'UAT', 'accept this', 'is this ready to ship', 'does it really work', 'were all the rules verified', '验收', '能交付吗', '规则都验证了吗', '真的能用吗'. Executor and judge are separate; outcomes are proven by machine probes. NOT for writing a test suite (use canon-test) or debugging a known bug (use canon-diagnose)."
+description: "Use when a feature or change is done and needs acceptance: does the product actually do what its rules promise, driven through its real entry point (CLI or web)? Also when tests pass but the product still feels broken. Triggers: 'acceptance', 'UAT', 'accept this', 'is this ready to ship', 'does it really work', 'were all the rules verified', '验收', '能交付吗', '规则都验证了吗', '真的能用吗'. NOT for writing a test suite (use canon-test) or debugging a known bug (use canon-diagnose)."
 ---
 
 # Acceptance (canon)

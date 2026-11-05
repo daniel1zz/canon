@@ -1,6 +1,6 @@
 ---
 name: canon-prototype
-description: "Use when a question is cheaper to answer by building something throwaway than by arguing: sanity-checking a state machine or data model by driving it by hand, or comparing a few UI variants of a screen before committing. Triggers: 'prototype this', 'let me play with it', 'try a few designs', 'mock up', 'show me some options', '原型', '做个原型', '先做个样子看看', '出几个方案看看'. Builds a terminal app over a pure logic module, or switchable UI variants on a real page; the answer becomes a canon decision. NOT for production UI implementation, architecture design (canon-design), or deciding what to build (canon-product)."
+description: "Use when a question is cheaper to answer by building something throwaway than by arguing: sanity-checking a state machine or data model by driving it by hand, or comparing a few UI variants of a screen before committing. Triggers: 'prototype this', 'let me play with it', 'try a few designs', 'mock up', 'show me some options', '原型', '做个原型', '先做个样子看看', '出几个方案看看'. NOT for production UI implementation, architecture design (canon-design), or deciding what to build (canon-product)."
 ---
 
 # Prototype (canon)

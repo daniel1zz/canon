@@ -1,6 +1,6 @@
 # 调用约定（invocation）
 
-怎样调用 canon，所有领域都遵守这套约定（D-63）：`canon` 命令行的参数怎样声明、帮助怎样写、每个退出码只有一种含义，以及 `canon/config.yaml` 怎样读、写错时怎样失败。agent 或人要做的每个动作对应一个命令，各命令的行为写在各自的领域里；canon 自带的 skill 和 hook 怎样装进项目属于 `install`。子领域 `invocation/reference`：让人和 agent 看到配置能设置什么、现在设成什么。
+怎样调用 canon，所有领域都遵守这套约定（D-63）：`canon` 命令行的参数怎样声明、帮助怎样写、每个退出码只有一种含义，以及 `canon/config.yaml` 怎样读、写错时怎样失败。agent 或人要做的每个动作对应一个命令，各命令的行为写在各自的领域里；canon 自带的 skill 和 hook 怎样装进项目属于 `install`。子领域见 `canon rule domains`。
 
 这个领域取代了按技术层命名的 `cli` 和 `config`（D-63）。
 

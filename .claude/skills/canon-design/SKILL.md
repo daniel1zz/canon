@@ -1,6 +1,6 @@
 ---
 name: canon-design
-description: "Use when deciding how something should be structured: designing a new architecture, API, data model, system (scale, reliability) or module boundary, or judging whether an existing structure, model, layout or process is the right design and how it should change ('is this the best design', 'evaluate our X', 'should we reorganise'). Also whenever choosing between real alternatives. Triggers: 'design this', 'architecture', 'API design', 'data model', 'schema', 'is this the best', 'evaluate the design', '设计一下', '架构', '方案对比', '是不是最佳', '评估一下', '该怎么改'. Ends in a canon decision (D-n) and rules, not a separate design document. NOT for visual UI design or a defect-only audit."
+description: "Use when deciding how something should be structured: designing a new architecture, API, data model, system (scale, reliability) or module boundary, or judging whether an existing structure, model, layout or process is the right design and how it should change ('is this the best design', 'evaluate our X', 'should we reorganise'). Also whenever choosing between real alternatives. Triggers: 'design this', 'architecture', 'API design', 'data model', 'schema', 'is this the best', 'evaluate the design', '设计一下', '架构', '方案对比', '是不是最佳', '评估一下', '该怎么改'. NOT for visual UI design or a defect-only audit."
 ---
 
 # Design (canon)
@@ -62,6 +62,7 @@ Read only the files of the mode you need. Cross-cutting references (`references/
 1. **Decision** for each real choice: `canon decision new --title "..."` → fill 背景 (facts, data), 方案 (every option marked 采用 or 否决 with why, at least one of each), 决定, 后果. Write it in Chinese (canon/ documents are Chinese). Under the options cite where the facts come from, one line each: `- 来源：<URL or repository path> “<exact quote, 8+ characters>”` — research the outside practice first, then quote it; a new decision needs at least one source, and the landing fetches each new one and refuses it unless the quote is really there. Do not add self-assessed scores or confidence levels: nobody can check them.
 2. **Rules** for every behaviour the design commits the product to: `canon rule new --domain <d> --title "..."`. One rule = one trigger and one outcome; fill 规则 and 例子 with concrete inputs on both sides of the boundary. Each active rule needs a test that names it.
 3. **Change file** (`canon/changes/C-n.md`): 为什么 / 要改什么 referencing the decision and the rules.
-4. Land as usual (`canon work land`). The rule review reads the decision and rules against the whole domain; fix what it blocks.
+4. If the design changes a container (a runtime part, where its data lives) or a main flow, update `canon/architecture.md` in the same change: it describes the system as it is now, each part ending with its decision numbers. Check its decision numbers against what you just decided: a superseded or amended one means a line to rewrite.
+5. Land as usual (`canon work land`). The rule review reads the decision and rules against the whole domain, and the overview; fix what it blocks.
 
-Interfaces worth fixing before implementation (types, command signatures, schema) go into the change file or the code itself, not a separate document.
+No separate document per design: interfaces worth fixing before implementation (types, command signatures, schema) go into the change file or the code itself.

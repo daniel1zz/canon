@@ -1,3 +1,5 @@
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { hooksGuide } from "../work/hooks/guide.ts";
 import { documentGuide } from "../knowledge/documents/guide.ts";
 import { queryGuide } from "../knowledge/query/guide.ts";
@@ -37,4 +39,14 @@ export function assembleGuide(header: string, domains: readonly (readonly GuideL
  * How to work in a canon project, printed by `canon brief` at every session start (BR-2090, D-10).
  * It ships with the binary instead of being installed as a file, so it always matches the canon that runs.
  */
-export const WORKFLOW_GUIDE = assembleGuide(HEADER, [hooksGuide, documentGuide, queryGuide, reviewGuide, dropGuide, humanGuide, issueGuide, landGuide, sessionGuide, snapshotGuide, verifyGuide]);
+const DOMAIN_LINES = [hooksGuide, documentGuide, queryGuide, reviewGuide, dropGuide, humanGuide, issueGuide, landGuide, sessionGuide, snapshotGuide, verifyGuide] as const;
+
+/** The first line, only in a project that has an architecture overview (BR-2090, D-65); without one BR-2085's update notice stands in for it. */
+const OVERVIEW_LINE: GuideLine = { rank: 0, text: "Read canon/architecture.md first." };
+
+export const WORKFLOW_GUIDE = assembleGuide(HEADER, DOMAIN_LINES);
+
+/** The guide as `canon brief` prints it in the project at `root`: with the overview line when `canon/architecture.md` is there. */
+export function guideFor(root: string): string {
+  return existsSync(join(root, "canon/architecture.md")) ? assembleGuide(HEADER, [[OVERVIEW_LINE], ...DOMAIN_LINES]) : WORKFLOW_GUIDE;
+}

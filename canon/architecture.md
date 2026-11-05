@@ -14,9 +14,9 @@ title: 架构总览
 - **Claude Code**：会话在它里面运行。canon 把 hook 和 skill 装进项目的 `.claude/`；读它的提问记录来佐证转述的回答；`canon usage` 只读它的会话记录。
 - **`claude -p`**：非交互的 Claude，用于合入时的规则评审，命令由 `canon/config.yaml` 的 `review` 配置；合入后的代码评审也是项目自己配的。
 - **GitHub**：`canon issues` 列出开着的 issue（`src/work/issues`，只读，关闭用 `gh`）；决策里引用的网址在合入时被抓取核对；`remote` 指向它时合入后把 main 推上去。
-- **项目自己的命令**：floor、类型检查、测试、`setup`、生命周期 hook，由 `canon/config.yaml` 配置，canon 只运行它们、看退出码。
+- **项目自己的命令**：floor、类型检查、测试、选测试的命令（`test_select_command`）、`setup`、生命周期 hook，由 `canon/config.yaml` 配置，canon 只运行它们、看退出码；测试命令把 JUnit XML 报告写到 `{report}`，canon 读报告里有哪些测试、跑没跑，不认语言（D-64）。
 
-决策：D-1、D-2、D-9、D-45、D-51。
+决策：D-1、D-2、D-9、D-45、D-51、D-64。
 
 ## 容器：canon 做的
 
@@ -33,28 +33,28 @@ title: 架构总览
 - 决策：D-6、D-11、D-18、D-33、D-41、D-45、D-47。
 
 **主 checkout 与变更 worktree**
-- 职责：主 checkout 签出 main，main 只通过 `canon work land` 前移；每个变更一个 worktree `<仓库名>.worktrees/C-n`、一个分支 `change/C-n`、一个认领（租约加进程探测）。快照和归档是 git ref：`refs/canon/snapshots/*`、`refs/canon/archive/*`。
+- 职责：主 checkout 签出 main，main 只通过 `canon work land` 前移；每个变更一个 worktree `<仓库名>.worktrees/C-n`、一个分支 `change/C-n`、一个认领（租约加进程探测）。认领的持有者是会话，子 agent 的名字写在后面（`agent:<会话>:<名字>`）：子 agent 的认领类命令（`work start`、`land`、`stop`、`drop`）带 `--as <自己的 agent_id>`，主会话不带；主会话用 `canon work take <C-n> --from <agent_id>` 接手子 agent 的变更。快照和归档是 git ref：`refs/canon/snapshots/*`、`refs/canon/archive/*`。
 - 数据：worktree 里的代码和 `canon/changes/C-n.md`；每个 worktree 的 `.canon/`（生成的 schema，被 git 忽略）。
-- 代码：`src/work/session`（开始、停下、交接、`canon brief`）、`src/work/claims`、`src/work/drop`、`src/work/snapshots`。
+- 代码：`src/work/session`（开始、停下、交接、`canon brief`）、`src/work/claims`（认领、`--as` 的解析、`check-as` hook 的检查）、`src/work/drop`、`src/work/snapshots`。
 - 决策：D-11、D-13、D-18、D-30、D-62。
 
 **合入流水线（`canon work land`）**
-- 职责：把一个变更变成 main：排队、在 rebase 后的树上跑检查和评审、移动 main、合入后推送和启动后台命令；配了 `land_batch_max` 时把排队的变更串成一批在临时 worktree 里测。运行在合入者自己的进程里，状态放 `state.db`。合入前的验证 `canon work test` 也在这里。步骤的先后见 `canon/rules/work/land/README.md` 和各子领域规则。
-- 数据：`state.db` 里的队列条目；批在 git 公共目录下的临时 worktree。
+- 职责：把一个变更变成 main：排队、在 rebase 后的树上跑检查和评审、移动 main、合入后推送和启动后台命令；配了 `land_batch_max` 时把排队的变更串成一批在临时 worktree 里测。运行在合入者自己的进程里，状态放 `state.db`。合入前的验证 `canon work test` 也在这里：选出和这个变更有关的测试文件（改动的、`test_select_command` 选出的、点名了碰过的规则的），一个文件一次运行，把 `test_command` 里的 `{report}` 换成临时路径，读 JUnit 报告并按（测试文件路径，内容哈希）记账，最后跑类型检查和 `canon check`。步骤的先后见 `canon/rules/work/land/README.md` 和各子领域规则。
+- 数据：`state.db` 里的队列条目和测试报告记账；批在 git 公共目录下的临时 worktree。
 - 代码：`src/work/land`（横跨整个流程）、`src/work/land/queue`、`src/work/land/batch`、`src/work/land/checks`、`src/work/land/finish`、`src/work/verify`、`src/work/remote`（合入后推 main，`canon sync` 只快进）。
-- 决策：D-5、D-16、D-22、D-26、D-29、D-32、D-34、D-38、D-42、D-58。
+- 决策：D-5、D-16、D-22、D-26、D-29、D-32、D-34、D-38、D-42、D-58、D-64。
 
 **`canon/` 文档树**
 - 职责：项目的共享记忆，进版本库：`canon/product.md`、`canon/architecture.md`、`canon/config.yaml`、`canon/backlog.md`、`canon/rules/<领域>/`（规则和领域 README）、`canon/decisions/`、`canon/changes/`、`canon/notes/`，需要时有 `canon/releases/`。一个文档一个文件，只在合入时改。
-- 数据：Markdown 加 front matter。`canon check` 查格式、引用、路径、规则有没有测试点名；`canon search`、`canon context` 读它。
+- 数据：Markdown 加 front matter。`canon check` 查格式、引用、路径、规则有没有被一个会运行的测试点名（读 `state.db` 里的测试报告记账，不运行测试，D-64）；`canon search`、`canon context` 读它。
 - 代码：`src/knowledge`（横跨整个领域）、`src/knowledge/documents`、`src/knowledge/check`、`src/knowledge/query`、`src/knowledge/releases`、`src/work/execution`（规则的执行状态由变更里的通过记录算出）。
-- 决策：D-1、D-12、D-14、D-15、D-32、D-61。
+- 决策：D-1、D-12、D-14、D-15、D-32、D-61、D-64、D-65。
 
 **装进项目的 hook、skill 和 git 守卫**
-- 职责：Claude Code hook（会话开始跑 `canon brief`；每次 Bash 前快照；提问工具之后记录回答）、`.claude/skills/canon-*`、git 的 `reference-transaction` hook（main 只能由 `canon work land` 移动）。
-- 数据：项目的 `.claude/settings.json`、`.claude/skills/`、git hook 目录里的守卫文件；skill 的来源是 canon 自己仓库的 `.claude/skills`。
+- 职责：Claude Code hook（会话开始跑 `canon brief`；每次 Bash 前快照、检查 `canon work` 命令带不带 `--as`（`canon work check-as`，只拒绝、不改写）；提问工具之后记录回答）、`.claude/skills/canon-*`、git 的 `reference-transaction` hook（main 只能由 `canon work land` 移动）。
+- 数据：项目的 `.claude/settings.json`、`.claude/skills/`、git hook 目录里的守卫文件；skill 的来源是 canon 自己仓库的 `.claude/skills`。`canon init` 和 `canon update` 还写只有标题的 `canon/architecture.md`（已有的不覆盖）。
 - 代码：`src/install`（`init`、`install`、`update`、`uninstall`、`githook.ts`）。
-- 决策：D-9、D-10、D-16、D-36、D-46、D-53。
+- 决策：D-9、D-10、D-16、D-36、D-46、D-53、D-62、D-65。
 
 **后台 floor watch（`floor_timing: after` 时）**
 - 职责：合入后在 git 公共目录下的临时 worktree 里，对 main 的最新提交按批跑 floor；通过就移动 `refs/canon/green` 并运行 `after_green`；没通过就记下，由下一个会话 `canon work start --fix-main` 向前修。
@@ -91,7 +91,7 @@ flowchart LR
   I -->|没通过| K[fix-main 变更向前修]
 ```
 
-- **一个变更**：`work start` 建 worktree、分支和认领；改完 `work test`；`work land --finish` 进合入流水线，只有 main 通过比较并交换前移；`work after-land <C-n> --wait` 等后台命令；`work clean` 删 worktree。每一步的要求看 `work/session`、`work/verify`、`work/land` 的规则（D-5、D-16、D-22）。
+- **一个变更**：`work start`（子 agent 带 `--as <agent_id>`）建 worktree、分支和认领；改完 `work test`；`work land --finish` 进合入流水线，只有 main 通过比较并交换前移；`work after-land <C-n> --wait` 等后台命令；`work clean` 删 worktree。每一步的要求看 `work/session`、`work/verify`、`work/land` 的规则（D-5、D-16、D-22、D-62）。
 - **后台 floor watch**：合入移动 main 后启动，在自己的进程组里；测过的结果决定 `refs/canon/green`，没通过的记进 red_main，`canon brief` 提示（D-31、D-55、D-59）。
 - **问人**：`canon human ask` 把问题记进 `state.db`（`src/work/humans`）；人在对话里回答，提问工具的 hook 记录；`canon human answer --relayed` 对照记录，对不上只标记（D-6、D-45、D-47）。
 - **发版**：规则带 `release: R-n` 标签；`canon release ship R-n` 开变更把版本设为 shipped（`src/knowledge/releases`，D-61）。

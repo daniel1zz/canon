@@ -116,42 +116,9 @@ After all lenses are reviewed (by you or by subagents), synthesize into final ar
 | Caching strategy | Performance: aggressive cache | Security: minimal cache (data freshness) | ... | ... |
 | Service granularity | DX: fewer services | Ops: isolated blast radius | ... | ... |
 
-## Phase 4: Document
+## Phase 4: Record
 
-Produce final architecture document:
-
-```markdown
-# Architecture: [System/Feature Name]
-
-## Overview
-[1-2 paragraph description]
-
-## Goals / Non-Goals
-
-## Architecture Diagram
-[mermaid or ASCII — C4 level appropriate to scope]
-
-## Components
-### [Component A]
-- **Responsibility**: [What it does]
-- **Interface**: [Public API]
-- **Dependencies**: [What it needs]
-
-## Data Flow
-[Sequence diagram or description]
-
-## Trade-off Decisions
-| Decision | Choice | Rationale | Trade-off | Dissenting View |
-|----------|--------|-----------|-----------|-----------------|
-
-## Risk Registry
-| Risk | Severity | Mitigation | Owner |
-|------|----------|------------|-------|
-
-## Migration Plan
-1. Phase 1: [Scope]
-2. Phase 2: [Scope]
-```
+No separate architecture document per design. The current system is `canon/architecture.md`: context, containers (runtime parts, their data, who calls whom) and main flows, only as it is now, each part ending with its decision numbers. If this design changes a container or a main flow, update it in the same change. Trade-off decisions become canon decisions (SKILL.md section 4); the tension table and risk registry from Phase 3 go into the decision's 方案 and 后果.
 
 ### ADR Format (enhanced)
 

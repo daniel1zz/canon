@@ -12,7 +12,7 @@ import { backlogNotes, check, noteLine, staleReportNotes } from "../../knowledge
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { budgetHint, sessionText } from "../../knowledge/check/session-text.ts";
 import { changesOf, paths, reportsFor } from "./changes.ts";
-import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
+import { guideFor } from "../../invocation/guide.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { idsIn } from "../../knowledge/documents/types.ts";
 import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
@@ -373,7 +373,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   for (const n of backlogNotes(input)) say(noteLine(n)); // never a failure (BR-2150, #112)
   say(findings.length === 0 ? "canon check: ok" : `canon check: ${findings.length} finding(s)`);
   // A hint on standard error, never a failure (BR-2257, D-37).
-  const hint = budgetHint(sessionText(ws.root, WORKFLOW_GUIDE), ws.config.sessionTextBudget);
+  const hint = budgetHint(sessionText(ws.root, guideFor(ws.root)), ws.config.sessionTextBudget);
   if (hint) console.error(hint);
 
   // Open review notes on what this change touches, the ones canon context shows; a hint, never a failure (BR-2249, D-21).

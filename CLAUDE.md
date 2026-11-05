@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Canon：为多个 AI 会话同时开发的项目提供共享记忆和协作协调。先读一遍 `canon/product.md`，里面的七条承诺（P1 到 P7）是这里所有东西存在的理由。
+Canon：为多个 AI 会话同时开发的项目提供共享记忆和协作协调。先读 `canon/product.md`（七条承诺 P1 到 P7，是这里所有东西存在的理由）和 `canon/architecture.md`（系统现在的结构）。
 
 `canon brief` 输出的工作说明是通用流程的唯一来源，这里只写 canon 自己仓库另外的约定。
 

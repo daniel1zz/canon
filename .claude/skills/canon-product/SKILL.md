@@ -1,6 +1,6 @@
 ---
 name: canon-product
-description: "Use when deciding what to build or whether a feature is worth building: tearing down benchmark products, deriving features from an outcome and evidenced needs, running the cheapest experiments that could kill a bet, or expanding a validated solution into a story map. Triggers: 'what should we build', 'is this worth building', 'validate this idea', 'what do competitors have', 'benchmark', 'teardown', 'story map', '该做什么功能', '这功能有人要吗', '验证一下', '对标', '竞品功能拆解', '拆功能'. Research ends in a canon note, the direction in canon human ask, behaviour in rules. NOT for architecture or API design (canon-design), UI variants (canon-prototype), or writing a PRD."
+description: "Use when deciding what to build or whether a feature is worth building: tearing down benchmark products, deriving features from an outcome and evidenced needs, running the cheapest experiments that could kill a bet, or expanding a validated solution into a story map. Triggers: 'what should we build', 'is this worth building', 'validate this idea', 'what do competitors have', 'benchmark', 'teardown', 'story map', '该做什么功能', '这功能有人要吗', '验证一下', '对标', '竞品功能拆解', '拆功能'. NOT for architecture or API design (canon-design), UI variants (canon-prototype), or writing a PRD."
 ---
 
 # Product (canon)

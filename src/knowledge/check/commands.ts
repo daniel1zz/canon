@@ -1,6 +1,6 @@
 import { defineCommand } from "citty";
 import { corpusOf, entry, EXIT, json, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
-import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
+import { guideFor } from "../../invocation/guide.ts";
 import { architectureHints } from "./architecture.ts";
 import { backlogNotes, check, domainNameNotes, noteLine, staleReportNotes } from "./check.ts";
 import { reportsFor } from "../../work/verify/changes.ts";
@@ -32,7 +32,7 @@ const checkCmd = defineCommand({
     else for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
     if (!args.json) say(findings.length === 0 ? `ok: ${read.corpus.docs.length} documents, ${read.corpus.domains.length} domains` : `${findings.length} finding(s)`);
     // reason: sizes and the budget hint go to standard error so stdout and the exit code stay as BR-2189 says (BR-2256, BR-2257)
-    const parts = sessionText(ws.root, WORKFLOW_GUIDE);
+    const parts = sessionText(ws.root, guideFor(ws.root));
     if (args.sizes) for (const line of sizeLines(parts, ws.config.sessionTextBudget)) console.error(line);
     const hint = budgetHint(parts, ws.config.sessionTextBudget);
     if (hint) console.error(hint);

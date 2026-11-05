@@ -1,5 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { holdClaim, takeClaim } from "../claims/claims.ts";
 import { processOf, type Proc } from "../claims/liveness.ts";
@@ -156,6 +157,33 @@ describe("overlap comparisons that fail", () => {
     expect(again.code).toBe(0);
     expect(again.out).toContain(`Overlap check failed: cannot compare ${o.branch} with main: `);
     expect(again.out).toContain(`Overlap: ${b.change} also changes shared.txt`);
+  });
+});
+
+describe("the overview line of the guide", () => {
+  const LINE = "- Read canon/architecture.md first.";
+
+  test("BR-2090: with canon/architecture.md the guide starts with the line telling to read it, in the main checkout and in a change's worktree; without it there is no such line", () => {
+    const root = project();
+    const without = canon(root, "brief");
+    expect(without.out.startsWith(WORKFLOW_GUIDE)).toBe(true);
+    expect(without.out).not.toContain("canon/architecture.md");
+    writeFileSync(join(root, "canon/architecture.md"), "---\ntitle: 架构总览\n---\n# 架构总览\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "overview");
+    const first = canon(root, "brief").out.split("\n");
+    expect(first[0]).toBe(WORKFLOW_GUIDE.split("\n")[0]);
+    expect(first[1]).toBe(LINE);
+    expect(canon(root, "brief").out.replace(`${LINE}\n`, "").startsWith(WORKFLOW_GUIDE)).toBe(true);
+    const s = startNew(root, "Some work");
+    expect(canon(s.worktree, "brief").out.split("\n")[1]).toBe(LINE);
+  });
+
+  test("BR-2090: outside a git repository the guide has no overview line and the failure follows", () => {
+    const dir = mkdtempSync(join(tmpdir(), "canon-brief-"));
+    const r = canon(dir, "brief");
+    expect(r.code).toBe(4);
+    expect(r.out.startsWith(WORKFLOW_GUIDE)).toBe(true);
   });
 });
 

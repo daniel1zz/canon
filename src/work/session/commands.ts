@@ -2,10 +2,10 @@ import { defineCommand } from "citty";
 import { writeSchemaFile } from "../../invocation/reference/reference.ts";
 import { AS_ARG, corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { takesMany } from "../../invocation/strict.ts";
-import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
+import { guideFor, WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { noticeUpdates } from "../../install/commands.ts";
 import { backgroundNotice, settleBackgroundHooks } from "../hooks/hooks.ts";
-import { git } from "../../kernel/git.ts";
+import { git, toplevel } from "../../kernel/git.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { backlogAt } from "../../knowledge/documents/backlog.ts";
 import { findDoc, referencedIds } from "../../knowledge/query/query.ts";
@@ -103,7 +103,9 @@ const brief = defineCommand({
   run() {
     // reason: the guide comes before anything that can fail, and failures are also said on stdout, which is what a
     // session-start hook shows the model; without it a session would know nothing about canon (BR-2090)
-    say(WORKFLOW_GUIDE);
+    // reason: the overview line needs the project root, found before anything that can fail; outside a repository the plain guide is printed and the failure follows (BR-2090)
+    const top = toplevel(process.cwd());
+    say(top.ok ? guideFor(top.value) : WORKFLOW_GUIDE);
     const failed = (what: string) =>
       say(`canon brief failed: ${what}\nFix this, then run canon brief again. Until then work as the guide above says; do not edit the main branch directly.`);
     const opened = openWorkspace(process.cwd());
