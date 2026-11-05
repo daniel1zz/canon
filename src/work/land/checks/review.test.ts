@@ -165,6 +165,19 @@ describe("rule review at land", () => {
     expect((await land(ws(code.worktree), FAST, quiet)).kind).toBe("landed");
   });
 
+  test("BR-2074: a new release document with no review key is refused, naming the release", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    const s = startNew(root, "A release");
+    mkdirSync(join(s.worktree, "canon/releases"), { recursive: true });
+    const r = ["R", 1].join("-");
+    writeFileSync(join(s.worktree, `canon/releases/${r}.md`), `---\nid: ${r}\ntitle: MVP\n---\n\n${["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"].map((h) => `## ${h}\n\n内容\n`).join("\n")}`);
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "release");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(out.kind === "refused" && out.message).toContain(r);
+  });
+
   test("BR-2074: with review: none changed rule text lands with a review: none line and a review.skip event", async () => {
     const root = billingProject(`floor: "true"\ntests: []\nreview: none\n`);
     const s = startNew(root, "New rule");
@@ -500,7 +513,7 @@ tests: []
     expect(sh(root, "rev-parse", "main")).toBe(before);
   });
 
-  test("BR-2009: a release document changed on its own is reviewed with its new text; a block refuses the landing, an ok lets it land", async () => {
+  test("BR-2009 BR-2010: a release document changed on its own is reviewed with its new text; a block refuses the landing, an ok lets it land", async () => {
     const release = (not: string) => `---\nid: ${["R", 1].join("-")}\ntitle: MVP\nstatus: active\n---\n\n${["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"].map((h) => `## ${h}\n\n${h === "不做" ? not : `${h}的内容`}\n`).join("\n")}`;
     const blocked = reviewedProject("block");
     const before = sh(blocked.root, "rev-parse", "main");
