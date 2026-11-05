@@ -25,7 +25,7 @@ const init = defineCommand({
     reportInstall(must(installAssets(root, must(skillsSource()), false, branch)));
     const files: Record<string, string> = {
       "canon/product.md": "---\ntitle: 产品\n---\n# 产品\n\n## 目的\n\n## 使用者\n\n## 承诺\n\n## 不做的事\n",
-      "canon/config.yaml": `${MODELINE}\nmain: ${JSON.stringify(branch ?? "main")}\nfloor: ${JSON.stringify(args.floor ?? "")}\n${REVIEW_COMMENT}\nreview: ${JSON.stringify(DEFAULT_REVIEW)}\n`,
+      "canon/config.yaml": `${MODELINE}\nmain: ${JSON.stringify(branch ?? "main")}\nfloor: ${JSON.stringify(args.floor ?? "")}\n${TESTS_COMMENT}\ntests: []\n${REVIEW_COMMENT}\nreview: ${JSON.stringify(DEFAULT_REVIEW)}\n`,
     };
     for (const [p, text] of Object.entries(files)) {
       const full = join(root, p);
@@ -46,6 +46,8 @@ const init = defineCommand({
 
 /** The line above the reviewer init writes: what it reviews and how to turn it off on purpose (BR-2032, BR-2074). */
 // reason: canon/ documents are written in Chinese, like the product.md init writes (CLAUDE.md)
+// reason: canon does not guess which files are tests (BR-2046, D-64), so a new project starts with an empty list that canon check accepts and a comment that says what goes there
+const TESTS_COMMENT = "# 项目的测试文件的 glob（任何语言），例如 [\"src/**/*.test.ts\"]；canon 从 test_command 写出的 JUnit 报告读出文件里有哪些测试、跑没跑（D-64）";
 const REVIEW_COMMENT = `# 合入时评审规则、决策和常驻说明的改动（从标准输入读提示，在标准输出给出结论 JSON）；没有配置时这样的合入被拒，有意不评审时写 review: ${REVIEW_NONE}`;
 
 /** The branch HEAD is on, also in a repository with no commits yet; a detached HEAD refuses with exit 4 (BR-2032). */

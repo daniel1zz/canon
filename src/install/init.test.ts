@@ -41,6 +41,13 @@ describe("canon init names main after the current branch", () => {
     expect(configOf(main)).toContain('main: "main"\n');
   });
 
+  test("BR-2032 BR-2046: init writes tests: [] under a comment, so canon check works in a new project and says where the globs go", () => {
+    const root = repo("main");
+    expect(canon(root, "init", "--floor", "true").code).toBe(0);
+    expect(configOf(root)).toMatch(/\n# [^\n]*test_command[^\n]*\ntests: \[\]\n/);
+    expect(canon(root, "check").code).toBe(0);
+  });
+
   test("BR-2032: a repository with no commits yet uses its unborn branch", () => {
     const root = repo("dev");
     expect(canon(root, "init").code).toBe(0);
