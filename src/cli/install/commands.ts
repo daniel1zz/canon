@@ -1,10 +1,11 @@
 import { defineCommand } from "citty";
 import { MODELINE } from "../../config/reference/reference.ts";
 import { DEFAULT_REVIEW, REVIEW_NONE } from "../../knowledge/review/config-keys.ts";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { parse } from "yaml";
 import { entry, EXIT, fail, must, say, workspace, type DomainCommands } from "../command.ts";
-import { git } from "../../kernel/git.ts";
+import { firstCommitStep, git, mainIsUnborn } from "../../kernel/git.ts";
 import type { Workspace } from "../../work/workspace.ts";
 import { skillsSource, type InstallReport } from "./install.ts";
 import { assetsStatus, installAssets, updateNotice, updateProject, WORKTREES_EXCLUDE } from "./update.ts";
@@ -36,6 +37,9 @@ const init = defineCommand({
     }
     for (const dir of ["rules", "decisions", "changes", "notes"]) mkdirSync(join(root, "canon", dir), { recursive: true });
     if (!args.floor) say("set `floor` in canon/config.yaml before landing anything");
+    // reason: BR-2032 — until main has a commit no change can start (BR-2012); say so while the files are fresh
+    const main = branch ?? configuredMain(root);
+    if (main && mainIsUnborn(root, main)) say(`${main} has no commit yet: ${firstCommitStep(main)}`);
   },
 });
 
@@ -48,6 +52,16 @@ function currentBranch(root: string): string {
   const r = git(root, "symbolic-ref", "--short", "-q", "HEAD");
   if (r.ok && r.value) return r.value;
   return fail({ code: "io", message: "HEAD is detached: check out the branch that is to be main, then run canon init again (it becomes `main` in canon/config.yaml)" });
+}
+
+/** `main` of an existing canon/config.yaml; undefined when the file does not name one (the other commands report that). */
+function configuredMain(root: string): string | undefined {
+  try {
+    const main = (parse(readFileSync(join(root, "canon/config.yaml"), "utf8")) as { main?: unknown } | null)?.main;
+    return typeof main === "string" ? main : undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 function reportInstall(r: InstallReport & { hook: boolean; guard: boolean; exclude: boolean }) {

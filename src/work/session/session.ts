@@ -14,7 +14,7 @@ import { readCorpus } from "../../knowledge/documents/read.ts";
 import { createDoc, highestNumber } from "../../knowledge/documents/write.ts";
 import { worktreesDirOf } from "./config-keys.ts";
 import { noPort, portFor, type PortLookup } from "../../work/hooks/ports.ts";
-import { addWorktree, git, ignoredPaths, isClean, listWorktreesLocked, removeWorktree, unregenerable, type WorktreeInfo } from "../../kernel/git.ts";
+import { firstCommitStep, mainIsUnborn, addWorktree, git, ignoredPaths, isClean, listWorktreesLocked, removeWorktree, unregenerable, type WorktreeInfo } from "../../kernel/git.ts";
 import { GENERATED_DIR } from "../../config/reference/reference.ts";
 import { processesIn, type Occupant } from "../../kernel/process.ts";
 
@@ -48,6 +48,8 @@ export interface Started {
  */
 export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[] }, say: Say): Result<Started> {
   const main = ws.config.main;
+  // reason: BR-2012 — checked before an id is allocated or git is called, so a repository with no commit yet loses no number (BR-2002)
+  if (mainIsUnborn(ws.primary, main)) return err("io", `${main} has no commit yet, so no change can start: ${firstCommitStep(main)}`);
   let changeId: string;
   let slug: string;
   let fresh = false;

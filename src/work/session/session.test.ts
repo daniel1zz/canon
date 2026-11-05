@@ -23,6 +23,33 @@ describe("work start", () => {
     expect(r.stderr.toString()).toContain("git cannot read nope");
   });
 
+  test("BR-2012 BR-2022 BR-2002: on a repository with no commit start exits 4 before allocating, and the first start after the commit gets C-1 (issue #123)", () => {
+    const root = mkdtempSync(join(tmpdir(), "canon-unborn-"));
+    sh(root, "init", "-q", "-b", "main");
+    sh(root, "config", "user.email", "t@t");
+    sh(root, "config", "user.name", "t");
+    const cli = (...args: string[]) => {
+      const r = Bun.spawnSync(["bun", join(import.meta.dir, "../../cli/main.ts"), ...args], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+      return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
+    };
+    expect(cli("init", "--floor", "true").code).toBe(0);
+    for (const args of [["work", "start", "--title", "x"], ["work", "start", "C-1"]]) {
+      const r = cli(...args);
+      expect(r.code).toBe(4);
+      expect(r.err).toContain("main has no commit yet");
+      expect(r.err).toContain('git commit -m "canon init"');
+      expect(r.err).not.toContain("invalid reference");
+    }
+    expect(cli("events").out).not.toContain("id.allocate");
+    expect(existsSync(`${root}.worktrees`)).toBe(false);
+    sh(root, "add", "canon", ".claude");
+    sh(root, "commit", "-qm", "canon init");
+    const ok = cli("work", "start", "--title", "x");
+    expect(ok.code).toBe(0);
+    expect(ok.out).toContain("C-1 →");
+    rmSync(`${root}.worktrees`, { recursive: true, force: true });
+  }, 180_000); // six CLI processes, each slow when the machine is loaded
+
   test("BR-2012: a new change gets its own worktree, branch, committed change file and claim", () => {
     const root = project();
     const s = startNew(root, "Refund window");

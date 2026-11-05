@@ -9,6 +9,22 @@ export function git(cwd: string, ...args: string[]): Result<string> {
 }
 
 /** `git` with extra environment variables, e.g. GIT_INDEX_FILE for a scratch index. */
+/**
+ * True when `main` has no commit because the repository has no commit at all (a fresh `git init`): git then
+ * answers "invalid reference" to everything that starts from main. A main that is merely misspelled in a
+ * repository that has branches is not this case and keeps its own error (BR-2012).
+ */
+export function mainIsUnborn(cwd: string, main: string): boolean {
+  if (git(cwd, "rev-parse", "--verify", "--quiet", `${main}^{commit}`).ok) return false;
+  const branches = git(cwd, "for-each-ref", "--count=1", "refs/heads");
+  return branches.ok && branches.value === "";
+}
+
+/** The next step when main has no commit: what `canon init` wrote must be committed first (BR-2012, BR-2032). */
+export function firstCommitStep(main: string): string {
+  return `commit what \`canon init\` wrote to ${main} first: git checkout ${main} && git add canon .claude && git commit -m "canon init"`;
+}
+
 export function gitEnv(cwd: string, env: Readonly<Record<string, string>>, ...args: string[]): Result<string> {
   const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", ...(Object.keys(env).length > 0 ? { env: { ...process.env, ...env } } : {}) });
   if (r.exitCode !== 0) return err("io", `git ${args.join(" ")}: ${(r.stderr.toString() || r.stdout.toString()).trim()}`);

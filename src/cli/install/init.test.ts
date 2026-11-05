@@ -47,6 +47,19 @@ describe("canon init names main after the current branch", () => {
     expect(configOf(root)).toContain('main: "dev"\n');
   });
 
+  test("BR-2032: init in a repository with no commit says to commit the written files; with a commit it does not (issue #123)", () => {
+    const empty = repo("main");
+    const r = canon(empty, "init", "--floor", "true");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("main has no commit yet");
+    expect(r.out).toContain('git commit -m "canon init"');
+    const born = repo("main");
+    sh(born, "commit", "-q", "--allow-empty", "-m", "first");
+    const again = canon(born, "init", "--floor", "true");
+    expect(again.code).toBe(0);
+    expect(again.out).not.toContain("has no commit yet");
+  });
+
   test("BR-2032 BR-2022: a detached HEAD without canon/config.yaml refuses with 4 and writes nothing", () => {
     const root = repo("main");
     sh(root, "commit", "-q", "--allow-empty", "-m", "first");
