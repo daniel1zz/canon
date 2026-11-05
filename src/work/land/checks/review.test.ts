@@ -592,6 +592,40 @@ describe("duplicate review of standing instructions at land", () => {
     expect(sh(root, "rev-parse", "main")).toBe(before);
   });
 
+  test("BR-2143: the prompt carries the diff and tells the reviewer to block only duplication on added lines; an old duplicate with an unrelated edit lands on ok with the finding as a note (#121)", async () => {
+    const { root, promptFile } = standingProject("ok");
+    writeFileSync(join(root, "CLAUDE.md"), "# Project\n\n- Ask the human about direction.\n- Ask the human only about direction.\n- Unrelated line.\n");
+    sh(root, "commit", "-qam", "old duplicate");
+    const s = startNew(root, "Edit unrelated line");
+    writeFileSync(join(s.worktree, "CLAUDE.md"), "# Project\n\n- Ask the human about direction.\n- Ask the human only about direction.\n- Unrelated line, reworded.\n");
+    sh(s.worktree, "commit", "-qam", "unrelated");
+    const lines: string[] = [];
+    expect((await land(ws(s.worktree), { ...FAST, guide: GUIDE }, (m) => lines.push(m))).kind).toBe("landed");
+    const prompt = readFileSync(promptFile, "utf8");
+    expect(prompt).toContain("# CLAUDE.md (diff of this landing");
+    expect(prompt).toContain("+- Unrelated line, reworded.");
+    expect(prompt).toContain("-- Unrelated line.");
+    expect(prompt).not.toContain("+- Ask the human only about direction.");
+    expect(prompt).toContain("at least one of the two places is in a line this landing added or changed");
+    expect(prompt).toContain("A moved line (removed in one place, added in another) counts as added");
+    expect(prompt).toContain("do not block for it");
+    expect(lines.join("\n")).toContain("review note: CLAUDE.md repeats the guide");
+  });
+
+  test("BR-2143: a change that adds a line repeating a requirement stated elsewhere is shown to the reviewer as an added line, and a block verdict refuses it (#121)", async () => {
+    const { root, promptFile } = standingProject("block");
+    writeFileSync(join(root, "CLAUDE.md"), "# Project\n\n- Ask the human about direction.\n");
+    sh(root, "commit", "-qam", "one statement");
+    const before = sh(root, "rev-parse", "main");
+    const s = startNew(root, "Repeat a requirement");
+    writeFileSync(join(s.worktree, "CLAUDE.md"), "# Project\n\n- Ask the human about direction.\n- Ask the human only about direction.\n");
+    sh(s.worktree, "commit", "-qam", "repeat");
+    const out = await land(ws(s.worktree), { ...FAST, guide: GUIDE }, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(readFileSync(promptFile, "utf8")).toContain("+- Ask the human only about direction.");
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+  });
+
   test("BR-2143: an edited skill is reviewed with its new full text in the prompt and an ok verdict lands", async () => {
     const { root, promptFile } = standingProject("ok");
     const s = startNew(root, "Edit skill");

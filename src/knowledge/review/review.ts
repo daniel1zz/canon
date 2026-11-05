@@ -222,10 +222,11 @@ export function standingText(root: string, instructions: readonly string[]): Sta
   return { files, skills };
 }
 
-export function duplicatePrompt(changed: readonly string[], standing: StandingText, guide: string | undefined, changedSkills: readonly { path: string; text: string }[] = []): string {
+export function duplicatePrompt(changed: readonly string[], standing: StandingText, guide: string | undefined, changedSkills: readonly { path: string; text: string }[] = [], diffs: readonly { path: string; diff: string }[] = []): string {
   const parts: string[] = [
     "You review the standing instructions of a project: text loaded into every AI coding session at start. The same requirement written in two places drifts apart, and the reader no longer knows which one holds.",
-    "Block when one requirement (an instruction, a condition or a qualifier) is stated in two standing texts below, or twice in one of them, in any wording or language, and at least one of the two places is in a changed file.",
+    "Block only duplication this landing introduces: one requirement (an instruction, a condition or a qualifier) is stated in two standing texts below, or twice in one of them, in any wording or language, and at least one of the two places is in a line this landing added or changed (a `+` line of the diffs below). A moved line (removed in one place, added in another) counts as added; a deleted line creates no duplication.",
+    "Duplication that lies entirely in unchanged text was already there: do not block for it; you may list it as a finding in a verdict of ok, which is only a note.",
     "Do not block for: a one-line pointer to where a requirement is stated; a project-specific qualifier added to a general requirement stated elsewhere; facts or descriptions that are not requirements; wording, style or formatting.",
     "Each finding names both places (file or source, and the sentence) and which one to keep.",
     "Write the findings in the language the changed text is written in.",
@@ -238,5 +239,7 @@ export function duplicatePrompt(changed: readonly string[], standing: StandingTe
   if (standing.skills.length) parts.push(`# Skill descriptions (each loaded into every session)\n\n${standing.skills.map((s) => `- ${s.path}: ${s.description}`).join("\n")}`);
   // reason: the reviewer runs in main's tree (BR-2216), so a changed skill's body must travel in the prompt, or it reads main's old text (#122)
   for (const f of changedSkills) parts.push(`# ${f.path} (changed in this landing, full new text)\n\n${f.text.trim()}\n`);
+  // reason: without the diff the reviewer cannot tell duplication this landing added from old duplication in the same file (BR-2143, #121)
+  for (const d of diffs) parts.push(`# ${d.path} (diff of this landing, \`+\` lines are added or changed)\n\n${d.diff.trim()}\n`);
   return parts.join("\n");
 }
