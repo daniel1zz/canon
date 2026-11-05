@@ -48,24 +48,32 @@ describe("human questions", () => {
 
   test("BR-2021: with options a relay is recorded only as the option the human's words name; a different word, a different option or a free sentence is refused with exit 1 and nothing recorded", () => {
     const root = project();
-    const agent = (...args: string[]) => canon(root, "agent:x", false, "human", ...args);
-    for (let i = 0; i < 6; i++) expect(agent("ask", `Ship it ${i}?`, "--option", "yes,no").code).toBe(0);
-    const stored = (n: number) => questions(ws(root).db, "all").find((q) => q.id === n)!;
+    const d = ws(root).db;
+    // reason: one real CLI run each for a refusal and for an acceptance (the entry point, its exit codes); the other
+    // cases of the rule are the same answer() call in this process, since each CLI run costs a process start that a
+    // loaded machine stretches to seconds (C-375, #126)
+    for (let i = 0; i < 6; i++) ask(d, "agent:x", null, `Ship it ${i}?`, ["yes", "no"]);
+    const stored = (n: number) => questions(d, "all").find((q) => q.id === n)!;
+    const relay = (id: number, text: string, words: string) => answer(d, id, text, "agent:x", words, false, NO_CTX);
+    const refused = (id: number, text: string, words: string) => {
+      const r = relay(id, text, words);
+      return r.ok ? "ok" : r.error.code;
+    };
     // the human chose no in the question tool; the agent types yes
-    const lie = agent("answer", "1", "yes", "--relayed", "no");
+    const lie = canon(root, "agent:x", false, "human", "answer", "1", "yes", "--relayed", "no");
     expect([lie.code, stored(1).answer]).toEqual([1, null]);
-    expect(agent("answer", "2", "no", "--relayed", "yes").code).toBe(1);
-    expect(agent("answer", "3", "yes", "--relayed", "好的，发吧").code).toBe(1);
+    expect(refused(2, "no", "yes")).toBe("refused");
+    expect(refused(3, "yes", "好的，发吧")).toBe("refused");
     expect(refusals(root)).toEqual(["option-mismatch", "option-mismatch", "option-mismatch"]);
-    expect(questions(ws(root).db, "pending").map((q) => q.id)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(questions(d, "pending").map((q) => q.id)).toEqual([1, 2, 3, 4, 5, 6]);
     // the same words and option are recorded, whatever the case or the spaces
-    expect(agent("answer", "1", "no", "--relayed", "no").code).toBe(0);
-    expect(agent("answer", "4", "yes", "--relayed", " YES ").code).toBe(0);
+    expect(canon(root, "agent:x", false, "human", "answer", "1", "no", "--relayed", "no").code).toBe(0);
+    expect(refused(4, "yes", " YES ")).toBe("ok");
     expect([stored(1).answer, stored(1).relayed, stored(4).answer, stored(4).relayed]).toEqual(["no", "no", "yes", "YES"]);
     // an answered question stays 5, and a question without options keeps any relay
-    expect(agent("answer", "1", "yes", "--relayed", "no").code).toBe(5);
-    expect(agent("ask", "Free?").code).toBe(0);
-    expect(agent("answer", "7", "yes", "--relayed", "好的，发吧").code).toBe(0);
+    expect(canon(root, "agent:x", false, "human", "answer", "1", "yes", "--relayed", "no").code).toBe(5);
+    const free = ask(d, "agent:x", null, "Free?", []);
+    expect(refused(free, "yes", "好的，发吧")).toBe("ok");
   });
 
   test.skipIf(!Bun.which("script"))("BR-2021: a human at a terminal answers a question with options directly, whatever the option check says for a relay", () => {

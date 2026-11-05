@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
+import { FAST, HANG_SECONDS, boundedLoop, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 import { land } from "../land.ts";
 
 // reason: these tests start the real CLI and kill it with SIGKILL, so they wait out real processes (C-111 gave TIMED to such tests).
@@ -30,10 +30,20 @@ const kinds = (root: string, subject: string) => ws(root).db.db.query<{ kind: st
 const detail = (root: string, kind: string) => JSON.parse(ws(root).db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = ? ORDER BY id DESC LIMIT 1").get(kind)!.detail) as Record<string, unknown>;
 const queueRows = (root: string) => ws(root).db.db.query<{ id: number; state: string; result: string | null }, []>("SELECT id, state, result FROM queue ORDER BY id").all();
 
+/**
+ * A pre-commit hook that touches `marker` when git starts it and holds the commit until `release` exists, as a slow
+ * hook would; the test releases it after it has killed the lander, so git (which outlives its parent) finishes the
+ * close commit when the test says, not after a guessed number of seconds. It gives up after LOOP_SECONDS.
+ */
+const holdingCommit = (marker: string, release: string) => `#!/bin/sh\ntouch ${marker}\n${boundedLoop(`[ ! -e ${release} ]`)}\n`;
+
+/** Waits until the branch's top commit is the close commit of `change`. */
+const closeCommitMade = (wt: string, change: string) => waitFor("the close commit", () => sh(wt, "log", "-1", "--format=%s").includes(change));
+
 /** A project whose floor sleeps (as `exec sleep`, so its pid is the one in the pid file) only while CANON_TEST_SLOW is set. */
 function slowProject() {
   const root = project();
-  writeFileSync(join(root, "canon/config.yaml"), `floor: 'test -z "$CANON_TEST_SLOW" || { echo $$ > "$CANON_TEST_PIDFILE"; exec sleep 60; }'\ntests: []\nreview: none\n`);
+  writeFileSync(join(root, "canon/config.yaml"), `floor: 'test -z "$CANON_TEST_SLOW" || { echo $$ > "$CANON_TEST_PIDFILE"; exec sleep ${HANG_SECONDS}; }'\ntests: []\nreview: none\n`);
   sh(root, "commit", "-qam", "slow floor");
   const s = startNew(root, "Killed landing");
   const pidfile = `${root}.floor.pid`;
@@ -62,13 +72,16 @@ async function killedAfterMainMoved(finish = true) {
   const s = startNew(root, "Killed after main moved");
   const marker = `${root}.main.marker`;
   mkdirSync(join(root, ".git/hooks"), { recursive: true });
-  writeFileSync(join(root, ".git/hooks/reference-transaction"), `#!/bin/sh\n[ "$1" = committed ] && grep -q ' refs/heads/main$' && { touch ${marker}; sleep 4; }\nexit 0\n`, { mode: 0o755 });
+  const release = `${root}.main.release`;
+  const done = `${root}.main.done`;
+  writeFileSync(join(root, ".git/hooks/reference-transaction"), `#!/bin/sh\n[ "$1" = committed ] && grep -q ' refs/heads/main$' && { touch ${marker}; ${boundedLoop(`[ ! -e ${release} ]`)}; touch ${done}; }\nexit 0\n`, { mode: 0o755 });
   const lander = spawnCanon(s.worktree, ["work", "land", ...(finish ? ["--finish"] : [])]);
   await waitFor("main to move", () => existsSync(marker));
   lander.kill("SIGKILL");
   await lander.exited;
-  await Bun.sleep(4500); // the git process that moved main outlives its parent
   rmSync(join(root, ".git/hooks/reference-transaction"));
+  writeFileSync(release, ""); // the git process that moved main outlives its parent: let it finish
+  await waitFor("the git process that moved main to finish", () => existsSync(done));
   return { root, s, pid: lander.pid };
 }
 
@@ -110,10 +123,12 @@ describe("land.start", () => {
     const marker = `${root}.hook.marker`;
     // the close commit is the slow step before queueing; the signal is handled once it is done
     mkdirSync(join(root, ".git/hooks"), { recursive: true });
-    writeFileSync(join(root, ".git/hooks/pre-commit"), `#!/bin/sh\ntouch ${marker}\nsleep 3\n`, { mode: 0o755 });
+    const release = `${root}.hook.release`;
+    writeFileSync(join(root, ".git/hooks/pre-commit"), holdingCommit(marker, release), { mode: 0o755 });
     const lander = spawnCanon(s.worktree, ["work", "land", "--finish"]);
     await waitFor("the close commit's hook", () => existsSync(marker));
     lander.kill("SIGTERM");
+    writeFileSync(release, ""); // canon handles the signal once the commit is done
     expect(await lander.exited).toBe(143);
     rmSync(join(root, ".git/hooks/pre-commit"));
     expect(kinds(root, s.change).at(-1)).toBe("land.killed");
@@ -155,13 +170,15 @@ describe("canon work status lists landings without a result", () => {
     const s = startNew(root, "Killed early");
     const marker = `${root}.hook.marker`;
     mkdirSync(join(root, ".git/hooks"), { recursive: true });
-    writeFileSync(join(root, ".git/hooks/pre-commit"), `#!/bin/sh\ntouch ${marker}\nsleep 3\n`, { mode: 0o755 });
+    const release = `${root}.hook.release`;
+    writeFileSync(join(root, ".git/hooks/pre-commit"), holdingCommit(marker, release), { mode: 0o755 });
     const lander = spawnCanon(s.worktree, ["work", "land", "--finish"]);
     await waitFor("the close commit's hook", () => existsSync(marker));
     lander.kill("SIGKILL");
     await lander.exited;
     rmSync(join(root, ".git/hooks/pre-commit"));
-    await Bun.sleep(3500); // git commit outlives its parent and finishes the close commit
+    writeFileSync(release, ""); // git commit outlives its parent and finishes the close commit
+    await closeCommitMade(s.worktree, s.change);
     const r = await run(root, ["work", "status"]);
     expect(r.out).toContain("INTERRUPTED");
     expect(queueRows(root)).toEqual([]);
@@ -251,13 +268,15 @@ describe("the next landing and the other commands report a killed landing", () =
     const s = startNew(root, "Killed before queueing");
     const marker = `${root}.hook.marker`;
     mkdirSync(join(root, ".git/hooks"), { recursive: true });
-    writeFileSync(join(root, ".git/hooks/pre-commit"), `#!/bin/sh\ntouch ${marker}\nsleep 3\n`, { mode: 0o755 });
+    const release = `${root}.hook.release`;
+    writeFileSync(join(root, ".git/hooks/pre-commit"), holdingCommit(marker, release), { mode: 0o755 });
     const lander = spawnCanon(s.worktree, ["work", "land", "--finish"]);
     await waitFor("the close commit's hook", () => existsSync(marker));
     lander.kill("SIGKILL");
     await lander.exited;
     rmSync(join(root, ".git/hooks/pre-commit"));
-    await Bun.sleep(3500); // git commit outlives its parent and finishes the close commit
+    writeFileSync(release, ""); // git commit outlives its parent and finishes the close commit
+    await closeCommitMade(s.worktree, s.change);
     expect(sh(s.worktree, "log", "-1", "--format=%s")).toContain(s.change);
     const r = await run(s.worktree, ["work", "land", "--finish"]);
     expect(r.code).toBe(0);

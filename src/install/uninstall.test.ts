@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { CHECK_AS_COMMAND, planUnhook, RECORD_COMMAND, SNAPSHOT_COMMAND } from "./hook.ts";
+import { boundedLoop, waitFor } from "../work/testkit.ts";
 
 // reason: every test drives the canon CLI through spawned processes, a landing included (C-111)
 setDefaultTimeout(60_000);
@@ -221,14 +222,17 @@ describe("canon uninstall", () => {
   });
 
   test("BR-2283, BR-2022: while the landing's after_land commands run, the cleanup waits with exit 75; later it finishes", async () => {
-    const { root, env } = project('floor: "true"\ntests: []\nhooks:\n  after_land:\n    - "sleep 4"\n');
+    // the after_land command runs until the test releases it (at most LOOP_SECONDS), so it lasts as long as the test needs
+    const hold = join(tmpdir(), `canon-uninstall-hold-${process.pid}-${Date.now()}`);
+    writeFileSync(`${hold}.sh`, `${boundedLoop(`[ ! -e ${hold}.release ]`)}\n`);
+    const { root, env } = project(`floor: "true"\ntests: []\nhooks:\n  after_land:\n    - "sh ${hold}.sh"\n`);
     const r = canon(root, env, "uninstall");
     expect(r.code).toBe(75);
     expect(r.err).toContain("after_land commands are still running");
     expect(onMain(root, "canon/config.yaml")).toBe(false);
     expect(existsSync(guard(root))).toBe(true);
-    await Bun.sleep(6000);
-    expect(canon(root, env, "uninstall").code).toBe(0);
+    writeFileSync(`${hold}.release`, "");
+    await waitFor("the cleanup to finish once the after_land command has ended", () => canon(root, env, "uninstall").code === 0, 30_000);
     expect(existsSync(guard(root))).toBe(false);
   });
 });

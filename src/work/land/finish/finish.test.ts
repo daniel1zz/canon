@@ -8,7 +8,7 @@ import { readCorpus } from "../../../knowledge/documents/read.ts";
 import { land } from "../land.ts";
 import { reopen } from "./finish.ts";
 import { moveBranch } from "../../../kernel/git.ts";
-import { FAST, gapCommit, project, quiet, sh, startNew, ws } from "../../testkit.ts";
+import { FAST, gapCommit, project, quiet, sh, startNew, waitFor, ws } from "../../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
 // under load that alone came within 0.4 s of the 5 s default (C-111), so they get room, not the rest of the file.
@@ -59,8 +59,12 @@ describe("the claim during a landing", () => {
     const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
     expect(tryTurn(other.db, ahead).mine).toBe(true);
     const landing = land(ws(s.worktree), { finish: true, timeoutMs: 20_000 }, quiet);
-    await Bun.sleep(2500); // two and a half leases
+    const expires = () => other.db.db.query<{ expires_at: string }, [string]>("SELECT expires_at FROM claims WHERE subject = ?").get(s.change)?.expires_at;
+    await waitFor("the landing to wait in the queue", () => other.db.db.query("SELECT 1 FROM queue WHERE worktree = ? AND state = 'waiting'").get(s.worktree) !== null);
+    const lease = Date.parse(expires()!); // the lease the landing waits under runs out at this time
+    await waitFor("the lease to run out", () => Date.now() > lease + 100);
     expect(takeClaim(other.db, s.change, s.worktree, "agent:b", 1000).ok).toBe(false);
+    expect(Date.parse(expires()!)).toBeGreaterThan(lease); // it was renewed meanwhile, not just still unexpired
     finishEntry(other.db, ahead, "landed", "x");
     expect((await landing).kind).toBe("landed");
   }, TIMED);

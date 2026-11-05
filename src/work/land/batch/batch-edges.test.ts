@@ -3,23 +3,29 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { dirname, join } from "node:path";
 import { enqueue, finishEntry } from "../queue/queue.ts";
 import { land } from "../land.ts";
-import { FAST, gapCommit, project, sh, startNew, ws } from "../../testkit.ts";
+import { FAST, boundedLoop, gapCommit, project, sh, startNew, waitFor, ws } from "../../testkit.ts";
 
 // reason: end-to-end batches run real landings through 2 s queue polls and spawned landers on purpose (C-111).
 const TIMED = 60_000;
 const CLI = join(import.meta.dir, "../../../invocation/main.ts");
 
-/** A project whose floor counts its runs in a file, fails on a FAIL file, and sleeps `batchSleep` s in a batch worktree. */
-function batchProject(extra: string, batchSleep = 0) {
+/**
+ * A project whose floor counts its runs in a file and fails on a FAIL file. With `hold`, the floor of a batch
+ * worktree also waits until `release()` is called (at most LOOP_SECONDS), so a test can act while the batch floor
+ * runs and then let it go, instead of guessing how long a sleeping floor lasts.
+ */
+function batchProject(extra: string, hold = false) {
   const root = project();
   const dir = join(root, "..", `${root.split("/").pop()}-floor`);
   mkdirSync(dir, { recursive: true });
   const runs = join(dir, "runs");
-  writeFileSync(join(dir, "floor.sh"), `echo "$PWD" >> ${runs}\ncase $PWD in */batch/*) sleep ${batchSleep};; esac\ntest ! -e FAIL\n`);
+  const releaseFile = join(dir, "release");
+  writeFileSync(join(dir, "floor.sh"), `echo "$PWD" >> ${runs}\n${hold ? `case $PWD in */batch/*) ${boundedLoop(`[ ! -e ${releaseFile} ]`)};; esac\n` : ""}test ! -e FAIL\n`);
   writeFileSync(join(root, "canon/config.yaml"), `floor: "sh ${join(dir, "floor.sh")}"\ntests: []\n${extra}`);
   sh(root, "commit", "-qam", "config");
   const floorRuns = () => (existsSync(runs) ? readFileSync(runs, "utf8").trim().split("\n") : []);
-  return { root, dir, floorRuns };
+  const release = () => writeFileSync(releaseFile, "");
+  return { root, dir, floorRuns, release };
 }
 const commitFile = (wt: string, path: string, text: string) => {
   writeFileSync(join(wt, path), text);
@@ -33,6 +39,16 @@ const until = async (what: () => boolean, tries = 400) => {
 const events = (root: string, kind: string) =>
   ws(root).db.db.query<{ subject: string | null; detail: string }, [string]>("SELECT subject, detail FROM events WHERE kind = ? ORDER BY id").all(kind).map((e): Record<string, unknown> => ({ subject: e.subject, ...(JSON.parse(e.detail) as Record<string, unknown>) }));
 const entryOf = (root: string, wt: string) => ws(root).db.db.query<{ id: number; state: string; result: string | null; solo: number | null }, [string]>("SELECT id, state, result, solo FROM queue WHERE worktree = ? ORDER BY id DESC LIMIT 1").get(wt);
+/** Collects what a spawned canon prints, so a test can wait for a line instead of guessing how long it takes. */
+function collect(p: ReturnType<typeof spawnLand>) {
+  const heard = { text: "" };
+  for (const stream of [p.stdout, p.stderr]) {
+    void (async () => {
+      for await (const chunk of stream as ReadableStream<Uint8Array>) heard.text += new TextDecoder().decode(chunk);
+    })();
+  }
+  return heard;
+}
 const spawnLand = (wt: string) => Bun.spawn(["bun", CLI, "work", "land"], { cwd: wt, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
 
 /**
@@ -120,12 +136,16 @@ describe("a batch's own edges", () => {
     const hooks = join(sh(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "hooks");
     mkdirSync(hooks, { recursive: true });
     const marker = join(root, "..", `${root.split("/").pop()}-moving`);
-    writeFileSync(join(hooks, "post-merge"), `#!/bin/sh\ntouch ${marker}\nsleep 2\n`, { mode: 0o755 });
+    const release = `${marker}.release`;
+    writeFileSync(join(hooks, "post-merge"), `#!/bin/sh\ntouch ${marker}\n${boundedLoop(`[ ! -e ${release} ]`)}\n`, { mode: 0o755 });
     // reason: both landers run in their own process; the leader's git calls block its process, which would hold this test's polling too.
     const run = await landTogether(root, [{ spawn: a.worktree }, { spawn: b.worktree }]);
     await until(() => existsSync(marker), 1200);
     expect(entryOf(root, b.worktree)!.state).toBe("landing"); // locked
+    const heard = collect(run.procs[1]!);
     run.procs[1]!.kill("SIGTERM");
+    await waitFor("the locked lander to say it waits for the batch", () => heard.text.includes("signal received while this landing is locked"));
+    writeFileSync(release, ""); // main's update finishes only now: the SIGTERM came while the member was locked
     expect(await run.done).toEqual([0, 143]);
     expect(entryOf(root, b.worktree)!.state).toBe("landed");
     expect(events(root, "land.killed")).toEqual([]);
@@ -133,7 +153,7 @@ describe("a batch's own edges", () => {
   }, TIMED);
 
   test("BR-2172 BR-2173: a member whose lander stops during the batch leaves it; the ones before it are tested again without it and land together", async () => {
-    const { root, floorRuns } = batchProject("land_batch_max: 3\n", 3);
+    const { root, floorRuns, release } = batchProject("land_batch_max: 3\n", true);
     const a = startNew(root, "Leader");
     commitFile(a.worktree, "a.txt", "a\n");
     const b = startNew(root, "Stays");
@@ -143,6 +163,8 @@ describe("a batch's own edges", () => {
     const run = await landTogether(root, [a.worktree, b.worktree, { spawn: c.worktree }]);
     await until(() => floorRuns().some((p) => p.includes("/batch/")), 1200); // the batch floor runs
     run.procs[2]!.kill("SIGTERM");
+    await until(() => entryOf(root, c.worktree)?.state === "failed"); // C is out of the batch before its floor ends
+    release();
     const [oa, ob, code] = (await run.done) as [{ kind: string }, { kind: string }, number];
     expect(code).toBe(143);
     expect([oa.kind, ob.kind]).toEqual(["landed", "landed"]);
@@ -189,7 +211,7 @@ describe("a batch's own edges", () => {
   }, TIMED);
 
   test("BR-2190: a leader that finds it lost its turn before moving main sends the member back to the queue; the member lands", async () => {
-    const { root, floorRuns } = batchProject("land_batch_max: 2\n", 2);
+    const { root, floorRuns, release } = batchProject("land_batch_max: 2\n", true);
     const a = startNew(root, "Leader");
     commitFile(a.worktree, "a.txt", "a\n");
     const b = startNew(root, "Member");
@@ -199,6 +221,7 @@ describe("a batch's own edges", () => {
     await until(() => floorRuns().some((p) => p.includes("/batch/")), 1200);
     // A later lander saw the leader silent past the stale time and skipped it, while the batch floor ran.
     ws(root).db.db.query("UPDATE queue SET state = 'abandoned', result = 'no heartbeat' WHERE id = ?").run(entryOf(root, a.worktree)!.id);
+    release();
     const [oa, ob] = (await run.done) as { kind: string; reason?: string }[];
     expect(oa!.kind === "refused" && oa!.reason).toBe("lost-turn");
     expect(ob!.kind).toBe("landed");

@@ -6,7 +6,7 @@ import { check } from "../../knowledge/check/check.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { enqueue, finishEntry, tryTurn } from "./queue/queue.ts";
 import { land } from "./land.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { FAST, project, quiet, sh, startNew, waitFor, ws } from "../testkit.ts";
 
 // reason: these tests drive a spawned `canon work land` and wait out queue polls on purpose (C-111).
 const TIMED = 30_000;
@@ -105,7 +105,8 @@ describe("refusals and waits after queuing", () => {
     expect(tryTurn(other.db, ahead).mine).toBe(true);
     const held = Date.now();
     const landing = land(ws(s.worktree), FAST, quiet);
-    await Bun.sleep(1500);
+    await waitFor("the landing to wait in the queue", () => other.db.db.query("SELECT 1 FROM queue WHERE worktree = ? AND state = 'waiting'").get(s.worktree) !== null);
+    await waitFor("the one ahead to have held the turn for a while", () => Date.now() > held + 500); // so the wait to compare with is not close to 0
     finishEntry(other.db, ahead, "landed", "x");
     const heldMs = Date.now() - held;
     expect((await landing).kind).toBe("landed");
@@ -121,7 +122,7 @@ describe("refusals and waits after queuing", () => {
     const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
     expect(tryTurn(other.db, ahead).mine).toBe(true);
     const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
-    for (let i = 0; i < 200 && !other.db.db.query("SELECT 1 FROM queue WHERE worktree = ?").get(s.worktree); i++) await Bun.sleep(50);
+    await waitFor("the landing to queue", () => other.db.db.query("SELECT 1 FROM queue WHERE worktree = ?").get(s.worktree) !== null);
     p.kill("SIGTERM");
     expect(await p.exited).toBe(143);
     expect(events(root, "land.turn")).toEqual([]);

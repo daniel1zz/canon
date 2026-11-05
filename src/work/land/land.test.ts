@@ -8,7 +8,7 @@ import { clean, stop } from "../session/session.ts";
 import { land } from "./land.ts";
 import { LAND_MARKER } from "./finish/finish.ts";
 import { ensureGuard } from "../../install/githook.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { FAST, project, quiet, sh, startNew, waitFor, ws } from "../testkit.ts";
 
 describe("work land", () => {
   test("BR-2017 BR-2039: lands a committed branch: main moves and the primary checkout's files follow", async () => {
@@ -126,7 +126,7 @@ describe("work land", () => {
     const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
     expect(tryTurn(other.db, ahead).mine).toBe(true);
     const landing = land(ws(s.worktree), FAST, quiet);
-    await Bun.sleep(300);
+    await waitFor("the landing to wait in the queue", () => other.db.db.query("SELECT 1 FROM queue WHERE worktree = ? AND state = 'waiting'").get(s.worktree) !== null);
     writeFileSync(join(s.worktree, "app.txt"), "edited while waiting\n");
     finishEntry(other.db, ahead, "landed", "x");
     const out = await landing;

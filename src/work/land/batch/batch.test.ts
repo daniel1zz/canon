@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claims } from "../../claims/claims.ts";
 import { enqueue, finishEntry, joinBatch, landBatched, refuseInBatch, unlockBatch } from "../queue/queue.ts";
@@ -7,7 +8,7 @@ import { land } from "../land.ts";
 import { reopenForGoneLander } from "./batch.ts";
 import { processOf } from "../../claims/liveness.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
+import { FAST, boundedLoop, project, quiet, sh, startNew, waitFor, ws } from "../../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
 // under load that alone came within 0.4 s of the 5 s default (C-111), so they get room, not the rest of the file.
@@ -201,12 +202,23 @@ describe("batched landings", () => {
 
   test("BR-2049 BR-2172: a slow setup in the batch worktree keeps the leader's heartbeat, so the batch lands (issue #60)", async () => {
     // reason: setup runs only in the batch worktree (its path has /batch/), so starting the changes stays fast.
-    const { root, floorRuns } = batchProject(`land_batch_max: 2\nlander_stale_minutes: 0.1\nsetup: "case $PWD in */batch/*) sleep 8;; esac"\n`);
+    // the setup holds until the test has seen the leader beat for longer than the 1.2 s stale time, so it lasts as long as the test needs
+    const hold = join(tmpdir(), `canon-setup-hold-${process.pid}-${Date.now()}`);
+    writeFileSync(`${hold}.sh`, `touch ${hold}.started\n${boundedLoop(`[ ! -e ${hold}.release ]`)}\n`);
+    const { root, floorRuns } = batchProject(`land_batch_max: 2\nlander_stale_minutes: 0.02\nsetup: "case $PWD in */batch/*) sh ${hold}.sh;; esac"\n`);
     const a = startNew(root, "A");
     commitFile(a.worktree, "a.txt", "a\n");
     const b = startNew(root, "B");
     commitFile(b.worktree, "b.txt", "b\n");
+    const beat = () => Date.parse(ws(root).db.db.query<{ heartbeat: string }, [string]>("SELECT heartbeat FROM queue WHERE worktree = ? ORDER BY id DESC LIMIT 1").get(a.worktree)!.heartbeat);
+    const released = (async () => {
+      await waitFor("the setup in the batch worktree to start", () => existsSync(`${hold}.started`), 30_000);
+      const first = beat();
+      await waitFor("a leader heartbeat more than the stale time after the first, while the setup still holds", () => beat() > first + 1200, 30_000);
+      writeFileSync(`${hold}.release`, "");
+    })();
     const { out } = await landTogether(root, [a.worktree, b.worktree]);
+    await released;
     expect(out.map((o) => o.kind)).toEqual(["landed", "landed"]);
     expect(floorRuns()).toBe(1);
     expect(landOks(root)[1]!["batched_by"]).toBeNumber();

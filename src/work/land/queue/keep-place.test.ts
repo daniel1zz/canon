@@ -7,7 +7,7 @@ import { readConfig } from "../../../invocation/config.ts";
 import { abandonGone, batchCandidates, enqueue, enter, failForConflict, failIfActive, finishEntry, keptPlaces, tryTurn } from "./queue.ts";
 import { selfProcess } from "../../claims/liveness.ts";
 import { land } from "../land.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
+import { FAST, boundedLoop, project, quiet, sh, startNew, waitFor, ws } from "../../testkit.ts";
 
 function db(): CoordDb {
   const r = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-keep-place-")), "state.db"));
@@ -92,7 +92,7 @@ describe("a landing refused for a conflict keeps its place", () => {
     const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
     expect(tryTurn(other.db, ahead).mine).toBe(true);
     const landing = land(ws(s.worktree), FAST, quiet);
-    await Bun.sleep(300);
+    await waitFor("the landing to wait in the queue", () => other.db.db.query("SELECT 1 FROM queue WHERE worktree = ? AND state = 'waiting'").get(s.worktree) !== null);
     writeFileSync(join(root, "app.txt"), "one\nTWO\nthree\n");
     sh(root, "commit", "-qam", "theirs");
     const out = await landing;
@@ -107,7 +107,7 @@ describe("a landing refused for a conflict keeps its place", () => {
     sh(s.worktree, "rebase", "-q", "-X", "theirs", "main");
     const said: string[] = [];
     const again = land(ws(s.worktree), FAST, (m: string) => said.push(m));
-    await Bun.sleep(300);
+    await waitFor("the landing to take its place back", () => stateOf(other.db, first) === "waiting");
     expect(other.db.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM queue WHERE worktree = ?").get(s.worktree)?.n).toBe(1);
     expect(stateOf(other.db, first)).toBe("waiting");
     expect(tryTurn(other.db, later)).toEqual({ mine: false, ahead: 2 }); // behind the one landing and behind C-n
@@ -212,18 +212,31 @@ describe("kept places end to end, through real landings", () => {
 
   test("BR-2178: back at its place while a later entry is landing, it waits for that landing, then goes before the entry queued after its place", async () => {
     const root = project();
+    // a stale time of 1.8 s makes a waiting lander look at the queue every 0.6 s (waitPollMs); the fake entries beat below
+    writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\nreview: none\nlander_stale_minutes: 0.03\n");
+    sh(root, "commit", "-qam", "short stale time");
     const { c2, r, d } = kept(root);
     const c3 = enqueue(d, "/wt/c3", "C-3", "agent:b");
     expect(tryTurn(d, c3).mine).toBe(true);
     const c4 = enqueue(d, "/wt/c4", "C-4", "agent:b");
-    const landing = land(ws(c2.worktree), FAST, quiet);
-    await Bun.sleep(2500); // past a queue poll
-    expect(stateOf(d, r)).toBe("waiting");
-    expect(tryTurn(d, c4)).toEqual({ mine: false, ahead: 2 });
-    finishEntry(d, c3, "landed", "x");
-    expect((await landing).kind).toBe("landed");
-    expect(stateOf(d, r)).toBe("landed");
-    expect(tryTurn(d, c4).mine).toBe(true);
+    const beats = setInterval(() => d.db.query("UPDATE queue SET heartbeat = ? WHERE id IN (?, ?)").run(new Date().toISOString(), c3, c4), 100);
+    try {
+      const landing = land(ws(c2.worktree), FAST, quiet);
+      // every look at the queue is a heartbeat: two changes mean one whole look, begun after the landing queued, is done
+      const beat = () => d.db.query<{ heartbeat: string }, [number]>("SELECT heartbeat FROM queue WHERE id = ?").get(r)!.heartbeat;
+      for (let n = 0; n < 2; n++) {
+        const seen = beat();
+        await waitFor("the landing to look at the queue again", () => beat() !== seen);
+      }
+      expect(stateOf(d, r)).toBe("waiting");
+      expect(tryTurn(d, c4)).toEqual({ mine: false, ahead: 2 });
+      finishEntry(d, c3, "landed", "x");
+      expect((await landing).kind).toBe("landed");
+      expect(stateOf(d, r)).toBe("landed");
+      expect(tryTurn(d, c4).mine).toBe(true);
+    } finally {
+      clearInterval(beats);
+    }
   }, 30_000);
 
   test("BR-2178: back at its place while a later entry's lander is gone, it does not wait; that entry is marked abandoned", async () => {
@@ -253,7 +266,7 @@ describe("kept places end to end, through real landings", () => {
       mkdirSync(hooks, { recursive: true });
       const go = join(root, "..", `${root.split("/").pop()}-go`);
       const hit = join(root, "..", `${root.split("/").pop()}-hit`);
-      writeFileSync(join(hooks, "post-checkout"), `#!/bin/sh\nif [ -f ${go} ]; then rm ${go}; touch ${hit}; sleep 2; fi\n`, { mode: 0o755 });
+      writeFileSync(join(hooks, "post-checkout"), `#!/bin/sh\nif [ -f ${go} ]; then rm ${go}; touch ${hit}; ${boundedLoop(`[ ! -e ${go}.release ]`)}; fi\n`, { mode: 0o755 });
       const p3 = Bun.spawn(["bun", CLI, "work", "land"], { cwd: c3.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
       const entry = (wt: string) => d.db.query<{ id: number; state: string }, [string]>("SELECT id, state FROM queue WHERE worktree = ? ORDER BY id DESC LIMIT 1").get(wt);
       await until(() => entry(c3.worktree)?.state === "waiting");
@@ -264,6 +277,7 @@ describe("kept places end to end, through real landings", () => {
       await until(() => existsSync(hit), 1200);
       const l2 = land(ws(c2.worktree), FAST, quiet); // takes its place back while C-3 holds the turn
       expect(stateOf(d, r)).toBe("waiting");
+      writeFileSync(`${go}.release`, ""); // C-3's rebase goes on and picks its members
       const [o2, o4, code3] = await Promise.all([l2, l4, p3.exited]);
       expect([o2.kind, o4.kind, code3]).toEqual(["landed", "landed", 0]);
       const start = d.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'batch.start' ORDER BY id LIMIT 1").get();
