@@ -207,6 +207,18 @@ describe("floor_skip_paths", () => {
       expect(r.ok ? `accepted ${bad}` : r.error.message).toContain("floor_skip_paths");
     }
   });
+
+  test("BR-2165: floor_skip_paths without test_select_command is a config error, and with an empty list or the command it is not", () => {
+    const read = (yaml: string) => readConfig(repo({ "canon/config.yaml": yaml }));
+    const without = read("floor_skip_paths: [canon/rules]\n");
+    expect(!without.ok && without.error.message).toContain("`floor_skip_paths` needs `test_select_command`");
+    expect(read('floor_skip_paths: [canon/rules]\ntest_select_command: ""\n').ok).toBe(false);
+    expect(read("floor_skip_paths: []\n").ok).toBe(true);
+    expect(read(`floor_skip_paths: [canon/rules]\n${SEL}\n`).ok).toBe(true);
+    const run = canon(repo({ "canon/config.yaml": "floor_skip_paths: [canon/rules]\n" }), "show", ["C", 1].join("-"));
+    expect(run.code).toBe(2);
+    expect(run.err).toContain("test_select_command");
+  });
 });
 
 describe("script paths in commands", () => {

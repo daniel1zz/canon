@@ -133,6 +133,7 @@ describe("the config schema", () => {
     { config: { floor_timing: null }, ok: false },
     { config: { floor_timing: true }, ok: false },
     { config: { floor_skip_paths: ["canon/rules", "docs"], test_select_command: "bun select.ts" }, ok: true },
+    { config: { floor_skip_paths: ["canon/rules", "docs"] }, ok: false },
     { config: { test_select_command: "bun select.ts" }, ok: true },
     { config: { floor_skip_paths: null }, ok: true },
     { config: { floor_skip_paths: ["canon/templates/x.md"], test_select_command: "bun select.ts" }, ok: false },

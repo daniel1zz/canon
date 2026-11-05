@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { configKey, MINUTE, optionalString, positiveNumber, positiveValue, REL_DIR, relPath, stringValue } from "../../invocation/key.ts";
+import { configKey, type KeyContext, MINUTE, optionalString, positiveNumber, positiveValue, REL_DIR, relPath, stringValue } from "../../invocation/key.ts";
 
 /** canon/config.yaml keys of landing (C-135). */
 export const landKeys = {
@@ -49,6 +49,8 @@ export const landKeys = {
     default: [],
     schema: { type: ["array", "null"], items: { allOf: [relPath, { not: { enum: ["canon", "canon/config.yaml", "canon/templates"] } }, { not: { type: "string", pattern: "^canon/templates/" } }] }, default: [] },
     read: readFloorSkipPaths,
+    // reason: a landing may skip the floor only because test_select_command says no test reads its paths, so the one without the other is a config error (BR-2164, D-64)
+    needs: ["test_select_command"],
     listed: 180,
     checked: 100,
   }),
@@ -77,7 +79,7 @@ export const landKeys = {
  * `floor_skip_paths` (BR-2165): relative paths; none may cover the files that decide how a landing runs (the
  * floor command in canon/config.yaml, the document templates), or a change to them would land untested.
  */
-function readFloorSkipPaths(v: unknown): Result<string[]> {
+function readFloorSkipPaths(v: unknown, ctx: KeyContext): Result<string[]> {
   if (v === null) return ok([]);
   if (!Array.isArray(v) || v.some((t) => typeof t !== "string" || !REL_DIR.test(t))) {
     return err("invalid", "`floor_skip_paths` must be a list of directory or file paths relative to the repository root, such as canon/rules");
@@ -86,6 +88,11 @@ function readFloorSkipPaths(v: unknown): Result<string[]> {
     if (p === "canon" || p === "canon/config.yaml" || p === "canon/templates" || p.startsWith("canon/templates/")) {
       return err("invalid", `\`floor_skip_paths\` entry \`${p}\` covers canon/config.yaml or canon/templates, which decide how a landing runs; a change to them must run the floor`);
     }
+  }
+  // reason: a landing that only changes these paths skips the floor because test_select_command says no test reads them; without the command nothing says so (BR-2164, D-64)
+  const select = ctx.raw["test_select_command"];
+  if ((v as string[]).length > 0 && (typeof select !== "string" || select === "")) {
+    return err("invalid", "`floor_skip_paths` needs `test_select_command`: the command that says which test files a change to those paths can break (e.g. test_select_command: \"bun scripts/select-tests/main.ts\")");
   }
   return ok(v as string[]);
 }

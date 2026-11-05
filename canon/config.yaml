@@ -53,17 +53,12 @@ instructions:
 # 每个会话固定加载的文字（根目录 CLAUDE.md、工作说明、skill 描述）合计超过这么多字节时，canon check 和 canon work test 提示一行，不拒绝合入（BR-2257、D-37）。
 # C-59 删减后合计 11226 字节，设成 12000：只留一点余量，再涨就看到提示
 session_text_budget: 12000
-# 只改这些路径的合入不跑 floor（BR-2164）：代码树和 main 上已测过的一样。
+# floor_skip_paths（BR-2164）暂时不写：D-64 要求配了它就必须配 test_select_command（BR-2165），而已安装的 canon 还不认这个键，
+# 写进来每条命令都会报错（BR-2248）。已安装的 canon 重编以后，另开一个变更一起写回这两项：
+#   test_select_command: "bun scripts/select-tests/main.ts"   # 本项目的脚本，BR-2346 到 BR-2351
+#   floor_skip_paths: [canon/rules, canon/decisions, canon/changes, canon/notes, canon/product.md, canon/backlog.md]
 # 依据（C-122 核查）：测试只在临时仓库里读写 canon/ 下的文件；读真实仓库文件的只有 .claude/skills（BR-2096、install）和 scripts/，所以不列它们，也不列 canon/config.yaml
-# 测试读这些路径下真实文件时：由 test_select_command 在合入时发现，floor 照常运行（BR-2164，D-64）；这个项目的脚本是 scripts/select-tests/main.ts，等已安装的 canon 认得 test_select_command 这个键以后再写进这里（BR-2248）
 # 规则和代码列表的核对在 canon check 里（BR-2180，C-145）
-floor_skip_paths:
-  - canon/rules
-  - canon/decisions
-  - canon/changes
-  - canon/notes
-  - canon/product.md
-  - canon/backlog.md
 # 轮到的合入者最多把几个合入一起测、只跑一次 floor（D-26、BR-2172）；floor_timing: after 下不分批
 land_batch_max: 4
 # 新 worktree 里执行一次，环境里有 CANON_PORT（BR-2267）。依赖安装的推荐配置（C-103）：setup 只做依赖安装。
