@@ -530,6 +530,52 @@ describe("subdomains from the CLI", () => {
     expect(readFileSync(join(root, "canon/rules/billing/README.md"), "utf8")).toStartWith("# billing");
   });
 
+  test("BR-2317: a domain named after a technical layer is still created, exit 0, with a hint naming the word; other names get none", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    mkdirSync(join(root, "src/billing"), { recursive: true });
+    const ok = canon(root, "rule", "domain", "billing", "--code", "src/billing");
+    expect([ok.code, ok.out.includes("hint:")]).toEqual([0, false]);
+    const sub = canon(root, "rule", "domain", "billing/api");
+    expect(sub.code).toBe(0);
+    expect(existsSync(join(root, "canon/rules/billing/api/README.md"))).toBe(true);
+    expect(sub.out).toMatch(/hint: .*`api`.*business capability.*canon-domains/);
+    const joined = canon(root, "rule", "domain", "billing/billing-api");
+    expect([joined.code, joined.out.includes("hint:")]).toEqual([0, false]);
+    writeFileSync(join(root, "canon/config.yaml"), `${readFileSync(join(root, "canon/config.yaml"), "utf8")}code_root: src\n`);
+    const cfg = canon(root, "rule", "domain", "config");
+    expect(cfg.code).toBe(0);
+    expect(cfg.out).toMatch(/hint: .*`config`/);
+  });
+
+  test("BR-2318: check says a technical-layer domain name as a note on stderr, not a finding; rule domains says it beside the domain", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    for (const d of ["billing", "config"]) {
+      mkdirSync(join(root, "src", d), { recursive: true });
+      canon(root, "rule", "domain", d, "--code", `src/${d}`);
+      writeFileSync(join(root, `canon/rules/${d}/README.md`), `---\ncode: [src/${d}]\n---\n# ${d}\n\nX.\n\n## 术语\n\n- **退款**：钱退回\n`);
+    }
+    const c = canon(root, "check");
+    expect([c.code, c.out.startsWith("ok: ")]).toEqual([0, true]);
+    expect(c.err).toMatch(/note: canon\/rules\/config\/README\.md: .*`config`/);
+    expect(c.err).not.toContain("billing/README");
+    expect(canon(root, "check", "--json").out.trim()).toBe("[]");
+    const dom = canon(root, "rule", "domains").out.split("\n");
+    expect(dom.find((l) => l.startsWith("config"))).toContain("named after a technical layer");
+    expect(dom.find((l) => l.startsWith("billing"))).not.toContain("named after a technical layer");
+    mkdirSync(join(root, "src/billing/api"), { recursive: true });
+    canon(root, "rule", "domain", "billing/api");
+    writeFileSync(join(root, "canon/rules/billing/api/README.md"), "# api\n\n## 术语\n\n- **退款**：钱退回\n");
+    const sub = canon(root, "check");
+    expect(sub.code).toBe(0);
+    expect(sub.err).toMatch(/note: canon\/rules\/billing\/api\/README\.md: .*`api`/);
+    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\nX.\n");
+    const noTerms = canon(root, "check");
+    expect(noTerms.code).toBe(1);
+    expect(noTerms.out).toContain("doc-missing-section");
+  });
+
   test("BR-2114: rule domains indents subdomains and suggests splitting only above 25 direct rules", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");

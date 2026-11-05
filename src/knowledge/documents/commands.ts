@@ -4,6 +4,7 @@ import type { Doc, Kind } from "./model.ts";
 import { readBacklog } from "./backlog.ts";
 import { listedChanges, marksOf } from "../../work/session/inflight.ts";
 import type { readCorpus } from "./read.ts";
+import { technicalLayerWord, technicalNameAdvice } from "./domain-names.ts";
 import { createDoc, createDomain, setMeta } from "./write.ts";
 import { findDoc } from "../query/query.ts";
 
@@ -131,6 +132,9 @@ const rule = defineCommand({
         const ws = workspace();
         if (args.code !== undefined && list(args.code).length === 0) fail({ code: "invalid", message: "--code needs at least one directory" });
         say(must(createDomain(ws.root, String(args.name), list(args.code), typeof args.description === "string" ? args.description : "", ws.config.codeRoot)));
+        // reason: a hint, not a refusal: the name may be right for this business, the exit code stays 0 (BR-2317)
+        const word = technicalLayerWord(String(args.name));
+        if (word !== undefined) say(`hint: ${technicalNameAdvice(String(args.name), word)}`);
       },
     }),
     domains: defineCommand({
@@ -142,7 +146,10 @@ const rule = defineCommand({
           const n = corpus.docs.filter((r) => r.kind === "rule" && r.domain === d.name && r.status === "active").length;
           // reason: a hint, not a check: a big domain makes `canon context` long, splitting is a judgement call (BR-2114)
           const hint = n > SPLIT_HINT ? `  (more than ${SPLIT_HINT} rules: consider subdomains, canon rule domain ${d.name}/<name>)` : "";
-          say(`${`${"  ".repeat(d.name.split("/").length - 1)}${d.name}`.padEnd(24)} ${String(n).padStart(4)} rules  ${d.code.length ? d.code.join(", ") : `(code through ${d.name.split("/")[0]})`}${hint}`);
+          const word = technicalLayerWord(d.name);
+          // reason: said next to the domain until it is renamed; `canon check` says it as a note too (BR-2318)
+          const named = word !== undefined ? `  (named after a technical layer: \`${word}\`; name domains by business capability)` : "";
+          say(`${`${"  ".repeat(d.name.split("/").length - 1)}${d.name}`.padEnd(24)} ${String(n).padStart(4)} rules  ${d.code.length ? d.code.join(", ") : `(code through ${d.name.split("/")[0]})`}${hint}${named}`);
         }
       },
     }),

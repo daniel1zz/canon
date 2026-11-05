@@ -237,6 +237,7 @@ describe("required sections", () => {
     const root = repo({
       "canon/rules/billing/README.md": `---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n${terms}`,
       "canon/rules/auth/README.md": "---\ncode: [src/auth]\n---\n# auth\n\nLogin.\n\n## 术语\n\n",
+      "canon/rules/pay/README.md": "---\ncode: [src/pay]\n---\n# pay\n\nPayments.\n",
       ...change(1, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n"),
       ...change(2, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] <任务>\n"),
       ...change(3, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n\n## 陷阱和假设\n\nY.\n\n## 任务\n\n- [x] X\n"),
@@ -250,6 +251,7 @@ describe("required sections", () => {
         "C-2.md C-2 lacks or leaves empty: ## 任务",
         `${d(1)}.md ${d(1)} lacks or leaves empty: ## 后果`,
         "README.md domain auth README lacks or leaves empty: ## 术语",
+        "README.md domain pay README lacks or leaves empty: ## 术语",
       ].sort(),
     );
   });

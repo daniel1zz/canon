@@ -1,7 +1,7 @@
 import { defineCommand } from "citty";
 import { corpusOf, entry, EXIT, json, must, say, workspace, type DomainCommands } from "../../cli/command.ts";
 import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
-import { backlogNotes, check, noteLine } from "./check.ts";
+import { backlogNotes, check, domainNameNotes, noteLine } from "./check.ts";
 import { changeIdsOnBranches, listedBefore } from "../../work/session/inflight.ts";
 import { budgetHint, sessionText, sizeLines } from "./session-text.ts";
 import { testFilesFor } from "./tests.ts";
@@ -19,6 +19,8 @@ const checkCmd = defineCommand({
     const findings = check(input);
     // reason: a dangling id main already lists is said on stderr and never fails the check (BR-2150, #112)
     for (const n of backlogNotes(input)) console.error(noteLine(n));
+    // reason: a domain named after a technical layer is a note too: renaming it is a judgement call, never a refusal (BR-2318)
+    for (const n of domainNameNotes(input)) console.error(noteLine(n));
     if (args.json) json(findings);
     else for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
     if (!args.json) say(findings.length === 0 ? `ok: ${read.corpus.docs.length} documents, ${read.corpus.domains.length} domains` : `${findings.length} finding(s)`);

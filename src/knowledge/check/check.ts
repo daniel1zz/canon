@@ -2,6 +2,7 @@ import { fileSourceFailure, MIN_QUOTE, optionProblems, sourceFile, sources } fro
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { parse } from "yaml";
+import { technicalLayerWord, technicalNameAdvice } from "../documents/domain-names.ts";
 import { stripCode, type Corpus, type Rule } from "../documents/model.ts";
 import type { FileProblem } from "../documents/read.ts";
 import { idsIn as idsOf } from "../documents/types.ts";
@@ -36,6 +37,7 @@ export type CheckRule =
   | "rule-no-example" // an active or planned rule without `untested:` has no example in "## 例子"
   | "example-before-change" // a current rule's "## 例子" states how the product behaved before the change (BR-2301)
   | "domain-code-missing" // a domain README lists a code path that does not exist (BR-2079)
+  | "domain-name-technical" // a domain named after a technical layer: only ever a note, never a finding (BR-2318)
   | "domain-code-declared" // a README lists `code:` where the layout gives the location (BR-2117)
   | "code-layout" // with code_root: a domain without its directory, or a directory no domain or shared entry owns (BR-2118)
   | "decision-options" // a decision's options section shows no real choice (BR-2109)
@@ -88,6 +90,16 @@ export function backlogNotes(input: CheckInput): Finding[] {
 
 /** How a backlog note is printed: one line naming the place and the fix (BR-2150). */
 export const noteLine = (f: Finding): string => `note: ${f.path}: ${f.message}`;
+
+/** Domains named after a technical layer: said, never blocking (BR-2318). */
+export function domainNameNotes(input: CheckInput): Finding[] {
+  const out: Finding[] = [];
+  for (const dom of input.corpus.domains) {
+    const word = technicalLayerWord(dom.name);
+    if (word !== undefined) out.push({ path: dom.path, rule: "domain-name-technical", message: technicalNameAdvice(dom.name, word) });
+  }
+  return out;
+}
 
 export function check(input: CheckInput): Finding[] {
   const idsIn = (text: string) => idsOf(input.corpus.types, text);
