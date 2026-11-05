@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../land.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
+import { HANG_SECONDS, FAST, waitFor, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 const CLI = join(import.meta.dir, "../../../invocation/main.ts");
 
@@ -481,7 +481,7 @@ tests: []
       { name: "block", body: `echo '{"verdict":"block","findings":["no"]}'`, refused: true },
       { name: "exit", body: "exit 3", refused: true },
       { name: "invalid", body: "echo nothing", refused: true },
-      { name: "timeout", body: "exec sleep 60", config: "review_timeout_minutes: 0.25\n", refused: true },
+      { name: "timeout", body: `exec sleep ${HANG_SECONDS}`, config: "review_timeout_minutes: 0.25\n", refused: true },
     ];
     for (const c of cases) {
       const root = billingProject(`floor: "true"\ntests: []\n`);
@@ -531,12 +531,12 @@ tests: []
   test("BR-2216 BR-2099: canon work land stopped by SIGTERM while the reviewer runs leaves no temporary worktree", async () => {
     const root = billingProject(`floor: "true"\ntests: []\n`);
     const pidFile = join(root, "..", `${root.split("/").pop()}-sig.pid`);
-    const r = reviewer(root, `pwd -P > ${pidFile}.cwd\necho $$ > ${pidFile}\nexec sleep 30`);
+    const r = reviewer(root, `pwd -P > ${pidFile}.cwd\necho $$ > ${pidFile}\nexec sleep ${HANG_SECONDS}`);
     configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n`);
     const s = startNew(root, "New rule");
     addRule(s.worktree);
     const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
-    for (let i = 0; i < 200 && !existsSync(pidFile); i++) await Bun.sleep(100);
+    await waitFor("the reviewer to start", () => existsSync(pidFile));
     const dir = readFileSync(`${pidFile}.cwd`, "utf8").trim();
     expect(existsSync(dir)).toBe(true); // while the review runs it is there
     p.kill("SIGTERM");
@@ -548,7 +548,7 @@ tests: []
   test("BR-2296: a reviewer past review_timeout_minutes is stopped with its children and the landing is refused with reason review", async () => {
     const root = billingProject(`floor: "true"\ntests: []\n`);
     const pidFile = join(root, "..", `${root.split("/").pop()}-child.pid`);
-    const r = reviewer(root, `sleep 90 &\necho $! > ${pidFile}\nwait`);
+    const r = reviewer(root, `sleep ${HANG_SECONDS} &\necho $! > ${pidFile}\nwait`);
     // reason: 15 s leaves the reviewer time to start and write its pid under parallel floor load; 6 s did not (C-293)
     configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\nreview_timeout_minutes: 0.25\n`);
     const s = startNew(root, "New rule");
@@ -557,7 +557,7 @@ tests: []
     addRule(s.worktree);
     const started = Date.now();
     const out = await land(ws(s.worktree), FAST, quiet);
-    expect(Date.now() - started).toBeLessThan(60_000); // the limit is 15 s; the reviewer would sleep 90 s
+    expect(Date.now() - started).toBeLessThan(60_000); // the limit is 15 s; the reviewer would sleep  s
     expect(out.kind === "refused" && out.reason).toBe("review");
     expect(out.kind === "refused" && out.message).toContain("did not finish within");
     expect(await gone(Number(readFileSync(pidFile, "utf8").trim()))).toBe(true);
@@ -566,12 +566,12 @@ tests: []
   test("BR-2296 BR-2099: canon work land stopped by SIGTERM while the reviewer runs exits 143 and stops the reviewer", async () => {
     const root = billingProject(`floor: "true"\ntests: []\n`);
     const pidFile = join(root, "..", `${root.split("/").pop()}-reviewer.pid`);
-    const r = reviewer(root, `echo $$ > ${pidFile}\nexec sleep 30`);
+    const r = reviewer(root, `echo $$ > ${pidFile}\nexec sleep ${HANG_SECONDS}`);
     configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n`);
     const s = startNew(root, "New rule");
     addRule(s.worktree);
     const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
-    for (let i = 0; i < 200 && !existsSync(pidFile); i++) await Bun.sleep(100);
+    await waitFor("the reviewer to start", () => existsSync(pidFile));
     const pid = Number(readFileSync(pidFile, "utf8").trim());
     p.kill("SIGTERM");
     expect(await p.exited).toBe(143);

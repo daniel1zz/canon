@@ -2,7 +2,7 @@ import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
-import { processReaper, project, quiet, runsUntilKilled, sh, startNew, ws } from "../testkit.ts";
+import { HANG_SECONDS, alive, boundedLoop, hang, processReaper, project, quiet, runsUntilKilled, sh, startNew, waitFor, waitGone, ws } from "../testkit.ts";
 import { redMain } from "./redmain.ts";
 import { GREEN_REF, watch, watchDir } from "./watch.ts";
 
@@ -45,7 +45,7 @@ function watched(extra = "") {
   mkdirSync(dir, { recursive: true });
   const runs = join(dir, "runs");
   const hold = join(dir, "hold");
-  writeFileSync(join(dir, "floor.sh"), `git rev-parse HEAD >> ${runs}\nwhile [ -e ${hold} ]; do sleep 0.1; done\ntest ! -e FAIL\n`);
+  writeFileSync(join(dir, "floor.sh"), `git rev-parse HEAD >> ${runs}\n${boundedLoop(`[ -e ${hold} ]`, 0.1)}\ntest ! -e FAIL\n`);
   writeFileSync(join(root, "canon/config.yaml"), `floor: "sh ${join(dir, "floor.sh")}"\ntests: []\nfloor_timing: after\nfloor_quiet_minutes: 0\n${extra}`);
   sh(root, "commit", "-qam", "config");
   const tested = () => (existsSync(runs) ? readFileSync(runs, "utf8").trim().split("\n") : []);
@@ -118,9 +118,10 @@ const eventsOf = (root: string, kind: string) =>
 
 /**
  * Starts `canon floor watch` as its own group leader, as canon starts it, on a project whose config is `config(ready,
- * late)`; once `ready` exists sends `signal` (SIGTERM unless given) to the watcher alone, waits for it to exit 143 (130
- * for SIGINT) and then 1.5 s more, which is longer than a `sleep 1; touch late` the command left behind needs to write
- * `late`. `floor` replaces the floor ($READY and $LATE in it are the paths).
+ * late)`; once `ready` exists sends `signal` (SIGTERM unless given) to the watcher alone and waits for it to exit 143 (130
+ * for SIGINT). `late` is the file in which a process the command left behind wrote its own pid: the test asks
+ * `orphanPid(late)` and checks whether that process is still there, so nothing waits for a late write. `floor` replaces
+ * the floor ($READY and $LATE in it are the paths).
  */
 async function termedWhile(config: (ready: string, late: string) => string, opts: { floor?: string; signal?: "SIGTERM" | "SIGINT" } = {}) {
   const signal = opts.signal ?? "SIGTERM";
@@ -139,18 +140,14 @@ async function termedWhile(config: (ready: string, late: string) => string, opts
   await until(() => existsSync(ready));
   p.kill(signal); // the watcher only, not its group
   expect(await p.exited).toBe(signal === "SIGINT" ? 130 : 143);
-  await Bun.sleep(1500);
   return { ...w, dir, late };
 }
 
-const alive = (pid: number) => {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-};
+/** The pid a process left behind by a command wrote to `file` (a whole number once the write is done). */
+async function orphanPid(file: string): Promise<number> {
+  await waitFor(`${file} to hold a pid`, () => existsSync(file) && /^\d+$/.test(readFileSync(file, "utf8").trim()));
+  return Number(readFileSync(file, "utf8").trim());
+}
 
 const hookExits = (root: string) => ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'hook.run' ORDER BY id").all().map((r) => (JSON.parse(r.detail) as { exit: number }).exit);
 
@@ -221,8 +218,8 @@ describe("canon floor watch", () => {
   });
 
   test("BR-2285 BR-2219: a watcher stopped by SIGTERM while the floor runs stops the floor's processes too, those whose parent exited included, and records no result", async () => {
-    const { root, late } = await termedWhile(() => "", { floor: "( (sleep 1; touch $LATE) & ); touch $READY; sleep 30" });
-    expect(existsSync(late)).toBe(false);
+    const { root, late } = await termedWhile(() => "", { floor: `( sleep ${HANG_SECONDS} & echo $! > $LATE ); touch $READY; exec sleep ${HANG_SECONDS}` });
+    await waitGone(await orphanPid(late), "what the floor left after its parent exited");
     expect(results(root)).toEqual([]);
     expect(existsSync(watchDir(ws(root).db))).toBe(false);
   });
@@ -310,8 +307,7 @@ describe("a watcher hands off after every rebuild", () => {
     expect(results(root).map((x) => [x.kind, x.sha])).toEqual([["floor.pass", a], ["floor.pass", b]]);
     const kinds = ws(root).db.db.query<{ kind: string; detail: string }, []>("SELECT kind, detail FROM events WHERE kind IN ('floor.pass', 'floor.handoff') ORDER BY id").all().map((x) => [x.kind, (JSON.parse(x.detail) as { sha: string }).sha]);
     expect(kinds).toEqual([["floor.pass", a], ["floor.handoff", a], ["floor.pass", b], ["floor.handoff", b]]);
-    // The last one started found main's latest commit tested: no third handoff.
-    await Bun.sleep(500);
+    // The last one started found main's latest commit tested: no third handoff (no watcher is left that could hand off).
     expect(eventsOf(root, "floor.handoff")).toHaveLength(2);
   });
 
@@ -450,12 +446,12 @@ describe("a passing main", () => {
     expect(existsSync(watchDir(ws(root).db))).toBe(false);
   });
 
-  const orphaning = (ready: string, late: string) => `hooks:\n  after_green: '( (sleep 1; touch ${late}) & ); echo $$ > ${ready}.pid; touch ${ready}; ${runsUntilKilled}'\n`;
+  const orphaning = (ready: string, late: string) => `hooks:\n  after_green: '( sleep ${HANG_SECONDS} & echo $! > ${late} ); echo $$ > ${ready}.pid; touch ${ready}; ${runsUntilKilled}'\n`;
 
   test("BR-2285 BR-2222: a watcher stopped by SIGTERM while after_green runs sends its group SIGTERM: after_green and what it left after its parent exited end, the place is free, the watcher exits 143, and after_green is not run again", async () => {
     const { root, late, dir } = await termedWhile(orphaning);
     expect(alive(Number(readFileSync(join(dir, "ready.pid"), "utf8").trim()))).toBe(false);
-    expect(existsSync(late)).toBe(false);
+    await waitGone(await orphanPid(late), "what after_green left after its parent exited");
     expect(watcherRows(root)).toEqual([]);
     expect(existsSync(watchDir(ws(root).db))).toBe(false);
     expect(briefAfterGuide(root)).not.toContain("floor watch:");
@@ -472,10 +468,11 @@ describe("a passing main", () => {
 
   test("BR-2285: a process that left the group with setsid is not followed: the watcher exits 143 and it goes on and writes its file", async () => {
     const { late } = await termedWhile((ready, late) => {
-      writeFileSync(`${ready}.pl`, `use POSIX; if (fork() == 0) { POSIX::setsid(); sleep 1; open(my $f, ">", "${late}"); exit 0 }\n`);
+      writeFileSync(`${ready}.pl`, `use POSIX; if (fork() == 0) { POSIX::setsid(); open(my $f, ">", "${late}"); print $f $$; close($f); exec "sleep", "${HANG_SECONDS}" }\n`);
       return `hooks:\n  after_green: 'perl ${ready}.pl; touch ${ready}; ${runsUntilKilled}'\n`;
     });
-    expect(existsSync(late)).toBe(true);
+    const orphan = reaper.pid(await orphanPid(late));
+    expect(alive(orphan)).toBe(true);
   });
 
   test("BR-2285: an after_green that ignores SIGTERM is not waited for: the watcher exits 143 at once and its place is free while after_green still runs", async () => {
@@ -491,7 +488,7 @@ describe("a passing main", () => {
 
   test("BR-2285: a watcher stopped by SIGINT exits 130 and stops what after_green left running too", async () => {
     const { late } = await termedWhile(orphaning, { signal: "SIGINT" });
-    expect(existsSync(late)).toBe(false);
+    await waitGone(await orphanPid(late), "what after_green left after its parent exited");
   });
 
   test("BR-2285: a watcher that does not lead its process group sends SIGTERM to its own child only: after_green ends, what it left after its parent exited and the rest of the group run on", async () => {
@@ -501,7 +498,7 @@ describe("a passing main", () => {
     const late = join(dir, "late");
     const { root } = watched(orphaning(ready, late));
     const fake = fakeCanon(root);
-    const neighbour = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore", stdin: "ignore" });
+    const neighbour = hang();
     reaper.pid(neighbour.pid);
     // reason: not detached, so it shares this test's process group, as when run by hand from a shell without job control
     const w = Bun.spawn(["bun", MAIN, "floor", "watch"], { cwd: root, stdout: "ignore", stderr: "ignore", stdin: "ignore", env: { ...process.env, PATH: `${fake.bin}:${process.env["PATH"]}`, CANON_ACTOR: "agent:a" } });
@@ -514,8 +511,8 @@ describe("a passing main", () => {
     const still = alive(hook);
     if (still) process.kill(hook, "SIGKILL");
     expect(still).toBe(false);
-    await until(() => existsSync(late), 5_000).catch(() => {});
-    expect(existsSync(late)).toBe(true);
+    const orphan = reaper.pid(await orphanPid(late)); // what after_green left behind is not in the watcher's group, so it runs on
+    expect(alive(orphan)).toBe(true);
     expect(neighbour.exitCode).toBeNull();
     neighbour.kill("SIGKILL");
   });

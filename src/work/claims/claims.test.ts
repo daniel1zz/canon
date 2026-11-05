@@ -9,12 +9,12 @@ import { enqueue, finishEntry, tryTurn } from "../land/queue/queue.ts";
 import { land } from "../land/land.ts";
 import { stop } from "../session/session.ts";
 import { computeStats } from "../stats/stats.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { HANG_SECONDS, hang, FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 import { writeFileSync } from "node:fs";
 
 /** A real process that is gone by the time this returns: a pid and start time the probe will find missing. */
 async function deadProcess(): Promise<Proc> {
-  const p = Bun.spawn(["sleep", "30"]);
+  const p = hang();
   const proc = processOf(p.pid);
   if (!proc) throw new Error("no start time for a live child");
   p.kill("SIGKILL");
@@ -243,7 +243,7 @@ describe("the claim names the session again when a landing ends", () => {
   async function withSession(body: (root: string, s: { change: string; worktree: string }, session: number) => Promise<void>, config?: string) {
     const saved = process.env["CLAUDECODE"];
     delete process.env["CLAUDECODE"];
-    const session = Bun.spawn(["sleep", "60"]);
+    const session = hang();
     try {
       const root = project();
       if (config) {
@@ -296,7 +296,7 @@ describe("the claim names the session again when a landing ends", () => {
           expect(await lander.exited).toBe(code);
           expect(pidOf(root, s.change)).toBe(session);
         },
-        'floor: "sleep 30"\ntests: []\n',
+        `floor: "exec sleep ${HANG_SECONDS}"\ntests: []\n`,
       );
     }, 30_000);
   }

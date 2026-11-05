@@ -8,7 +8,7 @@ import { ask } from "../humans/questions.ts";
 import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { noticeOverlaps } from "./overlap.ts";
 import { LESSON_REMINDER, stop } from "./session.ts";
-import { project, sh, startNew, ws } from "../testkit.ts";
+import { hang, project, sh, startNew, ws } from "../testkit.ts";
 
 // reason: these cases spawn the CLI, which under load can take seconds per run (C-111)
 setDefaultTimeout(60_000);
@@ -63,7 +63,7 @@ describe("canon work status", () => {
 
 /** A process that existed and is gone now: a claim naming it no longer binds (BR-2100). */
 async function deadProcess(): Promise<Proc> {
-  const p = Bun.spawn(["sleep", "30"]);
+  const p = hang();
   const proc = processOf(p.pid);
   if (!proc) throw new Error("no start time for a live child");
   p.kill("SIGKILL");

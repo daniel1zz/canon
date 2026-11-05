@@ -9,7 +9,7 @@ import { writeSchemaFile } from "../../invocation/reference/reference.ts";
 import { land } from "../land/land.ts";
 import { addWorktree, git, listWorktreesLocked, withWorktreeLock } from "../../kernel/git.ts";
 
-import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { hang, FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
 describe("work start", () => {
   test("BR-2022: start of a change that is nowhere exits 3; when git cannot read main it exits 4, naming main (issue #77)", () => {
@@ -418,7 +418,7 @@ describe("clean keeps what git does not show", () => {
     const gone = await landed(root, "Gone");
     const live = await landed(root, "Live");
     const db = ws(root).db;
-    const dead = Bun.spawn(["sleep", "30"]);
+    const dead = hang();
     const proc = processOf(dead.pid);
     if (!proc) throw new Error("no start time for a live child");
     dead.kill("SIGKILL");
@@ -437,7 +437,7 @@ describe("clean keeps what git does not show", () => {
   test("BR-2019: a landed worktree that another process has as its current directory is kept, naming the pid", async () => {
     const root = project();
     const s = await landed(root, "Busy");
-    const proc = Bun.spawn(["sleep", "30"], { cwd: s.worktree });
+    const proc = hang({ cwd: s.worktree });
     try {
       const r = clean(ws(root), quiet);
       if (!r.ok) throw new Error(r.error.message);
@@ -798,7 +798,7 @@ describe("start and clean leave nothing half made", () => {
     stop(ws(s.worktree), "done for now", undefined, true);
     const w = ws(root);
     if (!holdClaim(w.db, s.change, s.worktree, "agent:a").ok) throw new Error("hold refused");
-    const p = Bun.spawn(["sleep", "30"]);
+    const p = hang();
     const dead = processOf(p.pid);
     if (!dead) throw new Error("no start time for a live child");
     p.kill("SIGKILL");

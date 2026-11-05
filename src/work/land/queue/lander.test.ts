@@ -7,7 +7,7 @@ import { readCorpus } from "../../../knowledge/documents/read.ts";
 import { land } from "../land.ts";
 import { waitPollMs } from "./wait.ts";
 import { processOf, selfProcess, type Proc } from "../../claims/liveness.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
+import { HANG_SECONDS, hang, FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
 // under load that alone came within 0.4 s of the 5 s default (C-111), so they get room, not the rest of the file.
@@ -15,7 +15,7 @@ const TIMED = 30_000;
 
 describe("the claim names the lander while it lands", () => {
   async function deadProcess(): Promise<Proc> {
-    const p = Bun.spawn(["sleep", "30"]);
+    const p = hang();
     const proc = processOf(p.pid);
     if (!proc) throw new Error("no start time for a live child");
     p.kill("SIGKILL");
@@ -53,7 +53,7 @@ describe("the claim names the lander while it lands", () => {
   });
 
   test("BR-2142: a work command of the session while its landing waits leaves the claim naming the lander", async () => {
-    const session = Bun.spawn(["sleep", "30"]);
+    const session = hang();
     const p = processOf(session.pid)!;
     await landingAsSession(p, async (root, s, landing) => {
       expect(renewClaim(ws(root).db, s.worktree, "agent:a", 12 * 3600_000, p).ok).toBe(true); // e.g. `canon work stop` from the session
@@ -67,7 +67,7 @@ describe("the claim names the lander while it lands", () => {
   });
 
   test("BR-2142: a session still running names the claim again after the landing, so it still binds", async () => {
-    const session = Bun.spawn(["sleep", "30"]);
+    const session = hang();
     try {
       await landingAsSession(processOf(session.pid)!, async (root, s, landing) => {
         expect(((await landing) as { kind: string }).kind).toBe("landed");
@@ -82,7 +82,7 @@ describe("the claim names the lander while it lands", () => {
   test("BR-2142: a lander killed with SIGKILL leaves the claim naming a gone process, so it can be taken at once", async () => {
     const root = project();
     const s = startNew(root, "Lander killed");
-    const session = Bun.spawn(["sleep", "30"]);
+    const session = hang();
     try {
       const p0 = processOf(session.pid)!;
       ws(root).db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(p0.pid, p0.start, s.change);
@@ -106,7 +106,7 @@ describe("the claim names the lander while it lands", () => {
   test("BR-2142: after a lander is killed with SIGKILL, a work command of the live session names the session again", async () => {
     const root = project();
     const s = startNew(root, "Lander killed, session lives");
-    const session = Bun.spawn(["sleep", "30"]);
+    const session = hang();
     try {
       const p0 = processOf(session.pid)!;
       ws(root).db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(p0.pid, p0.start, s.change);
@@ -147,7 +147,7 @@ describe("a lander killed by a signal", () => {
 
   test("BR-2099: SIGTERM while the floor runs fails the entry as killed, records it, exits 143, and the next lander goes at once", async () => {
     const root = project();
-    writeFileSync(join(root, "canon/config.yaml"), "floor: \"sleep 30\"\ntests: []\n");
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "exec sleep ${HANG_SECONDS}"\ntests: []\n`);
     sh(root, "commit", "-qam", "slow floor");
     const s = startNew(root, "Killed");
     const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
@@ -165,7 +165,7 @@ describe("a lander killed by a signal", () => {
 
   test("BR-2018: a --finish lander killed by SIGTERM takes its close commit back", async () => {
     const root = project();
-    writeFileSync(join(root, "canon/config.yaml"), "floor: \"sleep 30\"\ntests: []\n");
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "exec sleep ${HANG_SECONDS}"\ntests: []\n`);
     sh(root, "commit", "-qam", "slow floor");
     const s = startNew(root, "Killed finish");
     const head = sh(s.worktree, "rev-parse", "HEAD");
@@ -209,7 +209,7 @@ describe("a lander killed by a signal", () => {
     const hooks = join(sh(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "hooks");
     mkdirSync(hooks, { recursive: true });
     const marker = join(root, "..", `${root.split("/").pop()}-in-rebase`);
-    writeFileSync(join(hooks, "post-checkout"), `#!/bin/sh\ntouch ${marker}\nsleep 30\n`, { mode: 0o755 });
+    writeFileSync(join(hooks, "post-checkout"), `#!/bin/sh\ntouch ${marker}\nexec sleep ${HANG_SECONDS}\n`, { mode: 0o755 });
     // reason: a new process group, so the signal reaches git and the hook too, as a tool timeout's would.
     const p = Bun.spawn(["perl", "-e", "setpgrp(0,0); exec @ARGV", "bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
     await until(() => existsSync(marker));

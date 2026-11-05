@@ -6,7 +6,7 @@ import { processOf } from "../claims/liveness.ts";
 import { claims } from "../claims/claims.ts";
 import { drop } from "./drop.ts";
 import { writeSchemaFile } from "../../invocation/reference/reference.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { hang, FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 import { stop } from "../session/session.ts";
 import { handoffs } from "../session/handoffs.ts";
 
@@ -134,7 +134,7 @@ describe("dropping a change", () => {
   test("BR-2064 BR-2100: another operator's claim whose session process is gone does not stop the drop", async () => {
     const root = project();
     const s = withCommit(root, "Theirs, gone", "agent:b");
-    const sleeper = Bun.spawn(["sleep", "30"]);
+    const sleeper = hang();
     const dead = processOf(sleeper.pid)!;
     sleeper.kill("SIGKILL");
     await sleeper.exited;
@@ -150,7 +150,7 @@ describe("dropping a change", () => {
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
     const unlanded = released(withCommit(root, "Busy and unlanded"));
     for (const t of [s, unlanded]) {
-      const proc = Bun.spawn(["sleep", "30"], { cwd: t.worktree });
+      const proc = hang({ cwd: t.worktree });
       try {
         const r = drop(ws(root), t.change, quiet);
         expect(!r.ok && r.error.code).toBe("conflict");
@@ -298,14 +298,14 @@ describe("dropping a change", () => {
   test("BR-2064: a drop that fails after taking over a claim whose process is gone puts that claim back as it was", async () => {
     const root = project();
     const s = withCommit(root, "Theirs, gone, busy", "agent:b");
-    const sleeper = Bun.spawn(["sleep", "30"]);
+    const sleeper = hang();
     const dead = processOf(sleeper.pid)!;
     sleeper.kill("SIGKILL");
     await sleeper.exited;
     ws(root).db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(dead.pid, dead.start, s.change);
     const row = () => ws(root).db.db.query("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims").all();
     const before = row();
-    const busy = Bun.spawn(["sleep", "30"], { cwd: s.worktree });
+    const busy = hang({ cwd: s.worktree });
     try {
       const r = drop(ws(root, "agent:a"), s.change, quiet);
       expect(!r.ok && r.error.code).toBe("conflict");
@@ -431,7 +431,7 @@ describe("every refusal of drop is recorded", () => {
         reason: "in-use",
         arrange: (root) => {
           const s = released(withCommit(root, "Busy"));
-          const proc = Bun.spawn(["sleep", "30"], { cwd: s.worktree });
+          const proc = hang({ cwd: s.worktree });
           return { change: s.change, cleanup: async () => { proc.kill(); await proc.exited; } };
         },
       },

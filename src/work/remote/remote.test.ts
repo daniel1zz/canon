@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { land } from "../land/land.ts";
 import { ensureGuard } from "../../install/githook.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { HANG_SECONDS, FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 import { pushMain } from "./remote.ts";
 
 setDefaultTimeout(60_000);
@@ -174,7 +174,7 @@ describe("a failed push", () => {
     seed(root);
     const before = bareMain(bare);
     const hook = join(sh(root, "rev-parse", "--absolute-git-dir"), "hooks", "pre-push");
-    writeFileSync(hook, "#!/bin/sh\nsleep 30\n");
+    writeFileSync(hook, `#!/bin/sh\nexec sleep ${HANG_SECONDS}\n`);
     chmodSync(hook, 0o755);
     const s = startNew(root, "Slow");
     commitFile(s.worktree, "a.txt");
@@ -194,7 +194,7 @@ describe("a failed push", () => {
     writeFileSync(hook, "#!/bin/sh\nsleep 2\nexit 1\n");
     chmodSync(hook, 0o755);
     const stall = join(gitDir, "stall.sh");
-    writeFileSync(stall, "#!/bin/sh\nsleep 30\n");
+    writeFileSync(stall, `#!/bin/sh\nexec sleep ${HANG_SECONDS}\n`);
     chmodSync(stall, 0o755);
     sh(root, "config", "remote.origin.uploadpack", stall);
     const before = bareMain(bare);

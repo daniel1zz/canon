@@ -1,3 +1,4 @@
+import { afterEach } from "bun:test";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -114,4 +115,56 @@ export function processReaper() {
       pids.clear();
     },
   };
+}
+
+/**
+ * How many seconds a fake long-running process lives. It is longer than any test timeout (90 s at most), so a fake
+ * never ends by itself while a test runs: it ends only when the test or the code under test kills it. It is finite so
+ * that a runner killed with SIGKILL, which runs no cleanup, leaves nothing behind for long (C-374, #126).
+ */
+export const HANG_SECONDS = 120;
+
+const hung = new Set<{ kill: (signal: "SIGKILL") => void }>();
+// reason: registered once per test file that imports this module; afterEach runs after a failing test too (C-374, #126)
+afterEach(() => {
+  for (const p of hung) p.kill("SIGKILL");
+  hung.clear();
+});
+
+/** A live process that does nothing until it is killed; killed in afterEach at the latest. `cwd` puts it inside a directory. */
+export function hang(opts: { cwd?: string } = {}) {
+  const p = Bun.spawn(["sleep", String(HANG_SECONDS)], { stdout: "ignore", stderr: "ignore", stdin: "ignore", ...opts });
+  hung.add(p);
+  return p;
+}
+
+/** True while a process with this pid exists. */
+export function alive(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Waits until process `pid` is gone, for at most `ms` (default 5 s), and fails at once with a clear message when it is
+ * not: a process that should have been killed must not be waited for until the 30 s test timeout (C-374, #126).
+ */
+export async function waitGone(pid: number, what: string, ms = 5000): Promise<void> {
+  const end = Date.now() + ms;
+  while (alive(pid)) {
+    if (Date.now() > end) throw new Error(`${what}: process ${pid} still running ${ms} ms after it should have been killed`);
+    await Bun.sleep(20);
+  }
+}
+
+/** Waits until `ready()` is true, polling every 10 ms, for at most `ms`; fails with `what` instead of waiting for the test timeout. */
+export async function waitFor(what: string, ready: () => boolean, ms = 20_000): Promise<void> {
+  const end = Date.now() + ms;
+  while (!ready()) {
+    if (Date.now() > end) throw new Error(`timed out after ${ms} ms waiting for ${what}`);
+    await Bun.sleep(10);
+  }
 }

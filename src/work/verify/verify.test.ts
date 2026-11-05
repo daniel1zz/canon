@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { project, sh, startNew, ws } from "../testkit.ts";
+import { HANG_SECONDS, project, runsUntilKilled, sh, startNew, waitFor, waitGone, ws } from "../testkit.ts";
 import { EventEmitter } from "node:events";
 import { recordReport } from "./ledger.ts";
 import { commandFor, machineDeps, selectTests, workTest, type WorkTestDeps, type WorkTestResult } from "./verify.ts";
@@ -760,19 +760,18 @@ describe("canon work test reruns alone", () => {
 });
 
 describe("canon work test stops on a signal", () => {
-  /** Waits until `file` exists in `dir`. */
-  async function until(file: string) {
-    for (let i = 0; i < 200 && !existsSync(file); i++) await Bun.sleep(25);
-    expect(existsSync(file)).toBe(true);
-  }
+  /** Waits until `file` exists. */
+  const until = (file: string) => waitFor(`${file} to exist`, () => existsSync(file));
+  /** Waits until at least `n` test files have started in `wt` (each touches started.<pid> as its first step). */
+  const started = (wt: string, n: number) => waitFor(`${n} test file(s) to start`, () => readdirSync(wt).filter((f) => f.startsWith("started.")).length >= n);
 
   test("BR-2304: SIGTERM while files run stops them, counts running and not started, skips canon check and exits 143", async () => {
-    const wt = jobsFixture(4, 'sleep 30 &\necho $! >> "kids.$$"\ntouch "started.$$"\nwait\n', "2");
+    const wt = jobsFixture(4, `sleep ${HANG_SECONDS} &\necho $! >> "kids.$$"\ntouch "started.$$"\nwait\n`, "2");
     const { d, signals, exits } = fakeDeps();
     const lines: string[] = [];
     const run = workTest(ws(wt), false, (l) => lines.push(l), d);
     // the script writes its kid pid before touching started.<pid>, so 2 started files mean 2 kid files
-    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 2) await Bun.sleep(25);
+    await started(wt, 2);
     signals.emit("SIGTERM", "SIGTERM");
     const r = await run;
     expect(exits).toEqual([143]);
@@ -787,11 +786,11 @@ describe("canon work test stops on a signal", () => {
 
   test("BR-2304: SIGHUP is handled like SIGTERM and exits 129; SIGINT exits 130", async () => {
     for (const [sig, code] of [["SIGHUP", 129], ["SIGINT", 130]] as const) {
-      const wt = jobsFixture(2, 'touch "started.$$"\nsleep 5\n', "1");
+      const wt = jobsFixture(2, `touch "started.$$"\nsleep ${HANG_SECONDS}\n`, "1");
       const { d, signals, exits } = fakeDeps();
       const lines: string[] = [];
       const run = workTest(ws(wt), false, (l) => lines.push(l), d);
-      while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 1) await Bun.sleep(25);
+      await started(wt, 1);
       signals.emit(sig, sig);
       await run;
       expect(exits).toEqual([code]);
@@ -800,33 +799,34 @@ describe("canon work test stops on a signal", () => {
   });
 
   test("BR-2304: a second signal while the stop waits turns the hurry flag on", async () => {
-    const wt = jobsFixture(1, 'touch "started.$$"\nsleep 5\n', "1");
+    const wt = jobsFixture(1, `touch "started.$$"\nsleep ${HANG_SECONDS}\n`, "1");
     let hurriedAtEnd = false;
+    let stopping = false;
     const { d, signals } = fakeDeps({
       stop: async (_groups, hurried) => {
+        stopping = true;
         for (let i = 0; i < 100 && !hurried(); i++) await Bun.sleep(20);
         hurriedAtEnd = hurried();
         return undefined;
       },
     });
     const run = workTest(ws(wt), false, () => {}, d);
-    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 1) await Bun.sleep(25);
+    await started(wt, 1);
     signals.emit("SIGTERM", "SIGTERM");
-    await Bun.sleep(60);
+    await waitFor("the stop to be waiting", () => stopping); // the second signal comes while it waits
     signals.emit("SIGINT", "SIGINT");
     await run;
     expect(hurriedAtEnd).toBe(true);
   });
 
   test("BR-2304: a file that ends by a signal after canon was told to stop is no failure and no rerun", async () => {
-    const wt = jobsFixture(2, 'touch "started.$$"\nsleep 0.3\nkill -INT $$\n', "2");
+    const wt = jobsFixture(2, `touch "started.$$"\n${runsUntilKilled}\nkill -INT $$\n`, "2");
     const { d, signals } = fakeDeps();
     const lines: string[] = [];
     const run = workTest(ws(wt), false, (l) => lines.push(l), d);
-    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 1) await Bun.sleep(25);
-    signals.emit("SIGINT", "SIGINT"); // the files are killed by their own INT a moment later
+    await started(wt, 1);
+    signals.emit("SIGINT", "SIGINT"); // the files end by a signal after that
     await run;
-    await Bun.sleep(600);
     expect(lines.some((l) => l.startsWith("FAIL") || l.startsWith("rerunning") || l.startsWith("not rerunning"))).toBe(false);
     expect(lastEvent(wt)).toMatchObject({ signal: "SIGINT", failed: 0, files: 0 });
   });
@@ -836,8 +836,8 @@ describe("canon work test stops on a signal", () => {
     const { d, signals } = fakeDeps({ graceMs: 400 });
     const lines: string[] = [];
     const run = workTest(ws(wt), false, (l) => lines.push(l), d);
-    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 1) await Bun.sleep(25);
-    await Bun.sleep(100);
+    await started(wt, 1);
+    await waitGone(Number(readdirSync(wt).find((f) => f.startsWith("started."))!.split(".")[1]), "the test file that kills itself"); // it ended before the signal
     signals.emit("SIGINT", "SIGINT");
     await run;
     expect(lines.some((l) => l.startsWith("FAIL"))).toBe(false);
@@ -852,11 +852,11 @@ describe("canon work test stops on a signal", () => {
   });
 
   test("BR-2304: a file that traps SIGTERM and exits 1 is no failure; the counts are those taken at the signal", async () => {
-    const wt = jobsFixture(3, 'trap "exit 1" TERM\ntouch "started.$$"\nsleep 30 &\nwait\n', "2");
+    const wt = jobsFixture(3, `trap "exit 1" TERM\ntouch "started.$$"\nsleep ${HANG_SECONDS} &\nwait\n`, "2");
     const { d, signals, exits } = fakeDeps();
     const lines: string[] = [];
     const run = workTest(ws(wt), false, (l) => lines.push(l), d);
-    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 2) await Bun.sleep(25);
+    await started(wt, 2);
     signals.emit("SIGTERM", "SIGTERM");
     await run;
     expect(exits).toEqual([143]);
@@ -867,20 +867,19 @@ describe("canon work test stops on a signal", () => {
 
   test("BR-2304: a type check stopped by the signal records no typecheck result, prints no FAIL and starts nothing after it", async () => {
     const wt = jobsFixture(2, "exit 0\n", "1");
-    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\ntypecheck_command: "sh tc.sh"\n', "tc.sh": 'trap "exit 2" TERM\ntouch tc.started\nsleep 30 &\nwait\n' });
+    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\ntypecheck_command: "sh tc.sh"\n', "tc.sh": 'trap "exit 2" TERM\ntouch tc.started\nsleep ' + HANG_SECONDS + ' &\nwait\n' });
     const { d, signals } = fakeDeps();
     const lines: string[] = [];
     const run = workTest(ws(wt), false, (l) => lines.push(l), d);
     await until(join(wt, "tc.started"));
     signals.emit("SIGTERM", "SIGTERM");
     await run;
-    await Bun.sleep(200);
     expect(lastEvent(wt)).toMatchObject({ signal: "SIGTERM", typecheck: null });
     expect(lines.some((l) => l.startsWith("FAIL") || l.startsWith("test files:") || l.startsWith("pass"))).toBe(false);
   });
 
   test("BR-2304: when reporting the stop throws, canon still exits with the signal's code and says so on standard error", async () => {
-    const wt = jobsFixture(1, 'touch "started.$$"\nsleep 30 &\nwait\n', "1");
+    const wt = jobsFixture(1, `touch "started.$$"\nsleep ${HANG_SECONDS} &\nwait\n`, "1");
     const { d, signals, exits } = fakeDeps();
     const errors: string[] = [];
     const real = console.error;
@@ -889,7 +888,7 @@ describe("canon work test stops on a signal", () => {
       const run = workTest(ws(wt), false, (l) => {
         if (l.startsWith("stopped by")) throw new Error("output closed");
       }, d);
-      while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 1) await Bun.sleep(25);
+      await started(wt, 1);
       signals.emit("SIGINT", "SIGINT");
       await run;
     } finally {
@@ -900,16 +899,15 @@ describe("canon work test stops on a signal", () => {
   });
 
   test("BR-2304: a background process left by a file that already ended is stopped with the running files", async () => {
-    const wt = jobsFixture(2, 'case "$1" in *t1*) sleep 30 >/dev/null 2>&1 &\necho $! > bg.pid;;\n*) touch "started.$$"; sleep 30 & wait;;\nesac\n', "1");
+    const wt = jobsFixture(2, `case "$1" in *t1*) sleep ${HANG_SECONDS} >/dev/null 2>&1 &\necho $! > bg.pid;;\n*) touch "started.$$"; sleep ${HANG_SECONDS} & wait;;\nesac\n`, "1");
     const { d, signals } = fakeDeps();
     const run = workTest(ws(wt), false, () => {}, d);
-    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 1) await Bun.sleep(25);
+    await started(wt, 1);
     const bg = Number(readFileSync(join(wt, "bg.pid"), "utf8").trim());
     expect(() => process.kill(bg, 0)).not.toThrow(); // still alive: t1 ended, its group did not
     signals.emit("SIGTERM", "SIGTERM");
     await run;
-    await Bun.sleep(100);
-    expect(() => process.kill(bg, 0)).toThrow();
+    await waitGone(bg, "the background process the finished file left");
   });
 
   test("BR-2304: after the files have ended and before canon check no stop listener is left, so a signal then kills canon as usual", async () => {
@@ -924,12 +922,12 @@ describe("canon work test stops on a signal", () => {
   });
 
   test("BR-2227 BR-2304: a run stopped by a signal runs no canon check, so a finding in the worktree is not reported", async () => {
-    const wt = jobsFixture(1, 'touch "started.$$"\nsleep 30 &\nwait\n', "1");
+    const wt = jobsFixture(1, `touch "started.$$"\nsleep ${HANG_SECONDS} &\nwait\n`, "1");
     write(wt, { "canon/rules/core/BR-999.md": ruleText("dangling").replace("x\n\n## 例子", "refers to BR-998\n\n## 例子").replace(`id: ${rule}`, "id: BR-999") }); // a finding canon check would list
     const { d, signals } = fakeDeps();
     const lines: string[] = [];
     const run = workTest(ws(wt), false, (l) => lines.push(l), d);
-    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 1) await Bun.sleep(25);
+    await started(wt, 1);
     signals.emit("SIGTERM", "SIGTERM");
     await run;
     expect(lines.some((l) => l.startsWith("canon check") || l.includes("ref-dangling"))).toBe(false);
@@ -946,7 +944,7 @@ describe("canon work test stops on a signal", () => {
 
   test("BR-2304: during the type check a signal stops it, with 0 files running and all of them not started", async () => {
     const wt = jobsFixture(2, "exit 0\n", "1");
-    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\ntypecheck_command: "sh tc.sh"\n', "tc.sh": 'touch tc.started\nsleep 5\n' });
+    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\ntypecheck_command: "sh tc.sh"\n', "tc.sh": `touch tc.started\nsleep ${HANG_SECONDS}\n` });
     const { d, signals, exits } = fakeDeps();
     const lines: string[] = [];
     const run = workTest(ws(wt), false, (l) => lines.push(l), d);
@@ -958,13 +956,13 @@ describe("canon work test stops on a signal", () => {
   });
 
   test("BR-2304: during the rerun, files that failed together and are not rerun yet count as not started, not failed", async () => {
-    const wt = jobsFixture(2, 'touch "started.$$"\nsleep 0.3\nif [ "$(ls started.* | wc -l)" -le 2 ]; then exit 1; fi\nsleep 5\n', "2");
+    const wt = jobsFixture(2, `touch "started.$$"\nsleep 0.3\nif [ "$(ls started.* | wc -l)" -le 2 ]; then exit 1; fi\nsleep ${HANG_SECONDS}\n`, "2");
     const { d, signals } = fakeDeps();
     const lines: string[] = [];
     const run = workTest(ws(wt), false, (l) => lines.push(l), d);
-    for (let i = 0; i < 400 && !lines.some((l) => l.startsWith("rerunning alone")); i++) await Bun.sleep(25);
+    await waitFor("the rerun to start", () => lines.some((l) => l.startsWith("rerunning alone")));
     expect(lines.some((l) => l.startsWith("rerunning alone"))).toBe(true);
-    while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 3) await Bun.sleep(25);
+    await started(wt, 3);
     signals.emit("SIGTERM", "SIGTERM");
     await run;
     expect(lines).toContain("stopped by SIGTERM: 1 test file(s) were running, 1 not started");
@@ -975,7 +973,7 @@ describe("canon work test stops on a signal", () => {
 describe("canon work test stops its process tree on a real signal", () => {
   async function start(wt: string) {
     const proc = Bun.spawn(["bun", MAIN, "work", "test"], { cwd: wt, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
-    for (let i = 0; i < 400 && !existsSync(join(wt, "child.pid")); i++) await Bun.sleep(25);
+    await waitFor("the test file to write child.pid", () => existsSync(join(wt, "child.pid")));
     expect(existsSync(join(wt, "child.pid"))).toBe(true);
     return proc;
   }
@@ -989,7 +987,7 @@ describe("canon work test stops its process tree on a real signal", () => {
   };
 
   test("BR-2304: SIGTERM to canon alone ends the test file's whole process tree and exits 143", async () => {
-    const wt = jobsFixture(2, 'sleep 30 &\necho $! > child.pid\nwait\n', "1");
+    const wt = jobsFixture(2, `sleep ${HANG_SECONDS} &\necho $! > child.pid\nwait\n`, "1");
     const proc = await start(wt);
     const pid = Number(readFileSync(join(wt, "child.pid"), "utf8"));
     expect(alive(pid)).toBe(true);
@@ -1002,12 +1000,12 @@ describe("canon work test stops its process tree on a real signal", () => {
   }, 30_000);
 
   test("BR-2304: a second signal ends the wait at once and sends SIGKILL to a file that ignores SIGTERM", async () => {
-    const wt = jobsFixture(1, 'trap "" TERM INT\nsleep 30 &\necho $! > child.pid\nwhile true; do sleep 0.1; done\n', "1");
+    const wt = jobsFixture(1, `trap "touch term.seen" TERM INT\nsleep ${HANG_SECONDS} &\necho $! > child.pid\n${runsUntilKilled}\n`, "1");
     const proc = await start(wt);
     const pid = Number(readFileSync(join(wt, "child.pid"), "utf8"));
     const t0 = performance.now();
     proc.kill("SIGTERM");
-    await Bun.sleep(700);
+    await waitFor("the file to get SIGTERM", () => existsSync(join(wt, "term.seen"))); // canon is now waiting for it to exit
     proc.kill("SIGINT");
     expect(await proc.exited).toBe(143);
     expect(performance.now() - t0).toBeLessThan(8000); // not the 10 s grace period

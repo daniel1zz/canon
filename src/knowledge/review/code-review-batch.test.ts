@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git } from "../../kernel/git.ts";
 import { processOf } from "../../work/claims/liveness.ts";
-import { ws } from "../../work/testkit.ts";
+import { hang, ws } from "../../work/testkit.ts";
 
 setDefaultTimeout(60_000);
 
@@ -263,7 +263,7 @@ describe("one code review at a time, through the coordination database", () => {
   it("BR-2314: with a live holder, a review with CANON_CODE_REVIEW_NOWAIT=1 reports it is busy and does not call the AI", async () => {
     const r = setup("review_max_unreviewed: 1\n", FINDING);
     const l = land(r, "a.ts");
-    const holder = Bun.spawn(["sleep", "60"]);
+    const holder = hang();
     try {
       const me = processOf(holder.pid)!;
       hold(r, me.pid, me.start);
@@ -280,7 +280,7 @@ describe("one code review at a time, through the coordination database", () => {
   it("BR-2314: a holder killed with SIGKILL is taken over by the next review, which reviews and clears the row", async () => {
     const r = setup("review_max_unreviewed: 1\n", FINDING);
     const l = land(r, "a.ts");
-    const holder = Bun.spawn(["sleep", "60"]);
+    const holder = hang();
     const me = processOf(holder.pid)!;
     hold(r, me.pid, me.start);
     holder.kill("SIGKILL");
@@ -295,7 +295,7 @@ describe("one code review at a time, through the coordination database", () => {
   it("BR-2314: a live holder is not taken over when the process table cannot be read", async () => {
     const r = setup("review_max_unreviewed: 1\n", FINDING);
     const l = land(r, "a.ts");
-    const holder = Bun.spawn(["sleep", "60"]);
+    const holder = hang();
     try {
       const me = processOf(holder.pid)!;
       // a stale start: with a readable table this holder would be provably gone
@@ -318,7 +318,7 @@ describe("one code review at a time, through the coordination database", () => {
   it("BR-2314: a review whose row was taken over meanwhile does not delete the new holder's row", async () => {
     const r = setup("review_max_unreviewed: 1\n", FINDING);
     const l = land(r, "a.ts");
-    const other = Bun.spawn(["sleep", "60"]);
+    const other = hang();
     try {
       const me = processOf(other.pid)!;
       writeFileSync(
