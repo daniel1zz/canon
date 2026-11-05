@@ -507,7 +507,7 @@ describe("migration (BR-2245)", () => {
   test("BR-2245: a rule only a skipped testcase of the report names gets no migration record, one a running testcase names does", async () => {
     const root = fixture({
       files: {
-        [`canon/rules/billing/${br(3)}.md`]: ruleText(3),
+        [`canon/rules/billing/${br(3)}.md`]: ruleText(3, { untested: "provider" }),
         "src/billing/b.test.ts": `it.skip("${br(3)}: later", () => {});\n`,
       },
     });
