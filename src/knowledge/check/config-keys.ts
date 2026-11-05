@@ -5,7 +5,7 @@ import { configKey, REL_DIR, relPath } from "../../invocation/key.ts";
 export const checkKeys = {
   tests: configKey<readonly string[] | undefined>({
     key: "tests",
-    doc: "Globs of test files scanned for rule ids; unset means the default discovery (BR-2046).",
+    doc: "Globs of the project's test files, whatever their language: the files whose JUnit reports name rules (BR-2005). Required: without it canon check, canon work test and landing fail with exit 2, since canon does not guess which files are tests (BR-2046, D-64).",
     default: undefined,
     schema: { type: "array", items: { type: "string" } },
     read: (v) => (!Array.isArray(v) || v.some((t) => typeof t !== "string") ? err("invalid", "`tests` must be a list of globs") : ok(v as string[])),

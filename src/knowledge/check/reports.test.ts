@@ -78,7 +78,7 @@ describe("canon check reads the ledger of test reports", () => {
     expect(r.code).toBe(1);
     expect(r.out).toContain("sets no test_command");
     expect(r.out).toContain("bun test {file} --reporter=junit --reporter-outfile={report}");
-    expect(r.out).not.toContain("run canon work test");
+    expect(r.out).not.toContain("run canon work test src/billing/a.test.ts"); // the command to run is not offered: there is none to run
   });
 
   test("BR-2344: in the main checkout a test file without a report for its content is not a finding", () => {
