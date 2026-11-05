@@ -55,7 +55,7 @@ instructions:
 session_text_budget: 12000
 # 本项目选测试的脚本（D-64，BR-2346 到 BR-2351）；配了 floor_skip_paths 就必须配它（BR-2165）
 test_select_command: "bun scripts/select-tests/main.ts"
-floor_skip_paths: [canon/rules, canon/decisions, canon/changes, canon/notes, canon/product.md, canon/backlog.md]
+floor_skip_paths: [canon/rules, canon/decisions, canon/changes, canon/notes, canon/product.md, canon/architecture.md, canon/backlog.md]
 # 依据（C-122 核查）：测试只在临时仓库里读写 canon/ 下的文件；读真实仓库文件的只有 .claude/skills（BR-2096、install）和 scripts/，所以不列它们，也不列 canon/config.yaml
 # 规则和代码列表的核对在 canon check 里（BR-2180，C-145）
 # 轮到的合入者最多把几个合入一起测、只跑一次 floor（D-26、BR-2172）；floor_timing: after 下不分批

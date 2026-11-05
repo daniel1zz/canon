@@ -1,9 +1,10 @@
 import { defineCommand } from "citty";
 import { corpusOf, entry, EXIT, json, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
+import { architectureHints } from "./architecture.ts";
 import { backlogNotes, check, domainNameNotes, noteLine, staleReportNotes } from "./check.ts";
 import { reportsFor } from "../../work/verify/changes.ts";
-import { changeIdsOnBranches, listedBefore } from "../../work/session/inflight.ts";
+import { architectureBase, changeIdsOnBranches, listedBefore } from "../../work/session/inflight.ts";
 import { budgetHint, sessionText, sizeLines } from "./session-text.ts";
 import { testFilesFor } from "./tests.ts";
 
@@ -17,7 +18,7 @@ const checkCmd = defineCommand({
     const read = corpusOf(ws);
     const testFiles = must(testFilesFor(ws.root, ws.config));
     const reports = must(reportsFor(ws.db, ws.root, ws.config, read.corpus, testFiles));
-    const input = { root: ws.root, ...read, testFiles, reports, branchChanges: must(changeIdsOnBranches(ws)), backlogBase: must(listedBefore(ws)) };
+    const input = { root: ws.root, ...read, testFiles, reports, branchChanges: must(changeIdsOnBranches(ws)), backlogBase: must(listedBefore(ws)), architecture: must(architectureBase(ws)) };
     const findings = check(input);
     // reason: a dangling id main already lists is said on stderr and never fails the check (BR-2150, #112)
     for (const n of backlogNotes(input)) console.error(noteLine(n));
@@ -25,6 +26,8 @@ const checkCmd = defineCommand({
     // reason: files changed by others since their last report still count by their older report, said once (BR-2345)
     for (const n of staleReportNotes(input)) console.error(noteLine(n));
     for (const n of domainNameNotes(input)) console.error(noteLine(n));
+    // reason: domains the overview never named are old gaps, said and never refused; only a landing that adds one is refused (D-65, D-37)
+    for (const h of architectureHints(input)) console.error(h);
     if (args.json) json(findings);
     else for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
     if (!args.json) say(findings.length === 0 ? `ok: ${read.corpus.docs.length} documents, ${read.corpus.domains.length} domains` : `${findings.length} finding(s)`);

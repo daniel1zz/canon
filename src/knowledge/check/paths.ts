@@ -2,6 +2,7 @@ import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fencedLines as inFence, type Corpus } from "../documents/model.ts";
 import { git } from "../../kernel/git.ts";
+import { ARCHITECTURE_FILE } from "./architecture.ts";
 
 /**
  * BR-2171, D-25: a repository path written in backticks in a current document must not name a path the repository
@@ -49,7 +50,7 @@ const DECISION_HISTORY = new Set(["背景", "方案"]);
 /**
  * The current text of each document in scope (BR-2171): active rules without their examples (fixtures of a
  * hypothetical project), domain READMEs, accepted decisions without 背景 and 方案 (the situation when they were
- * decided), open changes, and the root docs. Done or dropped changes, superseded decisions and notes are history.
+ * decided), open changes, the root docs and the architecture overview. Done or dropped changes, superseded decisions and notes are history.
  */
 function currentTexts(root: string, corpus: Corpus): { path: string; text: string }[] {
   const out: { path: string; text: string }[] = [];
@@ -59,7 +60,7 @@ function currentTexts(root: string, corpus: Corpus): { path: string; text: strin
     else if (d.kind === "change" && d.status === "open") out.push({ path: d.path, text: d.body });
   }
   for (const dom of corpus.domains) out.push({ path: dom.path, text: dom.body });
-  for (const p of ROOT_DOCS) if (existsSync(join(root, p))) out.push({ path: p, text: readFileSync(join(root, p), "utf8") });
+  for (const p of [...ROOT_DOCS, ARCHITECTURE_FILE]) if (existsSync(join(root, p))) out.push({ path: p, text: readFileSync(join(root, p), "utf8") });
   return out;
 }
 

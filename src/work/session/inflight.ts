@@ -4,6 +4,7 @@ import { backlogAt, inBacklogOrder, type BacklogEntry } from "../../knowledge/do
 import { parseDocFile } from "../../knowledge/documents/docfile.ts";
 import type { Change, ChangeStatus, Corpus } from "../../knowledge/documents/model.ts";
 import { CANON_DIR } from "../../knowledge/documents/read.ts";
+import type { ArchitectureBase } from "../../knowledge/check/architecture.ts";
 import { liveClaims } from "../claims/claims.ts";
 import type { Workspace } from "../workspace.ts";
 import { handoffs, type Handoff } from "./handoffs.ts";
@@ -92,6 +93,21 @@ export function listedBefore(ws: Workspace): Result<Set<string>> {
   if (!atBase.ok) return atBase;
   for (const e of atBase.value) out.add(e.id);
   return ok(out);
+}
+
+/**
+ * What was there before this checkout's work, for the architecture checks (D-65): main's tip and the base (merge-base of HEAD
+ * and main) count as already there, the base is what the overview and change files are compared with. A repository whose
+ * main has no commit yet has nothing there, so everything counts as new.
+ */
+export function architectureBase(ws: Workspace): Result<ArchitectureBase> {
+  const refs: string[] = [];
+  const tip = git(ws.primary, "rev-parse", "--verify", "-q", `${ws.config.main}^{commit}`);
+  if (tip.ok) refs.push(tip.value);
+  const base = git(ws.root, "merge-base", "HEAD", ws.config.main);
+  // reason: no common history with main (an orphan branch) leaves only main's tip to compare with, as for the backlog (BR-2150)
+  if (base.ok && !refs.includes(base.value)) refs.push(base.value);
+  return ok({ refs, since: base.ok ? base.value : undefined });
 }
 
 /** The change ids whose files are committed at `ref`, by file name. */

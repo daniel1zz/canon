@@ -11,6 +11,7 @@ import { caseNames, REPORT_RECIPES } from "../../work/verify/report.ts";
 import type { TestReports } from "../../work/verify/ledger.ts";
 import { historyOf, pathFindings } from "./paths.ts";
 import { listFindings } from "./lists.ts";
+import { architectureFindings, type ArchitectureBase, type ArchitectureRule } from "./architecture.ts";
 import { releaseFindings } from "../releases/check.ts";
 import { EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, RULE_SECTION, section } from "../documents/templates.ts";
 
@@ -50,6 +51,7 @@ export type CheckRule =
   | "path-missing" // a current document names, in backticks, a repository path that was moved or deleted
   | "list-mismatch" // a rule's `lists` front matter disagrees with its text or with the code (BR-2180)
   | "release-frozen" // a shipped release's 目标, 范围, 不做 or its set of tagged rules differs from what it was at `shipped_at` (D-61)
+  | ArchitectureRule // the architecture overview and the domains and decisions it must follow (D-65)
   | "template-unfilled"; // a rule, decision, change, declared-type document or domain README still holds a template placeholder line
 
 export interface CheckInput {
@@ -67,6 +69,8 @@ export interface CheckInput {
    * its branch went after it was listed, and that must not block main or landings that did not list it (BR-2150, #112).
    */
   readonly backlogBase?: ReadonlySet<string>;
+  /** What was there before this work, for the architecture checks (D-65); without it every domain and link counts as new. */
+  readonly architecture?: ArchitectureBase;
 }
 
 /** Backlog ids that name no change in the tree and no change only on its own branch, each marked when main already lists it. */
@@ -228,6 +232,7 @@ export function check(input: CheckInput): Finding[] {
   for (const f of pathFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "path-missing", message: f.message });
   findings.push(...releaseFindings(input.root, input.corpus));
   for (const f of listFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "list-mismatch", message: f.message });
+  findings.push(...architectureFindings(input));
   return findings;
 }
 

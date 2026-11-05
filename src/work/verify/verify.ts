@@ -1,6 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { changeIdsOnBranches, listedBefore } from "../session/inflight.ts";
+import { architectureBase, changeIdsOnBranches, listedBefore } from "../session/inflight.ts";
 import { join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
@@ -364,7 +364,9 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   const testFiles = testFilesRead.value;
   const reports = reportsFor(ws.db, ws.root, ws.config, read.corpus, testFiles);
   if (!reports.ok) return reports;
-  const input = { root: ws.root, ...read, testFiles, reports: reports.value, branchChanges: onBranches.value, backlogBase: onMain.value };
+  const arch = architectureBase(ws);
+  if (!arch.ok) return arch;
+  const input = { root: ws.root, ...read, testFiles, reports: reports.value, branchChanges: onBranches.value, backlogBase: onMain.value, architecture: arch.value };
   const findings = check(input);
   for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
   for (const n of staleReportNotes(input)) say(noteLine(n)); // never a failure (BR-2345)

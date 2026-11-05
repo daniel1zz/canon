@@ -89,7 +89,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   if (!listed.ok) return refuse("environment", listed.error.message);
   const reports = reportsFor(ws.db, wt, landing.value, read.corpus, tests);
   if (!reports.ok) return refuse("environment", reports.error.message);
-  const input = { root: wt, ...read, testFiles: tests, reports: reports.value, branchChanges: onBranches.value, backlogBase: new Set(listed.value.map((e) => e.id)) };
+  const input = { root: wt, ...read, testFiles: tests, reports: reports.value, branchChanges: onBranches.value, backlogBase: new Set(listed.value.map((e) => e.id)), architecture: { refs: [v.base], since: v.base } };
   const findings = check(input);
   for (const n of backlogNotes(input)) say(noteLine(n));
   for (const n of staleReportNotes(input)) say(noteLine(n));
