@@ -1,8 +1,11 @@
 ---
 id: C-379
 title: human answer accepts multi-select answers
-status: open
-rules: [BR-2021]
+status: done
+rules:
+  - BR-2021
+passes:
+  BR-2021: 0a6196f22a4bbcae test
 ---
 
 ## 为什么
