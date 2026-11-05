@@ -1,11 +1,12 @@
 # CLAUDE.md
 
-Canon：为多个 AI 会话同时开发的项目提供共享记忆和协作协调。先读 `canon/product.md`（七条承诺 P1 到 P7，是这里所有东西存在的理由）和 `canon/architecture.md`（系统现在的结构）。
+Canon：为多个 AI 会话同时开发的项目提供共享记忆和协作协调。先读一遍 `canon/product.md`，里面的七条承诺（P1 到 P7）是这里所有东西存在的理由。
 
 `canon brief` 输出的工作说明是通用流程的唯一来源，这里只写 canon 自己仓库另外的约定。
 
 ## 东西在哪
 
+- `canon/architecture.md`：系统现在的部件、数据在哪、谁调谁；改了部件或主要流程，同一次变更里改它。`canon brief` 告诉你先读它。
 - `canon/notes/`：调研和复盘。
 - `.claude/skills/canon-*`：canon 自带的 skill，`canon init` 时装进每个用 canon 的项目；要改就在这里改（D-8、D-9、D-10）。
 - `src/`：canon 的实现，`code_root: src`：`src/work/land/` 是 `work/land` 的代码，`src/kernel/` 是不属于任何领域的共享代码；测试放在它测的代码旁边。
