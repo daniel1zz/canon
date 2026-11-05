@@ -1,7 +1,7 @@
 ---
 id: C-381
 title: "canon-test: one red-green cycle per rule (#128)"
-status: open
+status: done
 rules: []
 ---
 
