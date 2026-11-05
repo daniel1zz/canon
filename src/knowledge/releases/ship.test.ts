@@ -273,11 +273,11 @@ describe("canon release ship: shipping and the landing gate", () => {
       return land(ws(s.worktree), FAST, quiet);
     };
     // reason: deleting a release that rules still name is ref-dangling, and a shipped_at that names no commit holding it is release-frozen: canon check refuses those first; only an unship reaches the release gate
-    const expected = { unship: ["release", undefined], delete: ["check", ["ref-dangling"]], move: ["check", ["release-frozen"]] } as const;
+    const expected: Record<string, [string, string | undefined]> = { unship: ["release", undefined], delete: ["check", "ref-dangling"], move: ["check", "release-frozen"] };
     for (const [title, change] of [["unship", (t: string) => t.replace("status: shipped", "status: active").replace(/shipped_at: .*\n/, "")], ["delete", () => null], ["move", (t: string) => t.replace(/shipped_at: .*/, `shipped_at: ${"b".repeat(40)}`)]] as const) {
       const out = await attempt(title, change);
-      const rules = out.kind === "refused" ? [...new Set(out.findings?.map((f) => f.rule))] : undefined;
-      expect([title, out.kind === "refused" && out.reason, out.kind === "refused" && (rules?.length ? rules : undefined)]).toEqual([title, expected[title][0], expected[title][1]]);
+      const rules = out.kind === "refused" ? [...new Set(out.findings?.map((f) => f.rule))].join() : undefined;
+      expect([title, out.kind === "refused" && out.reason, out.kind === "refused" && (rules || undefined)]).toEqual([title, ...expected[title]!]);
     }
     const fine = await attempt("edit success criteria", (t) => t.replace("成功标准的内容", "成功标准改了"));
     expect(fine.kind).toBe("landed");
