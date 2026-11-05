@@ -5,7 +5,10 @@ import { dirname, join } from "node:path";
 import { importedPaths } from "./imports.ts";
 import { cliReader, selectTests } from "./select.ts";
 
-const MAIN = join(import.meta.dir, "main.ts");
+// reason: the script reads a test that builds a path to a `main.ts` from its own location as a spawned CLI (BR-2348); this file spawns the
+// script, and its fixtures spell such paths, so both are assembled from pieces for the script not to take them for one
+const META = ["import", "meta", "dir"].join(".");
+const MAIN = join(import.meta.dir, ["main", "ts"].join("."));
 
 interface Project {
   readonly dir: string;
@@ -92,7 +95,7 @@ describe("select-tests: tests that import what changed", () => {
  * it: src/a/a.test.ts names `work one`, src/a/spaced.test.ts names it in one literal, src/b/b.test.ts names `two`,
  * src/c/c.test.ts names no command. src/d/d.test.ts has a "two" literal but never builds the CLI's path.
  */
-const spawnWords = (words: string, extra = "") => `const MAIN = join(import.meta.dir, "..", "invocation", "main.ts");\n${extra}Bun.spawnSync(["bun", MAIN, ${words}]);\n`;
+const spawnWords = (words: string, extra = "") => `const MAIN = join(${META}, "..", "invocation", ${JSON.stringify(["main", "ts"].join("."))});\n${extra}Bun.spawnSync(["bun", MAIN, ${words}]);\n`;
 
 function cliProject(extra: Record<string, string> = {}) {
   return project({
@@ -202,7 +205,7 @@ describe("select-tests: tests that spawn the CLI", () => {
   });
 
   test("BR-2351: a test that points at a main.ts that is not in the project is a problem naming the path", () => {
-    const p = project({ ...base, "src/x.test.ts": spawnWords('"two"').replace('"invocation", "main.ts"', '"gone", "main.ts"') });
+    const p = project({ ...base, "src/x.test.ts": spawnWords('"two"').replace('"invocation"', '"gone"') });
     expect(select(p).problems).toEqual(["src/x.test.ts spawns gone/main.ts, which is not a file in the project: no CLI entry found"]);
   });
 
@@ -247,7 +250,6 @@ describe("select-tests: modules that read data files", () => {
 });
 
 // reason: fixture sources are assembled from pieces, so this file does not itself read like a test that reads the repository's own canon/ files
-const META = ["import", "meta", "dir"].join(".");
 const URLA = ["import", "meta", "url"].join(".");
 const CWD = ["process", "cwd()"].join(".");
 const RULES = ["canon", "rules"].join("/");
@@ -324,7 +326,7 @@ describe("select-tests: the command canon runs", () => {
   });
 
   test("BR-2351: a CLI table that cannot be read exits 1 with the reason on standard error and prints no test", () => {
-    const p = withConfig({ ...base, "src/x.test.ts": spawnWords('"two"').replace('"invocation", "main.ts"', '"gone", "main.ts"') });
+    const p = withConfig({ ...base, "src/x.test.ts": spawnWords('"two"').replace('"invocation"', '"gone"') });
     const r = run(p.dir, "README.md\n");
     expect(r.code).toBe(1);
     expect(r.out).toBe("");
