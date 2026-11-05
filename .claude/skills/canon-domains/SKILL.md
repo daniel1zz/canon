@@ -65,14 +65,14 @@ Any two signals pointing the same way justify a split or merge.
 | Change | one part changes often or for other reasons | always changes together |
 | Language | one word needs two definitions | same words, same meanings |
 | Class | core mixed with generic | same class |
-| Ownership | different people decide (a signal, not the reason: Conway's law explains where boundaries tend to form, it does not justify them) | same people |
+| Ownership | different people decide (a signal only, see below) | same people |
 | Size | weak: over ~25 rules is a prompt to check the rows above | a domain of 1-3 rules is usually part of another |
 
 Anti-patterns:
 
 - Big ball of mud / god domain: one domain that everything touches and no vocabulary fits. Mark it, split by language and change, do not model it finely.
 - Splitting for hypothetical reuse: two domains because "someone may reuse this". Split on today's language and change, not on a guess.
-- Splitting by team only: the org chart is not a vocabulary boundary.
+- Splitting by team only: Conway's law explains where boundaries tend to form, it does not justify them; ownership is a signal, the vocabulary is the reason.
 - Counter-example, a division that looks like capabilities but is layers: `ingestion`, `processing`, `reporting` for an analytics product. Each is a pipeline stage, and "a report is wrong" touches all three. Correction: cut by what the business decides: `usage-metering` (core: what counts as usage), `billing` (supporting), `export` (generic, uses a library). Stages become code inside each domain.
 
 ## 8. Context map: who depends on whom
