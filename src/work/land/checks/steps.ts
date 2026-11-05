@@ -20,6 +20,7 @@ import { err, ok, type Result } from "../../../kernel/result.ts";
 import { ARCHITECTURE_FILE, hasContent, overviewText } from "../../../knowledge/check/architecture.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
 import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
+import { noticeProposedDecisions } from "./proposed.ts";
 import { reviewTree } from "./review-tree.ts";
 import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
 import { parse } from "yaml";
@@ -211,6 +212,9 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   const hookEnv = { CANON_BASE: base.value, CANON_HEAD: head.value, CANON_BRANCH: v.branch };
   const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env: hookEnv, port: changePort(ws, subject) }, ws.config.hooks.before_land, say, true);
   if (failed) return refuse("hook", `before_land \`${failed.command}\` exited ${failed.exit}\n${failed.output}`);
+  // reason: a notice, never a refusal: subagents land decisions proposed by design (BR-2355)
+  const proposed = noticeProposedDecisions(ws, say, { wt, base: base.value, head: head.value, subject, corpus: read.corpus });
+  if (!proposed.ok) return refuse("environment", proposed.error.message);
   return { ok: true, reviewNotes };
 }
 

@@ -24,6 +24,7 @@ A PRD describes the happy path; the gaps are the work. For each requirement answ
 | What happens on repeat? | the second run prints `no change` and writes nothing |
 | What happens on concurrent use? | the second session gets exit 5 and the holder's change id |
 | Who is refused, and what do they see? | a session without the claim: exit 5, `held by C-n` |
+| What triggers it, observably? | `canon work land` run by a session; for an interactive product, which input (key, click, gamepad button) |
 
 - State rounding and the side of every threshold explicitly ("at most 3", "more than 100 KB", "round down to the cent"). "Up to", "within", "about" are not sides.
 - A guarantee about money or permission that rests only on a prompt or a warning is almost always one nobody built. Either the rule says what enforces it whichever way the user got there, or the point is not settled yet (section 5).
@@ -47,8 +48,16 @@ Banned verbs (no observer, no observation): works, runs, handles, supports, inte
 
 Never write a guess as if it were settled.
 
-- Direction, or a decision explicitly reserved for humans (spending money, irreversible on shared scope, needing a person's credentials): `canon human ask "<question>"` and keep working on what does not depend on the answer.
-- Anything else with real alternatives: decide it yourself and record why with `canon decision new --title "..."` (背景, 方案 with every rejected option, 决定, 后果), then write the rule.
+- The owner's: direction; product feel, meaning anything they would notice using the product (controls, look, wording, where the art or data comes from); and a decision explicitly reserved for humans (spending money, irreversible on shared scope, needing a person's credentials). `canon human ask "<question>"`, and keep working on what does not depend on the answer.
+- The agent's: anything else with real alternatives, such as internal structure or a library the owner would not notice. Decide it yourself and record why with `canon decision new --title "..."` (背景, 方案 with every rejected option, 决定, 后果), then write the rule.
+
+## 5a. Before landing rules: list the open choices
+
+The open choices otherwise surface mid-implementation, when the owner may not be there. Before landing a baseline, a release's rules or a change that adds rules, list them and settle each one (section 5 says whose it is):
+
+- A rule whose outcome has no observable trigger (section 2): name the trigger.
+- An "或", "or", "例如" or "e.g." in a release scope or a rule: pick one, or say in the text that the implementer chooses and why that is safe.
+- A decision this change adds that is still `proposed`: accept it (`canon decision accept D-n`, after its challenge), or say in the change file why it stays proposed. `canon work land` prints a notice for each one.
 
 ## 6. The flow
 

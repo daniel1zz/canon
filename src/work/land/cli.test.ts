@@ -153,3 +153,59 @@ describe("closing a change", () => {
     expect(ws(root).db.db.query("SELECT 1 FROM claims WHERE subject = ?").all(s.change)).toEqual([]);
   });
 });
+
+describe("a landing that adds a decision still proposed says so", () => {
+  // Fixture ids are assembled at runtime so this file does not itself name decisions when canon check scans the repo.
+  const d = (n: number) => ["D", n].join("-");
+  const decision = (n: number, status: string) =>
+    `---\nid: ${d(n)}\ntitle: Pick ${n}\nstatus: ${status}\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：refund.txt “export function refund(order)”\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
+  const add = (wt: string, ...files: [number, string][]) => {
+    mkdirSync(join(wt, "canon/decisions"), { recursive: true });
+    writeFileSync(join(wt, "refund.txt"), "export function refund(order) {}\n");
+    for (const [n, status] of files) writeFileSync(join(wt, `canon/decisions/${d(n)}.md`), decision(n, status));
+    sh(wt, "add", "-A");
+    sh(wt, "commit", "-qm", "decisions");
+  };
+
+  test("BR-2355: each new proposed decision is named in the output and one event lists them, and the landing still succeeds", async () => {
+    const root = project();
+    const s = startNew(root, "Proposes");
+    add(s.worktree, [5, "proposed"], [6, "proposed"], [7, "accepted"]);
+    const r = await canonIn(s.worktree, "work", "land");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`proposed decision: ${d(5)} Pick 5 lands still proposed`);
+    expect(r.out).toContain(`canon decision accept ${d(6)}`);
+    expect(r.out).not.toContain(`proposed decision: ${d(7)}`);
+    expect(events(root, "land.proposed").map((e) => e["decisions"])).toEqual([[d(5), d(6)]]);
+  }, TIMED);
+
+  test("BR-2355: an accepted new decision, an edit of a decision already on main, or no decision at all prints nothing and records no event", async () => {
+    const root = project();
+    const a = startNew(root, "Accepted");
+    add(a.worktree, [5, "accepted"], [6, "proposed"]);
+    sh(a.worktree, "rm", "-q", `canon/decisions/${d(6)}.md`);
+    sh(a.worktree, "commit", "-qm", "only the accepted one");
+    const ra = await canonIn(a.worktree, "work", "land");
+    expect(ra.code).toBe(0);
+    expect(ra.out).not.toContain("proposed decision:");
+
+    const root2 = project();
+    const old = startNew(root2, "Old");
+    add(old.worktree, [6, "proposed"]);
+    expect((await canonIn(old.worktree, "work", "land")).code).toBe(0);
+    const edit = startNew(root2, "Edits");
+    writeFileSync(join(edit.worktree, `canon/decisions/${d(6)}.md`), decision(6, "proposed").replace("B.\n", "B, reworded.\n"));
+    sh(edit.worktree, "commit", "-qam", "edit");
+    const re = await canonIn(edit.worktree, "work", "land");
+    expect(re.code).toBe(0);
+    expect(re.out).not.toContain("proposed decision:");
+    expect(events(root2, "land.proposed").length).toBe(1); // the first landing's only
+
+    const root3 = project();
+    const none = startNew(root3, "None");
+    commitFile(none.worktree, "app.txt", "changed\n");
+    expect((await canonIn(none.worktree, "work", "land")).out).not.toContain("proposed decision:");
+    expect(events(root3, "land.proposed")).toEqual([]);
+    expect(events(root, "land.proposed")).toEqual([]);
+  }, TIMED * 2);
+});
