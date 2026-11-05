@@ -312,7 +312,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
 
   // A landing that changes only paths the project declares no test reads has main's already-tested code tree,
   // so the floor would prove nothing new (BR-2164).
-  const skip = floorDeferred ? undefined : floorSkip(wt, base.value, tested.value);
+  const skip = floorDeferred ? undefined : floorSkip(wt, base.value, tested.value, say);
   if (floorDeferred) {
     say("floor: deferred — floor_timing is after; main is tested in the background once it moves (canon floor watch)");
   } else if (skip) {

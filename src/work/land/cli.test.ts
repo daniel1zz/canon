@@ -135,7 +135,7 @@ describe("closing a change", () => {
     mkdirSync(join(root, "canon/changes"), { recursive: true });
     writeFileSync(join(root, "canon/changes/C-1.md"), "---\nid: C-1\ntitle: Old\nstatus: done\nrules: []\n---\n\n## 为什么\n\nOld.\n\n## 要改什么\n\nOld.\n\n## 任务\n\n- [x] Old\n");
     const read = readCorpus(root);
-    const findings = check({ root, ...read, testFiles: [], floorSkipPaths: [] });
+    const findings = check({ root, ...read, testFiles: []});
     expect(findings.filter((f) => f.path.includes("C-1"))).toEqual([]);
   });
 

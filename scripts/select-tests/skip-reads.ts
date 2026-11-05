@@ -1,21 +1,24 @@
-import { readFileSync } from "node:fs";
-import { join, posix } from "node:path";
+import { posix } from "node:path";
 
 /**
- * BR-2181: a test that reads a file of the repository itself under a `floor_skip_paths` entry is skipped with the
- * floor by a landing that changes only that file (BR-2164), so the landing that breaks it is not the one refused.
- * Found statically in JS/TS test files: a path the test spells from its own location (`import.meta.dir`,
- * `import.meta.dirname`, `__dirname`, `new URL(<literal>, import.meta.url)`), from `process.cwd()` (the floor runs
- * at the repository root), or from a variable assigned one of those in the same file, joined with string
- * literals; a string literal passed straight to a file-reading call (relative to the root); and a `cwd:` set to
- * such a path. Paths built any other way (helpers in other files, computed strings) are not seen.
+ * The repository files a JS/TS test reads, found statically (BR-2350; moved from canon's `test-reads-skip-path` check, BR-2181, D-64).
+ * A path the test spells from its own location (`import.meta.dir`, `import.meta.dirname`, `__dirname`,
+ * `new URL(<literal>, import.meta.url)`), from `process.cwd()` (the floor runs at the repository root), or from a variable
+ * assigned one of those in the same file, joined with string literals; a string literal passed straight to a
+ * file-reading call (relative to the root); and a `cwd:` set to such a path. Paths built any other way (helpers in
+ * other files, computed strings) are not seen.
  */
-export interface SkipReadFinding {
+export interface Read {
+  /** 1-based line of the read. */
+  readonly line: number;
+  /** The repo-relative path read; "" is the repository root. */
   readonly path: string;
-  readonly message: string;
+  /** True when more path follows that the test computes, so anything under `path` may be read. */
+  readonly partial: boolean;
+  /** `reads` or `runs a command in`. */
+  readonly how: string;
 }
 
-const JS_TS = /\.[cm]?[jt]sx?$/;
 const LIT = String.raw`(?:"(?:[^"\\\n]|\\.)*"|'(?:[^'\\\n]|\\.)*'|\`[^\`$\\]*\`)`;
 const ANCHOR = String.raw`import\.meta\.dirname|import\.meta\.dir\b|__dirname|process\.cwd\(\)|new\s+URL\(\s*${LIT}\s*,\s*import\.meta\.url\s*\)|import\.meta\.url`;
 const READS = String.raw`readFileSync|readFile|existsSync|readdirSync|readdir|statSync|lstatSync|stat|createReadStream|opendirSync|Bun\.file`;
@@ -31,13 +34,10 @@ function inRepo(p: string): string | undefined {
   return n === "." ? "" : n.replace(/\/+$/, "");
 }
 
-export function skipReadFindings(root: string, testFiles: readonly string[], skipPaths: readonly string[]): SkipReadFinding[] {
-  if (skipPaths.length === 0) return [];
-  const out: SkipReadFinding[] = [];
-  for (const file of testFiles) {
-    if (!JS_TS.test(file)) continue;
-    const mine: { line: number; finding: SkipReadFinding }[] = [];
-    const text = readFileSync(join(root, file), "utf8");
+/** Every repository path the JS/TS test `file` (with source `text`) reads, in line order. */
+export function readsOf(file: string, text: string): Read[] {
+  {
+    const mine: Read[] = [];
     const here = posix.dirname(file.split("\\").join("/"));
     const vars = new Map<string, string>();
     const anchorOf = (a: string): string | undefined => {
@@ -83,16 +83,10 @@ export function skipReadFindings(root: string, testFiles: readonly string[], ski
     const line = (i: number) => text.slice(0, i).split("\n").length;
     const seen = new Set<string>();
     const report = (i: number, p: string, partial: boolean, how: string) => {
-      const entry = skipPaths.find((e) => p === e || p.startsWith(`${e}/`)) ?? (partial ? skipPaths.find((e) => p === "" || e.startsWith(`${p}/`)) : undefined);
-      if (!entry) return;
       const key = `${line(i)}:${p}`;
       if (seen.has(key)) return;
       seen.add(key);
-      const what = p === "" ? "the repository root" : `\`${p}\``;
-      mine.push({ line: line(i), finding: {
-        path: `${file}:${line(i)}`,
-        message: `${how} ${what} of the repository itself, ${p === entry || p.startsWith(`${entry}/`) ? "under" : "which holds"} floor_skip_paths entry \`${entry}\`: a landing that changes only that path skips the floor and this test with it (BR-2164); check it in canon check instead, or use a temporary repository`,
-      } });
+      mine.push({ line: line(i), path: p, partial, how });
     };
     for (const m of text.matchAll(new RegExp(String.raw`(?<![\w$])(?:(?:path\.|posix\.)?(?:join|resolve)\(|\`\$\{)`, "g"))) {
       const r = resolveAt(text.slice(m.index!));
@@ -110,9 +104,8 @@ export function skipReadFindings(root: string, testFiles: readonly string[], ski
       const r = resolveAt(text.slice(m.index! + m[0].length));
       if (r) report(m.index!, r.path, true, "runs a command in");
     }
-    out.push(...mine.sort((x, y) => x.line - y.line).map((x) => x.finding));
+    return mine.sort((x, y) => x.line - y.line);
   }
-  return out;
 }
 
 /** The expression is just a known start (a variable holding the root, say), not a call with more arguments. */

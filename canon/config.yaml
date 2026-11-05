@@ -24,6 +24,7 @@ shared:
 # 扫描规则编号的测试文件
 tests:
   - "src/**/*.test.ts"
+  - "scripts/**/*.test.ts"
 # canon work test 运行一个测试文件的命令，{file} 换成它的路径（D-23）；和 floor 一样经过 scripts/test.sh（C-247）
 # {report} 换成一个临时路径，bun 把 JUnit XML 写到那里；canon 读它，按“文件路径 + 内容哈希”记账（D-64、BR-2337）
 test_command: "sh scripts/test.sh {file} --reporter=junit --reporter-outfile={report}"
@@ -54,7 +55,8 @@ instructions:
 session_text_budget: 12000
 # 只改这些路径的合入不跑 floor（BR-2164）：代码树和 main 上已测过的一样。
 # 依据（C-122 核查）：测试只在临时仓库里读写 canon/ 下的文件；读真实仓库文件的只有 .claude/skills（BR-2096、install）和 scripts/，所以不列它们，也不列 canon/config.yaml
-# 测试读这些路径下真实文件时 canon check 报 test-reads-skip-path（BR-2181）；规则和代码列表的核对在 canon check 里（BR-2180，C-145）
+# 测试读这些路径下真实文件时：由 test_select_command 在合入时发现，floor 照常运行（BR-2164，D-64）；这个项目的脚本是 scripts/select-tests/main.ts，等已安装的 canon 认得 test_select_command 这个键以后再写进这里（BR-2248）
+# 规则和代码列表的核对在 canon check 里（BR-2180，C-145）
 floor_skip_paths:
   - canon/rules
   - canon/decisions

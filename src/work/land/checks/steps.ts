@@ -77,7 +77,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   if (unknown.length > 0) return refuse("config-key", unknown.join("\n"));
   const read = readCorpus(wt, ws.config.types, ws.config);
   const tests = testFilesFor(wt, ws.config);
-  // reason: the tree that is landing decides which paths may skip the floor (BR-2164), so it decides which test reads matter (BR-2181)
+  // reason: the config of the tree that is landing decides which commands and tests apply to it (BR-2005)
   const landing = readConfig(wt);
   if (!landing.ok) return refuse("check", `canon check: cannot read canon/config.yaml of the landing tree: ${landing.error.message}`);
   const onBranches = changeIdsOnBranches(ws);
@@ -87,7 +87,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   if (!listed.ok) return refuse("environment", listed.error.message);
   const reports = reportsFor(ws.db, wt, landing.value, read.corpus, tests);
   if (!reports.ok) return refuse("environment", reports.error.message);
-  const input = { root: wt, ...read, testFiles: tests, reports: reports.value, floorSkipPaths: landing.value.floorSkipPaths, branchChanges: onBranches.value, backlogBase: new Set(listed.value.map((e) => e.id)) };
+  const input = { root: wt, ...read, testFiles: tests, reports: reports.value, branchChanges: onBranches.value, backlogBase: new Set(listed.value.map((e) => e.id)) };
   const findings = check(input);
   for (const n of backlogNotes(input)) say(noteLine(n));
   for (const n of staleReportNotes(input)) say(noteLine(n));

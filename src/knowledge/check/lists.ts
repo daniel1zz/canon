@@ -8,7 +8,7 @@ import type { Corpus } from "../documents/model.ts";
  * language that writes `NAME = <expression>` with string literals: the file exists, it declares `name`, every
  * item is a string literal in that initializer, and the rule's text writes the file, the name and every item in
  * backticks. It runs on every landing, including one that skips the floor (BR-2164), which a test reading the rule
- * would not (BR-2181).
+ * would not.
  */
 export interface ListFinding {
   readonly path: string;

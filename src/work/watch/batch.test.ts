@@ -18,7 +18,7 @@ function batched(thresholds: { quiet?: number; untested?: number; age?: number }
   writeFileSync(join(dir, "floor.sh"), `git rev-parse HEAD >> ${runs}\ntest ! -e FAIL\n`);
   writeFileSync(
     join(root, "canon/config.yaml"),
-    `floor: "sh ${join(dir, "floor.sh")}"\ntests: []\nfloor_timing: after\nfloor_skip_paths:\n  - canon/rules\nfloor_quiet_minutes: ${thresholds.quiet ?? 20}\nfloor_max_untested: ${thresholds.untested ?? 10}\nfloor_max_age_minutes: ${thresholds.age ?? 60}\n`,
+    `floor: "sh ${join(dir, "floor.sh")}"\ntests: []\nfloor_timing: after\nfloor_skip_paths:\n  - canon/rules\ntest_select_command: "cat > /dev/null"\nfloor_quiet_minutes: ${thresholds.quiet ?? 20}\nfloor_max_untested: ${thresholds.untested ?? 10}\nfloor_max_age_minutes: ${thresholds.age ?? 60}\n`,
   );
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "config");

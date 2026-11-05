@@ -1,26 +1,24 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { changeIdsOnBranches, listedBefore } from "../session/inflight.ts";
-import { basename, join } from "node:path";
+import { join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
 import { FILE_PLACEHOLDER } from "./config-keys.ts";
 import { caseNames, readReport, REPORT_PLACEHOLDER } from "./report.ts";
 import { loadReports, recordReport } from "./ledger.ts";
+import { runSelectCommand } from "./select-command.ts";
 import { backlogNotes, check, noteLine, staleReportNotes } from "../../knowledge/check/check.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { budgetHint, sessionText } from "../../knowledge/check/session-text.ts";
 import { changesOf, paths, reportsFor } from "./changes.ts";
 import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
-import { importedPaths } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { idsIn } from "../../knowledge/documents/types.ts";
 import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
 import { groupAlive, stopGroups } from "./stop-groups.ts";
 import { availableParallelism } from "node:os";
-import { readersOfChanged, type DataRead } from "./data-reads.ts";
-import { commandsRegisteredIn, namesCommand, pathsBuiltFromDir, type CliDrive, type RegisteredCommand } from "./cli-tests.ts";
 import { jobCap, readCpu, startPool, type CpuSample, type CpuState, type FileResult, type Outcome } from "./pool.ts";
 import type { Workspace } from "../workspace.ts";
 
@@ -29,11 +27,9 @@ import type { Workspace } from "../workspace.ts";
  * break, one file per run of the project's `test_command`, instead of the full suite the floor runs anyway.
  */
 
-const JS_TS = /\.[cm]?[jt]sx?$/;
-
 export interface Selected {
   readonly file: string;
-  /** Why it runs: "changed", "imports …", "reads … (… changed)", "drives canon …", "runs the CLI …", "names BR-n", "always", or "--all". */
+  /** Why it runs: "changed", "chosen by test_select_command: …", "names BR-n", "always", or "--all". */
   readonly reasons: readonly string[];
 }
 
@@ -49,8 +45,10 @@ export interface Selection {
   readonly selected: readonly Selected[];
   /** `always_tests` globs that match no test file `tests` finds (BR-2297). */
   readonly unmatched: readonly string[];
-  /** How many test files spawn the CLI and how many distinct commands its table registers (BR-2157); 0 and 0 with `--all`. */
-  readonly cli: { readonly files: number; readonly commands: number };
+  /** What `test_select_command` printed on standard error (BR-2346). */
+  readonly notes: readonly string[];
+  /** Whether `test_select_command` is configured and was asked. */
+  readonly command: boolean;
 }
 
 function isFile(full: string): boolean {
@@ -58,62 +56,9 @@ function isFile(full: string): boolean {
 }
 
 /**
- * Finds the CLI each test spawns and the commands its table registers (D-60). Reads a test's own text and, from the entry
- * file, every file it imports. `problems` lists the tests that point at a `main.ts` that gives no usable table.
- */
-export function cliReader(root: string, importsFrom: (file: string) => string[]) {
-  const tables = new Map<string, RegisteredCommand[]>();
-  const bad: string[] = [];
-  let spawning = 0;
-  const tableOf = (entry: string): RegisteredCommand[] => {
-    let t = tables.get(entry);
-    if (!t) {
-      t = [];
-      const seen = new Set([entry]);
-      const queue = [entry];
-      while (queue.length) {
-        const cur = queue.shift()!;
-        if (JS_TS.test(cur) && isFile(join(root, cur))) t.push(...commandsRegisteredIn(cur, readFileSync(join(root, cur), "utf8")));
-        for (const next of importsFrom(cur)) {
-          if (seen.has(next)) continue;
-          seen.add(next);
-          queue.push(next);
-        }
-      }
-      tables.set(entry, t);
-    }
-    return t;
-  };
-  const cliOf = (file: string, text: string): CliDrive | null => {
-    for (const entry of pathsBuiltFromDir(file, text)) {
-      const isMain = basename(entry) === "main.ts";
-      if (!JS_TS.test(entry) || !isFile(join(root, entry))) {
-        if (isMain) bad.push(`${file} spawns ${entry}, which is not a file in the project: no CLI entry found`);
-        continue;
-      }
-      const table = tableOf(entry);
-      if (table.length) {
-        spawning++;
-        return { entry, driven: table.filter((c) => namesCommand(text, c.words)) };
-      }
-      if (isMain) bad.push(`${file} spawns ${entry}, but neither it nor the files it imports register a command with entry("name", rank, command): the command table is empty`);
-    }
-    return null;
-  };
-  return {
-    tableOf,
-    cliOf,
-    problems: () => [...bad],
-    counts: () => ({ files: spawning, commands: new Set([...tables.values()].flat().map((c) => c.words.join(" "))).size }),
-  };
-}
-
-/**
- * The test files to run and why (BR-2157): changed test files; test files whose relative imports reach a changed
- * file, directly or through other source files (the import reading of `canon context`, BR-2119); test files that
- * spawn the CLI and name a command whose module, or a file that module imports, changed (D-60); test files whose
- * running titles name a touched rule; source files that read a changed data file by a path they spell from their own
- * location (`reads …`, #117) count as reached like a changed file. With `all`, every test file (BR-2159).
+ * The test files to run and why (BR-2157): changed test files; test files whose reports name a touched rule with a running
+ * test (BR-2005); the files `test_select_command` prints for the changed paths (BR-2346); `always_tests` (BR-2297).
+ * With `all`, every test file (BR-2159).
  */
 export function selectTests(ws: Workspace, all: boolean, only: readonly string[] = []): Result<Selection> {
   const ch = changesOf(ws.root, ws.config);
@@ -123,115 +68,30 @@ export function selectTests(ws: Workspace, all: boolean, only: readonly string[]
   const globs = ws.config.alwaysTests.map((g) => ({ g, glob: new Bun.Glob(g) }));
   const always = new Set(tests.filter((f) => globs.some(({ glob }) => glob.match(f))));
   const unmatched = globs.filter(({ glob }) => !tests.some((f) => glob.match(f))).map(({ g }) => g);
-  if (all) return ok({ base, changed, rules, decisions, unmatched, selected: tests.map((file) => ({ file, reasons: ["--all"] })), cli: { files: 0, commands: 0 } });
+  if (all) return ok({ base, changed, rules, decisions, unmatched, selected: tests.map((file) => ({ file, reasons: ["--all"] })), notes: [], command: ws.config.testSelectCommand !== undefined });
   // reason: the files a person names are what runs, so a report can be recorded for exactly them (BR-2344)
   if (only.length > 0) {
     const known = new Set(tests);
     const bad = only.filter((f) => !known.has(f));
     if (bad.length > 0) return err("invalid", `not test files of this project (the files \`tests\` finds): ${bad.join(", ")}`);
-    return ok({ base, changed, rules, decisions, unmatched, selected: [...new Set(only)].sort().map((file) => ({ file, reasons: ["named on the command line"] })), cli: { files: 0, commands: 0 } });
+    return ok({ base, changed, rules, decisions, unmatched, selected: [...new Set(only)].sort().map((file) => ({ file, reasons: ["named on the command line"] })), notes: [], command: ws.config.testSelectCommand !== undefined });
   }
 
   const changedSet = new Set(changed);
   const ruleSet = new Set(rules);
-  // reason: an import written `./a` or `./a.js` must still reach the deleted `a.ts`, so a deleted file resolves as if it were there (BR-2157, issue #53)
-  const deleted = new Set(changed.filter((p) => !existsSync(join(ws.root, p))));
-  const exists = (p: string) => deleted.has(p) || isFile(join(ws.root, p));
-  const importsOf = new Map<string, string[]>();
-  const importsFrom = (file: string): string[] => {
-    let v = importsOf.get(file);
-    if (!v) {
-      v = JS_TS.test(file) && isFile(join(ws.root, file)) ? importedPaths(ws.root, file, exists) : [];
-      importsOf.set(file, v);
-    }
-    return v;
-  };
-
-  // reason: a module that reads a data file by a path it spells from its own location is not importing it; it counts as reaching the file, so a changed .claude/skills file selects the install tests (#117, D-60)
-  const sourceTexts = new Map<string, string>();
-  const listed = paths(ws.root, "ls-files", "--cached", "--others", "--exclude-standard");
-  if (!listed.ok) return listed;
-  for (const f of listed.value) if (JS_TS.test(f) && isFile(join(ws.root, f))) sourceTexts.set(f, readFileSync(join(ws.root, f), "utf8"));
-  const readers = readersOfChanged(sourceTexts, changed);
-  const readNote = (m: string, r: DataRead) => `reads ${r.path} (${r.changed[0]}${r.changed.length > 1 ? ` and ${r.changed.length - 1} more` : ""} changed, via ${m}`;
-
-  const reader = cliReader(ws.root, importsFrom);
-  const { tableOf, cliOf } = reader;
-  /** The changed files a spawned CLI runs: from its entry file, and from the module of each command the test names. */
-  const cliReasons = (cli: CliDrive): string[] => {
-    const modules = new Set(tableOf(cli.entry).map((c) => c.module));
-    const seeds = new Map<string, string>([[cli.entry, "runs the CLI"]]);
-    for (const m of new Set(cli.driven.map((c) => c.module))) {
-      seeds.set(m, `drives ${cli.driven.filter((c) => c.module === m).map((c) => `canon ${c.words.join(" ")}`).join(", ")}`);
-    }
-    const out: string[] = [];
-    for (const [start, label] of seeds) {
-      const via = new Map<string, string | null>([[start, null]]);
-      const queue = [start];
-      const reached: string[] = changedSet.has(start) ? [start] : [];
-      const readHit: string[] = readers.has(start) ? [start] : [];
-      while (queue.length) {
-        const cur = queue.shift()!;
-        for (const next of importsFrom(cur)) {
-          // reason: only the command table (a file that registers no command) imports every command module; following it would select each CLI test for each command's change. Commands import each other for helpers, and that is followed (D-60)
-          if (via.has(next) || (modules.has(next) && !modules.has(cur))) continue;
-          via.set(next, cur);
-          if (changedSet.has(next)) reached.push(next);
-          if (readers.has(next)) readHit.push(next);
-          queue.push(next);
-        }
-      }
-      for (const target of reached) {
-        const chain: string[] = [];
-        for (let p = via.get(target) ?? null; p; p = via.get(p) ?? null) chain.unshift(p);
-        out.push(`${label} (${target} changed${chain.length ? `, through ${chain.join(" → ")}` : ""})`);
-      }
-      for (const target of readHit) {
-        const chain: string[] = [];
-        for (let p = via.get(target) ?? null; p; p = via.get(p) ?? null) chain.unshift(p);
-        out.push(`${label} (${readNote(target, readers.get(target)!)}${chain.length ? `, through ${chain.join(" → ")}` : ""})`);
-      }
-    }
-    return out;
-  };
+  // reason: canon asks the project which tests a change reaches; it reads no source of its own, so it has no language (BR-2346, D-64)
+  const asked = ws.config.testSelectCommand === undefined ? undefined : runSelectCommand(ws.root, ws.config.testSelectCommand, changed, new Set(tests));
+  if (asked && !asked.ok) return asked;
+  const chosen = new Map<string, string[]>();
+  for (const c of asked?.value.chosen ?? []) chosen.set(c.file, [...(chosen.get(c.file) ?? []), c.reason]);
 
   const reports = loadReports(ws.db, ws.root, ruleSet.size ? tests : []);
   const selected: Selected[] = [];
   for (const file of tests) {
     const reasons: string[] = [];
     if (changedSet.has(file)) reasons.push("changed");
-
-    // Breadth first, so each changed file is reported through its shortest chain of imports.
-    const via = new Map<string, string | null>([[file, null]]);
-    const queue = [file];
-    const reached: string[] = [];
-    const readHit: string[] = readers.has(file) ? [file] : [];
-    while (queue.length) {
-      const cur = queue.shift()!;
-      for (const next of importsFrom(cur)) {
-        if (via.has(next)) continue;
-        via.set(next, cur);
-        if (changedSet.has(next)) reached.push(next);
-        if (readers.has(next)) readHit.push(next);
-        queue.push(next);
-      }
-    }
-    for (const target of readHit) {
-      const chain: string[] = [];
-      for (let p = via.get(target) ?? null; p && p !== file; p = via.get(p) ?? null) chain.unshift(p);
-      reasons.push(`${readNote(target, readers.get(target)!)}${chain.length ? `, through ${chain.join(" → ")}` : ""})`);
-    }
-    for (const target of reached) {
-      const chain: string[] = [];
-      for (let p = via.get(target) ?? null; p && p !== file; p = via.get(p) ?? null) chain.unshift(p);
-      reasons.push(`imports ${target}${chain.length ? ` (through ${chain.join(" → ")})` : ""}`);
-    }
-
-    if (JS_TS.test(file)) {
-      const cli = cliOf(file, readFileSync(join(ws.root, file), "utf8"));
-      if (cli) reasons.push(...cliReasons(cli));
-    }
-
+    const picked = chosen.get(file);
+    if (picked) reasons.push(...picked.map((r) => (r === "" ? "chosen by test_select_command" : `chosen by test_select_command: ${r}`)));
     if (ruleSet.size) {
       // reason: what a file's tests are named is what its report says, the current one or, failing that, the newest older one (BR-2157, D-64)
       const named = new Set<string>();
@@ -244,10 +104,7 @@ export function selectTests(ws: Workspace, all: boolean, only: readonly string[]
     if (always.has(file)) reasons.push("always");
     if (reasons.length) selected.push({ file, reasons });
   }
-  const problems = reader.problems();
-  // reason: a CLI whose entry or command table cannot be read would silently bring back the selection that missed C-309; refuse instead (BR-2157, D-60)
-  if (problems.length) return err("io", `canon work test cannot tell which tests spawn the CLI and what they drive:\n${problems.map((p) => `  ${p}`).join("\n")}\nThe CLI's entry file or its \`entry(...)\` command registrations changed shape (D-15, D-60); fix src/work/verify/cli-tests.ts or the tests' path, or run canon work test --all`);
-  return ok({ base, changed, rules, decisions, unmatched, selected, cli: reader.counts() });
+  return ok({ base, changed, rules, decisions, unmatched, selected, notes: asked?.value.notes ?? [], command: asked !== undefined });
 }
 
 const quoted = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
@@ -366,8 +223,9 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
     for (const f of selected) say(`  ${f.file}`);
   } else {
     say(`canon work test: ${selected.length} test file(s) related to this change (${against}; ${changed.length} changed file(s)${rules.length ? `; rules ${rules.join(", ")}` : ""})`);
-    say(`CLI tests: ${sel.value.cli.files} file(s) spawn the CLI, ${sel.value.cli.commands} command(s) known`);
-    say("Selected: changed test files, test files whose relative imports reach a changed file, test files that spawn the CLI and drive a command whose code changed, test files whose titles name a touched rule, test files always_tests names.");
+    if (ws.config.testSelectCommand === undefined) say("no test_select_command configured: selecting only changed test files, test files whose tests name a touched rule, and always_tests; selecting by imports was removed (D-64)");
+    for (const n of sel.value.notes) say(`test_select_command: ${n}`);
+    say("Selected: changed test files, test files the project's test_select_command chose, test files whose reports name a touched rule, test files always_tests names.");
     const width = Math.max(0, ...selected.map((s) => s.file.length));
     for (const s of selected) say(`  ${s.file.padEnd(width)}  ${s.reasons.join("; ")}`);
     say("Not selected: tests that only read changed files at run time; canon work test --all runs every test file.");
@@ -502,7 +360,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   const testFiles = testFilesFor(ws.root, ws.config);
   const reports = reportsFor(ws.db, ws.root, ws.config, read.corpus, testFiles);
   if (!reports.ok) return reports;
-  const input = { root: ws.root, ...read, testFiles, reports: reports.value, floorSkipPaths: ws.config.floorSkipPaths, branchChanges: onBranches.value, backlogBase: onMain.value };
+  const input = { root: ws.root, ...read, testFiles, reports: reports.value, branchChanges: onBranches.value, backlogBase: onMain.value };
   const findings = check(input);
   for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
   for (const n of staleReportNotes(input)) say(noteLine(n)); // never a failure (BR-2345)

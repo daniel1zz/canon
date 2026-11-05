@@ -147,7 +147,7 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
       const tip = links[len - 1]!.head;
       const co = git(dir, "checkout", "-q", "--detach", tip);
       if (!co.ok) return { ok: false, log: co.error.message, skipped: false };
-      const skip = floorSkip(dir, t.base, tip);
+      const skip = floorSkip(dir, t.base, tip, say);
       if (skip) {
         say(`floor: skipped — all ${skip.paths.length} changed path(s) of the batch are under floor_skip_paths (${skip.under.join(", ")})`);
         ws.db.event(ws.actor, "floor.skip", t.subject, { entry: t.entry, paths: skip.paths.slice(0, 50), under: skip.under });

@@ -17,7 +17,7 @@ const checkCmd = defineCommand({
     const read = corpusOf(ws);
     const testFiles = testFilesFor(ws.root, ws.config);
     const reports = must(reportsFor(ws.db, ws.root, ws.config, read.corpus, testFiles));
-    const input = { root: ws.root, ...read, testFiles, reports, floorSkipPaths: ws.config.floorSkipPaths, branchChanges: must(changeIdsOnBranches(ws)), backlogBase: must(listedBefore(ws)) };
+    const input = { root: ws.root, ...read, testFiles, reports, branchChanges: must(changeIdsOnBranches(ws)), backlogBase: must(listedBefore(ws)) };
     const findings = check(input);
     // reason: a dangling id main already lists is said on stderr and never fails the check (BR-2150, #112)
     for (const n of backlogNotes(input)) console.error(noteLine(n));

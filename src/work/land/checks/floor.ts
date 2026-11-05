@@ -4,6 +4,7 @@ import { dirname, isAbsolute, join, normalize, relative } from "node:path";
 import type { CoordDb } from "../../db.ts";
 import { readReport, REPORT_PLACEHOLDER, type TestCase } from "../../verify/report.ts";
 import { recordReport } from "../../verify/ledger.ts";
+import { runSelectCommand } from "../../verify/select-command.ts";
 import type { Say, Workspace } from "../../workspace.ts";
 import { readConfig, type Config } from "../../../invocation/config.ts";
 import { testFilesFor } from "../../../knowledge/check/tests.ts";
@@ -30,10 +31,11 @@ export async function runFloor(ws: Workspace, say: Say, cwd: string, name: strin
 }
 
 /**
- * The paths `base..head` changes, when every one is under a `floor_skip_paths` entry and none is a test file
- * (BR-2164); undefined when the floor must run. Renames count on both sides (`--no-renames`).
+ * The paths `base..head` changes, when every one is under a `floor_skip_paths` entry, none is a test file, and the
+ * project's `test_select_command` selects no test file for them (BR-2164); undefined when the floor must run, and then
+ * `why` is told when that is the command's doing. Renames count on both sides (`--no-renames`).
  */
-export function floorSkip(wt: string, base: string, head: string): { paths: string[]; under: string[] } | undefined {
+export function floorSkip(wt: string, base: string, head: string, why: (line: string) => void = () => {}): { paths: string[]; under: string[] } | undefined {
   // reason: the config of the tree that is landing decides, not the one read when the workspace opened, before
   // the rebase onto a main that may have changed floor_skip_paths or tests (BR-2164, issue #40).
   const read = readConfig(wt);
@@ -51,6 +53,21 @@ export function floorSkip(wt: string, base: string, head: string): { paths: stri
   }
   const tests = new Set(testFilesFor(wt, config));
   if (paths.some((p) => tests.has(p) || isTestPath(config, p))) return undefined;
+  // reason: whether a test reads these files is the project's to say, and canon asks before it skips (BR-2164, D-64)
+  if (config.testSelectCommand === undefined) {
+    why("floor not skipped: floor_skip_paths is set without test_select_command, so nothing says no test reads these paths");
+    return undefined;
+  }
+  const asked = runSelectCommand(wt, config.testSelectCommand, paths, tests);
+  if (!asked.ok) {
+    why(`floor not skipped: ${asked.error.message}`);
+    return undefined;
+  }
+  if (asked.value.chosen.length > 0) {
+    const first = asked.value.chosen.slice(0, 5).map((c) => `${c.file}${c.reason === "" ? "" : ` (${c.reason})`}`);
+    why(`floor not skipped: test_select_command selects ${asked.value.chosen.length} test file(s) for these paths: ${first.join("; ")}${asked.value.chosen.length > 5 ? "; …" : ""}`);
+    return undefined;
+  }
   return { paths, under: [...under].sort() };
 }
 

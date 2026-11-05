@@ -22,6 +22,16 @@ export const verifyKeys = {
     listed: 40,
     checked: 60,
   }),
+  testSelectCommand: configKey<string | undefined>({
+    key: "test_select_command",
+    doc: "Shell command `canon work test` and the floor skip (BR-2164) ask which test files a change can break: it gets the changed repository paths on standard input, one per line, deleted ones included, and prints one test file per line, optionally a tab and why; empty output means none (BR-2346, D-64).",
+    default: undefined,
+    schema: optionalString,
+    read: stringValue("test_select_command"),
+    commands: (v) => (v === undefined ? [] : [v]),
+    listed: 42,
+    checked: 62,
+  }),
   typecheckCommand: configKey<string | undefined>({
     key: "typecheck_command",
     doc: "Shell command `canon work test` runs once before the selected test files, such as the floor's type-check step; unset runs none (BR-2226).",

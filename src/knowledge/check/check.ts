@@ -12,7 +12,6 @@ import type { TestReports } from "../../work/verify/ledger.ts";
 import { historyOf, pathFindings } from "./paths.ts";
 import { listFindings } from "./lists.ts";
 import { releaseFindings } from "../releases/check.ts";
-import { skipReadFindings } from "./skip-reads.ts";
 import { EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, RULE_SECTION, section } from "../documents/templates.ts";
 
 /**
@@ -50,7 +49,6 @@ export type CheckRule =
   | "doc-missing-section" // a document lacks a section its type requires, or the section is empty (BR-2091)
   | "path-missing" // a current document names, in backticks, a repository path that was moved or deleted
   | "list-mismatch" // a rule's `lists` front matter disagrees with its text or with the code (BR-2180)
-  | "test-reads-skip-path" // a test reads a file of the repository under floor_skip_paths (BR-2181)
   | "release-frozen" // a shipped release's 目标, 范围, 不做 or its set of tagged rules differs from what it was at `shipped_at` (D-61)
   | "template-unfilled"; // a rule, decision, change, declared-type document or domain README still holds a template placeholder line
 
@@ -62,8 +60,6 @@ export interface CheckInput {
   readonly testFiles?: readonly string[];
   /** What the ledger holds for those test files (BR-2005); without it no test file has a report. */
   readonly reports?: TestReports;
-  /** `floor_skip_paths` of the config in force; tests must not read the repository's files under them (BR-2181). */
-  readonly floorSkipPaths?: readonly string[];
   /** Ids whose change file is on their own change branch, not yet on main: the backlog may list them (BR-2150, D-50). */
   readonly branchChanges?: ReadonlySet<string>;
   /**
@@ -230,7 +226,6 @@ export function check(input: CheckInput): Finding[] {
   for (const f of pathFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "path-missing", message: f.message });
   findings.push(...releaseFindings(input.root, input.corpus));
   for (const f of listFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "list-mismatch", message: f.message });
-  for (const f of skipReadFindings(input.root, testFiles, input.floorSkipPaths ?? [])) findings.push({ path: f.path, rule: "test-reads-skip-path", message: f.message });
   return findings;
 }
 
