@@ -175,27 +175,19 @@ describe("code layout config", () => {
 });
 
 describe("test discovery", () => {
-  const rule = (n: number) => `---\nid: ${br(n)}\ntitle: R\n---\n## 规则\n\nS.\n\n## 例子\n\n- a → b\n`;
-  const base = {
-    "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n",
-    [`canon/rules/billing/${br(1)}.md`]: rule(1),
-  };
-  const untested = (root: string) => {
+  const found = (files: Record<string, string>) => {
+    const root = repo(files);
     const cfg = readConfig(root);
     if (!cfg.ok) throw new Error(cfg.error.message);
-    return check({ root, ...readCorpus(root), testFiles: testFilesFor(root, cfg.value) }).filter((f) => f.rule === "rule-untested").length;
+    return testFilesFor(root, cfg.value);
   };
 
-  test("BR-2046: configured globs are the only test files scanned", () => {
-    expect(untested(repo({ ...base, "canon/config.yaml": 'tests: ["src/**/*.test.ts"]\n', "e2e/a.spec.ts": `it("${br(1)}", () => {});` }))).toBe(1);
+  test("BR-2046: configured globs are the only test files found", () => {
+    expect(found({ "canon/config.yaml": 'tests: ["src/**/*.test.ts"]\n', "src/a.test.ts": "x", "e2e/a.spec.ts": "x" })).toEqual(["src/a.test.ts"]);
   });
 
-  test("BR-2046: without globs every *.test.* and *.spec.* counts, except under dist, canon, node_modules", () => {
-    expect(untested(repo({ ...base, "e2e/a.spec.ts": `it("${br(1)}", () => {});` }))).toBe(0);
-    expect(untested(repo({ ...base, "e2e/b.test.mts": `it("${br(1)}", () => {});` }))).toBe(0);
-    expect(untested(repo({ ...base, "tools/a.test.py": `it("${br(1)}", () => {});` }))).toBe(1);
-    expect(untested(repo({ ...base, "dist/a.test.js": `it("${br(1)}", () => {});` }))).toBe(1);
-    expect(untested(repo({ ...base, "node_modules/x/a.test.js": `it("${br(1)}", () => {});` }))).toBe(1);
+  test("BR-2046: without globs every *.test.* and *.spec.* file of 12 JS/TS extensions counts, except under dist, node_modules and the root canon", () => {
+    expect(found({ "e2e/a.spec.ts": "x", "e2e/b.test.mts": "x", "tools/a.test.py": "x", "dist/a.test.js": "x", "node_modules/x/a.test.js": "x", "canon/b.test.ts": "x", "src/canon/a.test.ts": "x" })).toEqual(["e2e/a.spec.ts", "e2e/b.test.mts", "src/canon/a.test.ts"]);
   });
 });
 

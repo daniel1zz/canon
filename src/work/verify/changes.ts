@@ -54,6 +54,8 @@ export function changesOf(root: string, config: Config, known?: Corpus): Result<
  * outside any change, no file is relevant.
  */
 export function reportsFor(db: CoordDb, root: string, config: Config, corpus: Corpus, testFiles: readonly string[]): Result<TestReports> {
+  // reason: a repository with no commit yet has no change to be relevant to, like the main branch itself (BR-2344)
+  if (!git(root, "rev-parse", "--verify", "--quiet", "HEAD").ok) return ok(loadReports(db, root, testFiles));
   const branch = git(root, "rev-parse", "--abbrev-ref", "HEAD");
   if (!branch.ok) return branch;
   if (branch.value === config.main) return ok(loadReports(db, root, testFiles));
