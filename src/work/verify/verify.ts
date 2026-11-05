@@ -5,12 +5,12 @@ import { basename, join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
 import { FILE_PLACEHOLDER } from "./config-keys.ts";
-import { readReport, REPORT_PLACEHOLDER } from "./report.ts";
-import { recordReport } from "./ledger.ts";
-import { backlogNotes, check, noteLine } from "../../knowledge/check/check.ts";
+import { caseNames, readReport, REPORT_PLACEHOLDER } from "./report.ts";
+import { loadReports, recordReport } from "./ledger.ts";
+import { backlogNotes, check, noteLine, staleReportNotes } from "../../knowledge/check/check.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
-import { testTitles } from "../../knowledge/check/test-titles.ts";
 import { budgetHint, sessionText } from "../../knowledge/check/session-text.ts";
+import { changesOf, paths, reportsFor } from "./changes.ts";
 import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { importedPaths } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
@@ -51,12 +51,6 @@ export interface Selection {
   readonly unmatched: readonly string[];
   /** How many test files spawn the CLI and how many distinct commands its table registers (BR-2157); 0 and 0 with `--all`. */
   readonly cli: { readonly files: number; readonly commands: number };
-}
-
-/** NUL-separated git output, so paths with spaces or non-ASCII characters come back as written. */
-function paths(root: string, ...args: string[]): Result<string[]> {
-  const r = git(root, ...args, "-z");
-  return r.ok ? ok(r.value.split("\0").filter(Boolean)) : r;
 }
 
 function isFile(full: string): boolean {
@@ -114,36 +108,6 @@ export function cliReader(root: string, importsFrom: (file: string) => string[])
   };
 }
 
-/** The files this worktree changed against main and the rules it touched. */
-function changesOf(ws: Workspace): Result<{ base: string; changed: string[]; rules: string[]; decisions: string[] }> {
-  const base = git(ws.root, "merge-base", "HEAD", ws.config.main);
-  if (!base.ok) return err("io", `cannot compare with ${ws.config.main}: ${base.error.message}`);
-  const diff = paths(ws.root, "diff", "--name-only", "--no-renames", base.value);
-  if (!diff.ok) return diff;
-  const untracked = paths(ws.root, "ls-files", "--others", "--exclude-standard");
-  if (!untracked.ok) return untracked;
-  const changed = [...new Set([...diff.value, ...untracked.value])].sort();
-
-  const { corpus } = readCorpus(ws.root, ws.config.types, ws.config);
-  const ruleType = ws.config.types.find((t) => t.name === "rule")!;
-  const rulePrefix = `${ruleType.prefix}-`;
-  const decisionType = ws.config.types.find((t) => t.name === "decision")!;
-  const touched = new Set(changed);
-  const rules = new Set<string>();
-  const decisions = new Set<string>();
-  for (const path of changed) {
-    // A deleted rule or decision file is no longer in the corpus; its file name is its id.
-    const stem = basename(path).replace(/\.md$/, "");
-    if (path.startsWith(`canon/${ruleType.dir}/`) && path.endsWith(".md") && stem.startsWith(rulePrefix)) rules.add(stem);
-    if (path.startsWith(`canon/${decisionType.dir}/`) && path.endsWith(".md") && stem.startsWith(`${decisionType.prefix}-`)) decisions.add(stem);
-  }
-  for (const d of corpus.docs) {
-    if (d.kind === "change" && touched.has(d.path)) for (const r of d.rules) rules.add(r);
-  }
-  const sorted = (ids: Set<string>) => [...ids].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-  return ok({ base: base.value, changed, rules: sorted(rules), decisions: sorted(decisions) });
-}
-
 /**
  * The test files to run and why (BR-2157): changed test files; test files whose relative imports reach a changed
  * file, directly or through other source files (the import reading of `canon context`, BR-2119); test files that
@@ -152,7 +116,7 @@ function changesOf(ws: Workspace): Result<{ base: string; changed: string[]; rul
  * location (`reads …`, #117) count as reached like a changed file. With `all`, every test file (BR-2159).
  */
 export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
-  const ch = changesOf(ws);
+  const ch = changesOf(ws.root, ws.config);
   if (!ch.ok) return ch;
   const { base, changed, rules, decisions } = ch.value;
   const tests = testFilesFor(ws.root, ws.config).filter((f) => isFile(join(ws.root, f)));
@@ -224,6 +188,7 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
     return out;
   };
 
+  const reports = loadReports(ws.db, ws.root, ruleSet.size ? tests : []);
   const selected: Selected[] = [];
   for (const file of tests) {
     const reasons: string[] = [];
@@ -261,11 +226,12 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
     }
 
     if (ruleSet.size) {
-      const text = readFileSync(join(ws.root, file), "utf8");
-      // reason: as in canon check, only running titles name a rule in JS/TS; other languages count their whole text (BR-2005)
-      const titles = JS_TS.test(file) ? testTitles(text).filter((t) => t.runs).map((t) => t.title) : [text];
+      // reason: what a file's tests are named is what its report says, the current one or, failing that, the newest older one (BR-2157, D-64)
       const named = new Set<string>();
-      for (const title of titles) for (const id of idsIn(ws.config.types, title)) if (ruleSet.has(id)) named.add(id);
+      for (const c of reports.files.get(file)?.cases ?? []) {
+        if (!c.runs) continue;
+        for (const id of idsIn(ws.config.types, caseNames(c))) if (ruleSet.has(id)) named.add(id);
+      }
       if (named.size) reasons.push(`names ${[...named].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).join(", ")}`);
     }
     if (always.has(file)) reasons.push("always");
@@ -524,9 +490,12 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   const onMain = listedBefore(ws);
   if (!onMain.ok) return onMain;
   const testFiles = testFilesFor(ws.root, ws.config);
-  const input = { root: ws.root, ...read, testFiles, floorSkipPaths: ws.config.floorSkipPaths, branchChanges: onBranches.value, backlogBase: onMain.value };
+  const reports = reportsFor(ws.db, ws.root, ws.config, read.corpus, testFiles);
+  if (!reports.ok) return reports;
+  const input = { root: ws.root, ...read, testFiles, reports: reports.value, floorSkipPaths: ws.config.floorSkipPaths, branchChanges: onBranches.value, backlogBase: onMain.value };
   const findings = check(input);
   for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
+  for (const n of staleReportNotes(input)) say(noteLine(n)); // never a failure (BR-2345)
   for (const n of backlogNotes(input)) say(noteLine(n)); // never a failure (BR-2150, #112)
   say(findings.length === 0 ? "canon check: ok" : `canon check: ${findings.length} finding(s)`);
   // A hint on standard error, never a failure (BR-2257, D-37).

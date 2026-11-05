@@ -1,5 +1,3 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
 import type { Config } from "../../invocation/config.ts";
 import { git } from "../../kernel/git.ts";
 import { behaviourHash, behaviourParts } from "../../knowledge/documents/behaviour.ts";
@@ -7,9 +5,10 @@ import { parseDocFile } from "../../knowledge/documents/docfile.ts";
 import type { Change, Corpus, PassRecord, Rule } from "../../knowledge/documents/model.ts";
 import { section } from "../../knowledge/documents/templates.ts";
 import { idsIn } from "../../knowledge/documents/types.ts";
-import { testTitles } from "../../knowledge/check/test-titles.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import type { CoordDb } from "../db.ts";
+import { blobsOf, lastReport, reportFor, type LedgerRow } from "../verify/ledger.ts";
+import { caseNames, type TestCase } from "../verify/report.ts";
 
 /**
  * What one execution proves (D-32): for the change being closed, the pass record of each rule it executes and
@@ -25,6 +24,8 @@ export interface Range {
 }
 
 export interface PlanInput {
+  /** The ledger of test reports (BR-2337): what the changed test files held, by their blob hash at `head`. */
+  readonly db: CoordDb;
   /** Checkout at `head`: the worktree before the close commit, or the landing tree. */
   readonly root: string;
   readonly head: string;
@@ -64,7 +65,7 @@ export function plan(input: PlanInput): Plan {
   const { corpus, change } = input;
   const others = recordsOf(corpus, change.id);
   const rules = new Map(corpus.docs.filter((d): d is Rule => d.kind === "rule").map((r) => [r.id, r]));
-  const touched = touchedRules(input);
+  const { line: touched, file: touchedInFile } = touchedRules(input);
   const executed = executedRules(input);
   const records: Record<string, PassRecord> = {};
   const missing: Missing[] = [];
@@ -74,6 +75,7 @@ export function plan(input: PlanInput): Plan {
     const hash = behaviourHash(rule.body);
     if (!input.recorded?.has(id) && (others.get(id) ?? []).some((o) => o.record.hash === hash)) continue;
     if (touched.has(id)) records[id] = { hash, method: "test", wording: false };
+    else if (touchedInFile.has(id)) records[id] = { hash, method: "test-file", wording: false };
     else if (rule.untested !== undefined && hasAcceptanceLine(change.body, id)) records[id] = { hash, method: "acceptance", wording: false };
     else {
       const before = passedVersion(input.root, input.head, rule, others);
@@ -83,7 +85,7 @@ export function plan(input: PlanInput): Plan {
     }
   }
   if (!input.mainHasPasses) {
-    const tested = testedRules(input.root, input.config, corpus);
+    const tested = testedRules(input.db, input.root, input.config, corpus);
     for (const rule of rules.values()) {
       // reason: a rule the change edits is executed by it, so it is never migrated as if no one had touched it (BR-2245, issue #104)
       if (rule.status !== "active" || executed.has(rule.id) || !tested.has(rule.id)) continue;
@@ -144,7 +146,6 @@ export function hasAcceptanceLine(body: string, id: string): boolean {
   });
 }
 
-const JS_TS = /\.[cm]?[jt]sx?$/;
 const DEFAULT_TEST = /\.(test|spec)\.[cm]?[jt]sx?$/;
 
 /** Whether a repository path is a test file by the config (BR-2005's files), judged by name so an earlier landing's files count too. */
@@ -155,30 +156,45 @@ function isTestPath(config: Config, path: string): boolean {
 }
 
 /**
- * BR-2241: rules named by a running test that one of the change's landings added, changed or removed a line in:
- * the lines of `git diff -U0 base head` on the new side, against the test's lines in the file at `head`.
+ * BR-2241: the rules a running test names that one of the change's landings added, changed or removed a line in.
+ * `line`: every testcase of the file's report at `head` has a `line`, and a changed line falls to the nearest testcase
+ * starting at or before it (a deletion, to the line after the deletion point); `file`: some testcase has no `line`, so the
+ * file being changed is all the evidence there is (method `test-file`).
  */
-function touchedRules(input: PlanInput): Set<string> {
-  const out = new Set<string>();
+function touchedRules(input: PlanInput): { line: Set<string>; file: Set<string> } {
+  const line = new Set<string>();
+  const file = new Set<string>();
   const types = input.corpus.types;
   const prefix = `${types.find((t) => t.name === "rule")!.prefix}-`;
+  const ids = (c: TestCase) => [...idsIn(types, caseNames(c))].filter((id) => id.startsWith(prefix));
   for (const r of input.ranges) {
     const diff = git(input.root, "-c", "core.quotePath=false", "diff", "-U0", "--no-color", "--no-ext-diff", r.base, r.head);
     if (!diff.ok) continue;
-    for (const [path, lines] of newSideLines(diff.value)) {
-      if (!isTestPath(input.config, path) || lines.length === 0) continue;
-      const text = git(input.root, "show", `${r.head}:${path}`);
-      if (!text.ok) continue;
-      const titles = JS_TS.test(path) ? testTitles(text.value) : [{ title: text.value, runs: true, start: 1, end: Number.MAX_SAFE_INTEGER }];
-      for (const t of titles) {
-        if (!t.runs) continue;
-        // reason: an added or changed line lies within the call; a deletion (`+c,0`) falls after line c, so c must be before its end
-        if (!lines.some(([from, count]) => (count > 0 ? from <= t.end && from + count - 1 >= t.start : from >= t.start && from < t.end))) continue;
-        for (const id of idsIn(types, t.title)) if (id.startsWith(prefix)) out.add(id);
+    for (const [path, hunks] of newSideLines(diff.value)) {
+      if (!isTestPath(input.config, path) || hunks.length === 0) continue;
+      // reason: the report is keyed by the file's content at `head`, the tree that becomes main (BR-2337, D-64)
+      const blob = git(input.root, "rev-parse", `${r.head}:${path}`);
+      const row = blob.ok ? reportFor(input.db, path, blob.value) : undefined;
+      if (!row) continue;
+      const lined = row.cases.every((c) => c.line !== undefined);
+      if (!lined) {
+        for (const c of row.cases) if (c.runs) for (const id of ids(c)) file.add(id);
+        continue;
+      }
+      const ordered = [...row.cases].sort((a, b) => a.line! - b.line!);
+      for (const [from, count] of hunks) {
+        // reason: a deletion (`+c,0`) falls after line c, so it belongs to the testcase that holds line c + 1 (BR-2241)
+        const first = count > 0 ? from : from + 1;
+        for (let l = first; l < first + Math.max(count, 1); l++) {
+          let owner: TestCase | undefined;
+          for (const c of ordered) if (c.line! <= l) owner = c;
+          if (owner?.runs) for (const id of ids(owner)) line.add(id);
+        }
       }
     }
   }
-  return out;
+  for (const id of line) file.delete(id);
+  return { line, file };
 }
 
 /** Per file of a `-U0` diff, the new-side hunks as [first line, line count]; a deleted file has none. */
@@ -198,13 +214,15 @@ export function newSideLines(diff: string): Map<string, [number, number][]> {
   return out;
 }
 
-/** Rules a running test title names in the tree at `root` (BR-2005's reading), for migration (BR-2245). */
-export function testedRules(root: string, config: Config, corpus: Corpus): Set<string> {
+/** Rules a running testcase names in the tree at `root`, from the ledger (BR-2005's reading), for migration (BR-2245). */
+export function testedRules(db: CoordDb, root: string, config: Config, corpus: Corpus): Set<string> {
   const out = new Set<string>();
-  for (const file of testFilesFor(root, config)) {
-    const src = readFileSync(join(root, file), "utf8");
-    const titles = JS_TS.test(file) ? testTitles(src) : [{ title: src, runs: true }];
-    for (const t of titles) if (t.runs) for (const id of idsIn(corpus.types, t.title)) out.add(id);
+  const files = testFilesFor(root, config);
+  const blobs = blobsOf(root, files);
+  for (const file of files) {
+    const blob = blobs.get(file);
+    const row: LedgerRow | undefined = (blob === undefined ? undefined : reportFor(db, file, blob)) ?? lastReport(db, file);
+    for (const c of row?.cases ?? []) if (c.runs) for (const id of idsIn(corpus.types, caseNames(c))) out.add(id);
   }
   return out;
 }

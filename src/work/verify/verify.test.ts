@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { importedPaths } from "../../knowledge/query/query.ts";
 import { project, sh, startNew, ws } from "../testkit.ts";
 import { EventEmitter } from "node:events";
+import { recordReport } from "./ledger.ts";
 import { cliReader, commandFor, machineDeps, selectTests, workTest, type WorkTestDeps, type WorkTestResult } from "./verify.ts";
 import type { CpuSample } from "./pool.ts";
 
@@ -52,6 +53,11 @@ function fixture(testCommand = "sh run.sh {file}", extra: Record<string, string>
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "fixture");
   const wt = startNew(root, "work test").worktree;
+  // what the ledger holds for the two test files that name the rule: e runs it, f has it only in a skipped test (BR-2005, BR-2337)
+  const db = ws(root).db;
+  const named = (runs: boolean) => [{ suites: [], classname: "", name: `${rule}: names the rule`, runs }];
+  recordReport(db, "src/e.test.ts", sh(root, "hash-object", "src/e.test.ts"), named(true), "test_command");
+  recordReport(db, "src/f.test.ts", sh(root, "hash-object", "src/f.test.ts"), named(false), "test_command");
   return { root, wt };
 }
 
@@ -92,7 +98,7 @@ describe("canon work test selection", () => {
     expect(reasons(wt)).toEqual({ "src/d.test.ts": "changed", "src/g.test.ts": "changed" });
   });
 
-  test("BR-2157: a changed rule file selects the tests whose running titles name it, not skipped ones", () => {
+  test("BR-2157: a changed rule file selects the tests whose report has a running test naming it, not skipped ones, and not a file with no report", () => {
     const { wt } = fixture();
     write(wt, { [`canon/rules/core/${rule}.md`]: ruleText("y") });
     expect(reasons(wt)).toEqual({ "src/e.test.ts": `names ${rule}` });

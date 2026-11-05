@@ -6,11 +6,13 @@ import { readCorpus } from "../../knowledge/documents/read.ts";
 import { behaviourHash } from "../../knowledge/documents/behaviour.ts";
 import type { Change } from "../../knowledge/documents/model.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { recordReport } from "../verify/ledger.ts";
+import type { TestCase } from "../verify/report.ts";
 
 // reason: each test lands one or more changes through real worktrees, which takes seconds under load
 const TIMED = 60_000;
 
-// Fixture ids are assembled at runtime, so only test titles name rules (BR-2005).
+// Fixture ids are assembled at runtime, so this file's own text names no rule.
 const br = (n: number) => ["BR", n].join("-");
 const FINISH = { ...FAST, finish: true };
 
@@ -18,6 +20,19 @@ const ruleText = (n: number, o: { status?: string; untested?: string; statement?
   `---\nid: ${br(n)}\ntitle: ${o.title ?? `Rule ${n}`}\n${o.status ? `status: ${o.status}\n` : ""}${o.untested ? `untested: ${o.untested}\n` : ""}---\n## 规则\n\n${o.statement ?? `Statement ${n}.`}\n\n## 例子\n\n${o.examples ?? `- input ${n} → output ${n}`}\n`;
 
 const testFile = (ns: number[], extra = "") => `${ns.map((n) => `it("${br(n)}: case", () => {\n  expect(${n}).toBe(${n});\n});\n`).join("")}${extra}`;
+
+/**
+ * What a framework's report would say about a fixture test file (BR-2338): a testcase per `it("name", …)` call, with the
+ * line it starts on, and per `it.skip("name", …)` one that does not run. Recorded the way `canon work test` records (BR-2337).
+ */
+function report(db: ReturnType<typeof ws>["db"], root: string, path: string, text: string, withLines = true): void {
+  const cases: TestCase[] = [];
+  text.split("\n").forEach((line, i) => {
+    const m = /^it(\.skip)?\("([^"]+)"/.exec(line);
+    if (m) cases.push({ suites: [], classname: "", name: m[2]!, runs: m[1] === undefined, ...(withLines ? { line: i + 1 } : {}) });
+  });
+  recordReport(db, path, sh(root, "hash-object", path), cases, "test_command");
+}
 
 /**
  * billing with rules BR-1, BR-2 (tested in src/billing/a.test.ts) and whatever `rules` adds; `review` is the review
@@ -39,6 +54,7 @@ function fixture(o: { files?: Record<string, string>; review?: string; timing?: 
   }
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "fixture");
+  for (const [p, text] of Object.entries(files)) if (p.endsWith(".test.ts")) report(ws(root).db, root, p, text);
   return root;
 }
 
@@ -59,6 +75,7 @@ function write(wt: string, files: Record<string, string>, message = "work") {
   }
   sh(wt, "add", "-A");
   sh(wt, "commit", "-qm", message);
+  for (const [p, text] of Object.entries(files)) if (p.endsWith(".test.ts")) report(ws(wt).db, wt, p, text);
 }
 
 /** The change as the checkout at `root` holds it (main's checkout after a landing, or the change's worktree). */
@@ -165,6 +182,47 @@ describe("evidence at --finish (BR-2241)", () => {
     const out = await land(ws(s.worktree), FINISH, quiet);
     expect(out.kind).toBe("landed");
     expect(changeOn(root, "main", s.change).passes[br(1)]).toMatchObject({ method: "test" });
+  }, TIMED);
+});
+
+describe("evidence from the report's lines (BR-2241, D-64)", () => {
+  const run = async (o: { lines: boolean; edit: (text: string) => string; record?: boolean }) => {
+    const root = fixture();
+    await migrated(root);
+    const s = startNew(root, "Execute by report");
+    setChange(s.worktree, s.change, [br(1)]);
+    const file = "src/billing/a.test.ts";
+    const text = o.edit(testFile([1, 2]));
+    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { examples: "- input 1 → output 10" }), [file]: text });
+    // `write` records the report with lines; a framework without line numbers or a missing report is recorded over it
+    if (!o.lines || o.record === false) {
+      const db = ws(s.worktree).db;
+      db.db.query("DELETE FROM test_reports WHERE path = ? AND blob = ?").run(file, sh(s.worktree, "hash-object", file));
+      if (o.record !== false) report(db, s.worktree, file, text, false);
+    }
+    return { root, s, out: await land(ws(s.worktree), FINISH, quiet) };
+  };
+
+  test("BR-2241: without line numbers in the report, a change anywhere in the file that has a running test naming the rule is evidence of method test-file", async () => {
+    const { root, s, out } = await run({ lines: false, edit: (t) => t.replace("toBe(2)", "toBe(2); // other") });
+    expect(out.kind).toBe("landed");
+    expect(changeOn(root, "main", s.change).passes[br(1)]).toMatchObject({ method: "test-file" });
+  }, TIMED);
+
+  test("BR-2241: with line numbers the same edit to another rule's test is not evidence", async () => {
+    const { out } = await run({ lines: true, edit: (t) => t.replace("toBe(2)", "toBe(2); // other") });
+    expect(out.kind === "refused" && out.reason).toBe("evidence");
+  }, TIMED);
+
+  test("BR-2241: a line before the first testcase belongs to no test, so it is no evidence", async () => {
+    const { out } = await run({ lines: true, edit: (t) => `// header\n${t}`.replace("// header\nit(", "// header changed\nit(") });
+    expect(out.kind === "refused" && out.reason).toBe("evidence");
+  }, TIMED);
+
+  test("BR-2241: a changed test file with no report for its content gives no evidence, and canon check names the missing report", async () => {
+    const { out } = await run({ lines: true, record: false, edit: (t) => t.replace("toBe(1)", "toBe(1); // output 10") });
+    expect(out.kind === "refused" && out.reason).toBe("check");
+    expect(out.kind === "refused" && (out.findings ?? []).map((f) => f.rule)).toContain("test-report-missing");
   }, TIMED);
 });
 

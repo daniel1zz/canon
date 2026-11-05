@@ -4,12 +4,21 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { CoordDb } from "../../work/db.ts";
 import { readCorpus } from "../documents/read.ts";
-import { check, findTestFiles } from "./check.ts";
+import { check, findTestFiles, staleReportNotes } from "./check.ts";
+import type { TestReports } from "../../work/verify/ledger.ts";
+import type { TestCase } from "../../work/verify/report.ts";
 import { verify } from "./sources.ts";
 
-// Fixture ids are assembled at runtime. Since only test titles name rules (BR-2005), ids in fixture strings would not count anyway.
+// Fixture ids are assembled at runtime, so this file's own text names no rule.
 const br = (n: number) => ["BR", n].join("-");
 const d = (n: number) => ["D", n].join("-");
+
+const tc = (name: string, more: Partial<TestCase> = {}): TestCase => ({ suites: [], classname: "", name, runs: true, ...more });
+/** What the ledger holds: each file's testcases, fresh unless the file is listed in `stale`; `relevant` files are the ones this change touches (BR-2344). */
+const reportsOf = (files: Record<string, TestCase[]>, o: { stale?: string[]; relevant?: string[] } = {}): TestReports => ({
+  files: new Map(Object.entries(files).map(([f, cases]) => [f, { cases, fresh: !(o.stale ?? []).includes(f) }])),
+  relevant: new Set(o.relevant ?? []),
+});
 
 /** Fixture repo; the code directories the fixture domains name exist, as BR-2079 requires. */
 function repo(files: Record<string, string>): string {
@@ -34,7 +43,7 @@ describe("canon check", () => {
       "src/billing/refund.test.ts": `it("${br(1)}: refuses day 31", () => {});`,
     });
     const r = readCorpus(root);
-    expect(check({ root, ...r })).toEqual([]);
+    expect(check({ root, ...r, reports: reportsOf({ "src/billing/refund.test.ts": [tc(`${br(1)}: refuses day 31`)] }) })).toEqual([]);
   });
 
   test("BR-2001 BR-2004 BR-2005 BR-2042: reports each outcome violation by its rule name", () => {
@@ -47,7 +56,7 @@ describe("canon check", () => {
       [`canon/changes/C-1-a.md`]: `---\nid: C-1\ntitle: A\nrules: [${br(9)}]\n---\n## 为什么\n\nTouches ${br(1)}.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n`,
       "src/billing/a.test.ts": `it("${br(2)} old", () => {}); it("${br(7)}", () => {});`,
     });
-    const findings = check({ root, ...readCorpus(root) });
+    const findings = check({ root, ...readCorpus(root), reports: reportsOf({ "src/billing/a.test.ts": [tc(`${br(2)} old`), tc(br(7))] }) });
     const summary = findings.map((f) => `${f.rule} ${f.path}`).sort();
     expect(summary).toEqual(
       [
@@ -60,51 +69,80 @@ describe("canon check", () => {
     );
   });
 
-  test("BR-2005: only titles of tests that run make a rule tested; comments, strings, fixtures and skipped tests do not", () => {
-    const untested = (body: string, file = "src/billing/a.test.ts") => {
-      const root = repo({ "canon/rules/billing/README.md": domainReadme, [`canon/rules/billing/${br(1)}.md`]: ruleFile(1), [file]: body });
-      return check({ root, ...readCorpus(root), testFiles: [file] }).filter((f) => f.rule === "rule-untested").length;
-    };
+  test("BR-2005: only a testcase that runs and whose names carry the id makes a rule tested; skipped ones, the file's text and a missing report do not", () => {
     const id = br(1);
+    const untested = (cases: TestCase[] | undefined, o: { stale?: string[] } = {}) => {
+      const file = "src/billing/a.test.ts";
+      const root = repo({ "canon/rules/billing/README.md": domainReadme, [`canon/rules/billing/${id}.md`]: ruleFile(1), [file]: `// ${id} only in the file's text\n` });
+      return check({ root, ...readCorpus(root), testFiles: [file], reports: reportsOf(cases ? { [file]: cases } : {}, o) }).filter((f) => f.rule === "rule-untested");
+    };
     for (const tested of [
-      `test("${id}: refunds day 30", () => {});`,
-      `it('${id}', () => {});`,
-      `test(\`${id}: \${what} fails\`, () => {});`,
-      `test.each([1, 2])("${id} case %d", (n) => {});`,
-      "test.each`a | b\n${1} | ${2}`(\"" + id + " $a\", ({ a }) => {});",
-      `describe("${id}", () => { test("x", () => {}); });`,
-      `test.only("${id}", () => {}); test.concurrent("y", () => {});`,
-      `const ok = /\\(/.test(s); test("${id}", () => {});`,
-    ]) expect([tested, untested(tested)]).toEqual([tested, 0]);
+      [tc(`${id}: refunds day 30`)],
+      [tc(`${id}: fails`)], // a failing test ran
+      [tc("first", { suites: ["a.test.ts", id], classname: id })], // the id is in a describe
+      [tc("x", { classname: id })],
+      [tc("x", { suites: [id] })],
+      [tc(`${id} case one`), tc(`${id} case two`, { runs: false })],
+      [tc("x", { runs: false }), tc(`test_param[${id}-one]`)], // pytest puts a parameter id in the name
+    ]) expect([JSON.stringify(tested), untested(tested).length]).toEqual([JSON.stringify(tested), 0]);
     for (const loose of [
-      `// ${id}\ntest("x", () => {});`,
-      `/* ${id} */ test("x", () => {});`,
-      `const s = "${id}"; test("x", () => expect(s).toBe(s));`,
-      `const files = { "a.test.ts": \`it("${id}", () => {});\` };`,
-      `test.skip("${id}: later", () => {});`,
-      `test.todo("${id}");`,
-      `xit("${id}", () => {}); xtest("${id}", () => {});`,
-      `test.failing("${id}", () => {});`,
-      `test.if(process.env.X)("${id}", () => {}); test.skipIf(true)("${id}", () => {});`,
-      `describe.skip("x", () => { test("${id}", () => {}); });`,
-      `xdescribe("x", () => { describe("y", () => { it("${id}", () => {}); }); });`,
-      `const title = "${id}"; test(title, () => {});`,
-      `helper.test("${id}"); runner.it("${id}");`,
-    ]) expect([loose, untested(loose)]).toEqual([loose, 1]);
-    expect(untested(`describe.skip("x", () => {}); test("${id}", () => {});`)).toBe(0); // the skip ends with its describe
-    expect(untested(`# ${id} in a comment`, "tools/a.py")).toBe(0); // no title parser for other languages: whole text
+      [tc(`${id}: later`, { runs: false })], // skipped or todo
+      [tc("x", { suites: ["a.test.ts"], classname: "BR_1" })], // a different spelling is another name
+      [tc("plain")], // the id is only in the file's text, which canon does not read
+      [], // an empty report
+    ]) expect([JSON.stringify(loose), untested(loose).length]).toEqual([JSON.stringify(loose), 1]);
+    expect(untested(undefined)[0]!.message).toContain("1 test file(s) have no report: run canon work test --all");
+    expect(untested([])[0]!.message).toContain("reports with no testcase: src/billing/a.test.ts");
   });
 
-  test("BR-2004 BR-2042: ids in test titles are checked even when the test is skipped; ids outside titles are not", () => {
+  test("BR-2005: a file without a report for its current content counts by its newest older report unless this change touches it", () => {
+    const file = "src/billing/a.test.ts";
+    const root = repo({ "canon/rules/billing/README.md": domainReadme, [`canon/rules/billing/${br(1)}.md`]: ruleFile(1), [file]: "x\n" });
+    const run = (o: { relevant?: string[] }) => check({ root, ...readCorpus(root), testFiles: [file], reports: reportsOf({ [file]: [tc(`${br(1)}: a`)] }, { stale: [file], ...o }) }).map((f) => f.rule);
+    expect(run({})).toEqual([]);
+    expect(run({ relevant: [file] })).toEqual(["test-report-missing", "rule-untested"]);
+  });
+
+  test("BR-2004 BR-2042: ids in test names are checked even when the test is skipped; ids that are in no testcase name are not", () => {
     const root = repo({
       "canon/rules/billing/README.md": domainReadme,
       [`canon/rules/billing/${br(1)}.md`]: ruleFile(1),
       [`canon/rules/billing/${br(2)}.md`]: ruleFile(2, "status: retired\n"),
       "src/billing/a.test.ts": `// ${br(8)} and ${br(2)} in a comment\ntest("${br(1)}", () => { const s = "${br(9)}"; });`,
-      "src/billing/b.test.ts": `test.skip("${br(7)} later", () => {}); xit("${br(2)} old", () => {});`,
+      "src/billing/b.test.ts": "x\n",
     });
-    const got = check({ root, ...readCorpus(root) }).map((f) => `${f.rule} ${f.path} ${f.message}`);
+    const reports = reportsOf({ "src/billing/a.test.ts": [tc(br(1))], "src/billing/b.test.ts": [tc(`${br(7)} later`, { runs: false }), tc(`${br(2)} old`, { runs: false })] });
+    const got = check({ root, ...readCorpus(root), reports }).map((f) => `${f.rule} ${f.path} ${f.message}`);
     expect(got).toEqual([`ref-dangling src/billing/b.test.ts test names ${br(7)}, which does not exist`, `test-retired-rule src/billing/b.test.ts test still names retired rule ${br(2)}`]);
+  });
+
+  test("BR-2344: a test file this change touches without a report for its content is one finding naming the files and the command; others are not", () => {
+    const files = ["src/billing/a.test.ts", "src/billing/b.test.ts", "src/billing/c.test.ts"];
+    const root = repo({ "canon/rules/billing/README.md": domainReadme, [`canon/rules/billing/${br(1)}.md`]: ruleFile(1), ...Object.fromEntries(files.map((f) => [f, "x\n"])) });
+    const findings = (reports: TestReports) => check({ root, ...readCorpus(root), testFiles: files, reports }).filter((f) => f.rule === "test-report-missing");
+    const ok = reportsOf({ [files[0]!]: [tc(br(1))] });
+    expect(findings(ok)).toEqual([]); // b and c have no report at all, but this change does not touch them
+    const two = findings({ files: ok.files, relevant: new Set([files[1]!, files[2]!]) });
+    expect(two.length).toBe(1);
+    expect(two[0]!.message).toBe("2 test file(s) this change touches have no report for their current content (src/billing/b.test.ts, src/billing/c.test.ts): run canon work test src/billing/b.test.ts src/billing/c.test.ts");
+    const many = Array.from({ length: 7 }, (_, i) => `src/billing/m${i}.test.ts`);
+    const seven = check({ root, ...readCorpus(root), testFiles: many, reports: { files: new Map(), relevant: new Set(many) } }).filter((f) => f.rule === "test-report-missing");
+    expect(seven[0]!.message).toContain("7 test file(s)");
+    expect(seven[0]!.message).toContain("src/billing/m4.test.ts, and 2 more");
+  });
+
+  test("BR-2345: files changed since their last report are said once as a note and do not fail the check", () => {
+    const files = ["src/billing/a.test.ts", "src/billing/b.test.ts"];
+    const root = repo({ "canon/rules/billing/README.md": domainReadme, [`canon/rules/billing/${br(1)}.md`]: ruleFile(1), ...Object.fromEntries(files.map((f) => [f, "x\n"])) });
+    const reports = reportsOf({ [files[0]!]: [tc(br(1))], [files[1]!]: [tc("x")] }, { stale: files });
+    const input = { root, ...readCorpus(root), testFiles: files, reports };
+    expect(check(input)).toEqual([]);
+    const notes = staleReportNotes(input);
+    expect(notes.length).toBe(1);
+    expect(notes[0]!.rule).toBe("test-report-stale");
+    expect(notes[0]!.message).toContain("2 test file(s) changed since their last report (src/billing/a.test.ts, src/billing/b.test.ts)");
+    expect(staleReportNotes({ ...input, reports: reportsOf({ [files[0]!]: [tc(br(1))] }) })).toEqual([]);
+    expect(staleReportNotes({ ...input, reports: { ...reports, relevant: new Set(files) } })).toEqual([]); // a relevant file is a finding, not a note
   });
 
   test("BR-2006: a domain without README is invalid, so its code scope is never silently empty", () => {
@@ -159,8 +197,8 @@ describe("rule shape", () => {
   const fileOf = (n: number, body: string, extra = "") => ({ [`canon/rules/billing/${br(n)}.md`]: `---\nid: ${br(n)}\ntitle: R${n}\n${extra}---\n${body}` });
   const run = (files: Record<string, string>) => {
     const ids = Object.keys(files).map((p) => p.split("/").pop()!.replace(/\.md$/, ""));
-    const root = repo({ ...readme, ...files, "src/billing/a.test.ts": `it("${ids.join(" ")}", () => {});` });
-    return check({ root, ...readCorpus(root) }).map((f) => `${f.rule} ${f.path.split("/").pop()}`).sort();
+    const root = repo({ ...readme, ...files, "src/billing/a.test.ts": "x\n" });
+    return check({ root, ...readCorpus(root), reports: reportsOf({ "src/billing/a.test.ts": [tc(ids.join(" "))] }) }).map((f) => `${f.rule} ${f.path.split("/").pop()}`).sort();
   };
 
   test("BR-2033: an active rule without a non-empty statement section is reported", () => {
@@ -201,9 +239,9 @@ describe("rule shape", () => {
       ...fileOf(1, "## 规则\n\nS.\n\n## 例子\n\n- <边界上的具体输入或状态> → <必须出现的结果>\n- `canon work start <C-n>` → starts\n"),
       [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: X\n---\n## 背景\n\n<为什么需要做这个决定，有哪些事实和数据。>\n\n\`\`\`\n<kept as code>\n\`\`\`\n`,
       "canon/changes/C-1.md": "---\nid: C-1\ntitle: X\n---\n## 为什么\n\n<要解决什么问题。>\n",
-      "src/billing/a.test.ts": `it("${br(1)}", () => {});`,
+      "src/billing/a.test.ts": "x\n",
     });
-    const got = check({ root, ...readCorpus(root) }).filter((f) => f.rule === "template-unfilled").map((f) => f.path.split("/").pop()).sort();
+    const got = check({ root, ...readCorpus(root), reports: reportsOf({ "src/billing/a.test.ts": [tc(br(1))] }) }).filter((f) => f.rule === "template-unfilled").map((f) => f.path.split("/").pop()).sort();
     expect(got).toEqual([`${br(1)}.md`, `${d(1)}.md`, "C-1.md", "README.md"].sort());
   });
 
@@ -564,7 +602,7 @@ describe("backticked repository paths", () => {
       "CLAUDE.md": "See `src/dangling` and `link.ts`.\n",
       "canon/rules/billing/README.md": domainReadme,
       [`canon/rules/billing/${br(1)}.md`]: ruleFile(1),
-      "src/r.test.ts": `test("${br(1)}", () => {});`,
+      "src/r.test.ts": "x\n",
     });
     symlinkSync("nowhere", join(root, "src/dangling"));
     symlinkSync("nowhere", join(root, "dangling-top"));
@@ -574,7 +612,7 @@ describe("backticked repository paths", () => {
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "links");
     expect(findTestFiles(root)).toEqual(["src/r.test.ts"]);
-    expect(check({ root, ...readCorpus(root) }).map((f) => `${f.rule} ${f.path}`)).toEqual([]);
+    expect(check({ root, ...readCorpus(root), reports: reportsOf({ "src/r.test.ts": [tc(br(1))] }) }).map((f) => `${f.rule} ${f.path}`)).toEqual([]);
   });
 
   test("BR-2171: a missing candidate path outside a git repository is reported once as unreadable history; existing ones need no history", () => {

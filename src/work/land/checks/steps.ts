@@ -3,7 +3,8 @@ import { join } from "node:path";
 import type { Say, Workspace } from "../../workspace.ts";
 import { changeIdsOnBranches } from "../../session/inflight.ts";
 import { readConfig } from "../../../invocation/config.ts";
-import { backlogNotes, check, noteLine, type Finding } from "../../../knowledge/check/check.ts";
+import { backlogNotes, check, noteLine, staleReportNotes, type Finding } from "../../../knowledge/check/check.ts";
+import { reportsFor } from "../../verify/changes.ts";
 import { backlogAt } from "../../../knowledge/documents/backlog.ts";
 import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../../../knowledge/check/sources.ts";
 import { testFilesFor } from "../../../knowledge/check/tests.ts";
@@ -84,9 +85,12 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   // reason: only the landing that adds a dangling backlog id is refused for it; one main already lists is a note (BR-2150, #112)
   const listed = backlogAt(wt, v.main, ws.config.types);
   if (!listed.ok) return refuse("environment", listed.error.message);
-  const input = { root: wt, ...read, testFiles: tests, floorSkipPaths: landing.value.floorSkipPaths, branchChanges: onBranches.value, backlogBase: new Set(listed.value.map((e) => e.id)) };
+  const reports = reportsFor(ws.db, wt, landing.value, read.corpus, tests);
+  if (!reports.ok) return refuse("environment", reports.error.message);
+  const input = { root: wt, ...read, testFiles: tests, reports: reports.value, floorSkipPaths: landing.value.floorSkipPaths, branchChanges: onBranches.value, backlogBase: new Set(listed.value.map((e) => e.id)) };
   const findings = check(input);
   for (const n of backlogNotes(input)) say(noteLine(n));
+  for (const n of staleReportNotes(input)) say(noteLine(n));
   if (findings.length > 0) return refuse("check", `canon check: ${findings.length} finding(s)`, findings);
   // Execution records (D-32): planned rules made active by their change only, pass records written only by canon, and
   // still matching their rules after the rebase (BR-2240, BR-2242, BR-2244).

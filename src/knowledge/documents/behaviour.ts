@@ -19,8 +19,8 @@ export function behaviourHash(body: string): string {
   return createHash("sha256").update(`规则\n${statement}\n例子\n${examples}`).digest("hex").slice(0, 16);
 }
 
-const METHODS: readonly PassMethod[] = ["test", "acceptance", "migration"];
-const VALUE = /^([0-9a-f]{16}) (test|acceptance|migration)( wording)?$/;
+const METHODS: readonly PassMethod[] = ["test", "test-file", "acceptance", "migration"];
+const VALUE = /^([0-9a-f]{16}) (test|test-file|acceptance|migration)( wording)?$/;
 const RULE_ID = /^[A-Z][A-Z0-9]*-\d+$/;
 
 /** The one-line value a pass record is written as: `<hash> <method>[ wording]` (BR-2237). */

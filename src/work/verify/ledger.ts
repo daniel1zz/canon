@@ -1,5 +1,5 @@
 import type { CoordDb } from "../db.ts";
-import type { TestCase } from "./report.ts";
+import { caseNames, type TestCase } from "./report.ts";
 
 /**
  * The ledger of test reports (BR-2337, D-64): for each (test file path, git blob hash of its content) the testcases a
@@ -58,3 +58,60 @@ interface Raw {
 }
 
 const row = (r: Raw): LedgerRow => ({ path: r.path, blob: r.blob, cases: JSON.parse(r.cases) as TestCase[], source: r.source, recordedAt: r.recorded_at });
+
+/** What the ledger holds for one test file (BR-2005). */
+export interface FileReport {
+  /** The testcases of the row for the file's current content, or of its newest older row. */
+  readonly cases: readonly TestCase[];
+  /** True when the row is for the file's current content (its blob hash), false when it is an older row. */
+  readonly fresh: boolean;
+}
+
+/** What `canon check` and the evidence read about the test files of one tree (BR-2005, BR-2344). */
+export interface TestReports {
+  /** A file the ledger has no row for at all is absent. */
+  readonly files: ReadonlyMap<string, FileReport>;
+  /** Test files this change makes relevant and that have no row for their current content (BR-2344). */
+  readonly relevant: ReadonlySet<string>;
+}
+
+/** The git blob hash of each file's content in the working tree of `root`; a file git cannot read has none. */
+export function blobsOf(root: string, files: readonly string[]): Map<string, string> {
+  const out = new Map<string, string>();
+  if (files.length === 0) return out;
+  const r = Bun.spawnSync(["git", "hash-object", "--stdin-paths"], { cwd: root, stdin: new TextEncoder().encode(`${files.join("\n")}\n`), stdout: "pipe", stderr: "pipe" });
+  const lines = r.exitCode === 0 ? r.stdout.toString().trim().split("\n") : [];
+  if (lines.length === files.length) files.forEach((f, i) => out.set(f, lines[i]!));
+  return out;
+}
+
+/**
+ * What the ledger says about each of `files` in the working tree of `root`: the row for the current content, else the
+ * newest older row. `touched` makes files relevant (BR-2344): a changed file, or one whose newest row has a running
+ * testcase naming a rule the change touched (`namesTouched`); without it no file is relevant.
+ */
+export function loadReports(
+  db: CoordDb,
+  root: string,
+  files: readonly string[],
+  touched?: { readonly changed: ReadonlySet<string>; readonly namesTouched: (names: string) => boolean },
+): TestReports {
+  const blobs = blobsOf(root, files);
+  const out = new Map<string, FileReport>();
+  const relevant = new Set<string>();
+  for (const file of files) {
+    const blob = blobs.get(file);
+    const current = blob === undefined ? undefined : reportFor(db, file, blob);
+    if (current) {
+      out.set(file, { cases: current.cases, fresh: true });
+      continue;
+    }
+    const last = lastReport(db, file);
+    if (last) out.set(file, { cases: last.cases, fresh: false });
+    if (touched && (touched.changed.has(file) || (last !== undefined && last.cases.some((c) => c.runs && touched.namesTouched(caseNames(c)))))) relevant.add(file);
+  }
+  return { files: out, relevant };
+}
+
+/** The testcases of a report that run: no `skipped` child (BR-2338). */
+export const runningCases = (r: FileReport | undefined): readonly TestCase[] => (r ? r.cases.filter((c) => c.runs) : []);

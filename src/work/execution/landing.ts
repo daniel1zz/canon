@@ -16,7 +16,7 @@ export function planClose(db: CoordDb, config: Config, wt: string, main: string,
   const base = git(wt, "merge-base", main, "HEAD");
   if (!head.ok) return { error: head.error.message };
   if (!base.ok) return { error: base.error.message };
-  return plan({ root: wt, head: head.value, corpus, config, change, ranges: [...earlierLandings(db, change.id), { base: base.value, head: head.value }], mainHasPasses: hasPassesAt(wt, main) });
+  return plan({ db, root: wt, head: head.value, corpus, config, change, ranges: [...earlierLandings(db, change.id), { base: base.value, head: head.value }], mainHasPasses: hasPassesAt(wt, main) });
 }
 
 /** The `passes` value the close commit writes, or undefined when there is no record, so the key is left out (BR-2242). */
@@ -129,7 +129,7 @@ export function landingExecution(i: Input): LandingExecution {
   if (moved.length > 0) {
     return { ok: false, reason: "rule-changed", message: `rules ${change.id} executes changed on ${i.main} while it was landing: ${moved.join(", ")}. Run git rebase ${i.main}, verify against the new text (change the test or the ## 验收 line), then land --finish again (BR-2244)` };
   }
-  const expected = plan({ root: wt, head, corpus, config: i.config, change, ranges: [...earlierLandings(i.db, change.id), { base, head }], mainHasPasses: hasPassesAt(wt, base), recorded: new Set(Object.keys(change.passes)) });
+  const expected = plan({ db: i.db, root: wt, head, corpus, config: i.config, change, ranges: [...earlierLandings(i.db, change.id), { base, head }], mainHasPasses: hasPassesAt(wt, base), recorded: new Set(Object.keys(change.passes)) });
   if (expected.missing.length > 0 || !same(expected.records, change.passes)) {
     const want = Object.entries(expected.records).map(([id, r]) => `${id}: ${formatPass(r)}`);
     return { ok: false, reason: "passes", message: `the pass records of ${change.id} are not the ones canon computes on the landing tree (BR-2242, BR-2245)${expected.missing.length ? `; without evidence: ${expected.missing.map((m) => m.id).join(", ")}` : ""}\n  computed: ${want.length ? want.join(", ") : "(none)"}\n  in ${change.path}: ${Object.entries(change.passes).map(([id, r]) => `${id}: ${formatPass(r)}`).join(", ") || "(none)"}\nLand --finish again from the change's worktree; canon writes them itself` };

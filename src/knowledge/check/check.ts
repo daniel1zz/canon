@@ -7,7 +7,8 @@ import { stripCode, type Corpus, type Rule } from "../documents/model.ts";
 import type { FileProblem } from "../documents/read.ts";
 import { idsIn as idsOf } from "../documents/types.ts";
 import { BACKLOG_FILE, readBacklog } from "../documents/backlog.ts";
-import { testTitles } from "./test-titles.ts";
+import { caseNames } from "../../work/verify/report.ts";
+import type { TestReports } from "../../work/verify/ledger.ts";
 import { historyOf, pathFindings } from "./paths.ts";
 import { listFindings } from "./lists.ts";
 import { releaseFindings } from "../releases/check.ts";
@@ -33,6 +34,8 @@ export type CheckRule =
   | "supersedes-not-decision" // a decision's `supersedes` names a document that is not a decision, or itself (BR-2230)
   | "instructions-missing" // a file `instructions` lists in canon/config.yaml does not exist (BR-2231)
   | "rule-untested" // an active rule has no test and no `untested:` reason (a planned one needs none, BR-2235)
+  | "test-report-missing" // a test file this change touches has no report for its current content (BR-2344)
+  | "test-report-stale" // test files changed since their last report: only ever a note (BR-2345)
   | "test-retired-rule" // a test still names a retired rule
   | "rule-no-statement" // an active or planned rule has no non-empty "## 规则" section
   | "rule-no-example" // an active or planned rule without `untested:` has no example in "## 例子"
@@ -57,6 +60,8 @@ export interface CheckInput {
   readonly problems: readonly FileProblem[];
   /** Test files to scan for rule ids; defaults to every *.test.ts / *.spec.ts outside node_modules and canon/. */
   readonly testFiles?: readonly string[];
+  /** What the ledger holds for those test files (BR-2005); without it no test file has a report. */
+  readonly reports?: TestReports;
   /** `floor_skip_paths` of the config in force; tests must not read the repository's files under them (BR-2181). */
   readonly floorSkipPaths?: readonly string[];
   /** Ids whose change file is on their own change branch, not yet on main: the backlog may list them (BR-2150, D-50). */
@@ -88,6 +93,29 @@ function backlogDangling(input: CheckInput): { finding: Finding; known: boolean 
 /** The dangling backlog ids main already lists: said, never blocking (BR-2150, D-50). */
 export function backlogNotes(input: CheckInput): Finding[] {
   return backlogDangling(input).filter((d) => d.known).map((d) => d.finding);
+}
+
+const FIRST = 5;
+/** The first few names, and how many more there are. */
+const listed = (files: readonly string[]): string => `${files.slice(0, FIRST).join(", ")}${files.length > FIRST ? `, and ${files.length - FIRST} more` : ""}`;
+
+/**
+ * Test files whose newest report is for older content and that this change does not make relevant: their rows still
+ * count, said once, never blocking (BR-2345).
+ */
+export function staleReportNotes(input: CheckInput): Finding[] {
+  const reports = input.reports;
+  if (!reports) return [];
+  const stale = (input.testFiles ?? []).filter((f) => {
+    const row = reports.files.get(f);
+    return row !== undefined && !row.fresh && !reports.relevant.has(f);
+  });
+  if (stale.length === 0) return [];
+  return [{
+    path: stale[0]!,
+    rule: "test-report-stale",
+    message: `${stale.length} test file(s) changed since their last report (${listed(stale)}); the rules their older report names still count as tested. Run canon work test ${stale.slice(0, 5).join(" ")}${stale.length > 5 ? " …" : ""} to refresh`,
+  }];
 }
 
 /** How a backlog note is printed: one line naming the place and the fix (BR-2150). */
@@ -155,25 +183,45 @@ export function check(input: CheckInput): Finding[] {
   const tested = new Set<string>();
   const testFiles = input.testFiles ?? findTestFiles(input.root);
   const rulePrefix = `${input.corpus.types.find((t) => t.name === "rule")!.prefix}-`;
+  const reports = input.reports;
+  const noReport: string[] = [];
+  const emptyReport: string[] = [];
   for (const file of testFiles) {
-    const text = readFileSync(join(input.root, file), "utf8");
-    // reason: in JS/TS files only test titles name rules, and only titles that run make a rule tested (BR-2005,
-    // D-12); other languages have no title parser, so their whole text still counts.
-    const titles = JS_TS.test(file) ? testTitles(text) : [{ title: text, runs: true }];
-    for (const { title, runs } of titles) {
-      for (const ref of idsIn(title)) {
+    // reason: what tests a file holds, and whether they run, is what its test framework reported (BR-2005, D-64);
+    // an older row stands in only for a file this change does not make relevant, which has its own finding (BR-2344)
+    const row = reports?.files.get(file);
+    if (!row || (!row.fresh && reports!.relevant.has(file))) {
+      noReport.push(file);
+      continue;
+    }
+    if (row.cases.length === 0) emptyReport.push(file);
+    for (const c of row.cases) {
+      for (const ref of idsIn(caseNames(c))) {
         if (!ref.startsWith(rulePrefix)) continue;
         const rule = rules.get(ref);
         if (!rule) findings.push({ path: file, rule: "ref-dangling", message: `test names ${ref}, which does not exist` });
         else if (rule.status === "retired") findings.push({ path: file, rule: "test-retired-rule", message: `test still names retired rule ${ref}` });
-        else if (runs) tested.add(ref);
+        else if (c.runs) tested.add(ref);
       }
     }
+  }
+  // reason: one finding for the project, with the files and the command that fixes it (BR-2344)
+  const missing = testFiles.filter((f) => reports?.relevant.has(f) && !reports.files.get(f)?.fresh);
+  if (missing.length > 0) {
+    findings.push({
+      path: missing[0]!,
+      rule: "test-report-missing",
+      message: `${missing.length} test file(s) this change touches have no report for their current content (${listed(missing)}): run canon work test ${missing.slice(0, 5).join(" ")}${missing.length > 5 ? " …" : ""}`,
+    });
   }
   // reason: a planned rule is designed but not executed yet, so it needs no test (BR-2235, BR-2005)
   for (const rule of rules.values()) {
     if (rule.status === "active" && rule.untested === undefined && !tested.has(rule.id)) {
-      findings.push({ path: rule.path, rule: "rule-untested", message: `${rule.id} has no running test whose title names it and no \`untested:\` reason` });
+      const why = [
+        ...(noReport.length > 0 ? [`${noReport.length} test file(s) have no report: run canon work test --all`] : []),
+        ...(emptyReport.length > 0 ? [`reports with no testcase: ${listed(emptyReport)}`] : []),
+      ];
+      findings.push({ path: rule.path, rule: "rule-untested", message: `${rule.id} has no running test whose name names it and no \`untested:\` reason${why.length ? ` (${why.join("; ")})` : ""}` });
     }
   }
   findings.push(...structureFindings(input.root, input.corpus));
@@ -344,8 +392,6 @@ export function beforeChangeWording(examples: string): string | undefined {
   const text = stripCode(examples).toLowerCase();
   return BEFORE_CHANGE.find((w) => text.includes(w));
 }
-
-const JS_TS = /\.[cm]?[jt]sx?$/;
 
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".cache"]);
 /** Skipped only at the repository root: canon's own documents, not any directory that happens to be named canon (BR-2046). */
