@@ -7,7 +7,7 @@ import { readCorpus } from "../../../knowledge/documents/read.ts";
 import { land } from "../land.ts";
 import { waitPollMs } from "./wait.ts";
 import { processOf, selfProcess, type Proc } from "../../claims/liveness.ts";
-import { HANG_SECONDS, hang, FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
+import { HANG_SECONDS, boundedLoop, hang, FAST, project, quiet, sh, startNew, waitFor, ws } from "../../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
 // under load that alone came within 0.4 s of the 5 s default (C-111), so they get room, not the rest of the file.
@@ -35,7 +35,7 @@ describe("the claim names the lander while it lands", () => {
       const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
       expect(tryTurn(other.db, ahead).mine).toBe(true);
       const landing = land(ws(s.worktree), FAST, quiet);
-      await Bun.sleep(300);
+      await waitFor("the landing to wait in the queue", () => other.db.db.query("SELECT 1 FROM queue WHERE worktree = ? AND state = 'waiting'").get(s.worktree) !== null);
       await body(root, s, (async () => { finishEntry(other.db, ahead, "landed", "x"); return landing; })());
     } finally {
       if (saved === undefined) delete process.env["CLAUDECODE"];
@@ -186,10 +186,12 @@ describe("a lander killed by a signal", () => {
     const hooks = join(sh(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "hooks");
     mkdirSync(hooks, { recursive: true });
     const marker = join(root, "..", `${root.split("/").pop()}-closing`);
-    writeFileSync(join(hooks, "post-commit"), `#!/bin/sh\ntouch ${marker}\nsleep 2\n`, { mode: 0o755 });
+    const release = `${marker}.release`;
+    writeFileSync(join(hooks, "post-commit"), `#!/bin/sh\ntouch ${marker}\n${boundedLoop(`[ ! -e ${release} ]`)}\n`, { mode: 0o755 });
     const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
     await until(() => existsSync(marker)); // the close commit is being made
     p.kill("SIGTERM"); // canon only: git finishes the commit
+    writeFileSync(release, ""); // the hook ends after the signal, so canon handles it once the commit is done
     expect(await p.exited).toBe(143);
     expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(head);
     const change = readCorpus(s.worktree).corpus.docs.find((d) => d.id === s.change);
@@ -236,13 +238,16 @@ describe("a waiting lander's heartbeat", () => {
     const beat = setInterval(() => heartbeat(other.db, ahead), 100);
     try {
       const landing = land(ws(s.worktree), FAST, quiet);
-      await Bun.sleep(300);
+      await waitFor("the landing to wait in the queue", () => other.db.db.query("SELECT 1 FROM queue WHERE worktree = ? AND state = 'waiting'").get(s.worktree) !== null);
       const behind = enqueue(other.db, "/elsewhere-too", "C-98", "agent:c", me);
       // reason: the entry behind tries for its turn often, so a waiting lander silent for more than 0.6 s would be marked abandoned
-      for (let i = 0; i < 30; i++) {
+      const lastBeat = () => Date.parse(other.db.db.query<{ heartbeat: string }, [string]>("SELECT heartbeat FROM queue WHERE worktree = ?").get(s.worktree)!.heartbeat);
+      const first = lastBeat();
+      // the lander has beaten for five stale times, by its own heartbeat, and the entry behind tried for the turn all that while
+      await waitFor("the waiting lander to beat for five stale times", () => {
         tryTurn(other.db, behind, staleMs);
-        await Bun.sleep(100);
-      }
+        return lastBeat() >= first + 5 * staleMs;
+      }, 20_000);
       const state = () => other.db.db.query<{ state: string }, [string]>("SELECT state FROM queue WHERE subject = ? ORDER BY id DESC LIMIT 1").get(s.change)?.state;
       expect(state()).toBe("waiting");
       finishEntry(other.db, behind, "failed", "test");
