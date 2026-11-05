@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { CHECK_AS_COMMAND } from "../../install/hook.ts";
 import { CoordDb } from "../db.ts";
 import { project, sh, startNew, ws } from "../testkit.ts";
 
@@ -200,4 +201,25 @@ describe("events keep the subagent's name and worktree (BR-2131)", () => {
     expect([ok[0]!.actor, ok[0]!.worktree]).toEqual([`${S}:abc`, s.worktree]);
     expect(holderOf(root, s.change)).toBeUndefined();
   }, TIMED);
+});
+
+describe("canon work land says when the project has no check-as hook (BR-2342)", () => {
+  const NOTICE = "has no canon check-as hook";
+  const settings = (root: string, hooks: unknown) => {
+    mkdirSync(join(root, ".claude"), { recursive: true });
+    writeFileSync(join(root, ".claude/settings.json"), JSON.stringify({ hooks }));
+  };
+
+  test("BR-2342: in Claude Code without the hook the line is printed, also when the landing is refused, with the refusal's own exit code; with the hook or outside Claude Code it is not", async () => {
+    const root = project();
+    const without = await canon(root, {}, "work", "land");
+    expect(without.code).toBe(2); // landing from the checkout that has main (BR-2031)
+    expect(without.out).toContain(NOTICE);
+    expect(without.out).toContain("run canon update");
+    expect((await canon(root, { CLAUDECODE: "" }, "work", "land")).out).not.toContain(NOTICE);
+    settings(root, { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: CHECK_AS_COMMAND }] }] });
+    const withHook = await canon(root, {}, "work", "land");
+    expect(withHook.code).toBe(2);
+    expect(withHook.out).not.toContain(NOTICE);
+  });
 });

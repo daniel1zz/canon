@@ -6,9 +6,9 @@ import { err, ok, type Result } from "../kernel/result.ts";
 /**
  * The hooks canon puts into a project: at session start Claude Code runs `canon brief` (BR-2087, D-10), so a new
  * session learns what it is working on and whether canon's project assets are out of date; before each Bash call it
- * runs `canon snapshot take` (BR-2185, D-30), so uncommitted work can always be recovered.
+ * runs `canon snapshot take` (BR-2185, D-30), so uncommitted work can always be recovered, and `canon work check-as` (BR-2343, D-62).
  * It is a *merged* asset: canon owns only its own entry in `.claude/settings.json` and never touches
- * anything else in that file. It reports; it never blocks (D-1: no hook checks how an agent works). The entries
+ * anything else in that file. It reports and records; the one thing it refuses is a canon claim command whose `--as` names the wrong agent (BR-2340, D-62), never how an agent works (D-1). The entries
  * canon withdrew (C-91's PreToolUse hook and allow rule, D-18) are removed by the same write.
  */
 /**
@@ -23,6 +23,12 @@ export const BRIEF_COMMAND =
  */
 export const SNAPSHOT_COMMAND =
   `canon snapshot take --hook || echo '{"systemMessage":"canon snapshot take failed or canon is not on PATH: uncommitted work was not snapshotted before this Bash call"}'`;
+/**
+ * Before each Bash call, the check that a canon claim command carries the right `--as` (BR-2340, D-62). It refuses only
+ * that: a call it cannot check goes ahead, and when canon fails or is not on PATH the echo tells the user in a systemMessage.
+ */
+export const CHECK_AS_COMMAND =
+  `canon work check-as --hook || echo '{"systemMessage":"canon work check-as failed or canon is not on PATH: --as was not checked for this Bash call"}'`;
 /**
  * After each answer to Claude Code's question tool, a record of the questions and the human's answers (BR-2274, D-45).
  * It only records: when canon fails or is not on PATH, the echo tells the user in a systemMessage and nothing is blocked.
@@ -81,6 +87,10 @@ const hasRecord = (settings: Settings | undefined) =>
 /** Whether the Bash PreToolUse entry with canon's snapshot command is there (BR-2185). */
 const hasSnapshot = (settings: Settings | undefined) =>
   preToolUse(settings).some((e) => isObject(e) && e.matcher === "Bash" && Array.isArray(e.hooks) && e.hooks.some((h) => h.command?.trim() === SNAPSHOT_COMMAND));
+
+/** Whether the Bash PreToolUse entry with canon's --as check is there (BR-2343). */
+const hasCheckAs = (settings: Settings | undefined) =>
+  preToolUse(settings).some((e) => isObject(e) && e.matcher === "Bash" && Array.isArray(e.hooks) && e.hooks.some((h) => h.command?.trim() === CHECK_AS_COMMAND));
 
 function briefState(settings: Settings | undefined): HookState {
   const commands = sessionStart(settings).flatMap((e) => (Array.isArray(e.hooks) ? e.hooks : []).map((h) => h.command?.trim()));
@@ -156,6 +166,8 @@ export interface SettingsState {
   readonly brief: HookState;
   /** Whether the snapshot hook before each Bash call is installed (BR-2185). */
   readonly snapshot: boolean;
+  /** Whether the --as check hook before each Bash call is installed (BR-2343). */
+  readonly checkAs: boolean;
   /** Withdrawn canon entries still in the file; each is out of date until removed (BR-2087, D-18). */
   readonly retired: readonly Retired[];
   /** Whether `worktree.baseRef` is "head" (BR-2264). */
@@ -170,7 +182,7 @@ export function hookStatus(root: string): Result<SettingsState> {
   if (!s.ok) return s;
   const base = baseRefState(s.value);
   if (base === "invalid") return NOT_OBJECT;
-  return ok({ brief: briefState(s.value), snapshot: hasSnapshot(s.value), retired: retiredIn(s.value), baseRef: base === "head", record: hasRecord(s.value) });
+  return ok({ brief: briefState(s.value), snapshot: hasSnapshot(s.value), checkAs: hasCheckAs(s.value), retired: retiredIn(s.value), baseRef: base === "head", record: hasRecord(s.value) });
 }
 
 /**
@@ -184,10 +196,11 @@ export function planHook(root: string): Result<Settings | undefined> {
   const state = briefState(s.value);
   const retired = retiredIn(s.value);
   const snapshot = hasSnapshot(s.value);
+  const checkAs = hasCheckAs(s.value);
   const base = baseRefState(s.value);
   if (base === "invalid") return NOT_OBJECT;
   const record = hasRecord(s.value);
-  if (state === "present" && snapshot && record && retired.length === 0 && base === "head") return ok(undefined);
+  if (state === "present" && snapshot && checkAs && record && retired.length === 0 && base === "head") return ok(undefined);
   const settings = retired.length > 0 ? withoutRetired(s.value ?? {}) : { ...(s.value ?? {}) };
   if (state !== "present") {
     const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
@@ -203,6 +216,11 @@ export function planHook(root: string): Result<Settings | undefined> {
     hooks["PreToolUse"] = [...preToolUse(settings), { matcher: "Bash", hooks: [{ type: "command", command: SNAPSHOT_COMMAND }] }];
     settings["hooks"] = hooks;
   }
+  if (!checkAs) {
+    const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
+    hooks["PreToolUse"] = [...preToolUse(settings), { matcher: "Bash", hooks: [{ type: "command", command: CHECK_AS_COMMAND }] }];
+    settings["hooks"] = hooks;
+  }
   if (!record) {
     const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
     hooks["PostToolUse"] = [...postToolUse(settings), { matcher: "AskUserQuestion", hooks: [{ type: "command", command: RECORD_COMMAND }] }];
@@ -216,7 +234,7 @@ export function planHook(root: string): Result<Settings | undefined> {
 const isCanonCommand = (c: unknown) => {
   if (typeof c !== "string") return false;
   const t = c.trim();
-  return t === BRIEF_COMMAND || t === OLD_BRIEF_COMMAND || t === SNAPSHOT_COMMAND || t === RECORD_COMMAND || t.startsWith(RETIRED_HOOK_PREFIX);
+  return t === BRIEF_COMMAND || t === OLD_BRIEF_COMMAND || t === SNAPSHOT_COMMAND || t === CHECK_AS_COMMAND || t === RECORD_COMMAND || t.startsWith(RETIRED_HOOK_PREFIX);
 };
 
 /** `list` without canon's hooks; an entry left with no hooks goes. Undefined when nothing of canon's was in it. */

@@ -50,9 +50,10 @@ export function assetsStatus(root: string, source: string): Result<AssetsStatus>
     "actor permission": "permission: Bash(export CANON_ACTOR='agent:*'), withdrawn by canon; install or update removes it (.claude/settings.json)",
   };
   const snapshot = h.value.snapshot ? [] : ["hook: canon snapshot take before each Bash call (.claude/settings.json)"];
+  const checkAs = h.value.checkAs ? [] : ["hook: canon work check-as before each Bash call (.claude/settings.json)"];
   const baseRef = h.value.baseRef ? [] : ['setting: worktree.baseRef "head", so subagent worktrees start from local HEAD (.claude/settings.json)'];
   const record = h.value.record ? [] : ["hook: canon human record after each answer to the question tool (.claude/settings.json)"];
-  const hook = [...brief, ...snapshot, ...record, ...h.value.retired.map((r) => withdrawn[r]), ...baseRef];
+  const hook = [...brief, ...snapshot, ...checkAs, ...record, ...h.value.retired.map((r) => withdrawn[r]), ...baseRef];
   const g = guardLine(root);
   if (!g.ok) return g;
   const x = excludeMissing(root, WORKTREES_EXCLUDE);

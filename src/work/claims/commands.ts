@@ -1,5 +1,7 @@
 import { defineCommand } from "citty";
 import { AS_ARG, entry, fail, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { readFileSync } from "node:fs";
+import { runAsCheck } from "./as-hook.ts";
 import { handOverClaim } from "./claims.ts";
 import { sessionProcess } from "./liveness.ts";
 
@@ -27,4 +29,14 @@ const takeCmd = defineCommand({
   },
 });
 
-export const claimCommands: DomainCommands = { commands: [entry("take", 65, takeCmd, "work")] };
+/** `canon work check-as --hook`: the PreToolUse hook that checks `--as` on canon claim commands (BR-2340, D-62). */
+const checkAsCmd = defineCommand({
+  meta: { description: "Run by Claude Code's PreToolUse hook before each Bash call: refuse a canon work start, land, stop, drop or take whose --as does not match who runs it; reads the hook input on stdin" },
+  args: { hook: { type: "boolean", description: "Read Claude Code's PreToolUse input from stdin (required)" } },
+  run({ args }) {
+    if (!args.hook) fail({ code: "invalid", message: "`canon work check-as` is run by Claude Code's PreToolUse hook: pass --hook, the hook input comes on stdin" });
+    process.stdout.write(runAsCheck(readFileSync(0, "utf8"), process.cwd()));
+  },
+});
+
+export const claimCommands: DomainCommands = { commands: [entry("take", 65, takeCmd, "work"), entry("check-as", 66, checkAsCmd, "work")] };

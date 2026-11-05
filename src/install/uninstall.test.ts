@@ -2,7 +2,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { planUnhook, RECORD_COMMAND, SNAPSHOT_COMMAND } from "./hook.ts";
+import { CHECK_AS_COMMAND, planUnhook, RECORD_COMMAND, SNAPSHOT_COMMAND } from "./hook.ts";
 
 // reason: every test drives the canon CLI through spawned processes, a landing included (C-111)
 setDefaultTimeout(60_000);
@@ -256,6 +256,8 @@ describe("removing canon's settings entries", () => {
   test("BR-2278: a file holding only canon's entries is to be deleted; one with none of them is left alone", () => {
     const only = planUnhook(settings({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: SNAPSHOT_COMMAND }] }] } }));
     expect(only.ok && only.value).toBe(null);
+    const checkAs = planUnhook(settings({ hooks: { PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: CHECK_AS_COMMAND }] }] } }));
+    expect(checkAs.ok && checkAs.value).toBe(null); // BR-2343: the check-as entry is canon's too
     const none = planUnhook(settings({ hooks: { PreToolUse: [] } }));
     expect(none.ok && none.value).toBe(undefined);
   });
