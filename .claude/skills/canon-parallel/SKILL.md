@@ -19,9 +19,8 @@ Split when the tasks are:
 
 Do not split, or put the tasks in one agent's hands, when:
 
-- **two tasks change the same file.** They conflict at landing, and the one landing second finds out only when its turn comes, after waiting in the queue. It can still be done, but plan for rework;
+- **two tasks change the same file** (see section 2, step 3);
 - one task needs another's result (do them in order);
-- the work is a follow-up on a review note that does not block: that is not a change of its own;
 - the main agent already holds the context and the work is small: doing it yourself is cheaper than briefing someone.
 
 ## 2. Before dispatching
@@ -38,13 +37,12 @@ Do not split, or put the tasks in one agent's hands, when:
 Copy this list into each brief and fill in the task. A subagent starts with none of your context.
 
 - **The task and why**: what to build, the evidence for the need, what counts as done, and which domain or files it covers.
-- **Its own change**: run `canon work start --title "<title>"` (or `canon work start C-n`) from the primary checkout, then `cd` into the worktree it prints and do every edit there. Fill the change file's sections before the code, and change rules in the same commit as the behaviour.
+- **Its own change**: run `canon work start --title "<title>"` (or `canon work start C-n`) from the primary checkout, then `cd` into the worktree it prints and do every edit there. The rest of the workflow is in `canon brief`: tell the subagent to run it.
 - **Hands off the others**: never enter, edit or clean another agent's worktree, and never edit the primary checkout.
-- **Test before landing**: run `canon work test`, which runs the test files related to the change, one file per run. Where that command does not exist, run each related test file in its own test-runner invocation (several files in one run have hung under load), and never the full suite: the floor runs it once at landing.
-- **Land with a long timeout**: `canon work land --finish`, with a command timeout of at least 10 minutes or in the background, output redirected to a log file; read the exit code directly, never through a pipe (a pipe reports the last command's code). Refused (exit 1): fix what the message names, commit, land again; never bypass the gate. Exit 75: still queued after the wait, run it again.
-- **After landing**: run `canon work after-land <C-n> --wait` with its own change id where the command exists (check `canon work --help`). Without the id it reports the newest landing of anyone, which may be another subagent's; otherwise read the after-land log whose path the landing printed, until every background command has written its exit line, and read the code-review findings in it. A simple real bug found there is fixed in a new change; anything else is reported.
+- **Test before landing**: where `canon work test` does not exist, run each related test file in its own test-runner invocation (several files in one run have hung under load). Never run the full suite: the floor runs it once at landing.
+- **Landing**: redirect the output of `canon work land --finish` to a log file. Exit 75: still queued after the wait, run it again.
+- **After landing**: use its own change id with `canon work after-land <C-n> --wait`: without the id it reports the newest landing of anyone, which may be another subagent's. Where the command does not exist, read the after-land log whose path the landing printed, until every background command has written its exit line. A simple real bug found in the code-review findings is fixed in a new change; anything else is reported.
 - **Clean only its own worktree**: `canon work clean <C-n>` with its own change id, never a bare `canon work clean`.
-- **Review notes that do not block are not changes**: do not open a follow-up change for them.
 - **Decisions stay proposed**: a subagent cannot start subagents of its own, so it cannot run canon-design's independent challenge. When a task writes a decision, the brief says: land it as `proposed`, do not `canon decision accept` it, and list it in the report. The main agent then has an agent that sees the problem and the options, not the recommendation, challenge it, addresses what it finds, and accepts the decision itself.
 - **Execute; hand back choices the brief did not settle**: the main agent holds the whole context and makes the decisions, the subagent carries out the brief. When going on would mean making a choice the brief did not settle, or doing work the main agent would likely not want, stop and report first instead of deciding. Common cases: about to add a new mechanism (table or column, process handling, rule) for a situation not seen in real use; the work is clearly larger or different than the brief said; the brief's premise turns out false; the same area was already fixed more than once recently for the same kind of problem (`git log` on the files, `canon search`); the fix would contradict an accepted rule or decision; a choice reserved for the owner. Small choices inside the brief's scope are not a reason to stop: finish the task. To stop: commit what exists, run `canon work stop --next "<why stopped>"`, and report what was found and the options with a recommendation; the main agent decides and resumes the subagent.
 - **Report with measurements**: change ids, what changed, rules and decisions, the tests run and their result, each landing's exit code and time (queued and total), review findings, and anything not done with the reason.
