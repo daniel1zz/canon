@@ -75,6 +75,17 @@ describe("human questions", () => {
     expect(questions(ws(root).db, "all")[0]?.answer).toBe("yes");
   });
 
+  test("BR-2276 BR-2289: without options the relay is compared with the tool's record by the words alone, so answer no with words yes is a match and shown side by side", () => {
+    const d = db();
+    const q = ask(d, "agent:a", null, "Ship it?", []);
+    const record: AskedRecord = { session: "s1", tool_use_id: null, transcript_path: null, questions: [{ question: "Ship it?", answer: "yes", note: null }], response: null, afk_timeout_ms: null };
+    recordAsked(d, "agent:s1", record);
+    expect(answer(d, q, "no", "agent:x", "yes", false, { session: "s1", hookInstalled: () => true }).ok).toBe(true);
+    const got = questions(d, "all")[0]!;
+    expect([got.answer, got.relayed, got.witness]).toEqual(["no", "yes", "match"]);
+    expect(witnessMark(got)).toContain("match Claude Code's record");
+  });
+
   test("BR-2040: two answers racing for one question cannot both succeed", () => {
     const d = db();
     const q = ask(d, "agent:a", "C-1", "Ship it?", ["yes", "no"]);

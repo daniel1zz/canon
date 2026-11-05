@@ -43,6 +43,13 @@ describe("config validation", () => {
     ["a batch size of 0", "land_batch_max: 0\n", "land_batch_max"],
     ["a batch size that is not whole", "land_batch_max: 2.5\n", "land_batch_max"],
   ];
+  test("BR-2045: a type on the prefix R or the directory releases is told it clashes with the built-in release type and how to migrate, not only that the prefix is taken", () => {
+    const prefix = canon(repo({ "canon/config.yaml": "types:\n  spec:\n    prefix: R\n    dir: specs\n" }), "show", ["C", 1].join("-"));
+    expect([prefix.code, prefix.err.includes("give `spec` another prefix"), prefix.err.includes("another type")]).toEqual([2, true, false]);
+    const dir = canon(repo({ "canon/config.yaml": "types:\n  spec:\n    prefix: SP\n    dir: releases\n" }), "show", ["C", 1].join("-"));
+    expect([dir.code, dir.err.includes("git mv canon/releases"), dir.err.includes("already used")]).toEqual([2, true, false]);
+  });
+
   for (const [what, yaml, message] of cases) {
     test(`BR-2045: ${what} makes every command fail with exit 2`, () => {
       const root = repo({ "canon/config.yaml": yaml });
