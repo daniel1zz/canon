@@ -504,6 +504,21 @@ describe("migration (BR-2245)", () => {
     });
   }, TIMED);
 
+  test("BR-2245: a rule only a skipped testcase of the report names gets no migration record, one a running testcase names does", async () => {
+    const root = fixture({
+      files: {
+        [`canon/rules/billing/${br(3)}.md`]: ruleText(3),
+        "src/billing/b.test.ts": `it.skip("${br(3)}: later", () => {});\n`,
+      },
+    });
+    const s = startNew(root, "First, with a skipped test");
+    setChange(s.worktree, s.change, [br(1)]);
+    write(s.worktree, { "src/billing/a.test.ts": testFile([1, 2]).replace("toBe(1)", "toBe(1); // checked") });
+    const out = await land(ws(s.worktree), FINISH, quiet);
+    expect(out.kind).toBe("landed");
+    expect(Object.keys(changeOn(root, "main", s.change).passes)).toEqual([br(1), br(2)]); // BR-3 is named only by a skipped test
+  }, TIMED);
+
   test("BR-2245: once main holds records, a later close writes no migration record", async () => {
     const root = fixture({ files: { [`canon/rules/billing/${br(3)}.md`]: ruleText(3), "src/billing/b.test.ts": testFile([3]) } });
     const first = startNew(root, "First");

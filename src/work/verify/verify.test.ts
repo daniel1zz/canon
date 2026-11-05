@@ -124,6 +124,30 @@ describe("canon work test selection", () => {
     expect(runs(wt)).toEqual([]);
   });
 
+  test("BR-2157: test files named on the command line run instead of the selection, reason named on the command line", () => {
+    const { wt } = fixture();
+    write(wt, { "src/a.ts": "export const a = 2;\n" }); // the selection would pick b.test.ts and c.test.ts
+    const r = canon(wt, "work", "test", "src/d.test.ts");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("1 test file(s) named on the command line");
+    expect(runs(wt)).toEqual(["src/d.test.ts"]);
+    expect(selectTests(ws(wt), false, ["src/e.test.ts", "src/d.test.ts"]).ok).toBe(true);
+    const sel = selectTests(ws(wt), false, ["src/e.test.ts", "src/d.test.ts"]);
+    expect(sel.ok && sel.value.selected.map((s) => [s.file, s.reasons.join("; ")])).toEqual([["src/d.test.ts", "named on the command line"], ["src/e.test.ts", "named on the command line"]]);
+  });
+
+  test("BR-2157: a named path that is no test file of the project, or named files together with --all, exit 2 and run nothing", () => {
+    const { wt } = fixture();
+    const bad = canon(wt, "work", "test", "README.md", "src/d.test.ts");
+    expect(bad.code).toBe(2);
+    expect(bad.err).toContain("not test files of this project");
+    expect(bad.err).toContain("README.md");
+    const both = canon(wt, "work", "test", "--all", "src/d.test.ts");
+    expect(both.code).toBe(2);
+    expect(both.err).toContain("not both");
+    expect(runs(wt)).toEqual([]);
+  });
+
   test("BR-2157: the CLI lists each selected file with its reason before running", () => {
     const { wt } = fixture();
     write(wt, { "src/a.ts": "export const a = 2;\n" });

@@ -115,7 +115,7 @@ export function cliReader(root: string, importsFrom: (file: string) => string[])
  * running titles name a touched rule; source files that read a changed data file by a path they spell from their own
  * location (`reads …`, #117) count as reached like a changed file. With `all`, every test file (BR-2159).
  */
-export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
+export function selectTests(ws: Workspace, all: boolean, only: readonly string[] = []): Result<Selection> {
   const ch = changesOf(ws.root, ws.config);
   if (!ch.ok) return ch;
   const { base, changed, rules, decisions } = ch.value;
@@ -124,6 +124,13 @@ export function selectTests(ws: Workspace, all: boolean): Result<Selection> {
   const always = new Set(tests.filter((f) => globs.some(({ glob }) => glob.match(f))));
   const unmatched = globs.filter(({ glob }) => !tests.some((f) => glob.match(f))).map(({ g }) => g);
   if (all) return ok({ base, changed, rules, decisions, unmatched, selected: tests.map((file) => ({ file, reasons: ["--all"] })), cli: { files: 0, commands: 0 } });
+  // reason: the files a person names are what runs, so a report can be recorded for exactly them (BR-2344)
+  if (only.length > 0) {
+    const known = new Set(tests);
+    const bad = only.filter((f) => !known.has(f));
+    if (bad.length > 0) return err("invalid", `not test files of this project (the files \`tests\` finds): ${bad.join(", ")}`);
+    return ok({ base, changed, rules, decisions, unmatched, selected: [...new Set(only)].sort().map((file) => ({ file, reasons: ["named on the command line"] })), cli: { files: 0, commands: 0 } });
+  }
 
   const changedSet = new Set(changed);
   const ruleSet = new Set(rules);
@@ -345,16 +352,19 @@ const STOP_SIGNALS: readonly NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
  * The type check runs first and the corpus check last, even when nothing is selected or an earlier step failed,
  * so one run reports every problem the floor or the landing check would refuse.
  */
-export async function workTest(ws: Workspace, all: boolean, say: (line: string) => void, deps: WorkTestDeps = machineDeps): Promise<Result<WorkTestResult>> {
+export async function workTest(ws: Workspace, all: boolean, say: (line: string) => void, deps: WorkTestDeps = machineDeps, only: readonly string[] = []): Promise<Result<WorkTestResult>> {
   if (!ws.config.testCommand) {
     return err("invalid", `canon/config.yaml has no \`test_command\`: set the command that runs one test file, with ${FILE_PLACEHOLDER} where its path goes (e.g. test_command: "bun test ${FILE_PLACEHOLDER}")`);
   }
-  const sel = selectTests(ws, all);
+  const sel = selectTests(ws, all, only);
   if (!sel.ok) return sel;
   const { base, changed, rules, decisions, selected, unmatched } = sel.value;
   const against = `against ${ws.config.main} at ${base.slice(0, 9)}`;
   if (all) say(`canon work test --all: every test file, ${selected.length} (${against})`);
-  else {
+  else if (only.length > 0) {
+    say(`canon work test: ${selected.length} test file(s) named on the command line (${against})`);
+    for (const f of selected) say(`  ${f.file}`);
+  } else {
     say(`canon work test: ${selected.length} test file(s) related to this change (${against}; ${changed.length} changed file(s)${rules.length ? `; rules ${rules.join(", ")}` : ""})`);
     say(`CLI tests: ${sel.value.cli.files} file(s) spawn the CLI, ${sel.value.cli.commands} command(s) known`);
     say("Selected: changed test files, test files whose relative imports reach a changed file, test files that spawn the CLI and drive a command whose code changed, test files whose titles name a touched rule, test files always_tests names.");
