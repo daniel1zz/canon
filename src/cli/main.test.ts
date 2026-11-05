@@ -65,6 +65,30 @@ describe("exit codes", () => {
     expect(template.indexOf("## 教训")).toBeLessThan(template.indexOf("## 任务"));
   });
 
+  test("BR-2037 BR-2110: a new decision's template has a 来源 line under each option; filled in it passes canon check, left as is it is refused", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    writeFileSync(join(root, "notes.txt"), "the original sentence quoted here\n");
+    const path = canon(root, "decision", "new", "--title", "Use files").out.trim();
+    const template = readFileSync(join(root, path), "utf8");
+    const placeholder = "   - 来源：<网址或仓库里的文件路径> “<原文摘录，至少 8 个字符>”";
+    expect(template.split(placeholder).length - 1).toBe(2); // one line under each of the two options
+    expect(template.indexOf(placeholder)).toBeGreaterThan(template.indexOf("1. <方案一>"));
+    expect(canon(root, "check").out).toContain("template-unfilled"); // unfilled placeholder: refused
+    const filled = template
+      .replace("<为什么需要做这个决定，有哪些事实和数据。>", "Because.")
+      .replace("<方案一>：<采用或否决，以及理由>", "Files：采用，简单")
+      .replace("<方案二>：<采用或否决，以及理由>", "Database：否决，太重")
+      .replace(placeholder, "   - 来源：notes.txt “the original sentence quoted here”")
+      .replace(placeholder, "   - 来源：notes.txt “the original sentence quoted here”")
+      .replace("<决定了什么。>", "Files.")
+      .replace("<带来哪些变化、代价和后续工作。>", "None.");
+    writeFileSync(join(root, path), filled);
+    const r = canon(root, "check");
+    expect(r.out).not.toContain("source-malformed");
+    expect(r.out).not.toContain("template-unfilled");
+  });
+
   test("BR-2037: a rule created without a body holds the template, which canon check reports until it is filled", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");

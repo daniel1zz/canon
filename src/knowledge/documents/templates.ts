@@ -36,6 +36,9 @@ export function isPlaceholderLine(line: string): boolean {
   const item = start.replace(LIST_MARKER, "");
   const rest = (item === start ? item : item.replace(/^\[[ xX]\]\s+/, ""))
     .replace(/\*\*/g, "")
+    // reason: the decision template's `来源：<…> “<…>”` line is a placeholder until filled (BR-2035, BR-2037)
+    .replace(/^来源[：:]/, "")
+    .replace(/[“”]/g, " ")
     .replace(/[→：:]/g, " ")
     .trim();
   return /^(?:<[^<>`\n]+>\s*)+$/.test(rest);
@@ -67,7 +70,7 @@ export function templateFor(type: string, projectTemplates: Readonly<Record<stri
         "",
       ].join("\n");
     case "decision":
-      return "## 背景\n\n<为什么需要做这个决定，有哪些事实和数据。>\n\n## 方案\n\n1. <方案一>：<采用或否决，以及理由>\n   - <来源：网址或仓库里的文件路径 “原文摘录”>\n2. <方案二>：<采用或否决，以及理由>\n\n## 决定\n\n<决定了什么。>\n\n## 后果\n\n<带来哪些变化、代价和后续工作。>\n";
+      return "## 背景\n\n<为什么需要做这个决定，有哪些事实和数据。>\n\n## 方案\n\n1. <方案一>：<采用或否决，以及理由>\n   - 来源：<网址或仓库里的文件路径> “<原文摘录，至少 8 个字符>”\n2. <方案二>：<采用或否决，以及理由>\n   - 来源：<网址或仓库里的文件路径> “<原文摘录，至少 8 个字符>”\n\n## 决定\n\n<决定了什么。>\n\n## 后果\n\n<带来哪些变化、代价和后续工作。>\n";
     case "change":
       return `## 为什么\n\n<要解决什么问题。>\n\n## 要改什么\n\n<具体改动，以及会新增或修改哪些规则。>\n\n## 陷阱和假设\n\n<新会话接手时最容易踩的坑，以及这个变更依赖的假设；没有就删掉这一节。>\n\n${LESSONS_SECTION}\n\n<每条教训一行：教训 → 现在由哪条规则、检查或命令保证（写编号），或“只靠文字：原因”，或“待负责人确认是否固化”；没有教训就写“无”。>\n\n## 任务\n\n- [ ] <任务>\n`;
     default:

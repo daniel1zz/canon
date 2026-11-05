@@ -207,6 +207,15 @@ describe("rule shape", () => {
     expect(got).toEqual([`${br(1)}.md`, `${d(1)}.md`, "C-1.md", "README.md"].sort());
   });
 
+  test("BR-2035: a 来源 line of the decision template is a placeholder until it names a real source", () => {
+    const unfilled = `---\nid: ${d(1)}\ntitle: X\n---\n## 方案\n\n1. A：采用。\n   - 来源：<网址或仓库里的文件路径> “<原文摘录，至少 8 个字符>”\n`;
+    const filled = unfilled.replace("<网址或仓库里的文件路径> “<原文摘录，至少 8 个字符>”", "src/x.ts “export function check(”");
+    const unfilledRoot = repo({ [`canon/decisions/${d(1)}.md`]: unfilled });
+    const filledRoot = repo({ [`canon/decisions/${d(1)}.md`]: filled });
+    expect(check({ root: unfilledRoot, ...readCorpus(unfilledRoot), testFiles: [] }).some((f) => f.rule === "template-unfilled")).toBe(true);
+    expect(check({ root: filledRoot, ...readCorpus(filledRoot), testFiles: [] }).some((f) => f.rule === "template-unfilled")).toBe(false);
+  });
+
   test("BR-2035: every placeholder form the built-in templates leave is reported; prose with angle brackets and code blocks are not", () => {
     const filled = "## 为什么\n\nBecause.\n";
     const root = repo({
