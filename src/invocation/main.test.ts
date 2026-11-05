@@ -427,7 +427,7 @@ describe("session continuity", () => {
     canon(root, "init", "--floor", "true");
     const idle = canon(root, "brief").out;
     expect(idle.trim()).toBe(guideFor(root)); // init wrote canon/architecture.md, so the guide starts with the overview line (BR-2090)
-    for (const cmd of ["canon context", "canon work start", "canon work land --finish", "canon work stop --next", "--relayed", "canon work drop", "canon work after-land --wait"]) expect(idle).toContain(cmd);
+    for (const cmd of ["canon context", "canon work start", "canon work land --finish", "canon work stop --next", "--relayed", "canon work drop", "canon work after-land --wait", "canon-product"]) expect(idle).toContain(cmd);
     committed(root);
     const wt = canon(root, "work", "start", "--title", "Refunds").out.match(/cd (.+)/)![1]!.trim();
     const b = canon(wt, "brief").out;
