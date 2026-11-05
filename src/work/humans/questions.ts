@@ -18,6 +18,8 @@ export interface Question {
   readonly asked_by: string;
   readonly question: string;
   readonly options: readonly string[];
+  /** Asked as multi-select (`--multi`): a relayed answer may name several of the options (BR-2021). */
+  readonly multi: boolean;
   readonly answer: string | null;
   readonly answered_by: string | null;
   /** The human's own words when an agent relayed the answer (BR-2021); null for a direct answer. */
@@ -27,17 +29,17 @@ export interface Question {
   readonly asked_at: string;
 }
 
-export function ask(db: CoordDb, actor: string, subject: string | null, question: string, options: readonly string[]): number {
-  const r = db.db.query("INSERT INTO questions(subject, asked_by, question, options, asked_at) VALUES (?, ?, ?, ?, ?)").run(subject, actor, question, JSON.stringify(options), iso(now()));
+export function ask(db: CoordDb, actor: string, subject: string | null, question: string, options: readonly string[], multi = false): number {
+  const r = db.db.query("INSERT INTO questions(subject, asked_by, question, options, multi, asked_at) VALUES (?, ?, ?, ?, ?, ?)").run(subject, actor, question, JSON.stringify(options), multi ? 1 : 0, iso(now()));
   db.event(actor, "human.ask", subject, { question });
   return Number(r.lastInsertRowid);
 }
 
 export function questions(db: CoordDb, which: "pending" | "all"): Question[] {
   const rows = db.db
-    .query<Omit<Question, "options"> & { options: string }, []>(`SELECT id, subject, asked_by, question, options, answer, answered_by, relayed, witness, asked_at FROM questions ${which === "pending" ? "WHERE answer IS NULL" : ""} ORDER BY id`)
+    .query<Omit<Question, "options" | "multi"> & { options: string; multi: number }, []>(`SELECT id, subject, asked_by, question, options, multi, answer, answered_by, relayed, witness, asked_at FROM questions ${which === "pending" ? "WHERE answer IS NULL" : ""} ORDER BY id`)
     .all();
-  return rows.map((r) => ({ ...r, options: JSON.parse(r.options) as string[] }));
+  return rows.map((r) => ({ ...r, options: JSON.parse(r.options) as string[], multi: r.multi === 1 }));
 }
 
 /**
@@ -69,14 +71,26 @@ export function answer(db: CoordDb, id: number, text: string, by: string, relaye
     return refuse("not-human-no-relay", "invalid", `${by} is not a human; an agent records a human's answer only with --relayed "<the human's own words>" (BR-2021)`);
   }
   const tx = db.db.transaction((): Result<void> => {
-    const q = db.db.query<{ answer: string | null; question: string; options: string }, [number]>("SELECT answer, question, options FROM questions WHERE id = ?").get(id);
+    const q = db.db.query<{ answer: string | null; question: string; options: string; multi: number }, [number]>("SELECT answer, question, options, multi FROM questions WHERE id = ?").get(id);
     if (!q) return err("not_found", `no question #${id}`);
     // reason: the answer an agent types is its own claim; with options it must be the option the human's words name, or a relayed no could be stored as yes (BR-2021)
     const options = JSON.parse(q.options) as string[];
     if (quote && !by.startsWith("human:") && q.answer === null && options.length > 0) {
       const same = (a: string, b: string) => a.trim().toLowerCase() === b.trim().toLowerCase();
-      if (!options.some((o) => same(o, quote)) || !same(text, quote)) {
-        return err("refused", `question #${id} offers the options ${options.join(" | ")}: the recorded answer must be the option the human's words name, and the words must be that option (answer ${JSON.stringify(text)}, relayed ${JSON.stringify(quote)}); nothing recorded`);
+      // reason: the question tool joins a multi-select answer's labels with ", " and a label cannot hold a comma (--option splits on it), so the parts are the named options (BR-2021, issue #130)
+      const parts = (t: string) => t.split(",").map((p) => p.trim());
+      const named = (t: string) => parts(t).map((p) => options.find((o) => same(o, p)));
+      const bad = (hint: string) => err("refused", `question #${id} offers the options ${options.join(" | ")}: ${hint} (answer ${JSON.stringify(text)}, relayed ${JSON.stringify(quote)}); nothing recorded`);
+      if (q.multi === 1) {
+        const a = named(text);
+        const w = named(quote);
+        const sameSet = a.length === w.length && a.every((o) => o !== undefined && w.includes(o)) && new Set(a).size === a.length;
+        if (!a.every((o) => o !== undefined) || !w.every((o) => o !== undefined) || !sameSet) {
+          return bad("the recorded answer must be one or more of the options, each once, separated by commas, and the human's words must name the same options");
+        }
+      } else if (!options.some((o) => same(o, quote)) || !same(text, quote)) {
+        const several = parts(quote).length > 1 && named(quote).every((o) => o !== undefined);
+        return bad(several ? "the question was not asked with --multi, so it takes one option only" : "the recorded answer must be the option the human's words name, and the words must be that option");
       }
     }
     const witness = quote ? witnessFor(db, q.question, quote, ctx) : null;

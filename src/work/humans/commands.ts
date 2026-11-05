@@ -30,14 +30,17 @@ const human = defineCommand({
   subCommands: {
     ask: defineCommand({
       meta: { description: "Ask the human; work that does not depend on the answer continues" },
-      args: { question: { type: "positional", required: true }, option: { type: "string", description: "Comma-separated options" }, change: { type: "string" } },
+      args: { question: { type: "positional", required: true }, option: { type: "string", description: "Comma-separated options" }, multi: { type: "boolean", description: "The human may pick several of the options (needs --option)" }, change: { type: "string" } },
       run({ args }) {
         const ws = workspace();
         // reason: without --change the question goes to the change this worktree belongs to, even when its claim
         // expired: the worktree is still that change's (BR-2075)
         const subject = typeof args.change === "string" ? must(namedChange(ws, args.change)) : (claimOfWorktree(ws.db, ws.root)?.subject ?? null);
-        const id = ask(ws.db, ws.actor, subject, String(args.question), list(args.option));
-        say(`question #${id} recorded; \`canon human pending\` shows it`);
+        const options = list(args.option);
+        // reason: multi-select only means something for a question with options; usage error, nothing recorded (BR-2021, issue #130)
+        if (args.multi && options.length === 0) fail({ code: "invalid", message: "--multi needs --option: only a question with options can be answered with several of them" });
+        const id = ask(ws.db, ws.actor, subject, String(args.question), options, args.multi === true);
+        say(`question #${id} recorded; \`canon human pending\` shows it${args.multi ? "; ask it with multiSelect: true in the question tool" : ""}`);
       },
     }),
     pending: defineCommand({
@@ -47,7 +50,7 @@ const human = defineCommand({
         const ws = workspace();
         const qs = questions(ws.db, args.all ? "all" : "pending");
         if (args.json) return json(qs);
-        for (const q of qs) say(`#${q.id} [${q.subject ?? "-"}] ${q.question}${q.options.length ? `  (${q.options.join(" | ")})` : ""}${q.answer ? `\n    → ${q.answer} (${answeredBy(q)})${witnessMark(q)}` : ""}`);
+        for (const q of qs) say(`#${q.id} [${q.subject ?? "-"}] ${q.question}${q.options.length ? `  (${q.options.join(" | ")}${q.multi ? "; multi-select: ask with multiSelect: true" : ""})` : ""}${q.answer ? `\n    → ${q.answer} (${answeredBy(q)})${witnessMark(q)}` : ""}`);
         if (qs.length === 0) say("(nothing waiting)");
       },
     }),

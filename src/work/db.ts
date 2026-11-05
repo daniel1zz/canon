@@ -117,6 +117,8 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ["queue", "keep_until TEXT"],
   // Whether a relayed answer matched the session's latest record from Claude Code's question tool (BR-2276, D-45).
   ["questions", "witness TEXT"],
+  // Whether the question was asked as multi-select, so a relayed answer may name several of its options (BR-2021, issue #130).
+  ["questions", "multi INTEGER NOT NULL DEFAULT 0"],
 ];
 
 /**

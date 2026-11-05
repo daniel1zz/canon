@@ -76,6 +76,47 @@ describe("human questions", () => {
     expect(refused(free, "yes", "好的，发吧")).toBe("ok");
   });
 
+  test("BR-2021: a --multi question takes a relayed answer naming one or more of its options, each once and the same set in the words; anything else is refused with exit 1 and nothing recorded", () => {
+    const root = project();
+    const d = ws(root).db;
+    // reason: one real CLI run each for asking, a refusal and an acceptance; the other cases call answer() in this process (C-375, #126)
+    expect(canon(root, "agent:x", false, "human", "ask", "Which?", "--multi").code).toBe(2);
+    expect(questions(d, "all")).toEqual([]);
+    const asked = canon(root, "agent:x", false, "human", "ask", "Which now?", "--option", "A,B,都不做", "--multi");
+    expect(asked.code).toBe(0);
+    expect(asked.out).toContain("multiSelect: true");
+    expect(questions(d, "all")[0]?.multi).toBe(true);
+    expect(canon(root, "agent:x", false, "human", "pending").out).toContain("multi-select");
+    for (let i = 0; i < 4; i++) ask(d, "agent:x", null, `Which ${i}?`, ["A", "B", "都不做"], true);
+    const single = ask(d, "agent:x", null, "Single?", ["A", "B"]);
+    const relay = (id: number, text: string, words: string) => answer(d, id, text, "agent:x", words, false, NO_CTX);
+    const code = (id: number, text: string, words: string) => {
+      const r = relay(id, text, words);
+      return r.ok ? "ok" : r.error.code;
+    };
+    const bad = canon(root, "agent:x", false, "human", "answer", "1", "A, C", "--relayed", "A, C");
+    expect(bad.code).toBe(1);
+    expect(questions(d, "pending").map((q) => q.id)).toEqual([1, 2, 3, 4, 5, 6]);
+    expect(code(2, "A, B", "A")).toBe("refused"); // the words name another set
+    expect(code(3, "A, A", "A, A")).toBe("refused"); // an option twice
+    expect(code(4, "A, ", "A, ")).toBe("refused"); // an empty part
+    const note = relay(single, "A, B", "A, B");
+    expect(!note.ok && note.error.message).toContain("not asked with --multi");
+    expect(refusals(root)).toEqual(["option-mismatch", "option-mismatch", "option-mismatch", "option-mismatch", "option-mismatch"]);
+    const ok = canon(root, "agent:x", false, "human", "answer", "1", "A, 都不做", "--relayed", "A, 都不做");
+    expect(ok.code).toBe(0);
+    expect(code(2, "B, A", "a,b")).toBe("ok");
+    expect(questions(d, "all").map((q) => q.answer).slice(0, 2)).toEqual(["A, 都不做", "B, A"]);
+  });
+
+  test("BR-2021 BR-2276: a multi-select relay is checked against the question tool's record, which joins the labels with commas", () => {
+    const d = db();
+    const q = ask(d, "agent:a", null, "Which now?", ["A", "B"], true);
+    recordAsked(d, "agent:x", { session: "s1", tool_use_id: null, transcript_path: null, questions: [{ question: "Which now?", answer: "A, B", note: null }], response: null, afk_timeout_ms: null });
+    expect(answer(d, q, "A, B", "agent:x", "A, B", false, { session: "s1", hookInstalled: () => true }).ok).toBe(true);
+    expect(questions(d, "all")[0]?.witness).toBe("match");
+  });
+
   test.skipIf(!Bun.which("script"))("BR-2021: a human at a terminal answers a question with options directly, whatever the option check says for a relay", () => {
     const root = project();
     expect(canon(root, "agent:x", false, "human", "ask", "Ship it?", "--option", "yes,no").code).toBe(0);
