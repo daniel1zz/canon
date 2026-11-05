@@ -10,6 +10,7 @@ A rule is what the product must do now, written so that any later session reads 
 ## 1. Find what exists
 
 - `canon context <domain|path>` and `canon search <word>` first. Most requirements change an existing rule; edit it in place, keep its id. A rule that is no longer true is retired (`canon rule retire`), never left beside its replacement.
+- Choosing or creating the domain for a rule, or a domain that has grown mixed: use canon-domains.
 - The same threshold stated in two rules will drift apart. Keep it in one and let the other rule name it.
 
 ## 2. Interrogate the requirement before writing
