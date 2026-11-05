@@ -1,7 +1,7 @@
 ---
 id: C-374
 title: Remove timing-dependent waits from tests (#126)
-status: open
+status: done
 rules: []
 ---
 
