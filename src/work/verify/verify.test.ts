@@ -563,9 +563,27 @@ async function runWorkTest(wt: string, d: WorkTestDeps): Promise<{ lines: string
 /** Each file sleeps `$SLEEP`, so files started within one window overlap; files named *slow* sleep longer. */
 const sleeper = 'echo "$1" >> runs.log\ncase "$1" in *t1*) sleep 0.6;; *) sleep 0.25;; esac\n';
 
+/**
+ * Like `sleeper`, but the order comes from marker files, not from how long each file sleeps (a loaded machine
+ * stretches sleeps by more than any margin): t1 ends only after t2, t3 and t4 have ended; t2 and t3 end only
+ * after t1, t2 and t3 have all started (so three really ran together); t4 ends at once. Each wait stops after 60 s.
+ */
+const ordered = [
+  'echo "$1" >> runs.log',
+  'n=$(basename "$1" .test.ts)',
+  'touch "started.$n"',
+  'wait_for() { i=0; for f in "$@"; do while [ ! -e "$f" ] && [ $i -lt 1200 ]; do sleep 0.05; i=$((i + 1)); done; done; }',
+  'case "$n" in',
+  '  t1) wait_for ended.t2 ended.t3 ended.t4;;',
+  '  t2|t3) wait_for started.t1 started.t2 started.t3;;',
+  'esac',
+  'touch "ended.$n"',
+  "",
+].join("\n");
+
 describe("canon work test runs several files at once", () => {
   test("BR-2302 BR-2158: on an idle machine up to the cap run together, results print as files end, the summary says how many ran at once", async () => {
-    const wt = jobsFixture(4, sleeper, "3");
+    const wt = jobsFixture(4, ordered, "3");
     const { lines, result } = await runWorkTest(wt, fakeDeps().d);
     expect(lines).toContain("test files: up to 3 at once (test_jobs 3, 8 CPUs), another one only while at least 1 CPU is idle");
     const ended = lines.filter((l) => /^pass /.test(l)).map((l) => l.trim().split(/\s+/).at(-1));
@@ -725,10 +743,11 @@ describe("canon work test stops on a signal", () => {
   }
 
   test("BR-2304: SIGTERM while files run stops them, counts running and not started, skips canon check and exits 143", async () => {
-    const wt = jobsFixture(4, 'touch "started.$$"\nsleep 30 &\necho $! >> "kids.$$"\nwait\n', "2");
+    const wt = jobsFixture(4, 'sleep 30 &\necho $! >> "kids.$$"\ntouch "started.$$"\nwait\n', "2");
     const { d, signals, exits } = fakeDeps();
     const lines: string[] = [];
     const run = workTest(ws(wt), false, (l) => lines.push(l), d);
+    // the script writes its kid pid before touching started.<pid>, so 2 started files mean 2 kid files
     while (readdirSync(wt).filter((f) => f.startsWith("started.")).length < 2) await Bun.sleep(25);
     signals.emit("SIGTERM", "SIGTERM");
     const r = await run;
