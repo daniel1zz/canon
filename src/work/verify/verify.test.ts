@@ -17,10 +17,19 @@ function canon(cwd: string, ...args: string[]) {
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
 }
 
+/**
+ * Writes files. A test file written here has its report recorded as `canon work test` would record it (BR-2337): a testcase
+ * per `it("name", …)` call, and per `it.skip("name", …)` one that does not run, so the checks that read the ledger
+ * (BR-2344) see a changed test file as reported. The fixtures' test_command writes no report of its own.
+ */
 function write(root: string, files: Record<string, string>) {
   for (const [p, text] of Object.entries(files)) {
     mkdirSync(dirname(join(root, p)), { recursive: true });
     writeFileSync(join(root, p), text);
+    if (p.endsWith(".test.ts")) {
+      const cases = [...text.matchAll(/^it(\.skip)?\("([^"]+)"/gm)].map((m) => ({ suites: [], classname: "", name: m[2]!, runs: m[1] === undefined }));
+      recordReport(ws(root).db, p, sh(root, "hash-object", p), cases, "test_command");
+    }
   }
 }
 
