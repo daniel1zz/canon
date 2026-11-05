@@ -37,7 +37,7 @@ Do not split, or put the tasks in one agent's hands, when:
 Copy this list into each brief and fill in the task. A subagent starts with none of your context.
 
 - **The task and why**: what to build, the evidence for the need, what counts as done, and which domain or files it covers.
-- **Its own change**: run `canon work start --title "<title>" --as <your agent id>` (or `canon work start C-n --as <your agent id>`) from the primary checkout, then `cd` into the worktree it prints (only that path, never one guessed with `ls | tail`) and do every edit there. Every later `canon work land`, `stop` and `drop` carries `--as <your agent id>` too; `canon work take` is for the main session only and a subagent never runs it. The rest of the workflow is in `canon brief`: tell the subagent to run it.
+- **Its own change**: run `canon work start --title "<title>" --as <your agent id>` (or `canon work start C-n --as <your agent id>`) from the primary checkout, then `cd` into the worktree it prints and do every edit there. The rest of the workflow is in `canon brief`: tell the subagent to run it.
 - **Hands off the others**: never enter, edit or clean another agent's worktree, and never edit the primary checkout.
 - **Test before landing**: where `canon work test` does not exist, run each related test file in its own test-runner invocation (several files in one run have hung under load). Never run the full suite: the floor runs it once at landing.
 - **Landing**: redirect the output of `canon work land --finish` to a log file. Exit 75: still queued after the wait, run it again.
