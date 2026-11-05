@@ -7,8 +7,24 @@ set -eu
 # reason: bunfig.toml has no test timeout key, and setDefaultTimeout in a preload only covers the first file (C-247)
 TIMEOUT_MS=30000
 
-dir=$(mktemp -d "${TMPDIR:-/tmp}/canon-test-git.XXXXXX")
-trap 'rm -rf "$dir"' EXIT
+# reason: bun reads the listing of every directory above the cwd of each process it starts. Tests make a temporary
+# directory per test, so this machine's shared TMPDIR held 534,000 leftovers, and every canon process a test started
+# there took 1.7 s instead of 0.1 s: tests got slower run after run until the ones near 30 s timed out (C-376, #126).
+# So the tests get a TMPDIR of their own, outside the shared one, that is removed when the run ends.
+run_root=${CANON_TEST_TMP_ROOT:-/tmp}
+# a run killed with SIGKILL ran no trap: its directory (canon-test.<runner pid>.<random>) goes once that runner is gone
+for old in "$run_root"/canon-test.*; do
+  [ -d "$old" ] || continue
+  pid=${old##*/canon-test.}
+  pid=${pid%%.*}
+  case $pid in '' | *[!0-9]*) continue ;; esac
+  kill -0 "$pid" 2>/dev/null || rm -rf "$old"
+done
+tmp=$(mktemp -d "$run_root/canon-test.$$.XXXXXX")
+trap 'rm -rf "$tmp"' EXIT
+export TMPDIR="$tmp"
+dir="$tmp/git"
+mkdir "$dir"
 : > "$dir/empty"
 cat > "$dir/gitconfig" <<EOF
 [user]
