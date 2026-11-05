@@ -1,8 +1,8 @@
-import { describe, expect, setDefaultTimeout, test } from "bun:test";
+import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
-import { project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { processReaper, project, quiet, runsUntilKilled, sh, startNew, ws } from "../testkit.ts";
 import { redMain } from "./redmain.ts";
 import { GREEN_REF, watch, watchDir } from "./watch.ts";
 
@@ -10,6 +10,24 @@ import { GREEN_REF, watch, watchDir } from "./watch.ts";
 setDefaultTimeout(90_000);
 
 const MAIN = join(import.meta.dir, "../../cli/main.ts");
+
+// reason: watchers run detached in their own groups and outlive the test body, so every one the test starts is killed
+// in afterEach (pass or fail), the ones `canon brief` starts included (they are in the watcher table); a SIGKILLed runner
+// is covered by the bound on the fixtures' loops (C-329, #120)
+const reaper = processReaper();
+// reason: a row left by a killed watcher can name a pid since reused, so only a live process that leads its own group is killed
+const leadsItsGroup = (pid: number) => pid > 1 && pid !== process.pid && Bun.spawnSync(["ps", "-o", "pgid=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" }).stdout.toString().trim() === String(pid);
+const roots: string[] = [];
+afterEach(() => {
+  for (const root of roots.splice(0)) {
+    try {
+      for (const w of ws(root).db.db.query<{ pid: number }, []>("SELECT pid FROM watcher").all()) if (leadsItsGroup(w.pid)) reaper.group(w.pid);
+    } catch {
+      // the repository is gone
+    }
+  }
+  reaper.killAll();
+});
 
 function canon(cwd: string, ...args: string[]) {
   const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
@@ -22,6 +40,7 @@ function canon(cwd: string, ...args: string[]) {
  */
 function watched(extra = "") {
   const root = project();
+  roots.push(root);
   const dir = `${root}-floor`;
   mkdirSync(dir, { recursive: true });
   const runs = join(dir, "runs");
@@ -116,6 +135,7 @@ async function termedWhile(config: (ready: string, late: string) => string, opts
   }
   const fake = fakeCanon(w.root);
   const p = Bun.spawn(["bun", MAIN, "floor", "watch"], { cwd: w.root, stdout: "ignore", stderr: "ignore", stdin: "ignore", detached: true, env: { ...process.env, PATH: `${fake.bin}:${process.env["PATH"]}`, CANON_ACTOR: "agent:a" } });
+  reaper.group(p.pid);
   await until(() => existsSync(ready));
   p.kill(signal); // the watcher only, not its group
   expect(await p.exited).toBe(signal === "SIGINT" ? 130 : 143);
@@ -185,6 +205,7 @@ describe("canon floor watch", () => {
     const a = sh(root, "rev-parse", "main");
     writeFileSync(hold, "");
     const killed = Bun.spawn(["bun", MAIN, "floor", "watch"], { cwd: root, stdout: "ignore", stderr: "ignore", stdin: "ignore", detached: true, env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    reaper.group(killed.pid);
     await until(() => tested().length === 1);
     expect(watcherRows(root).map((w) => [w.pid, w.sha])).toEqual([[killed.pid, a]]);
     // reason: the whole group, so the floor it started dies with it as on a reboot; the row stays behind
@@ -429,7 +450,7 @@ describe("a passing main", () => {
     expect(existsSync(watchDir(ws(root).db))).toBe(false);
   });
 
-  const orphaning = (ready: string, late: string) => `hooks:\n  after_green: '( (sleep 1; touch ${late}) & ); echo $$ > ${ready}.pid; touch ${ready}; while true; do sleep 0.1; done'\n`;
+  const orphaning = (ready: string, late: string) => `hooks:\n  after_green: '( (sleep 1; touch ${late}) & ); echo $$ > ${ready}.pid; touch ${ready}; ${runsUntilKilled}'\n`;
 
   test("BR-2285 BR-2222: a watcher stopped by SIGTERM while after_green runs sends its group SIGTERM: after_green and what it left after its parent exited end, the place is free, the watcher exits 143, and after_green is not run again", async () => {
     const { root, late, dir } = await termedWhile(orphaning);
@@ -452,14 +473,14 @@ describe("a passing main", () => {
   test("BR-2285: a process that left the group with setsid is not followed: the watcher exits 143 and it goes on and writes its file", async () => {
     const { late } = await termedWhile((ready, late) => {
       writeFileSync(`${ready}.pl`, `use POSIX; if (fork() == 0) { POSIX::setsid(); sleep 1; open(my $f, ">", "${late}"); exit 0 }\n`);
-      return `hooks:\n  after_green: 'perl ${ready}.pl; touch ${ready}; while true; do sleep 0.1; done'\n`;
+      return `hooks:\n  after_green: 'perl ${ready}.pl; touch ${ready}; ${runsUntilKilled}'\n`;
     });
     expect(existsSync(late)).toBe(true);
   });
 
   test("BR-2285: an after_green that ignores SIGTERM is not waited for: the watcher exits 143 at once and its place is free while after_green still runs", async () => {
     const started = Date.now();
-    const { root, dir } = await termedWhile((ready) => `hooks:\n  after_green: 'trap "" TERM; echo $$ > ${ready}.pid; touch ${ready}; while true; do sleep 0.1; done'\n`);
+    const { root, dir } = await termedWhile((ready) => `hooks:\n  after_green: 'trap "" TERM; echo $$ > ${ready}.pid; touch ${ready}; ${runsUntilKilled}'\n`);
     const pid = Number(readFileSync(join(dir, "ready.pid"), "utf8").trim());
     const running = alive(pid);
     if (running) process.kill(pid, "SIGKILL");
@@ -481,10 +502,12 @@ describe("a passing main", () => {
     const { root } = watched(orphaning(ready, late));
     const fake = fakeCanon(root);
     const neighbour = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore", stdin: "ignore" });
+    reaper.pid(neighbour.pid);
     // reason: not detached, so it shares this test's process group, as when run by hand from a shell without job control
     const w = Bun.spawn(["bun", MAIN, "floor", "watch"], { cwd: root, stdout: "ignore", stderr: "ignore", stdin: "ignore", env: { ...process.env, PATH: `${fake.bin}:${process.env["PATH"]}`, CANON_ACTOR: "agent:a" } });
+    reaper.pid(w.pid);
     await until(() => existsSync(ready));
-    const hook = Number(readFileSync(`${ready}.pid`, "utf8").trim());
+    const hook = reaper.pid(Number(readFileSync(`${ready}.pid`, "utf8").trim()));
     w.kill("SIGTERM");
     expect(await w.exited).toBe(143);
     await until(() => !alive(hook), 5_000).catch(() => {});

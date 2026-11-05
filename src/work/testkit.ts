@@ -67,3 +67,51 @@ export function gapCommit(root: string, wt: string, to: string): string {
   );
   return out;
 }
+
+/**
+ * Longest a shell loop in a test fixture lives. A test that fails or times out is cleaned up by `reaper`, but a runner
+ * killed with SIGKILL runs nothing, so this bound is what ends the loops it leaves behind (C-329, issues #119 #120).
+ */
+export const LOOP_SECONDS = 60;
+
+/** A shell loop that waits while `cond` holds and ends by itself after LOOP_SECONDS. */
+export const boundedLoop = (cond: string, step = 0.05) =>
+  `__n=0; while ${cond} && [ $__n -lt ${Math.round(LOOP_SECONDS / step)} ]; do sleep ${step}; __n=$((__n + 1)); done`;
+
+/** A fixture command that runs until the test ends it, but at most LOOP_SECONDS. */
+export const runsUntilKilled = boundedLoop("true", 0.1);
+
+/**
+ * Remembers the processes and process groups a test starts so `killAll` (call it from afterEach, which runs after a
+ * failing test too) ends them with SIGKILL. A group is killed as a whole, which also reaches what its members left
+ * running after their parent exited.
+ */
+export function processReaper() {
+  const groups = new Set<number>();
+  const pids = new Set<number>();
+  const kill = (pid: number) => {
+    try {
+      process.kill(pid, "SIGKILL");
+    } catch {
+      // already gone
+    }
+  };
+  return {
+    /** A process started with `detached: true` leads its own group; returns pid. */
+    group(pid: number): number {
+      if (pid === process.pid || pid <= 1) throw new Error(`refusing to register pid ${pid} as a group to kill`);
+      groups.add(pid);
+      return pid;
+    },
+    pid(pid: number): number {
+      pids.add(pid);
+      return pid;
+    },
+    killAll() {
+      for (const g of groups) kill(-g);
+      for (const p of pids) kill(p);
+      groups.clear();
+      pids.clear();
+    },
+  };
+}

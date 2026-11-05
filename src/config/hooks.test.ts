@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { noPort } from "./ports.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -8,10 +8,28 @@ import { handoffs } from "../work/session/handoffs.ts";
 import { start, stop } from "../work/session/session.ts";
 import { land } from "../work/land/land.ts";
 import { backgroundNotice, logFile, runHooksInBackground, settleBackgroundHooks } from "./hooks.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../work/testkit.ts";
+import { boundedLoop, FAST, project, quiet, sh, startNew, ws } from "../work/testkit.ts";
+
+// reason: hooks started in the background outlive the call by design (BR-2137), so the test ends them: every root that
+// waits for `go` gets one in afterEach (pass or fail); a SIGKILLed runner is covered by the loop's own bound (C-329, #119)
+const waiting: string[] = [];
+const waitForGo = (root: string) => {
+  waiting.push(root);
+  return root;
+};
+afterEach(() => {
+  for (const root of waiting.splice(0)) {
+    try {
+      writeFileSync(join(root, "go"), "");
+    } catch {
+      // the root is gone
+    }
+  }
+});
+const WAIT_GO = boundedLoop('[ ! -e "$CANON_WORKTREE/go" ]');
 
 function configured(hooks: string) {
-  const root = project();
+  const root = waitForGo(project());
   writeFileSync(join(root, "canon/config.yaml"), `floor: test ! -e FAIL\ntests: []\nhooks:\n${hooks}`);
   sh(root, "commit", "-qam", "hooks");
   return root;
@@ -170,7 +188,7 @@ describe("background hook exit codes", () => {
   });
 
   test("BR-2137: brief records each finished background command once as hook.exit; an unfinished one is not recorded", async () => {
-    const root = configured(`  after_land:\n    - exit 0\n    - exit 7\n    - 'while [ ! -e "$CANON_WORKTREE/go" ]; do sleep 0.05; done'\n`);
+    const root = configured(`  after_land:\n    - exit 0\n    - exit 7\n    - '${WAIT_GO}'\n`);
     const { s } = await commitAndLand(root, "Exits", "x.txt");
     const { log } = logOf(root);
     await finished(log, 2);
@@ -209,13 +227,13 @@ describe("background hook exit codes", () => {
   });
 
   test("BR-2138: nothing is said while the latest batch still runs; a missing log is said with its path", async () => {
-    const root = configured(`  after_land: 'while [ ! -e "$CANON_WORKTREE/go" ]; do sleep 0.05; done; exit 3'\n`);
+    const root = configured(`  after_land: '${WAIT_GO}; exit 3'\n`);
     const { s } = await commitAndLand(root, "Slow", "x.txt");
     const { log } = logOf(root);
     expect(brief(root)).not.toContain("after_land");
     writeFileSync(join(root, "go"), "");
     await finished(log, 1);
-    expect(brief(root)).toContain(`\`while [ ! -e "$CANON_WORKTREE/go" ]; do sleep 0.05; done; exit 3\` exited 3`);
+    expect(brief(root)).toContain(`\`${WAIT_GO}; exit 3\` exited 3`);
     rmSync(log);
     expect(backgroundNotice(settleBackgroundHooks(ws(root).db, "agent:test"))).toBe(
       `after_land after ${s.change}: the log ${log} is missing, so whether the background commands succeeded is unknown`,
@@ -223,10 +241,10 @@ describe("background hook exit codes", () => {
   });
 
   test("BR-2138 BR-2137: a failed command is named while the next one still runs; a missing log records no hook.exit", async () => {
-    const root = project();
+    const root = waitForGo(project());
     const w = ws(root);
     const ctx = { db: w.db, actor: "agent:a", event: "after_land" as const, change: "C-3", cwd: root, env: {}, port: noPort };
-    const log = runHooksInBackground(ctx, ["exit 2", `while [ ! -e ${root}/go ]; do sleep 0.05; done`], logFile(w.db, "after-land-3.log"), 3);
+    const log = runHooksInBackground(ctx, ["exit 2", boundedLoop(`[ ! -e ${root}/go ]`)], logFile(w.db, "after-land-3.log"), 3);
     await finished(log, 1);
     expect(backgroundNotice(settleBackgroundHooks(w.db, "agent:test"))).toBe(`after_land after C-3 failed in the background: \`exit 2\` exited 2 (log: ${log})`);
     writeFileSync(join(root, "go"), "");
