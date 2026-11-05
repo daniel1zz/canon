@@ -31,6 +31,20 @@ function write(root: string, files: Record<string, string>) {
   }
 }
 
+/**
+ * What the fixtures' test_command runs (BR-2337): it writes the JUnit report of the test file, a testcase per `it("name", …)`
+ * line and per `it.skip("name", …)` one that does not run, then runs the fixture's run.sh on the file for its exit code.
+ */
+const WRAP_SH = [
+  'f="$1"; r="$2"',
+  '{ printf \'<testsuites><testsuite name="t">\'',
+  '  grep -o \'^it("[^"]*"\' "$f" | sed \'s/^it("\\(.*\\)"$/<testcase name="\\1" classname=""\\/>/\'',
+  '  grep -o \'^it\\.skip("[^"]*"\' "$f" | sed \'s/^it\\.skip("\\(.*\\)"$/<testcase name="\\1" classname=""><skipped\\/><\\/testcase>/\'',
+  "  printf '</testsuite></testsuites>'; } > \"$r\"",
+  'exec sh run.sh "$f"',
+  "",
+].join("\n");
+
 const ruleText = (title: string) => `---\nid: ${rule}\ntitle: ${title}\nstatus: active\n---\n\n## 规则\n\nx\n\n## 例子\n\n- a → b\n`;
 
 /**
@@ -38,11 +52,12 @@ const ruleText = (title: string) => `---\nid: ${rule}\ntitle: ${title}\nstatus: 
  * a.ts ← b.ts; test_select_command (select.sh) says a change to a.ts reaches b.test.ts and c.test.ts, d.test.ts nothing,
  * e.test.ts names the rule, f.test.ts names it only in a skipped test.
  */
-function fixture(testCommand = "sh run.sh {file}", extra: Record<string, string> = {}) {
+function fixture(testCommand = "sh wrap.sh {file} {report}", extra: Record<string, string> = {}) {
   const root = project();
   write(root, {
     "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "${testCommand}"\ntest_select_command: "sh select.sh"\n`,
     "run.sh": 'echo "$1" >> runs.log\nif grep -q FAILME "$1"; then echo "boom in $1"; exit 1; fi\n',
+    "wrap.sh": WRAP_SH,
     // reason: stands in for a project's test_select_command: a change to src/a.ts reaches b.test.ts directly and c.test.ts through b.ts (BR-2346)
     "select.sh": 'paths=$(cat)\nprintf "%s\\n" "$paths" > select-stdin.log\ncase "$paths" in *src/a.ts*) printf "src/b.test.ts\\timports src/a.ts\\nsrc/c.test.ts\\timports src/a.ts (through src/b.ts)\\n";; esac\n',
     ".gitignore": "runs.log\nselect-stdin.log\n",
@@ -127,7 +142,7 @@ describe("canon work test selection", () => {
 
   test("BR-2346: without test_select_command canon says so on every run, selects only changed test files, named rules and always_tests, and --all is unchanged", () => {
     const { wt } = fixture();
-    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\n', "src/a.ts": "export const a = 2;\n" });
+    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\n', "src/a.ts": "export const a = 2;\n" });
     const r = canon(wt, "work", "test");
     expect(r.out).toContain("no test_select_command configured: selecting only changed test files, test files whose tests name a touched rule, and always_tests; selecting by imports was removed (D-64)");
     expect(r.out).toContain("0 test file(s) related");
@@ -270,8 +285,9 @@ describe("canon work test runs", () => {
   test("BR-2159: of 3 test files, a change that test_select_command maps to one runs 1 without --all and 3 with it", () => {
     const root = project();
     write(root, {
-      "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_select_command: "sh select.sh"\n',
+      "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\n',
       "run.sh": 'echo "$1" >> runs.log\n',
+      "wrap.sh": WRAP_SH,
       "select.sh": 'cat > /dev/null\necho "src/one.test.ts\\timports src/a.ts"\n',
       ".gitignore": "runs.log\n",
       "src/a.ts": "export const a = 1;\n",
@@ -306,7 +322,7 @@ describe("canon work test runs", () => {
 function typecheckFixture() {
   const f = fixture();
   write(f.wt, {
-    "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_select_command: "sh select.sh"\ntypecheck_command: "sh tc.sh"\n',
+    "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\ntypecheck_command: "sh tc.sh"\n',
     "tc.sh": 'echo typecheck >> runs.log\nif [ -e TYPEFAIL ]; then echo "type error in src/a.ts"; exit 2; fi\n',
   });
   sh(f.wt, "add", "-A");
@@ -362,7 +378,7 @@ describe("canon work test type check and canon check", () => {
     expect(r.code).toBe(0);
     expect(r.out).not.toContain("typecheck");
     expect(lastEvent(wt)).toMatchObject({ typecheck: null });
-    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_select_command: "sh select.sh"\ntypecheck_command: 3\n' });
+    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\ntypecheck_command: 3\n' });
     const bad = canon(wt, "work", "test");
     expect(bad.code).toBe(2);
     expect(bad.err).toContain("typecheck_command");
@@ -452,7 +468,7 @@ describe("canon work test session text budget", () => {
     const { wt } = fixture();
     const quiet = canon(wt, "work", "test");
     expect([quiet.code, hint(quiet.err)]).toEqual([0, []]);
-    write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_select_command: "sh select.sh"\nsession_text_budget: 1\n` });
+    write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\nsession_text_budget: 1\n` });
     const r = canon(wt, "work", "test");
     expect(r.code).toBe(0);
     expect(hint(r.err)).toHaveLength(1);
@@ -463,7 +479,7 @@ describe("canon work test session text budget", () => {
 /** The fixture with `always_tests` set to `globs` (a YAML value), committed in the change's worktree. */
 function alwaysFixture(globs: string, extra: Record<string, string> = {}) {
   const f = fixture();
-  write(f.wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_select_command: "sh select.sh"\nalways_tests: ${globs}\n`, ...extra });
+  write(f.wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\nalways_tests: ${globs}\n`, ...extra });
   sh(f.wt, "add", "-A");
   sh(f.wt, "commit", "-qm", "always_tests");
   return f;
@@ -513,12 +529,12 @@ describe("canon work test always_tests", () => {
   test("BR-2297 BR-2045: always_tests that is not a list of non-empty strings fails every command with exit 2", () => {
     const { wt } = fixture();
     for (const bad of ['"src/d.test.ts"', "[3]", '[""]']) {
-      write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_select_command: "sh select.sh"\nalways_tests: ${bad}\n` });
+      write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\nalways_tests: ${bad}\n` });
       const r = canon(wt, "check");
       expect(r.code).toBe(2);
       expect(r.err).toContain("always_tests");
     }
-    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_select_command: "sh select.sh"\nalways_tests: null\n' });
+    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\nalways_tests: null\n' });
     expect(canon(wt, "check").code).not.toBe(2);
   });
 });
@@ -536,9 +552,9 @@ function fakeCpu(idleCpus: number) {
 
 /** The fixture's worktree with `n` test files `src/t<i>.test.ts` that import the changed `src/a.ts`, run by `script`. */
 function jobsFixture(n: number, script: string, testJobs: string) {
-  const { wt } = fixture("sh run.sh {file}");
+  const { wt } = fixture("sh wrap.sh {file} {report}");
   const tests = Object.fromEntries(Array.from({ length: n }, (_, i) => [`src/t${i + 1}.test.ts`, 'import "./a.ts";\n']));
-  write(wt, { ...tests, "run.sh": script, "select.sh": "cat > /dev/null\n", "src/a.ts": "export const a = 2;\n", "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_select_command: "sh select.sh"\ntest_jobs: ${testJobs}\n` });
+  write(wt, { ...tests, "run.sh": script, "select.sh": "cat > /dev/null\n", "src/a.ts": "export const a = 2;\n", "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\ntest_jobs: ${testJobs}\n` });
   // only the t files are meant to run here: b.test.ts and c.test.ts go, and select.sh selects nothing
   sh(wt, "rm", "-q", "src/b.test.ts", "src/c.test.ts");
   return wt;
@@ -670,13 +686,13 @@ describe("canon work test runs several files at once", () => {
   test("BR-2045 BR-2302: test_jobs other than a whole number of at least 1 or lower-case auto fails every command with exit 2", () => {
     const { wt } = fixture();
     for (const bad of ['"3"', "Auto", "0", "-1", "1.5", "many"]) {
-      write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_select_command: "sh select.sh"\ntest_jobs: ${bad}\n` });
+      write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\ntest_jobs: ${bad}\n` });
       const r = canon(wt, "check");
       expect(r.code).toBe(2);
       expect(r.err).toContain("test_jobs");
     }
     for (const good of ["auto", "3", "null"]) {
-      write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_select_command: "sh select.sh"\ntest_jobs: ${good}\n` });
+      write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\ntest_jobs: ${good}\n` });
       expect(canon(wt, "check").code).not.toBe(2);
     }
   });
@@ -851,7 +867,7 @@ describe("canon work test stops on a signal", () => {
 
   test("BR-2304: a type check stopped by the signal records no typecheck result, prints no FAIL and starts nothing after it", async () => {
     const wt = jobsFixture(2, "exit 0\n", "1");
-    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_select_command: "sh select.sh"\ntypecheck_command: "sh tc.sh"\n', "tc.sh": 'trap "exit 2" TERM\ntouch tc.started\nsleep 30 &\nwait\n' });
+    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\ntypecheck_command: "sh tc.sh"\n', "tc.sh": 'trap "exit 2" TERM\ntouch tc.started\nsleep 30 &\nwait\n' });
     const { d, signals } = fakeDeps();
     const lines: string[] = [];
     const run = workTest(ws(wt), false, (l) => lines.push(l), d);
@@ -930,7 +946,7 @@ describe("canon work test stops on a signal", () => {
 
   test("BR-2304: during the type check a signal stops it, with 0 files running and all of them not started", async () => {
     const wt = jobsFixture(2, "exit 0\n", "1");
-    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\ntest_select_command: "sh select.sh"\ntypecheck_command: "sh tc.sh"\n', "tc.sh": 'touch tc.started\nsleep 5\n' });
+    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\ntypecheck_command: "sh tc.sh"\n', "tc.sh": 'touch tc.started\nsleep 5\n' });
     const { d, signals, exits } = fakeDeps();
     const lines: string[] = [];
     const run = workTest(ws(wt), false, (l) => lines.push(l), d);

@@ -7,6 +7,7 @@ import { parse } from "yaml";
 import { entry, EXIT, fail, must, say, workspace, type DomainCommands } from "../invocation/command.ts";
 import { firstCommitStep, git, mainIsUnborn } from "../kernel/git.ts";
 import type { Workspace } from "../work/workspace.ts";
+import { REPORT_UPDATE_NOTE } from "../work/verify/report.ts";
 import { skillsSource, type InstallReport } from "./install.ts";
 import { assetsStatus, installAssets, updateNotice, updateProject, WORKTREES_EXCLUDE } from "./update.ts";
 import { uninstall as uninstallProject } from "./uninstall.ts";
@@ -107,9 +108,13 @@ const update = defineCommand({
     if (out.kind === "current") return say(`canon project files: up to date (version ${out.version})`);
     if (out.kind === "local") {
       const what = [out.guard ? "git hook installed: main moves only through canon work land" : "", out.exclude ? `git exclude: ${WORKTREES_EXCLUDE} added to info/exclude` : ""].filter(Boolean).join("; ");
-      return say(`${what}; canon project files are now up to date (version ${out.version})`);
+      say(`${what}; canon project files are now up to date (version ${out.version})`);
+      return say(REPORT_UPDATE_NOTE);
     }
-    if (out.kind === "landed") return say(`updated to ${out.version} in ${out.change}, landed ${out.sha.slice(0, 9)}`);
+    if (out.kind === "landed") {
+      say(`updated to ${out.version} in ${out.change}, landed ${out.sha.slice(0, 9)}`);
+      return say(REPORT_UPDATE_NOTE);
+    }
     console.error(`canon: the update ${out.change} did not land: ${out.message}`);
     // reason: still queued is a timeout, not a refusal: the caller runs the landing again (BR-2022)
     process.exit(out.kind === "timeout" ? EXIT.timeout : EXIT.refused);

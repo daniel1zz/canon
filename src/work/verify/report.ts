@@ -9,6 +9,26 @@ import { err, ok, type Result } from "../../kernel/result.ts";
 /** Where `test_command` and `floor` take the path of the report the command writes (BR-2160, BR-2339). */
 export const REPORT_PLACEHOLDER = "{report}";
 
+/**
+ * How each test framework writes a JUnit XML report (D-64): what a project puts in `test_command` (and, where the report has
+ * a `file` on every testcase, in `floor`). The framework's own documentation is the source; none of this is read by canon.
+ */
+export const REPORT_RECIPES = [
+  "test_command writes the framework's JUnit XML report to {report}; per framework:",
+  "  bun:      test_command: \"bun test {file} --reporter=junit --reporter-outfile={report}\"",
+  "  pytest:   test_command: \"pytest {file} -o junit_family=xunit1 --junit-xml={report}\" (xunit1 adds file and line to each testcase; the default xunit2 has neither)",
+  "  go:       gotestsum writes it (`gotestsum --junitfile {report}`; go test itself cannot), one package per run, so {file} must name the one file's tests",
+  "  vitest:   its junit reporter, with the output file set to {report}",
+  "  jest:     the jest-junit reporter, with its output file set to {report}",
+  "  Godot (GUT, gdUnit4): a wrapper script that runs the file and copies the framework's JUnit XML to {report}; testcase names must carry the rule ids",
+].join("\n");
+
+/** What `canon update` tells a project once it has installed a canon that reads test reports (D-64). */
+export const REPORT_UPDATE_NOTE = [
+  "note: canon now reads JUnit test reports (D-64): canon/config.yaml needs `tests` (the globs of the test files) and a `test_command` with {file} and {report}; floor_skip_paths wants a test_select_command that says which tests read those paths.",
+  REPORT_RECIPES,
+].join("\n");
+
 /** A report larger than this is refused, not read: it is untrusted input (D-64). */
 export const MAX_REPORT_BYTES = 64 * 1024 * 1024;
 

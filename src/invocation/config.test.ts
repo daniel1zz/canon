@@ -69,22 +69,28 @@ describe("config validation", () => {
     }
   });
 
-  test("BR-2160: test_command must be a string holding {file}, and a script it names must exist", () => {
-    const good = readConfig(repo({ "canon/config.yaml": 'test_command: "npx vitest run {file}"\n' }));
-    expect(good.ok && good.value.testCommand).toBe("npx vitest run {file}");
-    const reported = readConfig(repo({ "canon/config.yaml": 'test_command: "bun test {file} --reporter=junit --reporter-outfile={report}"\n' }));
-    expect(reported.ok && reported.value.testCommand).toBe("bun test {file} --reporter=junit --reporter-outfile={report}");
+  test("BR-2160: test_command must be a string holding {file} and {report}, and a script it names must exist", () => {
+    const good = readConfig(repo({ "canon/config.yaml": 'test_command: "bun test {file} --reporter=junit --reporter-outfile={report}"\n' }));
+    expect(good.ok && good.value.testCommand).toBe("bun test {file} --reporter=junit --reporter-outfile={report}");
     const none = readConfig(repo());
     expect(none.ok && none.value.testCommand).toBeUndefined();
     for (const [yaml, message] of [
       ['test_command: "bun test"\n', "must contain {file}"],
+      ['test_command: "npx vitest run {file}"\n', "must contain {report}"],
+      ['test_command: "bun test --reporter-outfile={report}"\n', "must contain {file}"],
       ["test_command: 3\n", "`test_command` must be a string"],
-      ['test_command: "scripts/missing.sh {file}"\n', "scripts/missing.sh"],
+      ['test_command: "scripts/missing.sh {file} {report}"\n', "scripts/missing.sh"],
     ] as const) {
       const r = canon(repo({ "canon/config.yaml": yaml }), "show", ["C", 1].join("-"));
       expect(r.code).toBe(2);
       expect(r.err).toContain(message);
     }
+  });
+
+  test("BR-2160: the refusal of a test_command without {report} shows how each framework writes one", () => {
+    const r = canon(repo({ "canon/config.yaml": 'test_command: "pytest {file}"\n' }), "show", ["C", 1].join("-"));
+    expect(r.code).toBe(2);
+    for (const recipe of ["bun test {file} --reporter=junit --reporter-outfile={report}", "pytest {file} -o junit_family=xunit1 --junit-xml={report}", "gotestsum --junitfile {report}", "vitest", "jest-junit", "Godot"]) expect(r.err).toContain(recipe);
   });
 
   test("BR-2045: a number must be greater than 0, except land_keep_place_minutes, where 0 means keep no place (issue #64)", () => {
@@ -182,12 +188,24 @@ describe("test discovery", () => {
     return testFilesFor(root, cfg.value);
   };
 
-  test("BR-2046: configured globs are the only test files found", () => {
-    expect(found({ "canon/config.yaml": 'tests: ["src/**/*.test.ts"]\n', "src/a.test.ts": "x", "e2e/a.spec.ts": "x" })).toEqual(["src/a.test.ts"]);
+  test("BR-2046: the configured globs find the test files, whatever their language, and node_modules is skipped", () => {
+    const r = found({
+      "canon/config.yaml": 'tests: ["src/**/*.test.ts", "tools/*.py", "node_modules/**/*.test.js", "**/*.spec.ts"]\n',
+      "src/a.test.ts": "x", "src/deep/b.test.ts": "x", "tools/a.py": "x", "tools/b.rb": "x", "e2e/a.spec.ts": "x", "node_modules/x/a.test.js": "x", "docs/a.test.ts": "x",
+    });
+    expect(r.ok && r.value).toEqual(["e2e/a.spec.ts", "src/a.test.ts", "src/deep/b.test.ts", "tools/a.py"]);
   });
 
-  test("BR-2046: without globs every *.test.* and *.spec.* file of 12 JS/TS extensions counts, except under dist, node_modules and the root canon", () => {
-    expect(found({ "e2e/a.spec.ts": "x", "e2e/b.test.mts": "x", "tools/a.test.py": "x", "dist/a.test.js": "x", "node_modules/x/a.test.js": "x", "canon/b.test.ts": "x", "src/canon/a.test.ts": "x" })).toEqual(["e2e/a.spec.ts", "e2e/b.test.mts", "src/canon/a.test.ts"]);
+  test("BR-2046: without tests nothing is guessed: a usage error that says how to write it, and canon check exits 2", () => {
+    const root = repo({ "canon/config.yaml": "floor: \"true\"\n", "src/a.test.ts": "x" });
+    const cfg = readConfig(root);
+    if (!cfg.ok) throw new Error(cfg.error.message);
+    const r = testFilesFor(root, cfg.value);
+    expect(!r.ok && r.error.code).toBe("invalid");
+    expect(!r.ok && r.error.message).toContain('tests: ["src/**/*.test.ts"]');
+    const cli = canon(root, "check");
+    expect(cli.code).toBe(2);
+    expect(cli.err).toContain("canon/config.yaml has no `tests`");
   });
 });
 

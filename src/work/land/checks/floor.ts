@@ -51,7 +51,9 @@ export function floorSkip(wt: string, base: string, head: string, why: (line: st
     if (!entry) return undefined;
     under.add(entry);
   }
-  const tests = new Set(testFilesFor(wt, config));
+  const found = testFilesFor(wt, config);
+  if (!found.ok) return undefined;
+  const tests = new Set(found.value);
   if (paths.some((p) => tests.has(p) || isTestPath(config, p))) return undefined;
   // reason: whether a test reads these files is the project's to say, and canon asks before it skips (BR-2164, D-64)
   if (config.testSelectCommand === undefined) {
@@ -121,7 +123,9 @@ function recordFloorReport(db: CoordDb, config: Config, cwd: string, report: str
     if (rel === ".." || rel.startsWith("../") || isAbsolute(rel)) return fail(`a testcase (${c.classname} ${c.name}) names the file ${c.file}, outside the repository`);
     byFile.set(rel, [...(byFile.get(rel) ?? []), c]);
   }
-  const tests = new Set(testFilesFor(cwd, config));
+  const found = testFilesFor(cwd, config);
+  if (!found.ok) return fail(found.error.message);
+  const tests = new Set(found.value);
   let skipped = 0;
   for (const [file, cases] of byFile) {
     if (!tests.has(file)) {

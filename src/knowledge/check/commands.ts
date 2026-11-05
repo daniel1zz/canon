@@ -15,7 +15,7 @@ const checkCmd = defineCommand({
   run({ args }) {
     const ws = workspace();
     const read = corpusOf(ws);
-    const testFiles = testFilesFor(ws.root, ws.config);
+    const testFiles = must(testFilesFor(ws.root, ws.config));
     const reports = must(reportsFor(ws.db, ws.root, ws.config, read.corpus, testFiles));
     const input = { root: ws.root, ...read, testFiles, reports, branchChanges: must(changeIdsOnBranches(ws)), backlogBase: must(listedBefore(ws)) };
     const findings = check(input);

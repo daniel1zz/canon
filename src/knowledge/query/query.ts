@@ -102,26 +102,13 @@ export interface Context {
   /** Documents of declared types that mention one of the rules (BR-2053), listed by title. */
   readonly extras: readonly Extra[];
   readonly target?: Doc;
-  /** Domains holding code the target file imports, not already among `domains` (BR-2119). */
-  readonly imports: readonly ImportedDomain[];
   /** Subdomains of the returned top-level domains that were not returned, by name (BR-2120). */
   readonly others: readonly string[];
   /** For each listed decision (and a decision target) that accepted decisions amend, their ids (BR-2140). */
   readonly amended: ReadonlyMap<string, readonly string[]>;
 }
 
-export interface ImportedDomain {
-  readonly domain: Domain;
-  /** The imported repo paths that fall in this domain. */
-  readonly via: readonly string[];
-  /** Empty for a domain under another top-level domain: it is listed by name only (BR-2119). */
-  readonly rules: readonly Rule[];
-  /** True when the imported domain is under a top-level domain other than the target's. */
-  readonly elsewhere: boolean;
-}
-
-/** `root` lets a file target bring the domains of the code it imports (BR-2119); without it only matching counts. */
-export function contextFor(corpus: Corpus, target: string, root?: string): Context {
+export function contextFor(corpus: Corpus, target: string): Context {
   const t = target.replace(/^\.\//, "").replace(/\/$/, "");
   let domains: Domain[] = [];
   let targetDoc: Doc | undefined;
@@ -145,26 +132,8 @@ export function contextFor(corpus: Corpus, target: string, root?: string): Conte
   const current = (d: Doc): d is Rule => d.kind === "rule" && d.status !== "retired";
   const active = (name: string) => corpus.docs.filter((d): d is Rule => current(d) && d.domain === name);
   const rules = corpus.docs.filter((d): d is Rule => current(d) && names.has(d.domain));
-  const imports: ImportedDomain[] = [];
-  if (!targetDoc && root !== undefined && isFile(join(root, t))) {
-    const via = new Map<string, string[]>();
-    for (const path of importedPaths(root, t)) {
-      const owner = deepestOwner(corpus, path);
-      if (!owner || names.has(owner.name)) continue;
-      via.set(owner.name, [...(via.get(owner.name) ?? []), path]);
-    }
-    // reason: a behaviour that spans subdomains of one top-level domain is the easy one to miss, so those
-    // imports bring their rule titles; other top-level domains are named only, to keep the context short (BR-2119)
-    const ownTops = new Set(domains.map((d) => d.name.split("/")[0]!));
-    for (const d of corpus.domains) {
-      if (!via.has(d.name)) continue;
-      const elsewhere = !ownTops.has(d.name.split("/")[0]!);
-      imports.push({ domain: d, via: via.get(d.name)!, rules: elsewhere ? [] : active(d.name), elsewhere });
-    }
-  }
-  const shown = new Set([...names, ...imports.map((i) => i.domain.name)]);
   const tops = new Set(domains.map((d) => d.name.split("/")[0]!));
-  const others = corpus.domains.filter((d) => d.parent && tops.has(d.name.split("/")[0]!) && !shown.has(d.name)).map((d) => d.name);
+  const others = corpus.domains.filter((d) => d.parent && tops.has(d.name.split("/")[0]!) && !names.has(d.name)).map((d) => d.name);
   const ruleIds = new Set(rules.map((r) => r.id));
   const mentions = (d: Doc) => [...referencedIds(d, corpus.types)].some((id) => ruleIds.has(id));
   const decisions = corpus.docs.filter((d) => d.kind === "decision" && d.status === "accepted" && mentions(d));
@@ -175,51 +144,7 @@ export function contextFor(corpus: Corpus, target: string, root?: string): Conte
     const by = amendedBy(corpus, d.id).map((x) => x.id);
     if (by.length) amended.set(d.id, by);
   }
-  return { domains, rules, decisions, changes, extras, imports, others, amended, ...(targetDoc ? { target: targetDoc } : {}) };
-}
-
-/** The domain whose code path covers a path most specifically (the longest covering path wins). */
-function deepestOwner(corpus: Corpus, path: string): Domain | undefined {
-  let best: { domain: Domain; length: number } | undefined;
-  for (const d of corpus.domains) {
-    for (const c of d.code) if (isUnder(path, c) && (!best || c.length > best.length)) best = { domain: d, length: c.length };
-  }
-  return best?.domain;
-}
-
-const SPECIFIERS = [
-  /(?:^|[^\w$.])(?:import|export)\s[^'"`;]*?\sfrom\s*["']([^"'\n]+)["']/g,
-  /(?:^|[^\w$.])import\s*["']([^"'\n]+)["']/g,
-  /(?:^|[^\w$.])(?:require|import)\s*\(\s*["']([^"'\n]+)["']\s*\)/g,
-];
-const RESOLVE_EXTS = [".ts", ".tsx", ".mts", ".cts", ".js", ".jsx", ".mjs", ".cjs"];
-
-/**
- * Repo paths of the relative imports in a file, read at run time so nothing has to be declared or kept up to
- * date (D-15). A specifier resolves the way bundlers do: as written, with a source extension, or as a
- * directory's index; one that resolves to nothing is kept as written, since matching is by directory anyway.
- * `exists` says which repo paths count as files; `canon work test` also counts the files the change deleted (BR-2157).
- */
-export function importedPaths(root: string, file: string, exists: (path: string) => boolean = (p) => isFile(join(root, p))): string[] {
-  const text = readFileSync(join(root, file), "utf8");
-  const out = new Set<string>();
-  for (const re of SPECIFIERS) {
-    for (const m of text.matchAll(re)) {
-      const spec = m[1]!;
-      if (!spec.startsWith("./") && !spec.startsWith("../")) continue;
-      const base = posix.normalize(posix.join(posix.dirname(file), spec));
-      if (base.startsWith("../") || base === "..") continue;
-      const stem = base.replace(/\.[cm]?jsx?$/, "");
-      const candidates = [base, ...RESOLVE_EXTS.map((e) => `${stem}${e}`), ...RESOLVE_EXTS.map((e) => `${base}/index${e}`)];
-      out.add(candidates.find(exists) ?? base);
-    }
-  }
-  out.delete(file);
-  return [...out].sort();
-}
-
-function isFile(full: string): boolean {
-  return existsSync(full) && statSync(full).isFile();
+  return { domains, rules, decisions, changes, extras, others, amended, ...(targetDoc ? { target: targetDoc } : {}) };
 }
 
 /** Adds every enclosing domain, keeping corpus order (a parent is read before its subdomains). */
@@ -251,12 +176,6 @@ export function renderContext(root: string, ctx: Context, opts: { readonly full:
     out.push(`# Domain: ${d.name}  (code: ${d.code.length ? d.code.join(", ") : `through ${d.parent ?? "the enclosing domain"}`})\n\n${d.body.trim()}\n`);
     rulesOf(ctx.rules.filter((x) => x.domain === d.name));
   }
-  for (const i of ctx.imports.filter((x) => !x.elsewhere)) {
-    out.push(`# Imported domain: ${i.domain.name}  (the target imports ${i.via.join(", ")}; README: canon context ${i.domain.name})\n`);
-    rulesOf(i.rules);
-  }
-  const elsewhere = ctx.imports.filter((x) => x.elsewhere);
-  if (elsewhere.length) out.push(`Imported from other domains, not included: ${elsewhere.map((i) => `${i.domain.name} (${i.via.join(", ")})`).join("; ")} (canon context <name>)\n`);
   if (ctx.others.length) out.push(`Other subdomains, not included: ${ctx.others.join(", ")} (canon context <name>)\n`);
   if (ctx.decisions.length) out.push(`# Decisions\n\n${ctx.decisions.map((d) => `- ${d.id} ${d.title} (${d.path})${amended(d.id)}`).join("\n")}\n`);
   if (ctx.changes.length) out.push(`# Open changes\n\n${ctx.changes.map((c) => `- ${c.id} ${c.title} (${c.path})`).join("\n")}\n`);
@@ -265,7 +184,7 @@ export function renderContext(root: string, ctx: Context, opts: { readonly full:
     out.push(`# ${type}\n\n${of.map((e) => `- ${e.id} ${e.title}${e.status ? ` [${e.status}]` : ""} (${e.path})`).join("\n")}\n`);
   }
   if (out.length === 0) out.push(`No domain, rule or document matches. Domains: canon rule domains\n`);
-  else if (!opts.full && (ctx.rules.length || ctx.imports.some((i) => i.rules.length))) out.push(`Rules are listed by title. Read the ones you touch: canon show <id>; every rule's text: canon context ${opts.target ?? "<target>"} --full\n`);
+  else if (!opts.full && ctx.rules.length) out.push(`Rules are listed by title. Read the ones you touch: canon show <id>; every rule's text: canon context ${opts.target ?? "<target>"} --full\n`);
   return out.join("\n");
 }
 

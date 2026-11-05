@@ -55,13 +55,14 @@ export function changesOf(root: string, config: Config, known?: Corpus): Result<
  */
 export function reportsFor(db: CoordDb, root: string, config: Config, corpus: Corpus, testFiles: readonly string[]): Result<TestReports> {
   // reason: a repository with no commit yet has no change to be relevant to, like the main branch itself (BR-2344)
-  if (!git(root, "rev-parse", "--verify", "--quiet", "HEAD").ok) return ok(loadReports(db, root, testFiles));
+  const noTestCommand = config.testCommand === undefined;
+  if (!git(root, "rev-parse", "--verify", "--quiet", "HEAD").ok) return ok({ ...loadReports(db, root, testFiles), noTestCommand });
   const branch = git(root, "rev-parse", "--abbrev-ref", "HEAD");
   if (!branch.ok) return branch;
-  if (branch.value === config.main) return ok(loadReports(db, root, testFiles));
+  if (branch.value === config.main) return ok({ ...loadReports(db, root, testFiles), noTestCommand });
   const ch = changesOf(root, config, corpus);
   if (!ch.ok) return ch;
   const rules = new Set(ch.value.rules);
   const namesTouched = (names: string) => [...idsIn(config.types, names)].some((id) => rules.has(id));
-  return ok(loadReports(db, root, testFiles, { changed: new Set(ch.value.changed), namesTouched }));
+  return ok({ ...loadReports(db, root, testFiles, { changed: new Set(ch.value.changed), namesTouched }), noTestCommand });
 }

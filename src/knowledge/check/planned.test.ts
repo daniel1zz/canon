@@ -23,7 +23,7 @@ function repo(files: Record<string, string>): string {
 }
 
 const rule = (n: number, meta: string, body = "## 规则\n\nStatement.\n\n## 例子\n\n- day 30 → refunded\n") => ({ [`canon/rules/billing/${br(n)}.md`]: `---\nid: ${br(n)}\ntitle: Rule ${n}\n${meta}---\n${body}` });
-const findings = (root: string) => check({ root, ...readCorpus(root) }).map((f) => `${f.rule} ${f.path}${f.rule === "file-invalid" ? ` ${f.message}` : ""}`);
+const findings = (root: string) => check({ root, ...readCorpus(root), testFiles: [] }).map((f) => `${f.rule} ${f.path}${f.rule === "file-invalid" ? ` ${f.message}` : ""}`);
 
 describe("planned rules in canon check", () => {
   test("BR-2235 BR-2005: a planned rule with no test and no untested is not reported; an active one is", () => {

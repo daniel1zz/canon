@@ -146,13 +146,11 @@ export function hasAcceptanceLine(body: string, id: string): boolean {
   });
 }
 
-const DEFAULT_TEST = /\.(test|spec)\.[cm]?[jt]sx?$/;
 
 /** Whether a repository path is a test file by the config (BR-2005's files), judged by name so an earlier landing's files count too. */
 function isTestPath(config: Config, path: string): boolean {
   if (path.split("/").includes("node_modules")) return false;
-  if (config.tests) return config.tests.some((g) => new Bun.Glob(g).match(path));
-  return DEFAULT_TEST.test(path.split("/").pop() ?? "") && !path.startsWith("canon/");
+  return (config.tests ?? []).some((g) => new Bun.Glob(g).match(path));
 }
 
 /**
@@ -217,7 +215,8 @@ export function newSideLines(diff: string): Map<string, [number, number][]> {
 /** Rules a running testcase names in the tree at `root`, from the ledger (BR-2005's reading), for migration (BR-2245). */
 export function testedRules(db: CoordDb, root: string, config: Config, corpus: Corpus): Set<string> {
   const out = new Set<string>();
-  const files = testFilesFor(root, config);
+  const found = testFilesFor(root, config);
+  const files = found.ok ? found.value : [];
   const blobs = blobsOf(root, files);
   for (const file of files) {
     const blob = blobs.get(file);

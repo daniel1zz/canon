@@ -1,13 +1,13 @@
 import { fileSourceFailure, MIN_QUOTE, optionProblems, sourceFile, sources } from "./sources.ts";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
-import { join, relative } from "node:path";
+import { join } from "node:path";
 import { parse } from "yaml";
 import { technicalLayerWord, technicalNameAdvice } from "../documents/domain-names.ts";
 import { stripCode, type Corpus, type Rule } from "../documents/model.ts";
 import type { FileProblem } from "../documents/read.ts";
 import { idsIn as idsOf } from "../documents/types.ts";
 import { BACKLOG_FILE, readBacklog } from "../documents/backlog.ts";
-import { caseNames } from "../../work/verify/report.ts";
+import { caseNames, REPORT_RECIPES } from "../../work/verify/report.ts";
 import type { TestReports } from "../../work/verify/ledger.ts";
 import { historyOf, pathFindings } from "./paths.ts";
 import { listFindings } from "./lists.ts";
@@ -56,8 +56,8 @@ export interface CheckInput {
   readonly root: string;
   readonly corpus: Corpus;
   readonly problems: readonly FileProblem[];
-  /** Test files to scan for rule ids; defaults to every *.test.ts / *.spec.ts outside node_modules and canon/. */
-  readonly testFiles?: readonly string[];
+  /** The test files `tests` finds (BR-2046): the files whose reports name rules (BR-2005). */
+  readonly testFiles: readonly string[];
   /** What the ledger holds for those test files (BR-2005); without it no test file has a report. */
   readonly reports?: TestReports;
   /** Ids whose change file is on their own change branch, not yet on main: the backlog may list them (BR-2150, D-50). */
@@ -102,7 +102,7 @@ const listed = (files: readonly string[]): string => `${files.slice(0, FIRST).jo
 export function staleReportNotes(input: CheckInput): Finding[] {
   const reports = input.reports;
   if (!reports) return [];
-  const stale = (input.testFiles ?? []).filter((f) => {
+  const stale = input.testFiles.filter((f) => {
     const row = reports.files.get(f);
     return row !== undefined && !row.fresh && !reports.relevant.has(f);
   });
@@ -177,7 +177,7 @@ export function check(input: CheckInput): Finding[] {
   const rules = new Map<string, Rule>();
   for (const d of input.corpus.docs) if (d.kind === "rule") rules.set(d.id, d);
   const tested = new Set<string>();
-  const testFiles = input.testFiles ?? findTestFiles(input.root);
+  const testFiles = input.testFiles;
   const rulePrefix = `${input.corpus.types.find((t) => t.name === "rule")!.prefix}-`;
   const reports = input.reports;
   const noReport: string[] = [];
@@ -207,7 +207,9 @@ export function check(input: CheckInput): Finding[] {
     findings.push({
       path: missing[0]!,
       rule: "test-report-missing",
-      message: `${missing.length} test file(s) this change touches have no report for their current content (${listed(missing)}): run canon work test ${missing.slice(0, 5).join(" ")}${missing.length > 5 ? " …" : ""}`,
+      message: `${missing.length} test file(s) this change touches have no report for their current content (${listed(missing)}): ${
+        reports?.noTestCommand ? `canon/config.yaml sets no test_command, so nothing records reports; ${REPORT_RECIPES}` : `run canon work test ${missing.slice(0, 5).join(" ")}${missing.length > 5 ? " …" : ""}`
+      }`,
     });
   }
   // reason: a planned rule is designed but not executed yet, so it needs no test (BR-2235, BR-2005)
@@ -386,23 +388,4 @@ export function beforeChangeWording(examples: string): string | undefined {
   // reason: text in backticks is the product's input or output, which may hold these words (BR-2301)
   const text = stripCode(examples).toLowerCase();
   return BEFORE_CHANGE.find((w) => text.includes(w));
-}
-
-const SKIP_DIRS = new Set(["node_modules", ".git", "dist", ".cache"]);
-/** Skipped only at the repository root: canon's own documents, not any directory that happens to be named canon (BR-2046). */
-const ROOT_SKIP_DIRS = new Set(["canon"]);
-
-export function findTestFiles(root: string): string[] {
-  const out: string[] = [];
-  const walk = (dir: string) => {
-    // reason: a symbolic link is never followed or read, so a dangling link or a loop cannot crash check (BR-2186)
-    for (const entry of readdirSync(dir, { withFileTypes: true })) {
-      if (SKIP_DIRS.has(entry.name) || (dir === root && ROOT_SKIP_DIRS.has(entry.name))) continue;
-      const full = join(dir, entry.name);
-      if (entry.isDirectory()) walk(full);
-      else if (entry.isFile() && /\.(test|spec)\.[cm]?[jt]sx?$/.test(entry.name)) out.push(relative(root, full));
-    }
-  };
-  walk(root);
-  return out.sort();
 }

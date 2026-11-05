@@ -142,7 +142,7 @@ describe("render", () => {
 
   test("BR-2120: a returned domain without subdomains gets no other-subdomains line", () => {
     const { root, corpus } = corpusOf(files);
-    const out = renderContext(root, contextFor(corpus, "src/billing/refund.ts", root), { full: false });
+    const out = renderContext(root, contextFor(corpus, "src/billing/refund.ts"), { full: false });
     expect(out).toContain("# Domain: billing");
     expect(out).not.toContain("Other subdomains");
   });
@@ -198,7 +198,7 @@ describe("subdomains", () => {
 
   test("BR-2120: subdomains of a returned top-level domain that were not returned are listed by name only", () => {
     const { root, corpus } = layered();
-    const ctx = contextFor(corpus, "src/work/drop/drop.ts", root);
+    const ctx = contextFor(corpus, "src/work/drop/drop.ts");
     expect(ctx.others).toEqual(["work/land"]);
     const out = renderContext(root, ctx, { full: false });
     expect(out).toContain("Other subdomains, not included: work/land (canon context <name>)");
@@ -207,27 +207,22 @@ describe("subdomains", () => {
     expect(renderContext(root, contextFor(corpus, "work"), { full: false })).not.toContain("Other subdomains");
   });
 
-  test("BR-2119: a file target brings the domains of the code it imports, labelled, without their READMEs", () => {
+  test("BR-2113: a file target brings only the domains whose code covers it, whatever the file imports", () => {
     const { root, corpus } = layered({
       "canon/rules/billing/README.md": "# billing\n\nMoney.\n",
       [`canon/rules/billing/${id("BR", 4)}.md`]: rule(4, "Refund window", "Refunds within 30 days."),
-      "src/work/drop/drop.ts": 'import { land } from "../land/land.js";\nimport type { Db } from "../db";\nexport { x } from "../../kernel/git.ts";\nimport { parse } from "yaml";\nconst b = require("../../billing");\n',
+      "src/work/drop/drop.ts": 'import { land } from "../land/land.js";\nexport { x } from "../../kernel/git.ts";\nconst b = require("../../billing");\n',
       "src/work/land/land.ts": "",
-      "src/work/db.ts": "",
       "src/kernel/git.ts": "",
       "src/billing/index.ts": "",
     });
-    const ctx = contextFor(corpus, "src/work/drop/drop.ts", root);
-    expect(ctx.imports.map((i) => [i.domain.name, i.via, i.elsewhere])).toEqual([["billing", ["src/billing/index.ts"], true], ["work/land", ["src/work/land/land.ts"], false]]);
-    expect(ctx.others).toEqual([]); // work/land came in as an import
+    const ctx = contextFor(corpus, "src/work/drop/drop.ts");
+    expect(ctx.domains.map((d) => d.name)).toEqual(["work", "work/drop"]);
+    expect(ctx.others).toEqual(["work/land"]); // imported by the file, still only named
     const out = renderContext(root, ctx, { full: false });
-    expect(out).toContain("# Imported domain: work/land  (the target imports src/work/land/land.ts");
-    expect(out).toContain(`- ${id("BR", 3)} Land in order`);
-    expect(out).not.toContain("Landing."); // an imported domain's README is not printed
-    expect(out).not.toContain("Money.");
-    expect(out).not.toContain("Refund window"); // another top-level domain: named, its rules not listed
-    expect(out).toContain("Imported from other domains, not included: billing (src/billing/index.ts) (canon context <name>)");
-    expect(contextFor(corpus, "src/work/drop", root).imports).toEqual([]); // a directory: imports are not read
+    expect(out).not.toContain("Imported");
+    expect(out).not.toContain("Refund window");
+    expect(out).not.toContain(`- ${id("BR", 3)} Land in order`);
   });
 
   test("BR-2006: a subdomain directory without a README is reported", () => {

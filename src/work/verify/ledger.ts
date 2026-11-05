@@ -73,6 +73,8 @@ export interface TestReports {
   readonly files: ReadonlyMap<string, FileReport>;
   /** Test files this change makes relevant and that have no row for their current content (BR-2344). */
   readonly relevant: ReadonlySet<string>;
+  /** True when canon/config.yaml sets no `test_command`: nothing can record a report yet, so the finding says how to write one (BR-2344). */
+  readonly noTestCommand?: boolean;
 }
 
 /** The git blob hash of each file's content in the working tree of `root`; a file git cannot read has none. */

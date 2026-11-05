@@ -3,8 +3,10 @@ import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { CoordDb } from "../../work/db.ts";
+import { readConfig } from "../../invocation/config.ts";
 import { readCorpus } from "../documents/read.ts";
-import { check, findTestFiles, staleReportNotes } from "./check.ts";
+import { testFilesFor } from "./tests.ts";
+import { check, staleReportNotes } from "./check.ts";
 import type { TestReports } from "../../work/verify/ledger.ts";
 import type { TestCase } from "../../work/verify/report.ts";
 import { verify } from "./sources.ts";
@@ -14,6 +16,9 @@ const br = (n: number) => ["BR", n].join("-");
 const d = (n: number) => ["D", n].join("-");
 
 const tc = (name: string, more: Partial<TestCase> = {}): TestCase => ({ suites: [], classname: "", name, runs: true, ...more });
+/** Check input for a project whose test files are exactly the ones in `reports`. */
+const withReports = (root: string, reports: TestReports) => ({ root, ...readCorpus(root), testFiles: [...reports.files.keys()], reports });
+
 /** What the ledger holds: each file's testcases, fresh unless the file is listed in `stale`; `relevant` files are the ones this change touches (BR-2344). */
 const reportsOf = (files: Record<string, TestCase[]>, o: { stale?: string[]; relevant?: string[] } = {}): TestReports => ({
   files: new Map(Object.entries(files).map(([f, cases]) => [f, { cases, fresh: !(o.stale ?? []).includes(f) }])),
@@ -43,7 +48,7 @@ describe("canon check", () => {
       "src/billing/refund.test.ts": `it("${br(1)}: refuses day 31", () => {});`,
     });
     const r = readCorpus(root);
-    expect(check({ root, ...r, reports: reportsOf({ "src/billing/refund.test.ts": [tc(`${br(1)}: refuses day 31`)] }) })).toEqual([]);
+    expect(check({ ...withReports(root, reportsOf({ "src/billing/refund.test.ts": [tc(`${br(1)}: refuses day 31`)] })), ...r })).toEqual([]);
   });
 
   test("BR-2001 BR-2004 BR-2005 BR-2042: reports each outcome violation by its rule name", () => {
@@ -56,7 +61,7 @@ describe("canon check", () => {
       [`canon/changes/C-1-a.md`]: `---\nid: C-1\ntitle: A\nrules: [${br(9)}]\n---\n## 为什么\n\nTouches ${br(1)}.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n`,
       "src/billing/a.test.ts": `it("${br(2)} old", () => {}); it("${br(7)}", () => {});`,
     });
-    const findings = check({ root, ...readCorpus(root), reports: reportsOf({ "src/billing/a.test.ts": [tc(`${br(2)} old`), tc(br(7))] }) });
+    const findings = check(withReports(root, reportsOf({ "src/billing/a.test.ts": [tc(`${br(2)} old`), tc(br(7))] })));
     const summary = findings.map((f) => `${f.rule} ${f.path}`).sort();
     expect(summary).toEqual(
       [
@@ -112,7 +117,7 @@ describe("canon check", () => {
       "src/billing/b.test.ts": "x\n",
     });
     const reports = reportsOf({ "src/billing/a.test.ts": [tc(br(1))], "src/billing/b.test.ts": [tc(`${br(7)} later`, { runs: false }), tc(`${br(2)} old`, { runs: false })] });
-    const got = check({ root, ...readCorpus(root), reports }).map((f) => `${f.rule} ${f.path} ${f.message}`);
+    const got = check(withReports(root, reports)).map((f) => `${f.rule} ${f.path} ${f.message}`);
     expect(got).toEqual([`ref-dangling src/billing/b.test.ts test names ${br(7)}, which does not exist`, `test-retired-rule src/billing/b.test.ts test still names retired rule ${br(2)}`]);
   });
 
@@ -147,7 +152,7 @@ describe("canon check", () => {
 
   test("BR-2006: a domain without README is invalid, so its code scope is never silently empty", () => {
     const root = repo({ [`canon/rules/auth/${br(1)}.md`]: ruleFile(1, "untested: n/a\n") });
-    const findings = check({ root, ...readCorpus(root) });
+    const findings = check({ root, ...readCorpus(root), testFiles: [] });
     expect(findings.map((f) => f.rule)).toEqual(["file-invalid"]);
   });
 
@@ -198,7 +203,7 @@ describe("rule shape", () => {
   const run = (files: Record<string, string>) => {
     const ids = Object.keys(files).map((p) => p.split("/").pop()!.replace(/\.md$/, ""));
     const root = repo({ ...readme, ...files, "src/billing/a.test.ts": "x\n" });
-    return check({ root, ...readCorpus(root), reports: reportsOf({ "src/billing/a.test.ts": [tc(ids.join(" "))] }) }).map((f) => `${f.rule} ${f.path.split("/").pop()}`).sort();
+    return check(withReports(root, reportsOf({ "src/billing/a.test.ts": [tc(ids.join(" "))] }))).map((f) => `${f.rule} ${f.path.split("/").pop()}`).sort();
   };
 
   test("BR-2033: an active rule without a non-empty statement section is reported", () => {
@@ -241,7 +246,7 @@ describe("rule shape", () => {
       "canon/changes/C-1.md": "---\nid: C-1\ntitle: X\n---\n## 为什么\n\n<要解决什么问题。>\n",
       "src/billing/a.test.ts": "x\n",
     });
-    const got = check({ root, ...readCorpus(root), reports: reportsOf({ "src/billing/a.test.ts": [tc(br(1))] }) }).filter((f) => f.rule === "template-unfilled").map((f) => f.path.split("/").pop()).sort();
+    const got = check(withReports(root, reportsOf({ "src/billing/a.test.ts": [tc(br(1))] }))).filter((f) => f.rule === "template-unfilled").map((f) => f.path.split("/").pop()).sort();
     expect(got).toEqual([`${br(1)}.md`, `${d(1)}.md`, "C-1.md", "README.md"].sort());
   });
 
@@ -600,6 +605,7 @@ describe("backticked repository paths", () => {
   test("BR-2186: symbolic links are not followed, so dangling links and loops do not crash check", () => {
     const root = moved({
       "CLAUDE.md": "See `src/dangling` and `link.ts`.\n",
+      "canon/config.yaml": 'tests: ["src/**/*.test.ts"]\n',
       "canon/rules/billing/README.md": domainReadme,
       [`canon/rules/billing/${br(1)}.md`]: ruleFile(1),
       "src/r.test.ts": "x\n",
@@ -611,8 +617,9 @@ describe("backticked repository paths", () => {
     symlinkSync("src/r.test.ts", join(root, "link.ts"));
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "links");
-    expect(findTestFiles(root)).toEqual(["src/r.test.ts"]);
-    expect(check({ root, ...readCorpus(root), reports: reportsOf({ "src/r.test.ts": [tc(br(1))] }) }).map((f) => `${f.rule} ${f.path}`)).toEqual([]);
+    const config = readConfig(root);
+    expect(config.ok && testFilesFor(root, config.value)).toEqual({ ok: true, value: ["src/r.test.ts"] });
+    expect(check(withReports(root, reportsOf({ "src/r.test.ts": [tc(br(1))] }))).map((f) => `${f.rule} ${f.path}`)).toEqual([]);
   });
 
   test("BR-2171: a missing candidate path outside a git repository is reported once as unreadable history; existing ones need no history", () => {
@@ -636,12 +643,5 @@ describe("backticked repository paths", () => {
       [`canon/rules/billing/${br(1)}.md`]: rule("## 规则\n\nx\n\n```\n## 例子\n```\n\nReads `src/old.ts`.\n\n## 例子\n\n~~~\n## 规则\n~~~\n\n- `src/coord` → y\n"),
     });
     expect(missing(root)).toEqual([`canon/rules/billing/${br(1)}.md: src/old.ts`]);
-  });
-});
-
-describe("test file discovery", () => {
-  test("BR-2046: without tests configured only the root canon directory is skipped; a canon directory deeper down is scanned", () => {
-    const root = repo({ "src/canon/a.test.ts": `test("${br(1)}", () => {});`, "canon/b.test.ts": `test("${br(2)}", () => {});`, "pkg/dist/c.test.ts": "" });
-    expect(findTestFiles(root)).toEqual(["src/canon/a.test.ts"]);
   });
 });

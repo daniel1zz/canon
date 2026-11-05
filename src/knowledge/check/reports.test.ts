@@ -24,7 +24,7 @@ function fixture() {
   const root = project();
   const rule = (n: number) => `---\nid: ${br(n)}\ntitle: Rule ${n}\nstatus: active\n---\n\n## 规则\n\nS${n}.\n\n## 例子\n\n- a → b\n`;
   write(root, {
-    "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\nreview: none\n',
+    "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file} {report}"\nreview: none\n',
     "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **x**：y\n",
     [`canon/rules/billing/${br(1)}.md`]: rule(1),
     [`canon/rules/billing/${br(2)}.md`]: rule(2),
@@ -66,6 +66,19 @@ describe("canon check reads the ledger of test reports", () => {
     expect(missing.out).toContain(`${br(1)} has no running test`); // a's older report is not read for a file this change touched (BR-2005)
     record(wt, "src/billing/a.test.ts", `${br(1)}: x`);
     expect(canon(wt, "check").code).toBe(0);
+  });
+
+  test("BR-2344: a project without a test_command gets how each framework writes a report, not a command to run", () => {
+    const { root, record } = fixture();
+    record(root, "src/billing/a.test.ts", `${br(1)}: x`);
+    record(root, "src/billing/b.test.ts", `${br(2)}: y`);
+    const wt = startNew(root, "no test command").worktree;
+    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\nreview: none\n', "src/billing/a.test.ts": "a changed\n" });
+    const r = canon(wt, "check");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("sets no test_command");
+    expect(r.out).toContain("bun test {file} --reporter=junit --reporter-outfile={report}");
+    expect(r.out).not.toContain("run canon work test");
   });
 
   test("BR-2344: in the main checkout a test file without a report for its content is not a finding", () => {

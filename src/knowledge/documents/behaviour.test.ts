@@ -43,7 +43,7 @@ describe("pass records in a change's front matter", () => {
       mkdirSync(dirname(join(root, p)), { recursive: true });
       writeFileSync(join(root, p), t);
     }
-    return check({ root, ...readCorpus(root) }).map((f) => `${f.rule}${f.message.includes("passes") ? " passes" : ""}`);
+    return check({ root, ...readCorpus(root), testFiles: [] }).map((f) => `${f.rule}${f.message.includes("passes") ? " passes" : ""}`);
   };
 
   test("BR-2237: a hash and a method, with or without wording, is valid and read", () => {

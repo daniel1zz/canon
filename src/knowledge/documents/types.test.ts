@@ -12,7 +12,7 @@ const SPEC = "types:\n  spec:\n    prefix: SP\n    dir: specs\n    statuses: [dr
 function repo(config: string, files: Record<string, string> = {}): string {
   const root = mkdtempSync(join(tmpdir(), "canon-types-"));
   Bun.spawnSync(["git", "init", "-q", "-b", "main"], { cwd: root });
-  const all = { "canon/config.yaml": `floor: "true"\n${config}`, "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n", ...files };
+  const all = { "canon/config.yaml": `floor: "true"\ntests: []\n${config}`, "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n", ...files };
   for (const [p, text] of Object.entries(all)) {
     mkdirSync(dirname(join(root, p)), { recursive: true });
     writeFileSync(join(root, p), text);

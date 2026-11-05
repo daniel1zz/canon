@@ -14,7 +14,7 @@ function canon(cwd: string, ...args: string[]) {
 
 const rule = (n: number) => `---\nid: ${id("BR", n)}\ntitle: Rule ${n}\nstatus: active\nuntested: fixture\n---\n## 规则\n\nx.\n`;
 
-/** code_root src: work, work/drop (BR-1), work/land (BR-2) and billing (BR-5); src/work/drop/drop.ts imports work/land's and billing's code. */
+/** code_root src: work, work/drop (BR-1), work/land (BR-2) and billing (BR-5); src/work/drop/drop.ts imports work/land's and billing's code, which canon does not read (D-64). */
 function fixture() {
   const root = project();
   writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\ncode_root: src\n");
@@ -40,16 +40,17 @@ function fixture() {
 }
 
 describe("open review notes in context", () => {
-  test("BR-2146: the rules of an imported domain, listed by title, bring their open notes too", () => {
+  test("BR-2146: only the rules the context lists bring their open notes: what the file imports is not read, so its domains' notes are not shown", () => {
     const root = fixture();
     const out0 = canon(root, "context", "src/work/drop/drop.ts").out;
-    expect(out0).toContain(`# Imported domain: work/land`);
+    expect(out0).not.toContain("Imported");
     expect(out0).not.toContain("Open review notes");
-    expect(out0).toContain("Imported from other domains, not included: billing (src/billing/pay.ts)");
-    ws(root).db.event("agent:x", "land.ok", id("C", 9), { reviewed: [id("BR", 2), id("BR", 5)], notes: ["例子缺少边界另一侧"] });
+    const db = ws(root).db;
+    db.event("agent:x", "land.ok", id("C", 9), { reviewed: [id("BR", 1), id("BR", 2), id("BR", 5)], notes: ["例子缺少边界另一侧"] });
     const out = canon(root, "context", "src/work/drop/drop.ts").out;
-    expect(out).toContain(`- ${id("BR", 2)}: 例子缺少边界另一侧 (${id("C", 9)}, `);
-    expect(out).not.toContain(`- ${id("BR", 5)}:`); // another top-level domain is named only, so are its notes
+    expect(out).toContain(`- ${id("BR", 1)}: 例子缺少边界另一侧 (${id("C", 9)}, `); // work/drop's rule: the file's own domain
+    expect(out).not.toContain(`- ${id("BR", 2)}:`); // work/land and billing are imported by the file, which canon does not read
+    expect(out).not.toContain(`- ${id("BR", 5)}:`);
   });
 
   test("BR-2146: each note is one line with the id, the note, the change and the date; without a change only the date", () => {

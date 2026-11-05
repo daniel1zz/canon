@@ -138,7 +138,7 @@ describe("canon check session text sizes", () => {
 
   test("BR-2256: no CLAUDE.md has no line; a linked CLAUDE.md is not read; a budget is named; --json keeps stdout to the array", () => {
     const root = clean();
-    write(root, { "AGENTS.md": "y".repeat(500), "canon/config.yaml": "session_text_budget: 12000\n" });
+    write(root, { "AGENTS.md": "y".repeat(500), "canon/config.yaml": "tests: []\nsession_text_budget: 12000\n" });
     const none = canon(root, "check", "--sizes");
     expect(sizeLines(none.err)).toEqual([`session-text work guide: ${guideBytes} bytes`, `session-text total: ${guideBytes} bytes, budget 12000`]);
     symlinkSync("AGENTS.md", join(root, "CLAUDE.md"));
@@ -151,7 +151,7 @@ describe("canon check session text sizes", () => {
 
   test("BR-2257: a total over session_text_budget prints one hint on stderr; stdout, --json and the exit code stay as without it", () => {
     const root = clean();
-    write(root, { "CLAUDE.md": "x".repeat(150), ".claude/skills/a/SKILL.md": skill("做 A"), "canon/config.yaml": `session_text_budget: ${guideBytes + 100}\n` });
+    write(root, { "CLAUDE.md": "x".repeat(150), ".claude/skills/a/SKILL.md": skill("做 A"), "canon/config.yaml": `tests: []\nsession_text_budget: ${guideBytes + 100}\n` });
     const r = canon(root, "check");
     expect([r.code, r.out]).toEqual([0, "ok: 1 documents, 1 domains\n"]);
     expect(hintLines(r.err)).toEqual([
@@ -163,16 +163,16 @@ describe("canon check session text sizes", () => {
 
   test("BR-2257: a total equal to the budget, or no budget, prints no hint", () => {
     const root = clean();
-    write(root, { "CLAUDE.md": "x".repeat(150), "canon/config.yaml": `session_text_budget: ${guideBytes + 150}\n` });
+    write(root, { "CLAUDE.md": "x".repeat(150), "canon/config.yaml": `tests: []\nsession_text_budget: ${guideBytes + 150}\n` });
     expect(hintLines(canon(root, "check").err)).toEqual([]);
-    write(root, { "CLAUDE.md": "x".repeat(100_000), "canon/config.yaml": "session_text_budget: null\n" });
+    write(root, { "CLAUDE.md": "x".repeat(100_000), "canon/config.yaml": "tests: []\nsession_text_budget: null\n" });
     expect(hintLines(canon(root, "check").err)).toEqual([]);
   });
 
   test("BR-2257: session_text_budget of 0, 1.5 or a string is a config error, exit 2, naming the key", () => {
     for (const v of ["0", "1.5", '"8KB"', "-3"]) {
       const root = clean();
-      write(root, { "canon/config.yaml": `session_text_budget: ${v}\n` });
+      write(root, { "canon/config.yaml": `tests: []\nsession_text_budget: ${v}\n` });
       const r = canon(root, "check");
       expect([v, r.code]).toEqual([v, 2]);
       expect(r.out + r.err).toContain("session_text_budget");

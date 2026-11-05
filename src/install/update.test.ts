@@ -124,6 +124,8 @@ describe("finding and applying updates", () => {
     const r = canon(root, env, "update");
     expect(r.code).toBe(0);
     expect(r.out).toMatch(/updated to \w+ in C-\d+, landed/);
+    expect(r.out).toContain("canon now reads JUnit test reports (D-64)"); // what a project must have in canon/config.yaml (BR-2086)
+    expect(r.out).toContain("bun test {file} --reporter=junit --reporter-outfile={report}");
     expect(git(root, "show", "main:.claude/skills/canon-a/SKILL.md")).toBe("a v2");
     expect(git(root, "log", "-1", "--format=%s", "main")).toMatch(/^canon: close C-\d+$/);
     expect(canon(root, env, "update", "--check").code).toBe(0);

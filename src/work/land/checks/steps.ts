@@ -76,7 +76,9 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   const unknown = [...(added.value.length > 0 ? [keysAddedAndUsedMessage(added.value, v.main)] : []), ...(dated.value.length > 0 ? [checksAddedAndReviewedMessage(dated.value, v.main)] : [])];
   if (unknown.length > 0) return refuse("config-key", unknown.join("\n"));
   const read = readCorpus(wt, ws.config.types, ws.config);
-  const tests = testFilesFor(wt, ws.config);
+  const testsFound = testFilesFor(wt, ws.config);
+  if (!testsFound.ok) return refuse("check", testsFound.error.message);
+  const tests = testsFound.value;
   // reason: the config of the tree that is landing decides which commands and tests apply to it (BR-2005)
   const landing = readConfig(wt);
   if (!landing.ok) return refuse("check", `canon check: cannot read canon/config.yaml of the landing tree: ${landing.error.message}`);

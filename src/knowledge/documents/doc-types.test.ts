@@ -10,7 +10,7 @@ const id = (p: string, n: number) => [p, n].join("-");
 function repo(config: string, files: Record<string, string> = {}): string {
   const root = mkdtempSync(join(tmpdir(), "canon-doctypes-"));
   Bun.spawnSync(["git", "init", "-q", "-b", "main"], { cwd: root });
-  for (const [p, text] of Object.entries({ "canon/config.yaml": `floor: "true"\n${config}`, ...files })) {
+  for (const [p, text] of Object.entries({ "canon/config.yaml": `floor: "true"\ntests: []\n${config}`, ...files })) {
     mkdirSync(dirname(join(root, p)), { recursive: true });
     writeFileSync(join(root, p), text);
   }

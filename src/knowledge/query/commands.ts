@@ -46,12 +46,10 @@ const context = defineCommand({
     const corpus = corpusOf(ws).corpus;
     // reason: an id that names no document is a typo or a stale reference, unlike a path that may be a new directory (BR-2234)
     if (isIdQuery(corpus, args.target) && !findDoc(corpus, args.target.trim())) fail({ code: "not_found", message: `${args.target} does not exist` });
-    const ctx = contextFor(corpus, args.target, ws.root);
+    const ctx = contextFor(corpus, args.target);
     say(renderContext(ws.root, ctx, { full: Boolean(args.full), target: args.target }));
     // Open review notes on what this context covers, shown to whoever is about to change it (BR-2146, D-21).
-    // reason: an imported domain's rules are listed by title too, so their notes belong here as well (BR-2146, #73)
-    const listed = [...ctx.rules, ...ctx.imports.flatMap((i) => i.rules)];
-    const ids = [...(ctx.target && ctx.target.kind !== "change" ? [ctx.target.id] : []), ...listed.map((r) => r.id), ...ctx.decisions.map((d) => d.id)];
+    const ids = [...(ctx.target && ctx.target.kind !== "change" ? [ctx.target.id] : []), ...ctx.rules.map((r) => r.id), ...ctx.decisions.map((d) => d.id)];
     const notes = openNotes(ws.db, ids);
     if (notes.length) say(`# Open review notes\n\nNot blocking and not changes of their own: handle them when you change the document they name.\n${notes.map((n) => `- ${renderNote(n)}`).join("\n")}\n`);
   },

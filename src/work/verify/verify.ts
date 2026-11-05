@@ -64,7 +64,9 @@ export function selectTests(ws: Workspace, all: boolean, only: readonly string[]
   const ch = changesOf(ws.root, ws.config);
   if (!ch.ok) return ch;
   const { base, changed, rules, decisions } = ch.value;
-  const tests = testFilesFor(ws.root, ws.config).filter((f) => isFile(join(ws.root, f)));
+  const found = testFilesFor(ws.root, ws.config);
+  if (!found.ok) return found;
+  const tests = found.value.filter((f) => isFile(join(ws.root, f)));
   const globs = ws.config.alwaysTests.map((g) => ({ g, glob: new Bun.Glob(g) }));
   const always = new Set(tests.filter((f) => globs.some(({ glob }) => glob.match(f))));
   const unmatched = globs.filter(({ glob }) => !tests.some((f) => glob.match(f))).map(({ g }) => g);
@@ -357,7 +359,9 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   if (!onBranches.ok) return onBranches;
   const onMain = listedBefore(ws);
   if (!onMain.ok) return onMain;
-  const testFiles = testFilesFor(ws.root, ws.config);
+  const testFilesRead = testFilesFor(ws.root, ws.config);
+  if (!testFilesRead.ok) return testFilesRead;
+  const testFiles = testFilesRead.value;
   const reports = reportsFor(ws.db, ws.root, ws.config, read.corpus, testFiles);
   if (!reports.ok) return reports;
   const input = { root: ws.root, ...read, testFiles, reports: reports.value, branchChanges: onBranches.value, backlogBase: onMain.value };

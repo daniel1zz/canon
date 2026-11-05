@@ -1,5 +1,6 @@
 import { err, ok } from "../../kernel/result.ts";
 import { configKey, optionalString, stringValue } from "../../invocation/key.ts";
+import { REPORT_PLACEHOLDER, REPORT_RECIPES } from "./report.ts";
 
 /** Where `test_command` takes the test file's path (BR-2160). */
 export const FILE_PLACEHOLDER = "{file}";
@@ -8,13 +9,14 @@ export const FILE_PLACEHOLDER = "{file}";
 export const verifyKeys = {
   testCommand: configKey<string | undefined>({
     key: "test_command",
-    doc: "Shell command `canon work test` runs once per selected test file, `{file}` replaced by its path; a `{report}` in it is replaced by the path the command writes a JUnit XML report to, which canon records (BR-2160, BR-2337, D-23, D-64).",
+    doc: "Shell command `canon work test` runs once per selected test file: `{file}` is replaced by its path and `{report}` by the path the command writes a JUnit XML report to, which canon records per test file (BR-2160, BR-2337, D-23, D-64).",
     default: undefined,
-    schema: { anyOf: [{ type: "null" }, { type: "string", maxLength: 0 }, { type: "string", pattern: "\\{file\\}" }] },
+    schema: { anyOf: [{ type: "null" }, { type: "string", maxLength: 0 }, { type: "string", allOf: [{ pattern: "\\{file\\}" }, { pattern: "\\{report\\}" }] }] },
     read: (v) => {
       const s = stringValue("test_command")(v);
-      if (s.ok && s.value !== undefined && !s.value.includes(FILE_PLACEHOLDER)) {
-        return err("invalid", `\`test_command\` must contain ${FILE_PLACEHOLDER}, where the test file's path goes (e.g. "bun test ${FILE_PLACEHOLDER}")`);
+      if (s.ok && s.value !== undefined) {
+        if (!s.value.includes(FILE_PLACEHOLDER)) return err("invalid", `\`test_command\` must contain ${FILE_PLACEHOLDER}, where the test file's path goes, and ${REPORT_PLACEHOLDER}, where the command writes its JUnit XML report\n${REPORT_RECIPES}`);
+        if (!s.value.includes(REPORT_PLACEHOLDER)) return err("invalid", `\`test_command\` must contain ${REPORT_PLACEHOLDER}, where the command writes its JUnit XML report: canon reads which tests a file has and whether they run from it (D-64)\n${REPORT_RECIPES}`);
       }
       return s;
     },
