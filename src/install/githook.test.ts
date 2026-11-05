@@ -1,5 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import * as fs from "node:fs";
+import { ARCHITECTURE_TEMPLATE } from "./update.ts";
 import { existsSync, mkdirSync, readdirSync, mkdtempSync, readFileSync, rmSync, statSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -286,6 +287,7 @@ describe("the main branch name in the guard", () => {
     for (const args of [["init", "-q", "-b", main], ["config", "user.email", "t@t"], ["config", "user.name", "t"]]) sh(root, ...args);
     mkdirSync(join(root, "canon"));
     writeFileSync(join(root, "canon/config.yaml"), `main: ${JSON.stringify(main)}\nfloor: "true"\n`);
+    writeFileSync(join(root, "canon/architecture.md"), ARCHITECTURE_TEMPLATE); // what init writes, so only the guard can be out of date (BR-2084)
     expect(canon(root, "install").code).toBe(0);
     sh(root, "add", "-A");
     expect(git(root, ["commit", "-qm", "adopt canon"]).code).toBe(0); // the first commit: the branch does not exist yet
