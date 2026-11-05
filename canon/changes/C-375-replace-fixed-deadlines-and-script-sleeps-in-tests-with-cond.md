@@ -1,7 +1,7 @@
 ---
 id: C-375
 title: Replace fixed deadlines and script sleeps in tests with conditions (#126)
-status: open
+status: done
 rules: []
 ---
 
