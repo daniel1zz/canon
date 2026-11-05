@@ -76,7 +76,8 @@ hooks:
   after_land:
     # 评审的批量阈值 review_max_unreviewed、review_max_age_minutes 写在顶层，不在 hooks 下
     # 合入后的代码评审（C-2）：只找安全和并发问题，一个根因一个 issue，写到 GitHub（负责人 2026-11-03 同意开启）；用 sonnet（负责人 2026-11-04，C-308）
-    - "CANON_CODE_REVIEW_AI='claude -p --model sonnet --output-format text' bun scripts/code-review.ts"
+    # FORCE_PROMPT_CACHING_5M=1：每次评审的内容只用一次，5 分钟缓存的写入比 1 小时便宜（C-326）
+    - "FORCE_PROMPT_CACHING_5M=1 CANON_CODE_REVIEW_AI='claude -p --model sonnet --output-format text' bun scripts/code-review.ts"
   after_green:
     # main 的后台 floor 通过后，从这个测过的提交重新构建主 checkout 的 dist/canon（PATH 上的 canon），
     # 不从没测过的 main 构建：合入了把命令行弄坏的变更时，修复变更还能用旧的 canon 合进来（D-31、BR-2222）
