@@ -315,6 +315,37 @@ describe("project and documents", () => {
     expect(canon(root, "show", ["D", 3].join("-")).out).toContain("status: proposed"); // nothing was written
   });
 
+  test("BR-2027: a decision whose supersedes is a list supersedes every listed decision; any other shape is refused and changes nothing", () => {
+    const root = repo();
+    canon(root, "init", "--floor", "true");
+    const d = (n: number) => ["D", n].join("-");
+    const file = (n: number) => join(root, "canon/decisions", readdirSync(join(root, "canon/decisions")).find((f) => f.startsWith(`${d(n)}-`))!);
+    for (const t of ["Old one", "Old two", "New way"]) canon(root, "decision", "new", "--title", t);
+    for (const n of [1, 2]) expect(canon(root, "decision", "accept", d(n)).code).toBe(0);
+    const set = (value: string) => writeFileSync(file(3), readFileSync(file(3), "utf8").replace(/^supersedes:.*\n/m, "").replace("status: proposed", `supersedes: ${value}\nstatus: proposed`));
+    for (const bad of ["[]", "5", "{a: 1}", `[${d(1)}, 7]`, `[${d(1)}, nope]`]) {
+      set(bad);
+      const c = canon(root, "check");
+      expect(c.code).toBe(1);
+      expect(c.out).toContain(file(3).slice(root.length + 1));
+      expect(c.out).toContain("`supersedes`");
+      const a = canon(root, "decision", "accept", d(3));
+      expect(a.code).toBe(1);
+      expect(a.err).toContain("`supersedes`");
+      expect(readFileSync(file(1), "utf8")).toContain("status: accepted");
+      expect(readFileSync(file(3), "utf8")).toContain("status: proposed");
+    }
+    set(`[${d(1)}, ${d(2)}]`);
+    const ok = canon(root, "decision", "accept", d(3));
+    expect(ok.code).toBe(0);
+    expect(ok.out).toContain(`${d(1)} → superseded`);
+    expect(ok.out).toContain(`${d(2)} → superseded`);
+    const list = canon(root, "decision", "list", "--all").out;
+    expect(list).toMatch(/D-1\s+superseded/);
+    expect(list).toMatch(/D-2\s+superseded/);
+    expect(list).toMatch(/D-3\s+accepted/);
+  });
+
   test("BR-2140: show ends with the accepted decisions that amend a decision, and not a proposed one", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");

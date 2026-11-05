@@ -60,7 +60,8 @@ export interface CodeList {
 export interface Decision extends Base {
   readonly kind: "decision";
   readonly status: DecisionStatus;
-  readonly supersedes?: string;
+  /** Decisions this one replaces; they become superseded when it is accepted (BR-2027). */
+  readonly supersedes: readonly string[];
   /** Decisions this one changes in part without replacing them (BR-2139). */
   readonly amends: readonly string[];
 }

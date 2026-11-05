@@ -95,6 +95,10 @@ describe("canon check output", () => {
     expect(kinds(id("BR", 1))).toEqual([1, ["supersedes-not-decision"]]);
     expect(kinds(id("D", 2))).toEqual([1, ["supersedes-not-decision"]]);
     expect(kinds(id("D", 99))).toEqual([1, ["ref-dangling"]]);
+    // reason: a list is read element by element, so each element gets the same checks (BR-2027)
+    expect(kinds(`[${id("D", 1)}]`)).toEqual([0, []]);
+    expect(kinds(`[${id("D", 1)}, ${id("C", 9)}]`)).toEqual([1, ["supersedes-not-decision"]]);
+    expect(kinds(`[${id("D", 1)}, ${id("D", 99)}]`)).toEqual([1, ["ref-dangling"]]);
   });
 
   test("BR-2231: a file instructions lists that does not exist, or is a directory, is instructions-missing; the default CLAUDE.md is not checked", () => {

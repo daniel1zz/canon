@@ -142,7 +142,7 @@ export function check(input: CheckInput): Finding[] {
 
   for (const d of input.corpus.docs) {
     // Ids written as code (`BR-12` or inside a fenced block) are examples, not references.
-    for (const ref of idsIn(stripCode(d.body) + (d.kind === "change" ? ` ${d.rules.join(" ")} ${Object.keys(d.passes).join(" ")}` : "") + (d.kind === "decision" && d.supersedes ? ` ${d.supersedes}` : "") + (d.kind === "decision" ? ` ${d.amends.join(" ")}` : ""))) {
+    for (const ref of idsIn(stripCode(d.body) + (d.kind === "change" ? ` ${d.rules.join(" ")} ${Object.keys(d.passes).join(" ")}` : "") + (d.kind === "decision" ? ` ${d.supersedes.join(" ")}` : "") + (d.kind === "decision" ? ` ${d.amends.join(" ")}` : ""))) {
       if (ref !== d.id && !byId.has(ref)) findings.push({ path: d.path, rule: "ref-dangling", message: `names ${ref}, which does not exist` });
     }
     if (d.kind === "decision") {
@@ -152,10 +152,10 @@ export function check(input: CheckInput): Finding[] {
         else if (target && target.kind !== "decision") findings.push({ path: d.path, rule: "amends-not-decision", message: `amends ${a}, which is a ${target.kind}, not a decision (BR-2139)` });
       }
       // reason: a wrong target is otherwise found only when the decision is accepted (BR-2230, BR-2027)
-      if (d.supersedes !== undefined) {
-        const target = input.corpus.docs.find((x) => x.id === d.supersedes);
-        if (d.supersedes === d.id) findings.push({ path: d.path, rule: "supersedes-not-decision", message: `supersedes itself; name the decision it replaces (BR-2230)` });
-        else if (target && target.kind !== "decision") findings.push({ path: d.path, rule: "supersedes-not-decision", message: `supersedes ${d.supersedes}, which is a ${target.kind}, not a decision (BR-2230)` });
+      for (const s of d.supersedes) {
+        const target = input.corpus.docs.find((x) => x.id === s);
+        if (s === d.id) findings.push({ path: d.path, rule: "supersedes-not-decision", message: `supersedes itself; name the decision it replaces (BR-2230)` });
+        else if (target && target.kind !== "decision") findings.push({ path: d.path, rule: "supersedes-not-decision", message: `supersedes ${s}, which is a ${target.kind}, not a decision (BR-2230)` });
       }
     }
   }

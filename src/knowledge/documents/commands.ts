@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { defineCommand } from "citty";
 import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import type { Doc, Kind } from "./model.ts";
@@ -165,17 +166,23 @@ const decision = defineCommand({
       meta: { description: "Accept a decision; a decision it supersedes becomes superseded" },
       args: { id: { type: "positional", required: true } },
       run({ args }) {
+        // reason: a decision whose `supersedes` has the wrong shape is not in the corpus, so accept would say "not found" instead of naming the field (BR-2027)
+        const named = (path: string) => basename(path).replace(/\.md$/, "").split("-").slice(0, 2).join("-") === String(args.id);
+        const malformed = corpusOf(workspace()).problems.find((q) => q.message.startsWith("`supersedes`") && named(q.path));
+        if (malformed) fail({ code: "refused", message: `${malformed.path}: ${malformed.message}` });
+        // Every target is checked before anything is written, so a bad id in a list changes no file (BR-2027).
         const superseded = (corpus: ReturnType<typeof readCorpus>["corpus"], doc: Doc) => {
-          if (doc.kind !== "decision" || !doc.supersedes) return undefined;
-          // reason: a decision cannot replace itself; accepting it would leave it superseded (BR-2027)
-          if (doc.supersedes === doc.id) fail({ code: "invalid", message: `${doc.id} supersedes itself; fix \`supersedes\` in ${doc.path}` });
-          const old = findDoc(corpus, doc.supersedes);
-          if (!old || old.kind !== "decision") fail({ code: "not_found", message: `${doc.id} supersedes ${doc.supersedes}, which is not a decision` });
-          return old;
+          if (doc.kind !== "decision") return [];
+          return doc.supersedes.map((target) => {
+            // reason: a decision cannot replace itself; accepting it would leave it superseded (BR-2027)
+            if (target === doc.id) fail({ code: "invalid", message: `${doc.id} supersedes itself; fix \`supersedes\` in ${doc.path}` });
+            const old = findDoc(corpus, target);
+            if (!old || old.kind !== "decision") fail({ code: "not_found", message: `${doc.id} supersedes ${target}, which is not a decision` });
+            return old;
+          });
         };
         const { ws, corpus, doc } = setStatus(String(args.id), "decision", "accepted", (c, d) => void superseded(c, d));
-        const old = superseded(corpus, doc);
-        if (old) {
+        for (const old of superseded(corpus, doc)) {
           must(setMeta(ws.root, old, { status: "superseded" }));
           say(`${old.id} → superseded`);
         }

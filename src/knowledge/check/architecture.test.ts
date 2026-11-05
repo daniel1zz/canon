@@ -141,6 +141,14 @@ describe("architecture overview names only current decisions", () => {
     expect(r.out).toContain(`names ${id("D", 5)}, which is superseded by ${id("D", 9)}`);
   });
 
+  test("BR-2353: a superseded decision named in the overview is reported when the replacing decision lists it in a supersedes list", () => {
+    const root = fixture();
+    put(root, { [`canon/decisions/${id("D", 5)}.md`]: decision(5, "superseded"), [`canon/decisions/${id("D", 9)}.md`]: decision(9, "accepted", `supersedes: [${id("D", 4)}, ${id("D", 5)}]\n`), [`canon/decisions/${id("D", 4)}.md`]: decision(4, "superseded") });
+    const r = canon(root, "check");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(`names ${id("D", 5)}, which is superseded by ${id("D", 9)}`);
+  });
+
   test("BR-2353: an accepted or proposed decision, a backticked id, and an empty overview report nothing", () => {
     const accepted = fixture();
     expect(kinds(accepted).kinds).toEqual([]);

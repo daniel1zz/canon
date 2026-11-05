@@ -63,7 +63,7 @@ export function renderSearch(hits: readonly Hit[], idQuery: boolean): string[] {
 export function referencedIds(doc: Doc, types: readonly DocType[]): Set<string> {
   const ids = idsIn(types, stripCode(doc.body));
   if (doc.kind === "change") for (const r of doc.rules) ids.add(r);
-  if (doc.kind === "decision" && doc.supersedes) ids.add(doc.supersedes);
+  if (doc.kind === "decision") for (const s of doc.supersedes) ids.add(s);
   if (doc.kind === "decision") for (const a of doc.amends) ids.add(a);
   return ids;
 }

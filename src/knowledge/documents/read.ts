@@ -146,13 +146,17 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
       if (!p) continue;
       const common = { id, title: String(p.meta["title"]), path, body: p.body };
       if (type.name === "decision") {
-        const supersedes = p.meta["supersedes"];
+        const supersedes = supersedesIds(p.meta["supersedes"]);
+        if (!supersedes) {
+          problems.push({ path, message: "`supersedes` must be a decision id or a list of decision ids" });
+          continue;
+        }
         const amends = p.meta["amends"] ?? [];
         if (!Array.isArray(amends) || amends.some((a) => typeof a !== "string")) {
           problems.push({ path, message: "`amends` must be a list of decision ids" });
           continue;
         }
-        docs.push({ kind: "decision", ...common, status: p.status as DecisionStatus, ...(typeof supersedes === "string" ? { supersedes } : {}), amends: amends as string[] });
+        docs.push({ kind: "decision", ...common, status: p.status as DecisionStatus, supersedes, amends: amends as string[] });
       } else if (type.name === "change") {
         const rules = p.meta["rules"] ?? [];
         if (!Array.isArray(rules) || rules.some((r) => typeof r !== "string")) {
@@ -237,4 +241,12 @@ function codeLists(v: unknown): CodeList[] | string {
     out.push({ file, name, items: items as string[] });
   }
   return out;
+}
+
+/** The decision ids a front matter `supersedes` names: one id, or a list of ids like `amends`; undefined for any other shape (BR-2027). */
+export function supersedesIds(value: unknown): string[] | undefined {
+  if (value === undefined) return [];
+  const list = typeof value === "string" ? [value] : value;
+  if (!Array.isArray(list) || list.length === 0 || list.some((v) => typeof v !== "string" || !/^[A-Z][A-Z0-9]*-\d+$/.test(v))) return undefined;
+  return list as string[];
 }

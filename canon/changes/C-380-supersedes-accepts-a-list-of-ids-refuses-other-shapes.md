@@ -2,25 +2,23 @@
 id: C-380
 title: supersedes accepts a list of ids, refuses other shapes
 status: open
-rules: []
+rules: [BR-2027, BR-2230]
 ---
 
 ## 为什么
 
-<要解决什么问题。>
+Fixes #131。决策的 `supersedes` 写成 YAML 列表时被静默丢掉：`canon decision accept` 不取代任何决策，`canon check` 也不报。`amends` 是列表，`supersedes` 很容易写成同样的形状。
 
 ## 要改什么
 
-<具体改动，以及会新增或修改哪些规则。>
-
-## 陷阱和假设
-
-<新会话接手时最容易踩的坑，以及这个变更依赖的假设；没有就删掉这一节。>
+`supersedes` 接受一个编号或编号列表；其他形状（数字、映射、空列表、含非编号元素）读文档时记为问题，`canon check` 报文件和字段，`canon decision accept` 退出码 1 且不改文件。所有读 `supersedes` 的地方（accept、check、总览检查、规则评审提示、查询）都按列表处理。修改 BR-2027 和 BR-2230。
 
 ## 教训
 
-<每条教训一行：教训 → 现在由哪条规则、检查或命令保证（写编号），或“只靠文字：原因”，或“待负责人确认是否固化”；没有教训就写“无”。>
+无
 
 ## 任务
 
-- [ ] <任务>
+- [x] 读取、accept、check、总览检查、评审提示、查询都按列表处理
+- [x] 改 BR-2027、BR-2230
+- [x] 加命令行测试和各读取处的测试

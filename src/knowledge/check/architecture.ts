@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { git } from "../../kernel/git.ts";
 import { parseDocFile } from "../documents/docfile.ts";
+import { supersedesIds } from "../documents/read.ts";
 import { fencedLines, stripCode, type Corpus, type Decision } from "../documents/model.ts";
 import { idsIn } from "../documents/types.ts";
 
@@ -111,9 +112,9 @@ function linksAt(root: string, ref: string, d: Decision): Set<string> | undefine
   if (!text.ok) return undefined;
   const parsed = parseDocFile(text.value, d.path);
   if (!parsed.ok) return undefined;
-  const sup = parsed.value.meta["supersedes"];
+  const sup = supersedesIds(parsed.value.meta["supersedes"]);
   const amends = parsed.value.meta["amends"];
-  return new Set([...(typeof sup === "string" ? [sup] : []), ...(Array.isArray(amends) ? amends.filter((a): a is string => typeof a === "string") : [])]);
+  return new Set([...(sup ?? []), ...(Array.isArray(amends) ? amends.filter((a): a is string => typeof a === "string") : [])]);
 }
 
 /** The change files this work added or edited since `since`, read from the working tree; every change file when there is no base. */
@@ -164,7 +165,7 @@ export function architectureFindings(input: ArchitectureInput): ArchitectureFind
   for (const id of [...named].sort()) {
     const d = corpus.docs.find((x): x is Decision => x.kind === "decision" && x.id === id)!;
     if (d.status !== "superseded") continue;
-    const by = corpus.docs.find((x): x is Decision => x.kind === "decision" && x.supersedes === id);
+    const by = corpus.docs.find((x): x is Decision => x.kind === "decision" && x.supersedes.includes(id));
     out.push({ path: ARCHITECTURE_FILE, rule: "architecture-superseded", message: `names ${id}, which is superseded${by ? ` by ${by.id}` : ""}; read what replaced it, update the overview and name the current decision (D-65)` });
   }
 
@@ -174,7 +175,7 @@ export function architectureFindings(input: ArchitectureInput): ArchitectureFind
   const fresh: { by: Decision; target: string }[] = [];
   for (const d of corpus.docs) {
     if (d.kind !== "decision") continue;
-    const links = [...(d.supersedes !== undefined ? [d.supersedes] : []), ...d.amends].filter((t) => named.has(t));
+    const links = [...d.supersedes, ...d.amends].filter((t) => named.has(t));
     if (links.length === 0) continue;
     const there = refs.map((r) => linksAt(root, r, d)).filter((s): s is Set<string> => s !== undefined);
     for (const target of links) if (!there.some((s) => s.has(target))) fresh.push({ by: d, target });
@@ -184,7 +185,7 @@ export function architectureFindings(input: ArchitectureInput): ArchitectureFind
     const said = touchedChangeTexts(root, since, `canon/${changeDir?.dir ?? "changes"}`).some(hasUnaffectedLine);
     if (!said) {
       for (const { by, target } of fresh) {
-        const how = by.supersedes === target ? "supersedes" : "amends";
+        const how = by.supersedes.includes(target) ? "supersedes" : "amends";
         out.push({ path: by.path, rule: "architecture-unreviewed", message: `${by.id} ${how} ${target}, which ${ARCHITECTURE_FILE} names; update the overview in the same change, or write the line "总览不受影响：<原因>" in the change file (D-65)` });
       }
     }

@@ -95,7 +95,7 @@ ${q.examples.trim()}
   parts.push("# Changed documents (new text)");
   for (const d of changed) {
     // reason: the body has no front matter, so the reviewer could not see what a decision supersedes or amends (BR-2141)
-    const links = d.kind === "decision" ? [...(d.supersedes ? [`supersedes: ${d.supersedes}`] : []), ...(d.amends.length ? [`amends: ${d.amends.join(", ")}`] : [])] : [];
+    const links = d.kind === "decision" ? [...(d.supersedes.length ? [`supersedes: ${d.supersedes.join(", ")}`] : []), ...(d.amends.length ? [`amends: ${d.amends.join(", ")}`] : [])] : [];
     parts.push(`## ${d.id} ${d.title} (${d.kind}${"status" in d ? `, ${d.status}` : ""})\n\n${links.map((l) => `${l}\n`).join("")}${links.length ? "\n" : ""}${d.body.trim()}\n`);
   }
   if (extras.architecture) {
