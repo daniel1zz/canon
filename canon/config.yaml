@@ -7,10 +7,15 @@ floor: "bun install --frozen-lockfile && bunx tsc --noEmit -p tsconfig.json && s
 floor_timing: after
 # floor_timing: after 下后台全量测试按批运行（D-59、BR-2311）：main 安静 floor_quiet_minutes 分钟、没测过的合入达到 floor_max_untested 个、
 # 或最老的没测过的移动已过 floor_max_age_minutes 分钟，三者任一满足就测最新提交；main 没通过时不等。立即测：canon floor watch --now
-# 下面三项是默认值，先只写成注释：PATH 上的 canon 只从通过的提交构建，认得新键之前写进配置会被 BR-2224 拒绝；认得之后的下一次合入取消注释
-# floor_quiet_minutes: 20
-# floor_max_untested: 10
-# floor_max_age_minutes: 60
+# 下面三项写的是默认值
+floor_quiet_minutes: 20
+floor_max_untested: 10
+floor_max_age_minutes: 60
+# 代码评审按批运行（D-59、BR-2314）：未评审的合入达到 review_max_unreviewed 个、或最老的已过 review_max_age_minutes 分钟才评审，一次评审整个范围。
+# 立即评审攒着的：CANON_CODE_REVIEW_FORCE=1 bun scripts/code-review.ts
+# 下面两项写的是默认值
+review_max_unreviewed: 10
+review_max_age_minutes: 60
 # 代码目录和规则领域一一对应（D-15）：canon/rules/work/land ↔ src/work/land；src/kernel 是不属于任何业务领域的共享内核
 code_root: src
 shared:
@@ -69,11 +74,7 @@ remote: origin
 # 生命周期 hook（D-2、D-3）：每项是一条命令或命令列表
 hooks:
   after_land:
-    # 代码评审按批运行（D-59、BR-2314）：未评审的合入达到 review_max_unreviewed 个、或最老的已过 review_max_age_minutes 分钟才评审，一次评审整个范围。
-    # 默认值是 10 和 60；先只写成注释：PATH 上的 canon 认得这两个键之前写进配置会被 BR-2224 拒绝，认得之后的下一次合入取消注释
-    #   review_max_unreviewed: 10
-    #   review_max_age_minutes: 60（这两个键写在顶层，不在 hooks 下）
-    # 立即评审攒着的：CANON_CODE_REVIEW_FORCE=1 bun scripts/code-review.ts
+    # 评审的批量阈值 review_max_unreviewed、review_max_age_minutes 写在顶层，不在 hooks 下
     # 合入后的代码评审（C-2）：只找安全和并发问题，一个根因一个 issue，写到 GitHub（负责人 2026-11-03 同意开启）；用 sonnet（负责人 2026-11-04，C-308）
     - "CANON_CODE_REVIEW_AI='claude -p --model sonnet --output-format text' bun scripts/code-review.ts"
   after_green:
