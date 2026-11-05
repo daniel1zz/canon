@@ -1,6 +1,6 @@
-import { err, ok, type Result } from "../kernel/result.ts";
+import { err, ok, type Result } from "../../kernel/result.ts";
 import { existsSync } from "node:fs";
-import type { CoordDb } from "../work/db.ts";
+import type { CoordDb } from "../db.ts";
 
 /**
  * Per-change ports (C-103, D-41, D-48): `ports: <from>-<to>` in canon/config.yaml; each change gets a port of the range

@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import { readConfig, type Config } from "../../config/config.ts";
 import { GENERATED_DIR } from "../../config/reference/reference.ts";
-import { batchState, settleBackgroundHooks } from "../../config/hooks.ts";
+import { batchState, settleBackgroundHooks } from "../../work/hooks/hooks.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git, listWorktreesKeepingState, listWorktreesLocked, toplevel } from "../../kernel/git.ts";
 import { CoordDb } from "../../work/db.ts";

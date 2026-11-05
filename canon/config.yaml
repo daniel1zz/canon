@@ -37,11 +37,11 @@ typecheck_command: "bunx tsc --noEmit -p tsconfig.json"
 instructions:
   - CLAUDE.md
   - src/cli/guide.ts
-  - src/config/guide.ts
   - src/knowledge/documents/guide.ts
   - src/knowledge/query/guide.ts
   - src/knowledge/review/guide.ts
   - src/work/drop/guide.ts
+  - src/work/hooks/guide.ts
   - src/work/humans/guide.ts
   - src/work/issues/guide.ts
   - src/work/land/guide.ts

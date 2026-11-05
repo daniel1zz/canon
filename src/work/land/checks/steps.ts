@@ -7,8 +7,8 @@ import { backlogNotes, check, noteLine, type Finding } from "../../../knowledge/
 import { backlogAt } from "../../../knowledge/documents/backlog.ts";
 import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../../../knowledge/check/sources.ts";
 import { testFilesFor } from "../../../knowledge/check/tests.ts";
-import { runHooks } from "../../../config/hooks.ts";
-import { changePort } from "../../../config/ports.ts";
+import { runHooks } from "../../../work/hooks/hooks.ts";
+import { changePort } from "../../../work/hooks/ports.ts";
 import { type Doc } from "../../../knowledge/documents/model.ts";
 import { findDoc } from "../../../knowledge/query/query.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";

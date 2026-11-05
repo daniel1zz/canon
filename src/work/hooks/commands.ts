@@ -1,6 +1,6 @@
 import { defineCommand } from "citty";
-import { entry, EXIT, fail, json, say, workspace, type DomainCommands } from "../cli/command.ts";
-import { describeAttempt, openAttempts } from "../work/land/queue/interrupted.ts";
+import { entry, EXIT, fail, json, say, workspace, type DomainCommands } from "../../cli/command.ts";
+import { describeAttempt, openAttempts } from "../land/queue/interrupted.ts";
 import { AFTER_LAND_WAIT_MS, batchState, renderAfterLand, settleBackgroundHooks, waitBackgroundHooks } from "./hooks.ts";
 
 /** `canon work after-land`: the background after_land commands of a landing (BR-2166). */
@@ -37,4 +37,4 @@ const afterLand = defineCommand({
   },
 });
 
-export const configCommands: DomainCommands = { commands: [entry("after-land", 70, afterLand, "work")] };
+export const hooksCommands: DomainCommands = { commands: [entry("after-land", 70, afterLand, "work")] };

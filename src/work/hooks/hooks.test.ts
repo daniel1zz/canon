@@ -3,12 +3,12 @@ import { noPort } from "./ports.ts";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { claims } from "../work/claims/claims.ts";
-import { handoffs } from "../work/session/handoffs.ts";
-import { start, stop } from "../work/session/session.ts";
-import { land } from "../work/land/land.ts";
+import { claims } from "../claims/claims.ts";
+import { handoffs } from "../session/handoffs.ts";
+import { start, stop } from "../session/session.ts";
+import { land } from "../land/land.ts";
 import { backgroundNotice, logFile, runHooksInBackground, settleBackgroundHooks } from "./hooks.ts";
-import { boundedLoop, FAST, project, quiet, sh, startNew, ws } from "../work/testkit.ts";
+import { boundedLoop, FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
 // reason: hooks started in the background outlive the call by design (BR-2137), so the test ends them: every root that
 // waits for `go` gets one in afterEach (pass or fail); a SIGKILLed runner is covered by the loop's own bound (C-329, #119)
@@ -147,7 +147,7 @@ describe("lifecycle hooks", () => {
 });
 
 describe("background hook exit codes", () => {
-  const MAIN = join(import.meta.dir, "..", "cli", "main.ts");
+  const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
   const brief = (cwd: string) =>
     Bun.spawnSync(["bun", MAIN, "brief"], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:test" } }).stdout.toString();
   const exits = (root: string) =>

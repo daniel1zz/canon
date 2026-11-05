@@ -3,9 +3,9 @@ import { noPort } from "./ports.ts";
 import { writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { logFile, runHooksInBackground, waitBackgroundHooks } from "./hooks.ts";
-import { project, ws } from "../work/testkit.ts";
+import { project, ws } from "../testkit.ts";
 
-const MAIN = join(import.meta.dir, "../cli/main.ts");
+const MAIN = join(import.meta.dir, "../../cli/main.ts");
 
 function afterLand(cwd: string) {
   const r = Bun.spawnSync(["bun", MAIN, "work", "after-land"], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:test" } });

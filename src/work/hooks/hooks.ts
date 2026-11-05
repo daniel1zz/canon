@@ -1,6 +1,6 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { CoordDb } from "../work/db.ts";
+import type { CoordDb } from "../db.ts";
 import type { HookEvent } from "./config-keys.ts";
 import type { PortLookup } from "./ports.ts";
 

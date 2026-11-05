@@ -1,17 +1,17 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { claims } from "../work/claims/claims.ts";
-import { start, stop } from "../work/session/session.ts";
-import { land } from "../work/land/land.ts";
-import { readConfig } from "./config.ts";
+import { claims } from "../claims/claims.ts";
+import { start, stop } from "../session/session.ts";
+import { land } from "../land/land.ts";
+import { readConfig } from "../../config/config.ts";
 import { logFile, runHooksInBackground, waitBackgroundHooks } from "./hooks.ts";
 import { changePort } from "./ports.ts";
-import { err } from "../kernel/result.ts";
-import { enqueue, finishEntry } from "../work/land/queue/queue.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../work/testkit.ts";
+import { err } from "../../kernel/result.ts";
+import { enqueue, finishEntry } from "../land/queue/queue.ts";
+import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 
-const MAIN = join(import.meta.dir, "..", "cli", "main.ts");
+const MAIN = join(import.meta.dir, "..", "..", "cli", "main.ts");
 
 /**
  * A base port with `n` free ports after it, picked at random away from the 4100s of the rules' examples.

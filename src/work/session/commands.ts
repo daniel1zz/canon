@@ -4,7 +4,7 @@ import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCom
 import { takesMany } from "../../cli/strict.ts";
 import { WORKFLOW_GUIDE } from "../../cli/guide.ts";
 import { noticeUpdates } from "../../cli/install/commands.ts";
-import { backgroundNotice, settleBackgroundHooks } from "../../config/hooks.ts";
+import { backgroundNotice, settleBackgroundHooks } from "../../work/hooks/hooks.ts";
 import { git } from "../../kernel/git.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { backlogAt } from "../../knowledge/documents/backlog.ts";

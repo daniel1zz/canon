@@ -1,6 +1,6 @@
 import type { Say, Workspace } from "../../workspace.ts";
-import { logFile, runHooksInBackground } from "../../../config/hooks.ts";
-import { changePort } from "../../../config/ports.ts";
+import { logFile, runHooksInBackground } from "../../../work/hooks/hooks.ts";
+import { changePort } from "../../../work/hooks/ports.ts";
 import { git, gitEnv, isClean, listWorktreesLocked, moveBranch } from "../../../kernel/git.ts";
 import { releaseOwnClaim } from "../../claims/claims.ts";
 import { dropHandoff } from "../../session/handoffs.ts";

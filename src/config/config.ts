@@ -13,7 +13,8 @@ import { statsKeys } from "../work/stats/config-keys.ts";
 import { verifyKeys } from "../work/verify/config-keys.ts";
 import { watchKeys } from "../work/watch/config-keys.ts";
 import { remoteKeys } from "../work/remote/config-keys.ts";
-import { codeKeys, hookKeys } from "./config-keys.ts";
+import { hookKeys } from "../work/hooks/config-keys.ts";
+import { codeKeys } from "./config-keys.ts";
 import type { ConfigKey, FieldsOf, KeySet } from "./key.ts";
 
 /**

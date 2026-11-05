@@ -1,4 +1,4 @@
-import { configGuide } from "../config/guide.ts";
+import { hooksGuide } from "../work/hooks/guide.ts";
 import { documentGuide } from "../knowledge/documents/guide.ts";
 import { queryGuide } from "../knowledge/query/guide.ts";
 import { reviewGuide } from "../knowledge/review/guide.ts";
@@ -37,4 +37,4 @@ export function assembleGuide(header: string, domains: readonly (readonly GuideL
  * How to work in a canon project, printed by `canon brief` at every session start (BR-2090, D-10).
  * It ships with the binary instead of being installed as a file, so it always matches the canon that runs.
  */
-export const WORKFLOW_GUIDE = assembleGuide(HEADER, [configGuide, documentGuide, queryGuide, reviewGuide, dropGuide, humanGuide, issueGuide, landGuide, sessionGuide, snapshotGuide, verifyGuide]);
+export const WORKFLOW_GUIDE = assembleGuide(HEADER, [hooksGuide, documentGuide, queryGuide, reviewGuide, dropGuide, humanGuide, issueGuide, landGuide, sessionGuide, snapshotGuide, verifyGuide]);
