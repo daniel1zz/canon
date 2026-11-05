@@ -102,9 +102,13 @@ describe("canon work test records the reports its test_command writes", () => {
     expect(rows(wt)).toEqual([]);
   });
 
-  test("BR-2337: without {report} in test_command nothing is recorded and the run is unchanged", () => {
-    const wt = fixture("sh run.sh {file}");
-    expect(canon(wt, "work", "test", "--all").code).toBe(0);
-    expect(rows(wt)).toEqual([]);
+  test("BR-2337: a test_command without {report} records nothing because it is refused before anything runs, exit 2 (BR-2160)", () => {
+    const root = project();
+    write(root, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh run.sh {file}"\n', "run.sh": 'cp "$1" "$2"\n', "src/a.test.ts": suite("seven: x") });
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "fixture");
+    const r = canon(root, "work", "test", "--all");
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("must contain {report}");
   });
 });
