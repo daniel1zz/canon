@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { WORKFLOW_GUIDE } from "./guide.ts";
+import { guideFor, WORKFLOW_GUIDE } from "./guide.ts";
 
 const MAIN = join(import.meta.dir, "main.ts");
 
@@ -426,13 +426,13 @@ describe("session continuity", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     const idle = canon(root, "brief").out;
-    expect(idle.trim()).toBe(WORKFLOW_GUIDE);
+    expect(idle.trim()).toBe(guideFor(root)); // init wrote canon/architecture.md, so the guide starts with the overview line (BR-2090)
     for (const cmd of ["canon context", "canon work start", "canon work land --finish", "canon work stop --next", "--relayed", "canon work drop", "canon work after-land --wait"]) expect(idle).toContain(cmd);
     committed(root);
     const wt = canon(root, "work", "start", "--title", "Refunds").out.match(/cd (.+)/)![1]!.trim();
     const b = canon(wt, "brief").out;
-    expect(b.startsWith(WORKFLOW_GUIDE)).toBe(true);
-    expect(b.slice(WORKFLOW_GUIDE.length)).toContain("You are in C-1");
+    expect(b.startsWith(guideFor(root))).toBe(true);
+    expect(b.slice(guideFor(root).length)).toContain("You are in C-1");
   });
 });
 
@@ -452,8 +452,8 @@ describe("brief when it cannot read the project", () => {
     writeFileSync(join(root, "canon/config.yaml"), "main: [\n");
     const bad = canon(root, "brief");
     expect(bad.code).toBe(2);
-    expect(bad.out.startsWith(WORKFLOW_GUIDE)).toBe(true);
-    expect(bad.out.slice(WORKFLOW_GUIDE.length)).toContain("canon brief failed:");
+    expect(bad.out.startsWith(guideFor(root))).toBe(true);
+    expect(bad.out.slice(guideFor(root).length)).toContain("canon brief failed:");
   });
 });
 
