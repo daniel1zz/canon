@@ -1,7 +1,7 @@
 ---
 id: C-377
 title: Wait for killed processes to be gone instead of asserting it at once (#126)
-status: open
+status: done
 rules: []
 ---
 
