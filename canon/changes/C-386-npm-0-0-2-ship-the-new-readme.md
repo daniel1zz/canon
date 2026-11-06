@@ -1,7 +1,7 @@
 ---
 id: C-386
 title: "npm 0.0.2: ship the new README"
-status: open
+status: done
 rules: []
 ---
 
