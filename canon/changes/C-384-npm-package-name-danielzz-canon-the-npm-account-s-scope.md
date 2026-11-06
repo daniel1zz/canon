@@ -1,7 +1,7 @@
 ---
 id: C-384
 title: npm package name @danielzz/canon (the npm account's scope)
-status: open
+status: done
 rules: []
 ---
 
