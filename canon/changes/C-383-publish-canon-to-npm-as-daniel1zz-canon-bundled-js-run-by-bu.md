@@ -1,8 +1,11 @@
 ---
 id: C-383
 title: publish canon to npm as @daniel1zz/canon (bundled JS run by bun)
-status: open
-rules: [BR-2082]
+status: done
+rules:
+  - BR-2082
+passes:
+  BR-2082: 303c034af77dbf19 test
 ---
 
 ## 为什么
