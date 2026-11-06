@@ -1,7 +1,7 @@
 ---
 id: C-385
 title: "README for the npm package page: what canon is, install, quick start"
-status: open
+status: done
 rules: []
 ---
 
