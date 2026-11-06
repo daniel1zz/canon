@@ -27,13 +27,16 @@ export interface InstallReport {
 const sha = (text: Buffer | string) => createHash("sha256").update(text).digest("hex");
 
 /**
- * Where canon's skills come from (BR-2082): CANON_SKILLS_SOURCE when set (and only it), else the repository this canon runs from
- * (source checkout under `bun`, or the repository holding the compiled `dist/canon`). Missing → environment error.
+ * Where canon's skills come from (BR-2082): CANON_SKILLS_SOURCE when set (and only it), else the repository or package this canon
+ * runs from (source checkout under `bun`, the repository holding the compiled `dist/canon`, or the npm package holding the bundled
+ * `dist/canon.js`). Missing → environment error.
  */
 export function skillsSource(env: Record<string, string | undefined> = process.env): Result<string> {
   const explicit = env["CANON_SKILLS_SOURCE"];
   const candidates = explicit ? [explicit] : [
     join(import.meta.dir, "..", "..", ".claude", "skills"),
+    // reason: the npm package bundles every source into dist/canon.js, so import.meta.dir is dist/ and the skills sit one level up (BR-2082).
+    join(import.meta.dir, "..", ".claude", "skills"),
     join(dirname(realpathSync(process.execPath)), "..", ".claude", "skills"),
   ].filter((c): c is string => typeof c === "string" && c !== "");
   for (const c of candidates) {

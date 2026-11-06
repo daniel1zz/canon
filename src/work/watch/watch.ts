@@ -390,11 +390,13 @@ function markGreen(ws: Workspace, sha: string, say: Say): void {
   if (!cas.ok) say(`floor watch: ${GREEN_REF} moved meanwhile and was left as it is (${cas.error.message})`);
 }
 
-/** The command that runs this canon: the compiled binary itself, or bun with the CLI's source file. */
+/** The command that runs this canon: the compiled binary itself, bun with the CLI's source file, or bun with the bundled script. */
 function canonCommand(): string[] {
-  const source = join(import.meta.dir, "..", "..", "invocation", "main.ts");
   // reason: a compiled canon embeds its sources under /$bunfs and is started as itself (BR-2219).
-  return import.meta.dir.startsWith("/$bunfs") || !existsSync(source) ? [process.execPath] : [process.execPath, source];
+  if (import.meta.dir.startsWith("/$bunfs")) return [process.execPath];
+  const source = join(import.meta.dir, "..", "..", "invocation", "main.ts");
+  // reason: the npm package runs one bundled script under bun, so bun alone would not start canon (BR-2082).
+  return [process.execPath, existsSync(source) ? source : Bun.main];
 }
 
 /**

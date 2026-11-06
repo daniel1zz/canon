@@ -123,6 +123,18 @@ describe("where the skills come from and their version", () => {
     expect(readFileSync(join(root, ".claude/skills/canon-z/SKILL.md"), "utf8")).toBe("z from the repository holding dist/canon\n");
   });
 
+  test("BR-2082: the npm package's bundled dist/canon.js installs from the .claude/skills inside the package", () => {
+    const pkg = dir({ ".claude/skills/canon-z/SKILL.md": "z from the npm package\n" });
+    const built = Bun.spawnSync(["bun", "build", MAIN, "--target", "bun", "--outfile", join(pkg, "dist/canon.js")], { stdout: "pipe", stderr: "pipe" });
+    expect(built.exitCode).toBe(0);
+    const root = gitRepo();
+    const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: "agent:test" };
+    delete env["CANON_SKILLS_SOURCE"];
+    const r = Bun.spawnSync(["bun", join(pkg, "dist/canon.js"), "install"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env });
+    expect([r.exitCode, r.stderr.toString()]).toEqual([0, ""]);
+    expect(readFileSync(join(root, ".claude/skills/canon-z/SKILL.md"), "utf8")).toBe("z from the npm package\n");
+  });
+
   test("BR-2084: the version is computed from the skill files' content: the same files give the same version, any change gives another", () => {
     expect(versionOf({ "canon-a/SKILL.md": "h1" })).toBe(versionOf({ "canon-a/SKILL.md": "h1" }));
     expect(versionOf({ "canon-a/SKILL.md": "h2" })).not.toBe(versionOf({ "canon-a/SKILL.md": "h1" }));
