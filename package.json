@@ -1,5 +1,5 @@
 {
-  "name": "@daniel1zz/canon",
+  "name": "@danielzz/canon",
   "version": "0.0.1",
   "description": "Shared memory and coordination for a project built by many concurrent AI sessions",
   "type": "module",
