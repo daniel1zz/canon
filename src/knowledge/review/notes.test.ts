@@ -61,7 +61,7 @@ describe("review notes", () => {
     expect(openNotes(db, [id(2)]).map((n) => n.note)).toEqual(["措辞可以更短"]);
     expect(openNotes(db, [id(1)])[0]!.change).toBe(first.change);
 
-    // A landing refused after an ok review (before_land fails) records nothing.
+    // A landing refused after an ok review (before_land fails, which runs after the review and before the floor) records nothing.
     setReviewer(root, [`${id(1)} still vague`], "exit 1");
     const refused = await landRules(root, "Refused", [1]);
     expect(refused.out.kind === "refused" && refused.out.reason).toBe("hook");
