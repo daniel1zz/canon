@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { land } from "../land.ts";
 import { enqueue, finishEntry } from "../queue/queue.ts";
@@ -51,6 +51,18 @@ describe("a config key added and used in one landing", () => {
     expect(message).toContain("Land the key first without using it");
     expect(sh(root, "rev-parse", "main")).toBe(before);
     expect(lastRefusal(root)).toMatchObject({ reason: "config-key" });
+  });
+
+  test("BR-2248 BR-2014: the key check runs before the floor, so a refused landing runs no floor (floor_timing before)", async () => {
+    const root = canonLike();
+    const marker = `${root}-floor-ran`;
+    writeFileSync(join(root, "canon/config.yaml"), readFileSync(join(root, "canon/config.yaml"), "utf8").replace(/^floor: .*$/m, `floor: "touch ${marker}"`));
+    sh(root, "commit", "-qam", "floor with a marker");
+    const s = startNew(root, "Key and use before the floor");
+    commit(s.worktree, { [KEYS]: declarations("floor", "tests", "floor_timing", "typecheck_command"), "canon/config.yaml": withKey(s.worktree) });
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("config-key");
+    expect(existsSync(marker)).toBe(false);
   });
 
   test("BR-2248: declaring the key without using it lands; setting a key main already declares lands", async () => {

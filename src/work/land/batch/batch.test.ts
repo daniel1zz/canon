@@ -146,6 +146,17 @@ describe("batched landings", () => {
     expect(floorRuns()).toBe(1);
   }, TIMED);
 
+  test("BR-2172 BR-2014: a change landing on its own is judged by its own steps before the floor, as a batch member is: a canon check refusal runs no floor", async () => {
+    const { root, floorRuns } = batchProject("land_batch_max: 1\n");
+    const b = startNew(root, "Dangling");
+    const file = sh(b.worktree, "ls-files", "canon/changes").split("\n").find((f) => f.includes(b.change))!;
+    writeFileSync(join(b.worktree, file), `${readFileSync(join(b.worktree, file), "utf8")}\nSee D-99.\n`);
+    sh(b.worktree, "commit", "-qam", "dangling");
+    const out = await land(ws(b.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("check");
+    expect(floorRuns()).toBe(0);
+  }, TIMED);
+
   test("BR-2173: a member its own steps refuse leaves the batch alone; the others land together under one floor, and it is judged again on its own turn", async () => {
     const { root, floorRuns } = batchProject();
     const a = startNew(root, "A");
