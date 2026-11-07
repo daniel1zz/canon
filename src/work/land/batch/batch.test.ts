@@ -161,7 +161,7 @@ describe("batched landings", () => {
     expect(said[0]!.some((m) => m.startsWith(`batch: ${b.change} was refused in the batch (check); it goes back to the queue, the others go on`))).toBe(true);
     const oks = landOks(root);
     expect(oks.find((o) => o["subject"] === c.change)!["batched_by"]).toBeDefined();
-    expect(floorRuns()).toBe(2); // A and C together, then B's own landing
+    expect(floorRuns()).toBe(1); // A and C together; B's own landing is refused by canon check before its floor (BR-2014)
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'batch.fail'").get()?.n).toBe(0);
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'batch.drop'").get()?.n).toBe(1);
   }, TIMED);

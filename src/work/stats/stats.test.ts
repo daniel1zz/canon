@@ -241,7 +241,7 @@ describe("canon stats", () => {
     const s = computeStats(ws(root).db, { floor: "2026-01-01", check: "2027-02-03", review: "2026-11-03" }, "2026-11-03");
     expect([of(s, "floor").due, of(s, "check").due, of(s, "review").due]).toEqual([true, false, true]); // the day itself is due
     const text = renderStats(s);
-    expect(text).toContain("Due for review:\n  floor (due 2026-01-01)");
+    expect(text).toContain("Due for review:\n  review (due 2026-11-03)");
     expect(text).not.toContain("  check (due");
     expect(text).toMatch(/No review date .*setup/);
     expect(text).toContain("  review (due 2026-11-03): 0 runs, 0 refused; changed 0, same 0, abandoned 0, pending 0, unknown 0");

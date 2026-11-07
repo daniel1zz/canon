@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../land.ts";
+import { recordReport } from "../../verify/ledger.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 describe("floor skip for landings that change only declared paths", () => {
@@ -51,6 +52,8 @@ describe("floor skip for landings that change only declared paths", () => {
     const tests = skipProject('floor: "false"\ntests: ["docs/**/*.test.ts"]\nfloor_skip_paths: [canon/changes, docs]\ntest_select_command: "cat > /dev/null"\n');
     const c = startNew(tests, "Test file");
     commitFile(c.worktree, "docs/a.test.ts", "// a test\n");
+    // reason: canon check runs before the floor and needs the report `canon work test` wrote for the changed test file (BR-2014, BR-2344)
+    recordReport(ws(tests).db, "docs/a.test.ts", sh(c.worktree, "hash-object", "docs/a.test.ts"), [{ suites: [], classname: "", name: "a", runs: true }], "test_command");
     const r3 = await land(ws(c.worktree), FAST, quiet);
     expect(r3.kind === "refused" && r3.reason).toBe("floor");
 

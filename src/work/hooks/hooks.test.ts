@@ -74,6 +74,50 @@ describe("lifecycle hooks", () => {
     expect(ok.out.kind).toBe("landed");
   });
 
+  test("BR-2057 BR-2014: before_land runs before the floor, so a red floor still follows it; a canon check refusal means it never runs", async () => {
+    const root = configured(`  before_land: 'touch "${"$"}CANON_WORKTREE/../before-land-ran"'\n`);
+    const s = startNew(root, "Red");
+    writeFileSync(join(s.worktree, "FAIL"), "x");
+    sh(s.worktree, "add", "FAIL");
+    sh(s.worktree, "commit", "-qm", "red");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("floor");
+    expect(existsSync(join(s.worktree, "..", "before-land-ran"))).toBe(true);
+    rmSync(join(s.worktree, "..", "before-land-ran"));
+
+    const t = startNew(root, "Dangling");
+    writeFileSync(join(t.worktree, "canon/changes/C-90-bad-ref.md"), "---\nid: C-90\ntitle: Bad ref\n---\n## 为什么\n\nSee D-99.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n");
+    sh(t.worktree, "add", "-A");
+    sh(t.worktree, "commit", "-qm", "dangling");
+    const refused = await land(ws(t.worktree), FAST, quiet);
+    expect(refused.kind === "refused" && refused.reason).toBe("check");
+    expect(existsSync(join(t.worktree, "..", "before-land-ran"))).toBe(false);
+  });
+
+  test("BR-2056: after_start runs in the new worktree with the change in its environment; its exit code changes nothing", () => {
+    const root = configured(`  after_start:\n    - 'echo "$CANON_EVENT $CANON_CHANGE $CANON_BRANCH" > started.txt'\n    - exit 4\n    - echo 2 > second.txt\n`);
+    const lines: string[] = [];
+    const r = start(ws(root), { title: "Hooked" }, (l) => lines.push(l));
+    expect(r.ok).toBe(true);
+    if (!r.ok) return;
+    expect(readFileSync(join(r.value.worktree, "started.txt"), "utf8").trim()).toBe(`after_start ${r.value.change} ${r.value.branch}`);
+    expect(lines.join("\n")).toContain("exited 4");
+    expect(readFileSync(join(r.value.worktree, "second.txt"), "utf8").trim()).toBe("2"); // a failure does not stop the rest
+    expect(claims(ws(root).db).map((c) => c.subject)).toEqual([r.value.change]);
+  });
+
+  test("BR-2057: a failing before_land refuses the landing on the tree that would become main; a passing one lets it land", async () => {
+    const root = configured(`  before_land: 'test -e CHANGELOG.md && test "$CANON_HEAD" = "$(git rev-parse HEAD)"'\n`);
+    const before = sh(root, "rev-parse", "main");
+    const refused = await commitAndLand(root, "No changelog", "x.txt");
+    expect(refused.out.kind === "refused" && refused.out.reason).toBe("hook");
+    expect(sh(root, "rev-parse", "main")).toBe(before);
+    const reasons = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'land.refuse'").all().map((e) => JSON.parse(e.detail).reason);
+    expect(reasons).toEqual(["hook"]);
+    const ok = await commitAndLand(root, "With changelog", "CHANGELOG.md");
+    expect(ok.out.kind).toBe("landed");
+  });
+
   test("BR-2057: before_land does not run when the floor fails", async () => {
     const root = configured(`  before_land: 'touch "${"$"}CANON_WORKTREE/../before-land-ran"'\n`);
     const s = startNew(root, "Red");
