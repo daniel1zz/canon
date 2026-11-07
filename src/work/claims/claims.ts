@@ -27,12 +27,12 @@ export interface Claim {
 export function takeClaim(db: CoordDb, subject: string, holder: string, actor: string, leaseMs = CLAIM_LEASE_MS, owner?: Proc): Result<Claim> {
   const tx = db.db.transaction((): Result<Claim> => {
     const cur = db.db
-      .query<{ holder: string; expires_at: string; worktree: string | null; pid: number | null; pid_start: string | null }, [string]>("SELECT holder, expires_at, worktree, pid, pid_start FROM claims WHERE subject = ?")
+      .query<ClaimRow, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start, version FROM claims WHERE subject = ?")
       .get(subject);
     // reason: a live claim refuses every start, the same actor included: Claude Code gives a session's
     // subagents one session id and one process, so the actor cannot tell two of them apart; the worktree is
     // what keeps them apart, so the same actor is not invited in either (BR-2011, D-18).
-    const binds = cur !== null && bindsStill(cur);
+    const binds = cur !== null && bindsStill(db, cur);
     // A lease that has not expired but whose session process is gone frees at once (BR-2100).
     const gone = cur !== null && !binds && new Date(cur.expires_at) > now();
     if (binds) {
@@ -72,10 +72,10 @@ export function takeClaim(db: CoordDb, subject: string, holder: string, actor: s
 export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs = CLAIM_LEASE_MS, owner?: Proc): Result<Claim | undefined> {
   const tx = db.db.transaction((): Result<Claim | undefined> => {
     const cur = db.db
-      .query<{ subject: string; holder: string; expires_at: string; pid: number | null; pid_start: string | null }, [string]>("SELECT subject, holder, expires_at, pid, pid_start FROM claims WHERE worktree = ?")
+      .query<ClaimRow, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start, version FROM claims WHERE worktree = ?")
       .get(worktree);
     if (!cur) return ok(undefined);
-    if (cur.holder !== actor && bindsStill(cur)) {
+    if (cur.holder !== actor && bindsStill(db, cur)) {
       db.event(actor, "claim.refuse", cur.subject, { reason: "held", by: worktree, actor: cur.holder, until: cur.expires_at });
       const sub = subagentOf(actor, cur.holder);
       const who = sub !== undefined ? `, a subagent of this session: do not work in this worktree unless you are that subagent; if it has finished, run \`canon work take ${cur.subject} --from ${sub}\`` : "";
@@ -141,6 +141,7 @@ interface ClaimRow {
   readonly expires_at: string;
   readonly pid: number | null;
   readonly pid_start: string | null;
+  readonly version: number;
 }
 
 /**
@@ -152,13 +153,13 @@ interface ClaimRow {
  * it is not work, and `canon stats` counts claim events (BR-2067).
  */
 export function holdClaim(db: CoordDb, subject: string, worktree: string, actor: string, leaseMs = CLAIM_LEASE_MS): Result<Hold> {
-  const read = () => db.db.query<ClaimRow, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims WHERE subject = ?").get(subject) ?? null;
+  const read = () => db.db.query<ClaimRow, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start, version FROM claims WHERE subject = ?").get(subject) ?? null;
   // reason: the process probe runs outside the write transaction (as in tryTurn); the transaction re-reads and
   // only proceeds when the row is still the one probed.
   const seen = read();
   // reason: any live claim or hold binds, the same actor included: subagents of one session share the actor,
   // so a clean or drop must not delete a sibling's worktree while it works there (BR-2019, BR-2064, issue #18).
-  const binds = seen !== null && bindsStill(seen);
+  const binds = seen !== null && bindsStill(db, seen);
   const self = selfProcess();
   const mark = holdMark(worktree);
   const tx = db.db.transaction((): Result<Hold> => {
@@ -282,9 +283,9 @@ export interface ClaimWithState extends Claim {
 /** Every claim row with its state, as `canon work status` lists them (BR-2192). */
 export function claimsWithState(db: CoordDb): ClaimWithState[] {
   return db.db
-    .query<ClaimRow, []>("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims ORDER BY subject")
+    .query<ClaimRow, []>("SELECT subject, holder, worktree, expires_at, pid, pid_start, version FROM claims ORDER BY subject")
     .all()
-    .map((r) => ({ subject: r.subject, holder: r.worktree ?? "", actor: r.holder, expires_at: r.expires_at, state: stateOf(r) }));
+    .map((r) => ({ subject: r.subject, holder: r.worktree ?? "", actor: r.holder, expires_at: r.expires_at, state: stateOf(db, r) }));
 }
 
 /** The claims that still bind anyone; an expired or abandoned row is not one (BR-2100). */
@@ -299,8 +300,8 @@ export function liveClaims(db: CoordDb): Claim[] {
  * gone (BR-2011, BR-2100). Undefined when there is no claim or it no longer binds anyone.
  */
 export function liveClaim(db: CoordDb, subject: string): Claim | undefined {
-  const r = db.db.query<ClaimRow, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims WHERE subject = ?").get(subject);
-  if (!r || !bindsStill(r)) return undefined;
+  const r = db.db.query<ClaimRow, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start, version FROM claims WHERE subject = ?").get(subject);
+  if (!r || !bindsStill(db, r)) return undefined;
   return { subject: r.subject, holder: r.worktree ?? "", actor: r.holder, expires_at: r.expires_at };
 }
 
@@ -311,20 +312,33 @@ export function liveClaim(db: CoordDb, subject: string): Claim | undefined {
 export function deletionOf(db: CoordDb, worktree: string): { subject: string } | undefined {
   const prefix = `hold:${worktree}#`;
   const rows = db.db
-    .query<ClaimRow, [number, string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start FROM claims WHERE substr(worktree, 1, ?) = ?")
+    .query<ClaimRow, [number, string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start, version FROM claims WHERE substr(worktree, 1, ?) = ?")
     .all(prefix.length, prefix);
-  const r = rows.find((x) => bindsStill(x));
+  const r = rows.find((x) => bindsStill(db, x));
   return r ? { subject: r.subject } : undefined;
 }
 
-function stateOf(r: { expires_at: string; pid: number | null; pid_start: string | null }): ClaimState {
+/**
+ * The one judgement of a claim's state. The first time it finds a claim failed it also writes the event that says so
+ * (BR-2360, D-66): every command that judges a claim goes through here, so none can miss it.
+ */
+function stateOf(db: CoordDb, r: ClaimRow): ClaimState {
+  const state = judge(r);
+  // reason: a hold is a clean or drop in progress, not a claim on a change (BR-2360, BR-2025).
+  if (state !== "live" && !isHold(r.worktree)) {
+    db.eventOnce("canon", state === "expired" ? "claim.expired" : "claim.holder-gone", r.subject, { holder: r.holder, worktree: r.worktree, version: r.version });
+  }
+  return state;
+}
+
+function judge(r: { expires_at: string; pid: number | null; pid_start: string | null }): ClaimState {
   if (new Date(r.expires_at) <= now()) return "expired";
   // An unreadable process table keeps the lease (D-11).
   return r.pid !== null && r.pid_start !== null && isGone({ pid: r.pid, start: r.pid_start }) === true ? "holder-gone" : "live";
 }
 
-function bindsStill(r: { expires_at: string; pid: number | null; pid_start: string | null }): boolean {
-  return stateOf(r) === "live";
+function bindsStill(db: CoordDb, r: ClaimRow): boolean {
+  return stateOf(db, r) === "live";
 }
 
 /**

@@ -57,6 +57,8 @@ CREATE TABLE IF NOT EXISTS events (
   subject TEXT,
   detail  TEXT NOT NULL DEFAULT '{}'   -- JSON; a refusal carries its reason
 );
+-- A claim that failed is recorded once per change, claim version and kind (BR-2360, D-66); also added to old databases by this statement.
+CREATE UNIQUE INDEX IF NOT EXISTS events_claim_lapse ON events(subject, kind, json_extract(detail, '$.version')) WHERE kind IN ('claim.expired', 'claim.holder-gone');
 -- The one \`canon floor watch\` running for this repository, by pid and process start (BR-2219, D-11).
 CREATE TABLE IF NOT EXISTS watcher (
   id         INTEGER PRIMARY KEY CHECK (id = 1),
@@ -211,6 +213,15 @@ export class CoordDb {
     this.db
       .query("INSERT INTO events(ts, actor, kind, subject, detail, worktree) VALUES (?, ?, ?, ?, ?, ?)")
       .run(new Date().toISOString(), actor, kind, subject, JSON.stringify(detail), this.worktree);
+  }
+
+  /** Writes the event unless an identical one is already recorded under a unique index on events; true when it wrote (BR-2360). */
+  eventOnce(actor: string, kind: string, subject: string | null, detail: Record<string, unknown>): boolean {
+    return (
+      this.db
+        .query("INSERT OR IGNORE INTO events(ts, actor, kind, subject, detail, worktree) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(new Date().toISOString(), actor, kind, subject, JSON.stringify(detail), this.worktree).changes > 0
+    );
   }
 
   close(): void {

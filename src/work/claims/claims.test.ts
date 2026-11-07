@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
 import { isGone, processOf, selfProcess, sessionProcess, type Proc } from "./liveness.ts";
-import { claims, holdClaim, keepClaim, renewClaim, takeClaim, unholdClaim } from "./claims.ts";
+import { claims, claimsWithState, holdClaim, liveClaim, keepClaim, renewClaim, takeClaim, unholdClaim } from "./claims.ts";
 import { enqueue, finishEntry, tryTurn } from "../land/queue/queue.ts";
 import { land } from "../land/land.ts";
 import { stop } from "../session/session.ts";
@@ -302,3 +302,82 @@ describe("the claim names the session again when a landing ends", () => {
   }
 });
 
+
+describe("claim lapses become events", () => {
+  const lapses = (d: CoordDb) =>
+    d.db
+      .query<{ kind: string; subject: string; actor: string; detail: string }, []>("SELECT kind, subject, actor, detail FROM events WHERE kind IN ('claim.expired', 'claim.holder-gone') ORDER BY id")
+      .all()
+      .map((r) => ({ kind: r.kind, subject: r.subject, actor: r.actor, detail: JSON.parse(r.detail) as Record<string, unknown> }));
+
+  test("BR-2360: the first status after the session process is gone writes one claim.holder-gone with holder, worktree and version; later ones write none", async () => {
+    const d = db();
+    takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * HOUR, await deadProcess());
+    expect(claimsWithState(d).map((c) => c.state)).toEqual(["holder-gone"]);
+    expect(lapses(d)).toEqual([{ kind: "claim.holder-gone", subject: "C-1", actor: "canon", detail: { holder: "agent:a", worktree: "/wt/C-1", version: 1 } }]);
+    claimsWithState(d);
+    liveClaim(d, "C-1");
+    expect(lapses(d).length).toBe(1);
+  });
+
+  test("BR-2360: an expired lease writes claim.expired, not claim.holder-gone", () => {
+    const d = db();
+    takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * HOUR, selfProcess());
+    shift(d, "C-1", -13 * HOUR);
+    expect(liveClaim(d, "C-1")).toBeUndefined();
+    expect(lapses(d).map((e) => e.kind)).toEqual(["claim.expired"]);
+  });
+
+  test("BR-2360: a live claim writes nothing", () => {
+    const d = db();
+    takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * HOUR, selfProcess());
+    claimsWithState(d);
+    expect(lapses(d)).toEqual([]);
+  });
+
+  test("BR-2360: a takeover is noticed before it replaces the claim, and the next failure of the new version is a new event", async () => {
+    const d = db();
+    takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * HOUR, await deadProcess());
+    expect(takeClaim(d, "C-1", "/wt/C-1", "agent:b", 12 * HOUR, await deadProcess()).ok).toBe(true);
+    claimsWithState(d);
+    expect(lapses(d).map((e) => [e.kind, e.detail.holder, e.detail.version])).toEqual([
+      ["claim.holder-gone", "agent:a", 1],
+      ["claim.holder-gone", "agent:b", 2],
+    ]);
+  });
+
+  test("BR-2360: a hold left by a killed clean is not a claim on the change and writes nothing", async () => {
+    const d = db();
+    expect(holdClaim(d, "C-1", "/wt/C-1", "agent:a").ok).toBe(true);
+    const dead = await deadProcess();
+    d.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = 'C-1'").run(dead.pid, dead.start);
+    expect(claimsWithState(d).map((c) => c.state)).toEqual(["holder-gone"]);
+    expect(lapses(d)).toEqual([]);
+  });
+
+  test("BR-2360 BR-2078: opening an old database adds the unique constraint, and the same lapse is then written once", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "canon-next-state-")), "state.db");
+    const first = CoordDb.open(path);
+    if (!first.ok) throw new Error(first.error.message);
+    first.value.db.exec("DROP INDEX events_claim_lapse");
+    first.value.close();
+    const d = CoordDb.open(path);
+    if (!d.ok) throw new Error(d.error.message);
+    expect(d.value.db.query("SELECT name FROM sqlite_master WHERE name = 'events_claim_lapse'").get()).not.toBeNull();
+    expect(d.value.eventOnce("canon", "claim.expired", "C-1", { version: 3 })).toBe(true);
+    expect(d.value.eventOnce("canon", "claim.expired", "C-1", { version: 3 })).toBe(false);
+    expect(d.value.eventOnce("canon", "claim.expired", "C-1", { version: 4 })).toBe(true);
+    expect(d.value.eventOnce("canon", "claim.holder-gone", "C-1", { version: 3 })).toBe(true);
+  });
+
+  test("BR-2360: two connections judging the same failed claim leave one event", async () => {
+    const path = join(mkdtempSync(join(tmpdir(), "canon-next-state-")), "state.db");
+    const a = CoordDb.open(path);
+    const b = CoordDb.open(path);
+    if (!a.ok || !b.ok) throw new Error("open failed");
+    takeClaim(a.value, "C-1", "/wt/C-1", "agent:a", 12 * HOUR, await deadProcess());
+    claimsWithState(a.value);
+    claimsWithState(b.value);
+    expect(lapses(a.value).length).toBe(1);
+  });
+});
