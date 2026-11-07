@@ -129,6 +129,15 @@ describe("review command", () => {
     expect(failed.ok).toBe(false);
     expect(!failed.ok && failed.error.message).toBe("review command exited 3: boom");
   });
+
+  test("BR-2216: a non-zero exit names its reason from stdout when stderr is empty, from both when both exist, and says no output when neither does", async () => {
+    const run = (cmd: string) => runReview(cmd, tmpdir(), "p", { timeoutMs: 60_000 }).then((r) => (!r.ok ? r.error.message : "ok"));
+    expect(await run("echo 'Prompt is too long'; exit 1")).toBe("review command exited 1 (stdout): Prompt is too long");
+    expect(await run("echo 'err text' >&2; echo 'out text'; exit 2")).toBe("review command exited 2 (stderr): err text; (stdout): out text");
+    expect(await run("echo '  ' >&2; exit 4")).toBe("review command exited 4: no output");
+    const long = await run("printf 'A%.0s' $(seq 1 100); printf 'B%.0s' $(seq 1 500); exit 1");
+    expect(long).toBe(`review command exited 1 (stdout): ${"B".repeat(500)}`);
+  });
 });
 
 describe("duplicate review prompt", () => {

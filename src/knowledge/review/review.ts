@@ -187,6 +187,16 @@ export interface ReviewLimits {
   readonly track?: (running: { kill(): void } | undefined) => void;
 }
 
+/** Why a review command exited non-zero: stderr's head, else stdout's tail, both labelled when both exist (BR-2216, #132). */
+function failureMessage(code: number, errText: string, out: string): string {
+  const e = errText.trim();
+  const o = out.trim();
+  // reason: `claude -p` prints its error (e.g. "Prompt is too long") on stdout and leaves stderr empty; the cause is usually at the end (BR-2216)
+  if (e && o) return `review command exited ${code} (stderr): ${e.slice(0, 500)}; (stdout): ${o.slice(-500)}`;
+  if (o) return `review command exited ${code} (stdout): ${o.slice(-500)}`;
+  return `review command exited ${code}: ${e ? e.slice(0, 500) : "no output"}`;
+}
+
 export async function runReview(command: string, cwd: string, prompt: string, limits: ReviewLimits): Promise<Result<ReviewVerdict>> {
   // reason: its own process group, so a timeout or a signal stops the reviewer's children too (claude under sh), not only sh (BR-2296)
   const proc = Bun.spawn(["sh", "-c", command], { cwd, stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe", detached: true });
@@ -211,7 +221,7 @@ export async function runReview(command: string, cwd: string, prompt: string, li
     limits.track?.(undefined);
   }
   if (timedOut) return err("io", `review command did not finish within ${limits.timeoutMs / 60_000} minute(s) (review_timeout_minutes) and was stopped with its children`);
-  if (code !== 0) return err("io", `review command exited ${code}: ${errText.trim().slice(0, 500)}`);
+  if (code !== 0) return err("io", failureMessage(code, errText, out));
   const match = out.match(/\{[\s\S]*\}/);
   if (!match) return err("invalid", `review command printed no JSON: ${out.trim().slice(0, 300)}`);
   try {
