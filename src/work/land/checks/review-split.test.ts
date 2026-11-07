@@ -49,7 +49,7 @@ if [ "$mode" = block2 ] && [ "$n" = 2 ]; then echo '{"verdict":"block","findings
 }
 
 describe("rule review split by size at land (BR-2359, D-67)", () => {
-  test("BR-2359: a review over review_max_prompt_kb runs as several calls, each with the changed rule and under the budget; the landing says how many and how big", async () => {
+  test("BR-2009 BR-2359: a review over review_max_prompt_kb runs as several calls, each with the changed rule and under the budget; the landing says how many and how big", async () => {
     const { change, prompts } = splitProject(20, "ok");
     const s = change();
     const lines: string[] = [];

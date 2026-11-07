@@ -56,7 +56,7 @@ describe("rule review prompt budget", () => {
     expect(whole).not.toContain("split into");
   });
 
-  test("BR-2359: a prompt over the budget is split by subdomain; every call carries the changed rule, the index and the decisions, and none is over the budget", () => {
+  test("BR-2009 BR-2359: a prompt over the budget is split by subdomain; every call carries the changed rule, the index and the decisions, and none is over the budget", () => {
     const { root, corpus } = bigDomain(30); // 4 rules of 30 KB: 120 KB of big
     const changed = changedRule(corpus, 6);
     const budget = 80 * KB;
