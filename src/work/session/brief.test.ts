@@ -94,6 +94,9 @@ describe("claims that no longer bind", () => {
     expect(lines.find((l) => l.startsWith("  C-3"))).not.toContain("expired");
     const data = JSON.parse(canon(root, "work", "status", "--json").out);
     expect(data.claims.map((c: { subject: string; state: string }) => [c.subject, c.state])).toEqual([["C-1", "expired"], ["C-2", "holder-gone"], ["C-3", "live"]]);
+    // the only events status writes: one lapse per failed claim, none for the live one, not repeated by the second status (BR-2360)
+    const lapses = db.db.query<{ kind: string; subject: string }, []>("SELECT kind, subject FROM events WHERE kind LIKE 'claim.%' AND kind NOT IN ('claim.take', 'claim.renew') ORDER BY id").all();
+    expect(lapses.map((e) => [e.kind, e.subject])).toEqual([["claim.expired", "C-1"], ["claim.holder-gone", "C-2"]]);
   });
 
   test("BR-2149: brief marks (claimed) only on a claim that still binds, not on an expired one or one whose session process exited", async () => {

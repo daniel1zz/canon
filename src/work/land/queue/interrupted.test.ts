@@ -160,6 +160,7 @@ describe("canon work status lists landings without a result", () => {
     expect(r.out).toContain("the close commit is the branch's top commit");
     expect(r.out).toContain(`canon work land\` again in ${p.s.worktree}`);
     expect(queueRows(p.root)).toEqual(before); // status is read-only
+    expect(kinds(p.root, p.s.change)).not.toContain("claim.holder-gone"); // the one event status may write is a claim lapse, and this claim names the lander (BR-2360)
     expect(kinds(p.root, p.s.change)).toEqual(["land.start", "land.turn"]);
     const json = JSON.parse((await run(p.root, ["work", "status", "--json"])).out) as { landings: { state: string; pid: number }[] };
     expect(json.landings.map((a) => [a.state, a.pid])).toEqual([["interrupted", pid]]);
