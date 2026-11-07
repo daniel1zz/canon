@@ -72,7 +72,7 @@ describe("canon events --follow", () => {
     db.value.close();
   }
 
-  test("BR-2357 BR-2156: a new event after start prints as a text line, the old ones do not, SIGTERM exits 0", async () => {
+  test("BR-2357 BR-2156 BR-2022: a new event after start prints as a text line, the old ones do not, SIGTERM exits 0", async () => {
     const root = withSharedAndSearch();
     const r = await follow(root, [], () => write(root, "handoff.write", "C-1"), (o) => o.includes("handoff.write"));
     const lines = r.out.trim().split("\n");
@@ -100,5 +100,10 @@ describe("canon events --follow", () => {
     const r = await follow(root, ["--since", "0", "--kind", "search"], () => {}, (o) => o.includes(" search "));
     expect(r.out).toMatch(/ search - \{"query":"q"/);
     expect(r.code).toBe(0);
+  });
+
+  test("BR-2357 BR-2156: --follow with an invalid --since exits 2 without following", () => {
+    const r = canon(withSharedAndSearch(), "events", "--follow", "--since", "abc");
+    expect([r.code, r.err.includes("--since must be an event id")]).toEqual([2, true]);
   });
 });
