@@ -6,6 +6,7 @@ import { dirname } from "node:path";
 import { CoordDb } from "../db.ts";
 import { worktreesDir } from "../session/session.ts";
 import { DEFAULT_DAYS, projectsDir, renderUsage, usageReport } from "./usage.ts";
+import { followEvents } from "./follow.ts";
 import { eventsSince, lastEventId, parseSince, renderEvents, renderWindow, windowSummary } from "./window.ts";
 
 /** `canon stats` and `canon events`: what the event table recorded. */
@@ -42,6 +43,12 @@ const stats = defineCommand({
   },
 });
 
+/** The `--kind` values, repeated or not. */
+function kindsOf(args: object): string[] {
+  const raw = (args as Record<string, unknown>)["kind"];
+  return raw === undefined ? [] : (Array.isArray(raw) ? raw : [raw]).map(String);
+}
+
 const events = defineCommand({
   meta: { description: "List raw coordination events (id, time, actor, worktree, kind, subject, detail), newest last" },
   args: {
@@ -49,12 +56,22 @@ const events = defineCommand({
     kind: { type: "string", description: "Only this event kind, e.g. land.ok; repeat for several" },
     subject: { type: "string", description: "Only events about this subject, e.g. C-12" },
     json: { type: "boolean" },
+    follow: { type: "boolean", description: "Keep running and print each new matching event (one JSON object per line with --json); starts after the latest event unless --since is given; stops on SIGTERM or SIGINT" },
   },
-  run({ args }) {
+  async run({ args }) {
     const ws = workspace();
+    if (args.follow) {
+      const filter = { kinds: kindsOf(args), ...(typeof args.subject === "string" ? { subject: args.subject } : {}) };
+      const from = args.since === undefined ? undefined : sinceArg(args.since);
+      let stop = false;
+      const onSignal = () => { stop = true; };
+      process.on("SIGTERM", onSignal);
+      process.on("SIGINT", onSignal);
+      await followEvents(ws.db, filter, from, (r) => say(args.json ? JSON.stringify(r) : renderEvents([r])), () => stop);
+      return;
+    }
     const since = args.since === undefined ? 0 : sinceArg(args.since);
-    const raw = (args as Record<string, unknown>)["kind"];
-    const kinds = raw === undefined ? [] : (Array.isArray(raw) ? raw : [raw]).map(String);
+    const kinds = kindsOf(args);
     const rows = eventsSince(ws.db, { since, kinds, ...(typeof args.subject === "string" ? { subject: args.subject } : {}) });
     if (args.json) return json(rows);
     say(renderEvents(rows));

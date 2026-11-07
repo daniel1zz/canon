@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
 import { computeStats, searchStats } from "./stats.ts";
+import { followEvents } from "./follow.ts";
 import { eventsSince, lastEventId, parseSince, renderEvents, renderWindow, windowSummary } from "./window.ts";
 
 function db(worktree?: string): CoordDb {
@@ -180,5 +181,37 @@ describe("subagent actors and the hook and handover counts", () => {
     expect(text).toContain("actors (3): agent:s, agent:s:a, agent:s:b");
     expect(text).toContain("claim handovers: 1; hook skips: 2");
     expect(windowSummary(d, 5).hookSkips).toBe(1);
+  });
+});
+
+describe("canon events --follow", () => {
+  /** Follows `d` with a fake sleep that runs `between[i]` after the i-th round and stops once they are used up. */
+  async function follow(d: CoordDb, since: number | undefined, kinds: string[], between: (() => void)[]) {
+    const seen: number[] = [];
+    let round = 0;
+    await followEvents(d, { kinds }, since, (r) => seen.push(r.id), () => round > between.length, 1000, async () => {
+      between[round]?.();
+      round++;
+    });
+    return seen;
+  }
+
+  test("BR-2357: without --since the latest event is the start; events written later come out oldest first", async () => {
+    const d = db();
+    filler(d, 5);
+    const seen = await follow(d, undefined, [], [() => { d.event("agent:a", "handoff.write", "C-1", {}); d.event("agent:a", "land.ok", "C-1", {}); }]);
+    expect(seen).toEqual([6, 7]);
+  });
+
+  test("BR-2357: with --since the events after it come out first, then new ones", async () => {
+    const d = db();
+    filler(d, 5);
+    expect(await follow(d, 3, [], [() => filler(d, 1)])).toEqual([4, 5, 6]);
+  });
+
+  test("BR-2357: the kind filter applies to new events", async () => {
+    const d = db();
+    const seen = await follow(d, undefined, ["land.ok"], [() => d.event("agent:a", "land.refuse", "C-1", {}), () => d.event("agent:a", "land.ok", "C-1", {})]);
+    expect(seen).toEqual([2]);
   });
 });
