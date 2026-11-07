@@ -2,6 +2,8 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
+import { takeClaim } from "../claims/claims.ts";
+import { processOf } from "../claims/liveness.ts";
 import { project, sh } from "../testkit.ts";
 
 const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
@@ -105,5 +107,32 @@ describe("canon events --follow", () => {
   test("BR-2357 BR-2156: --follow with an invalid --since exits 2 without following", () => {
     const r = canon(withSharedAndSearch(), "events", "--follow", "--since", "abc");
     expect([r.code, r.err.includes("--since must be an event id")]).toEqual([2, true]);
+  });
+
+  test("BR-2360 BR-2357: following with --kind claim.holder-gone prints a line when a claim's session process has exited", async () => {
+    const root = withSharedAndSearch();
+    const p = Bun.spawn(["sleep", "60"]);
+    const proc = processOf(p.pid);
+    if (!proc) throw new Error("no start time for a live child");
+    p.kill("SIGKILL");
+    await p.exited;
+    let taken = false;
+    const r = await follow(
+      root,
+      ["--json", "--kind", "claim.holder-gone"],
+      () => {
+        if (taken) return;
+        taken = true;
+        const db = CoordDb.open(join(root, ".git/canon/state.db"));
+        if (!db.ok) throw new Error(db.error.message);
+        takeClaim(db.value, "C-1", "/wt/C-1", "agent:a", 12 * 3600_000, proc);
+        db.value.close();
+      },
+      (o) => o.includes("claim.holder-gone"),
+    );
+    const lines = r.out.trim().split("\n");
+    expect(lines.length).toBe(1);
+    expect(JSON.parse(lines[0]!)).toMatchObject({ kind: "claim.holder-gone", subject: "C-1", detail: { holder: "agent:a", worktree: "/wt/C-1", version: 1 } });
+    expect(r.code).toBe(0);
   });
 });

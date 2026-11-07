@@ -6,6 +6,7 @@ import { dirname } from "node:path";
 import { CoordDb } from "../db.ts";
 import { worktreesDir } from "../session/session.ts";
 import { DEFAULT_DAYS, projectsDir, renderUsage, usageReport } from "./usage.ts";
+import { claimsWithState } from "../claims/claims.ts";
 import { followEvents } from "./follow.ts";
 import { eventsSince, lastEventId, parseSince, renderEvents, renderWindow, windowSummary } from "./window.ts";
 
@@ -67,7 +68,7 @@ const events = defineCommand({
       const onSignal = () => { stop = true; };
       process.on("SIGTERM", onSignal);
       process.on("SIGINT", onSignal);
-      await followEvents(ws.db, filter, from, (r) => say(args.json ? JSON.stringify(r) : renderEvents([r])), () => stop);
+      await followEvents(ws.db, filter, from, (r) => say(args.json ? JSON.stringify(r) : renderEvents([r])), () => stop, () => void claimsWithState(ws.db));
       return;
     }
     const since = args.since === undefined ? 0 : sinceArg(args.since);

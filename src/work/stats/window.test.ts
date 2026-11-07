@@ -189,7 +189,7 @@ describe("canon events --follow", () => {
   async function follow(d: CoordDb, since: number | undefined, kinds: string[], between: (() => void)[]) {
     const seen: number[] = [];
     let round = 0;
-    await followEvents(d, { kinds }, since, (r) => seen.push(r.id), () => round > between.length, 1000, async () => {
+    await followEvents(d, { kinds }, since, (r) => seen.push(r.id), () => round > between.length, () => {}, 1000, async () => {
       between[round]?.();
       round++;
     });
