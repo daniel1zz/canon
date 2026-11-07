@@ -21,7 +21,7 @@ title: 架构总览
 ## 容器：canon 做的
 
 **CLI 二进制 `canon`**
-- 职责：全部命令；没有常驻进程（后台部件见下）。多数命令读运行它的 checkout 里的 `canon/config.yaml`；合入评审的命令、时限和常驻说明清单例外，取自 main 上已合入的配置（BR-2074），所以在一次合入里改它们只对之后的合入生效。
+- 职责：全部命令；没有常驻进程（后台部件见下）；唯一一直运行的命令是前台的 `canon events --follow`，它是被调用方停止的长命令，不是后台部件（BR-2357）。多数命令读运行它的 checkout 里的 `canon/config.yaml`；合入评审的命令、时限和常驻说明清单例外，取自 main 上已合入的配置（BR-2074），所以在一次合入里改它们只对之后的合入生效。
 - 数据：无。
 - 代码：`src/invocation`（命令声明、退出码、配置读取；`tree.ts` 汇总各领域的 `commands.ts`）、`src/invocation/reference`（配置项参考和 schema）；共享的 git、进程、结果类型在 `src/kernel`，不属于任何领域。
 - 决策：D-2、D-3、D-4、D-15、D-28、D-63。
