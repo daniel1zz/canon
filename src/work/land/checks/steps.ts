@@ -1,5 +1,4 @@
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { git } from "../../../kernel/git.ts";
 import type { Say, Workspace } from "../../workspace.ts";
 import { changeIdsOnBranches } from "../../session/inflight.ts";
 import { readConfig } from "../../../invocation/config.ts";
@@ -13,17 +12,14 @@ import { changePort } from "../../hooks/ports.ts";
 import { type Doc } from "../../../knowledge/documents/model.ts";
 import { findDoc } from "../../../knowledge/query/query.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
-import { git } from "../../../kernel/git.ts";
-import { duplicatePrompt, reviewPrompt, runReview, SKILL_FILE, standingText, type DeletedDoc } from "../../../knowledge/review/review.ts";
-import { REVIEW_NONE, REVIEW_WAYS_OUT, reviewKeys } from "../../../knowledge/review/config-keys.ts";
-import { err, ok, type Result } from "../../../kernel/result.ts";
-import { ARCHITECTURE_FILE, hasContent, overviewText } from "../../../knowledge/check/architecture.ts";
+import { reviewPrompt, runReview } from "../../../knowledge/review/review.ts";
+import { REVIEW_NONE, REVIEW_WAYS_OUT } from "../../../knowledge/review/config-keys.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
 import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
 import { noticeProposedDecisions } from "./proposed.ts";
 import { reviewTree } from "./review-tree.ts";
+import { architectureOf, couldNotRun, duplicateReviewPrompt, reviewScope, reviewSettingsOn, standingTouched } from "./review-scope.ts";
 import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
-import { parse } from "yaml";
 import { checksAddedAndReviewed, checksAddedAndReviewedMessage, keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
 
 /** Per-kind counts and the files involved, so `canon stats` can tell which checks are precise (BR-2094, P6). */
@@ -106,37 +102,12 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
 
   // Every added, edited or deleted file under canon/rules, canon/decisions or canon/releases is reviewed (BR-2009): rule,
   // release and decision documents by their new text, deleted ones by the text they had on main, domain READMEs whole.
-  // core.quotePath=false: git otherwise prints non-ASCII paths quoted and octal-escaped, which match no document.
-  // A file only moved, with identical content, is neither changed nor deleted: moving 74 rules into
-  // subdomains must not re-review all of them (BR-2009). git pairs exact renames; the blobs are compared too.
-  const knowledge = git(wt, "-c", "core.quotePath=false", "diff", "--name-status", "--find-renames=100%", base.value, head.value, "--", "canon/rules", "canon/decisions", "canon/releases");
-  const entries: { status: string; path: string }[] = [];
-  const renamed: string[] = [];
-  for (const l of knowledge.ok && knowledge.value !== "" ? knowledge.value.split("\n") : []) {
-    const [status, from, to] = l.split("\t") as [string, string, string | undefined];
-    if (status[0] !== "R" || to === undefined) entries.push({ status: status[0]!, path: from });
-    else if (sameBlob(wt, `${base.value}:${from}`, `${head.value}:${to}`)) renamed.push(`${from} → ${to}`);
-    else entries.push({ status: "D", path: from }, { status: "A", path: to });
-  }
-  if (renamed.length > 0) say(`review: ${renamed.length} file(s) only moved, not reviewed`);
-  const live = new Set(entries.filter((e) => e.status !== "D").map((e) => e.path));
-  const changedDocs = read.corpus.docs.filter((d) => live.has(d.path));
-  const deleted: DeletedDoc[] = entries
-    .filter((e) => e.status === "D" && e.path.endsWith(".md") && !e.path.endsWith("/README.md"))
-    .map((e) => {
-      const old = git(wt, "show", `${base.value}:${e.path}`);
-      const id = e.path.split("/").pop()!.match(/^[A-Z][A-Z0-9]*-\d+/)?.[0] ?? e.path;
-      return { id, path: e.path, text: old.ok ? old.value : "" };
-    });
+  const scope = reviewScope(wt, base.value, head.value, read.corpus);
+  const { entries, changedDocs, deleted, readmes, deletedReadmes, reviewed } = scope;
+  if (scope.renamed.length > 0) say(`review: ${scope.renamed.length} file(s) only moved, not reviewed`);
   // Sources new to main are checked once, here, on the tree that becomes main (BR-2111).
   const sourceFailures = await checkSources(wt, base.value, entries, read.corpus.docs, opts.fetcher ?? httpFetch);
   if (sourceFailures.length > 0) return refuse("source", `decision sources do not hold:\n${sourceFailures.map((f) => `  - ${f}`).join("\n")}`);
-  const readmes = read.corpus.domains.filter((dom) => live.has(dom.path)).map((dom) => dom.name);
-  const deletedReadmes = entries.filter((e) => e.status === "D" && e.path.endsWith("/README.md")).map((e) => {
-    const old = git(wt, "show", `${base.value}:${e.path}`);
-    return { path: e.path, text: old.ok ? old.value : "" }; // the text on main, like a deleted rule's (BR-2009)
-  });
-  const reviewed = [...changedDocs.map((d) => d.id), ...deleted.map((d) => `${d.id} (deleted)`), ...readmes.map((n) => `${n} README`), ...deletedReadmes.map((r) => `${r.path} (deleted)`)];
   let reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined;
   // reason: how a landing is reviewed (the command, its limit, the standing instruction list) comes from main's already-landed
   // config, never from the change's own tree: a change that swaps the reviewer would otherwise review itself (BR-2074, #115)
@@ -148,8 +119,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   const reviewer = onMain.review === REVIEW_NONE ? undefined : onMain.review;
   const limits = { timeoutMs: onMain.reviewTimeoutMs, track: (r: { kill(): void } | undefined) => (v.running.review = r) };
   // Standing instructions added or edited by this landing are reviewed for requirements stated twice (BR-2143), by main's list.
-  const touched = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=d", base.value, head.value);
-  const standing = (touched.ok && touched.value !== "" ? touched.value.split("\n") : []).filter((p) => onMain.instructions.includes(p) || SKILL_FILE.test(p));
+  const standing = standingTouched(wt, base.value, head.value, onMain.instructions);
   // reason: a wording-only record needs the review's judgement even when no rule file changed in this landing (BR-2239)
   if (execution.wording.length > 0 && !reviewer) return refuse("review", wordingMessage(execution.wording.map((q) => q.id), undefined, false));
   const needs = [...reviewed, ...standing];
@@ -167,11 +137,9 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       say(`review: ${[...reviewed, ...execution.wording.map((q) => `${q.id} (wording judgement)`)].join(", ")}`);
       const at = tree.get();
       if (!at.ok) return refuse("environment", at.error.message);
-      // reason: the overview is read as context and never makes a landing that only touches it a review (BR-2009, D-65)
-      const overview = overviewText(wt);
-      const overviewDiff = overview !== undefined && hasContent(overview) ? git(wt, "diff", "--no-color", base.value, head.value, "--", ARCHITECTURE_FILE) : undefined;
-      if (overviewDiff && !overviewDiff.ok) return refuse("environment", overviewDiff.error.message);
-      const architecture = overviewDiff?.ok ? { text: overview!, diff: overviewDiff.value } : undefined;
+      const overview = architectureOf(wt, base.value, head.value);
+      if (!overview.ok) return refuse("environment", overview.error.message);
+      const architecture = overview.value;
       const v = await runReview(reviewer, at.value, reviewPrompt(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording, ...(architecture ? { architecture } : {}) }), limits);
       if (!v.ok) return refuse("review", couldNotRun("rule", v.error.message, at.value, mainAt));
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings, commit: head.value, ...(execution.wording.length > 0 ? { wording: v.value.wording ?? {} } : {}) });
@@ -192,13 +160,9 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       say(`review: standing instructions ${standing.join(", ")}`);
       const at = tree.get();
       if (!at.ok) return refuse("environment", at.error.message);
-      const diffs: { path: string; diff: string }[] = [];
-      for (const path of standing) {
-        const d = git(wt, "-c", "core.quotePath=false", "diff", "--no-color", base.value, head.value, "--", path);
-        if (!d.ok) return refuse("environment", d.error.message);
-        diffs.push({ path, diff: d.value });
-      }
-      const v = await runReview(reviewer, at.value, duplicatePrompt(standing, standingText(wt, onMain.instructions), opts.guide, standing.filter((p) => SKILL_FILE.test(p)).map((path) => ({ path, text: readFileSync(join(wt, path), "utf8") })), diffs), limits);
+      const prompt = duplicateReviewPrompt(wt, base.value, head.value, standing, onMain.instructions, opts.guide);
+      if (!prompt.ok) return refuse("environment", prompt.error.message);
+      const v = await runReview(reviewer, at.value, prompt.value, limits);
       if (!v.ok) return refuse("review", couldNotRun("duplicate", v.error.message, at.value, mainAt));
       ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: standing, findings: v.value.findings, commit: head.value });
       if (v.value.verdict === "block") return refuse("review", `duplicate review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
@@ -234,36 +198,6 @@ function turnedOffMessage(docs: readonly string[], before: string | undefined, n
   return [`review: this landing ${is} (main has ${was}) and also changes ${docs.join(", ")}, which would then land unreviewed`, ...REVIEW_WAYS_OUT].join("\n");
 }
 
-/** The review settings canon/config.yaml has at `rev` (main), each read as canon reads it; defaults when it has no config (#115). */
-function reviewSettingsOn(wt: string, rev: string): Result<{ review: string | undefined; reviewTimeoutMs: number; instructions: readonly string[] }> {
-  const text = git(wt, "show", `${rev}:canon/config.yaml`);
-  let raw: Record<string, unknown> = {};
-  if (text.ok) {
-    try {
-      const parsed = parse(text.value) as unknown;
-      if (parsed !== null && typeof parsed === "object" && !Array.isArray(parsed)) raw = parsed as Record<string, unknown>;
-    } catch (e) {
-      return err("invalid", `not valid YAML: ${(e as Error).message}`);
-    }
-  }
-  const ctx = { root: wt, raw };
-  const field = <T>(k: { key: string; default: T; read: (value: unknown, c: typeof ctx) => Result<T> }): Result<T> => (raw[k.key] === undefined ? ok(k.default) : k.read(raw[k.key], ctx));
-  const review = field(reviewKeys.review);
-  if (!review.ok) return review;
-  const reviewTimeoutMs = field(reviewKeys.reviewTimeoutMs);
-  if (!reviewTimeoutMs.ok) return reviewTimeoutMs;
-  const instructions = field(reviewKeys.instructions);
-  if (!instructions.ok) return instructions;
-  return ok({ review: review.value, reviewTimeoutMs: reviewTimeoutMs.value, instructions: instructions.value });
-}
-
-/** Whether two `<rev>:<path>` objects are the same blob, i.e. the same bytes. */
-function sameBlob(wt: string, a: string, b: string): boolean {
-  const x = git(wt, "rev-parse", a);
-  const y = git(wt, "rev-parse", b);
-  return x.ok && y.ok && x.value === y.value;
-}
-
 /**
  * BR-2111: a decision added by this landing cites at least one source under its options, and every source
  * line not already on main (in that decision) is verified against what it names. A source that cannot be
@@ -284,13 +218,4 @@ async function checkSources(wt: string, base: string, entries: readonly { status
     for (const f of await verify(wt, now.filter((s) => !before.has(`${s.target} ${s.quote}`)), fetcher)) failures.push(`${d.id}: ${f}`);
   }
   return failures;
-}
-
-/** Why a review that could not run refused the landing, and what its directory lacks (BR-2216). */
-function couldNotRun(kind: "rule" | "duplicate", error: string, dir: string, main: string): string {
-  return [
-    `the ${kind} review could not run: ${error}`,
-    // reason: the review runs in a checkout of main's commit, so a command that needs git-ignored files fails there (BR-2216, D-51)
-    `  the review command ran in a temporary worktree at main's commit ${main.slice(0, 9)} (${dir}, removed afterwards), which holds only committed files: git-ignored files such as node_modules, .env or *.local.json are not there, so the command must not depend on them`,
-  ].join("\n");
 }

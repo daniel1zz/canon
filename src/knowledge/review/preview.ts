@@ -1,0 +1,120 @@
+import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { isAbsolute, join } from "node:path";
+import { git, gitEnv } from "../../kernel/git.ts";
+import { ok, type Result } from "../../kernel/result.ts";
+import type { Workspace } from "../../work/workspace.ts";
+import { claimOfWorktree } from "../../work/claims/claims.ts";
+import { architectureOf, couldNotRun, duplicateReviewPrompt, reviewScope, reviewSettingsOn, standingTouched } from "../../work/land/checks/review-scope.ts";
+import { reviewTree } from "../../work/land/checks/review-tree.ts";
+import type { Running } from "../../work/land/outcome.ts";
+import { readCorpus } from "../documents/read.ts";
+import { findDoc } from "../query/query.ts";
+import { REVIEW_NONE } from "./config-keys.ts";
+import { reviewPrompt, runReview } from "./review.ts";
+
+/** What `canon work review` found, as the command turns it into text and an exit code (BR-2358). */
+export type PreviewOutcome =
+  | { readonly kind: "ok" | "block"; readonly findings: readonly { readonly review: "rule" | "duplicate"; readonly text: string }[]; readonly reviewed: readonly string[]; readonly behind: number; readonly main: string }
+  | { readonly kind: "nothing" | "off"; readonly behind: number; readonly main: string }
+  | { readonly kind: "unconfigured"; readonly needs: readonly string[]; readonly main: string }
+  | { readonly kind: "usage" | "failed"; readonly message: string };
+
+/**
+ * The tree of everything in `root` as it is now: committed, uncommitted and untracked files, made with a scratch index so
+ * the worktree's own index and files stay as they are. Files git ignores are not in it, as they are not in a commit.
+ */
+function currentTree(root: string): Result<string> {
+  const scratch = mkdtempSync(join(tmpdir(), "canon-review-tree-"));
+  const env = { GIT_INDEX_FILE: join(scratch, "index") };
+  try {
+    const own = git(root, "rev-parse", "--git-path", "index");
+    if (!own.ok) return own;
+    const path = isAbsolute(own.value) ? own.value : join(root, own.value);
+    if (existsSync(path)) copyFileSync(path, env.GIT_INDEX_FILE);
+    else {
+      const r = gitEnv(root, env, "read-tree", "HEAD");
+      if (!r.ok) return r;
+    }
+    const added = gitEnv(root, env, "add", "-A");
+    if (!added.ok) return added;
+    return gitEnv(root, env, "write-tree");
+  } finally {
+    rmSync(scratch, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The landing's rule review and duplicate review, run on this worktree's current text with main's reviewer, limit and
+ * instruction list, in a temporary worktree at main's commit, from the same code the landing uses (BR-2358, BR-2216).
+ * It records `review.preview`, never a landing's review result, and attaches no note to any document (D-21).
+ */
+export async function previewReview(ws: Workspace, guide: string | undefined): Promise<PreviewOutcome> {
+  const usage = (message: string): PreviewOutcome => ({ kind: "usage", message });
+  if (ws.root === ws.primary) return usage(`canon work review runs in a change's worktree, not in the primary checkout (${ws.root})`);
+  const subject = claimOfWorktree(ws.db, ws.root)?.subject ?? null;
+  if (subject === null) return usage(`canon work review runs in a change's worktree; ${ws.root} is not one (canon work start <C-n> makes one)`);
+  const main = git(ws.root, "rev-parse", "--verify", `${ws.config.main}^{commit}`);
+  if (!main.ok) return { kind: "failed", message: main.error.message };
+  const base = git(ws.root, "merge-base", "HEAD", main.value);
+  if (!base.ok) return { kind: "failed", message: base.error.message };
+  const ahead = git(ws.root, "rev-list", "--count", `${base.value}..${main.value}`);
+  if (!ahead.ok) return { kind: "failed", message: ahead.error.message };
+  const behind = Number(ahead.value);
+  const head = currentTree(ws.root);
+  if (!head.ok) return { kind: "failed", message: head.error.message };
+
+  const settings = reviewSettingsOn(ws.root, main.value);
+  if (!settings.ok) return { kind: "failed", message: `canon/config.yaml on ${ws.config.main} cannot be read for the review settings: ${settings.error.message}` };
+  const onMain = settings.value;
+  const read = readCorpus(ws.root, ws.config.types, ws.config);
+  const scope = reviewScope(ws.root, base.value, head.value, read.corpus);
+  const standing = standingTouched(ws.root, base.value, head.value, onMain.instructions);
+  const needs = [...scope.reviewed, ...standing];
+  if (needs.length === 0) return { kind: "nothing", behind, main: main.value };
+  if (!onMain.review) return { kind: "unconfigured", needs, main: main.value };
+  if (onMain.review === REVIEW_NONE) return { kind: "off", behind, main: main.value };
+
+  const running: Running = {};
+  const tree = reviewTree(ws, running, main.value);
+  // reason: a signal must stop the reviewer and remove the temporary worktree, as it does for a landing (BR-2296, BR-2216)
+  const onSignal = (signal: NodeJS.Signals) => {
+    running.review?.kill();
+    tree.release();
+    process.exit(signal === "SIGINT" ? 130 : 143);
+  };
+  process.on("SIGTERM", onSignal);
+  process.on("SIGINT", onSignal);
+  const limits = { timeoutMs: onMain.reviewTimeoutMs, track: (r: { kill(): void } | undefined) => (running.review = r) };
+  const findings: { review: "rule" | "duplicate"; text: string }[] = [];
+  let blocked = false;
+  try {
+    const at = tree.get();
+    if (!at.ok) return { kind: "failed", message: at.error.message };
+    if (scope.reviewed.length > 0) {
+      const architecture = architectureOf(ws.root, base.value, head.value);
+      if (!architecture.ok) return { kind: "failed", message: architecture.error.message };
+      const prompt = reviewPrompt(ws.root, read.corpus, scope.changedDocs, { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change: findDoc(read.corpus, subject), ...(architecture.value ? { architecture: architecture.value } : {}) });
+      const v = await runReview(onMain.review, at.value, prompt, limits);
+      if (!v.ok) return { kind: "failed", message: couldNotRun("rule", v.error.message, at.value, main.value) };
+      findings.push(...v.value.findings.map((text) => ({ review: "rule" as const, text })));
+      blocked ||= v.value.verdict === "block";
+    }
+    if (standing.length > 0) {
+      const prompt = duplicateReviewPrompt(ws.root, base.value, head.value, standing, onMain.instructions, guide);
+      if (!prompt.ok) return { kind: "failed", message: prompt.error.message };
+      const v = await runReview(onMain.review, at.value, prompt.value, limits);
+      if (!v.ok) return { kind: "failed", message: couldNotRun("duplicate", v.error.message, at.value, main.value) };
+      findings.push(...v.value.findings.map((text) => ({ review: "duplicate" as const, text })));
+      blocked ||= v.value.verdict === "block";
+    }
+  } finally {
+    process.off("SIGTERM", onSignal);
+    process.off("SIGINT", onSignal);
+    const gone = tree.release();
+    if (!gone.ok) console.error(`canon: ${gone.error.message}`);
+  }
+  const verdict = blocked ? "block" : "ok";
+  ws.db.event(ws.actor, "review.preview", subject, { verdict, findings: findings.length, docs: scope.reviewed, standing, tree: head.value, main: main.value });
+  return { kind: verdict, findings, reviewed: needs, behind, main: main.value };
+}

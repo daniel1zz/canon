@@ -5,6 +5,7 @@ import { referenceCommands } from "./reference/commands.ts";
 import { checkCommands } from "../knowledge/check/commands.ts";
 import { documentCommands } from "../knowledge/documents/commands.ts";
 import { queryCommands } from "../knowledge/query/commands.ts";
+import { reviewCommands } from "../knowledge/review/commands.ts";
 import { releaseCommands } from "../knowledge/releases/commands.ts";
 import { workCommands } from "../work/commands.ts";
 import { claimCommands } from "../work/claims/commands.ts";
@@ -36,6 +37,7 @@ export const main = defineCommand({
     documentCommands,
     queryCommands,
     releaseCommands,
+    reviewCommands,
     executionCommands,
     workCommands,
     sessionCommands,
