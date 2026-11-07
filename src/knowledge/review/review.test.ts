@@ -67,6 +67,34 @@ describe("rule review of deleted documents", () => {
   });
 });
 
+describe("rule review of changed decisions", () => {
+  const decision = (n: number, body: string) => `---\nid: ${id("D", n)}\ntitle: Decision ${n}\nstatus: proposed\n---\n${body}\n`;
+
+  test("BR-2009: changed decisions bring the whole top-level domain of the rules they name, each domain once and each decision text once", () => {
+    const { root, corpus } = corpusOf({
+      ...files,
+      [`canon/decisions/${id("D", 5)}.md`]: decision(5, `Drop rule ${id("BR", 2)} matters. Unique text five.`),
+      [`canon/decisions/${id("D", 6)}.md`]: decision(6, `Land rule ${id("BR", 3)} matters. Unique text six.`),
+    });
+    const changed = corpus.docs.filter((d) => d.id === id("D", 5) || d.id === id("D", 6));
+    const prompt = reviewPrompt(root, corpus, changed);
+    expect(prompt.split("# Current context for work\n").length).toBe(2); // once, though both decisions name work rules
+    expect(prompt).toContain("Archive before deleting."); // work/drop
+    expect(prompt).toContain("Queue in arrival order."); // and work/land: the whole top-level domain
+    expect(prompt).not.toContain("# Current context for billing");
+    expect(prompt).not.toContain(`# Current context for ${id("D", 5)}`);
+    expect(prompt.split("Unique text five.").length).toBe(2); // the changed text is not repeated as context
+    expect(prompt.split("Unique text six.").length).toBe(2);
+  });
+
+  test("BR-2009: a changed decision that names no rule brings no domain context", () => {
+    const { root, corpus } = corpusOf({ ...files, [`canon/decisions/${id("D", 5)}.md`]: decision(5, "No rule named.") });
+    const prompt = reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("D", 5)));
+    expect(prompt).not.toContain("# Current context for");
+    expect(prompt).toContain("No rule named.");
+  });
+});
+
 describe("rule review prompt", () => {
   test("BR-2036: the prompt lists every active rule with its domain and every accepted decision, not proposed ones", () => {
     const { root, corpus } = corpusOf(files);

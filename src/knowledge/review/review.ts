@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { parse } from "yaml";
 import { stripCode, type Corpus, type Doc, type Rule } from "../documents/model.ts";
 import { idsIn } from "../documents/types.ts";
-import { contextFor, renderContext } from "../query/query.ts";
+import { contextFor, referencedIds, renderContext } from "../query/query.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { LESSONS_SECTION, section } from "../documents/templates.ts";
 
@@ -133,11 +133,14 @@ ${q.examples.trim()}
     parts.push(`# Current context for ${name}\n\n${renderContext(root, contextFor(corpus, name), { full: true })}`);
   }
   for (const d of changed) {
-    // reason: the review reads the whole top-level domain, so a contradiction across its subdomains is still seen (BR-2113)
-    const target = d.kind === "rule" ? d.domain.split("/")[0]! : d.id;
-    if (seen.has(target)) continue;
-    seen.add(target);
-    parts.push(`# Current context for ${target}\n\n${renderContext(root, contextFor(corpus, target), { full: true })}`);
+    // reason: the review reads the whole top-level domain, so a contradiction across its subdomains is still seen (BR-2113);
+    // a decision or release brings the top-level domains of the rules it names, each given once however many name it (BR-2009, #133)
+    const tops = d.kind === "rule" ? [d.domain.split("/")[0]!] : namedTops(corpus, d);
+    for (const top of tops) {
+      if (seen.has(top)) continue;
+      seen.add(top);
+      parts.push(`# Current context for ${top}\n\n${renderContext(root, contextFor(corpus, top), { full: true })}`);
+    }
   }
   // reason: a deletion affects the domain it leaves, so the review sees what remains there (BR-2009, #74):
   // a deleted rule's top-level domain, and the top-level domains of the rules a deleted decision named on main
@@ -152,6 +155,13 @@ ${q.examples.trim()}
   const accepted = corpus.docs.filter((d) => d.kind === "decision" && d.status === "accepted");
   if (accepted.length) parts.push(`# Accepted decisions\n\n${accepted.map((d) => `- ${d.id} ${d.title}`).join("\n")}`);
   return parts.join("\n");
+}
+
+/** Top-level domains of the current rules a changed document names, in corpus order. */
+function namedTops(corpus: Corpus, doc: Doc): string[] {
+  const named = referencedIds(doc, corpus.types);
+  const tops = new Set(corpus.docs.filter((x): x is Rule => x.kind === "rule" && named.has(x.id)).map((r) => r.domain.split("/")[0]!));
+  return corpus.domains.filter((d) => !d.parent && tops.has(d.name)).map((d) => d.name);
 }
 
 /** Top-level domains, still in the corpus, that the deleted documents belonged to or named. */
