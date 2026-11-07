@@ -11,7 +11,7 @@ import type { Running } from "../../work/land/outcome.ts";
 import { readCorpus } from "../documents/read.ts";
 import { findDoc } from "../query/query.ts";
 import { REVIEW_NONE } from "./config-keys.ts";
-import { reviewPrompt, runReview } from "./review.ts";
+import { reviewPrompts, runReview, runReviews } from "./review.ts";
 
 /** What `canon work review` found, as the command turns it into text and an exit code (BR-2358). */
 export type PreviewOutcome =
@@ -94,8 +94,9 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
     if (scope.reviewed.length > 0) {
       const architecture = architectureOf(ws.root, base.value, head.value);
       if (!architecture.ok) return { kind: "failed", message: architecture.error.message };
-      const prompt = reviewPrompt(ws.root, read.corpus, scope.changedDocs, { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change: findDoc(read.corpus, subject), ...(architecture.value ? { architecture: architecture.value } : {}) });
-      const v = await runReview(onMain.review, at.value, prompt, limits);
+      const prompts = reviewPrompts(ws.root, read.corpus, scope.changedDocs, { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change: findDoc(read.corpus, subject), ...(architecture.value ? { architecture: architecture.value } : {}) }, onMain.reviewMaxPromptBytes);
+      if (!prompts.ok) return { kind: "failed", message: prompts.error.message };
+      const v = await runReviews(onMain.review, at.value, prompts.value, limits);
       if (!v.ok) return { kind: "failed", message: couldNotRun("rule", v.error.message, at.value, main.value) };
       findings.push(...v.value.findings.map((text) => ({ review: "rule" as const, text })));
       blocked ||= v.value.verdict === "block";

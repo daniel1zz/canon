@@ -84,7 +84,7 @@ export function duplicateReviewPrompt(wt: string, base: string, head: string, st
 }
 
 /** The review settings canon/config.yaml has at `rev` (main), each read as canon reads it; defaults when it has no config (#115). */
-export function reviewSettingsOn(wt: string, rev: string): Result<{ review: string | undefined; reviewTimeoutMs: number; instructions: readonly string[] }> {
+export function reviewSettingsOn(wt: string, rev: string): Result<{ review: string | undefined; reviewTimeoutMs: number; reviewMaxPromptBytes: number; instructions: readonly string[] }> {
   const text = git(wt, "show", `${rev}:canon/config.yaml`);
   let raw: Record<string, unknown> = {};
   if (text.ok) {
@@ -101,9 +101,11 @@ export function reviewSettingsOn(wt: string, rev: string): Result<{ review: stri
   if (!review.ok) return review;
   const reviewTimeoutMs = field(reviewKeys.reviewTimeoutMs);
   if (!reviewTimeoutMs.ok) return reviewTimeoutMs;
+  const reviewMaxPromptBytes = field(reviewKeys.reviewMaxPromptBytes);
+  if (!reviewMaxPromptBytes.ok) return reviewMaxPromptBytes;
   const instructions = field(reviewKeys.instructions);
   if (!instructions.ok) return instructions;
-  return ok({ review: review.value, reviewTimeoutMs: reviewTimeoutMs.value, instructions: instructions.value });
+  return ok({ review: review.value, reviewTimeoutMs: reviewTimeoutMs.value, reviewMaxPromptBytes: reviewMaxPromptBytes.value, instructions: instructions.value });
 }
 
 /** Whether two `<rev>:<path>` objects are the same blob, i.e. the same bytes. */

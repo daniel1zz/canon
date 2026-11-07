@@ -1,9 +1,9 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
-import { stripCode, type Corpus, type Doc, type Rule } from "../documents/model.ts";
+import { stripCode, type Corpus, type Doc, type Domain, type Rule } from "../documents/model.ts";
 import { idsIn } from "../documents/types.ts";
-import { contextFor, referencedIds, renderContext } from "../query/query.ts";
+import { contextFor, referencedIds, renderContext, ruleSection, type Context } from "../query/query.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { LESSONS_SECTION, section } from "../documents/templates.ts";
 
@@ -50,7 +50,14 @@ export interface ReviewExtras {
   readonly architecture?: { readonly text: string; readonly diff: string };
 }
 
+/** The review prompt with every affected domain's whole text in it, however large. */
 export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras = {}): string {
+  const contexts = contextTops(corpus, changed, extras).map((top) => contextSection(root, corpus, top));
+  return [...promptHead(corpus, changed, extras), ...contexts, ...promptTail(corpus)].join("\n");
+}
+
+/** Everything in the prompt before the affected domains' text; `note` is a line for the reviewer after the answer format. */
+function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras, note?: string): string[] {
   const parts: string[] = [
     "You review changes to a project's rules and decisions. Rules are the current truth of what the product must do; decisions record why.",
     "Block only for: a rule that contradicts another active rule (in any domain: see the rule index) or an accepted decision; a rule a test cannot decide (vague, no boundary, examples that do not pin the boundary); a decision without the options it rejected.",
@@ -67,6 +74,7 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
     extras.wording?.length
       ? 'Answer with JSON only: {"verdict":"ok"|"block","findings":["<one sentence each, naming the id>"],"wording":{"<rule id>":"wording"|"behaviour"}}, with one wording entry per rule under # Wording judgements'
       : 'Answer with JSON only: {"verdict":"ok"|"block","findings":["<one sentence each, naming the id>"]}',
+    ...(note ? [note] : []),
     "",
   ];
   if (extras.wording?.length) {
@@ -127,34 +135,39 @@ ${q.examples.trim()}
     for (const r of extras.deletedReadmes ?? []) parts.push(`## deleted domain README ${r.path}\n\n${r.text.trim()}\n`);
   }
   if (extras.readmes?.length) parts.push(`# Domain READMEs changed: ${extras.readmes.join(", ")} (their new text is in the current context below)`);
-  const seen = new Set<string>();
-  for (const name of [...new Set((extras.readmes ?? []).map((n) => n.split("/")[0]!))]) {
-    seen.add(name);
-    parts.push(`# Current context for ${name}\n\n${renderContext(root, contextFor(corpus, name), { full: true })}`);
-  }
+  return parts;
+}
+
+/** The top-level domains whose whole text the review shows, in the order it shows them (BR-2009, #133). */
+function contextTops(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras): string[] {
+  const out = new Set<string>();
+  for (const n of extras.readmes ?? []) out.add(n.split("/")[0]!);
   for (const d of changed) {
     // reason: the review reads the whole top-level domain, so a contradiction across its subdomains is still seen (BR-2113);
     // a decision or release brings the top-level domains of the rules it names, each given once however many name it (BR-2009, #133)
-    const tops = d.kind === "rule" ? [d.domain.split("/")[0]!] : namedTops(corpus, d);
-    for (const top of tops) {
-      if (seen.has(top)) continue;
-      seen.add(top);
-      parts.push(`# Current context for ${top}\n\n${renderContext(root, contextFor(corpus, top), { full: true })}`);
-    }
+    for (const top of d.kind === "rule" ? [d.domain.split("/")[0]!] : namedTops(corpus, d)) out.add(top);
   }
   // reason: a deletion affects the domain it leaves, so the review sees what remains there (BR-2009, #74):
   // a deleted rule's top-level domain, and the top-level domains of the rules a deleted decision named on main
-  for (const top of deletedDomains(corpus, extras.deleted ?? [])) {
-    if (seen.has(top)) continue;
-    seen.add(top);
-    parts.push(`# Current context for ${top}\n\n${renderContext(root, contextFor(corpus, top), { full: true })}`);
-  }
+  for (const top of deletedDomains(corpus, extras.deleted ?? [])) out.add(top);
+  return [...out];
+}
+
+const contextHeader = (top: string): string => `# Current context for ${top}\n\n`;
+
+function contextSection(root: string, corpus: Corpus, top: string): string {
+  return `${contextHeader(top)}${renderContext(root, contextFor(corpus, top), { full: true })}`;
+}
+
+/** The rule index and the accepted decisions' titles, which every call of a split review carries. */
+function promptTail(corpus: Corpus): string[] {
+  const parts: string[] = [];
   // reason: planned rules constrain execution too, so a contradiction with one is found as well (BR-2036, BR-2235)
   const index = corpus.docs.filter((d) => d.kind === "rule" && d.status !== "retired");
   parts.push(`# Rule index (every active and planned rule, all domains)\n\n${index.map((r) => `- ${r.id} [${r.kind === "rule" ? r.domain : ""}]${r.kind === "rule" && r.status === "planned" ? " [规划中]" : ""}${r.kind === "rule" && r.release ? ` [${r.release}]` : ""} ${r.title}`).join("\n")}`);
   const accepted = corpus.docs.filter((d) => d.kind === "decision" && d.status === "accepted");
   if (accepted.length) parts.push(`# Accepted decisions\n\n${accepted.map((d) => `- ${d.id} ${d.title}`).join("\n")}`);
-  return parts.join("\n");
+  return parts;
 }
 
 /** Top-level domains of the current rules a changed document names, in corpus order. */
@@ -286,4 +299,117 @@ export function duplicatePrompt(changed: readonly string[], standing: StandingTe
   // reason: without the diff the reviewer cannot tell duplication this landing added from old duplication in the same file (BR-2143, #121)
   for (const d of diffs) parts.push(`# ${d.path} (diff of this landing, \`+\` lines are added or changed)\n\n${d.diff.trim()}\n`);
   return parts.join("\n");
+}
+
+const bytes = (text: string): number => Buffer.byteLength(text);
+const kb = (n: number): string => `${Math.ceil(n / 1024)}`;
+
+/** One call of a split review: the groups of domain text it carries, per top-level domain, and their estimated size. */
+interface Call {
+  readonly groups: Map<string, { readonly emitted: Set<string>; readonly blocks: string[] }>;
+  size: number;
+}
+
+/**
+ * The prompts one rule review is made of (BR-2359, D-67). Everything fits in `budgetBytes`: one prompt, exactly what
+ * `reviewPrompt` gives. Otherwise every call carries the changed documents, the rule index and the accepted decisions'
+ * titles, plus the affected domains' text packed by subdomain; a fixed part that alone is over budget is an error.
+ */
+export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras, budgetBytes: number): Result<readonly string[]> {
+  const whole = reviewPrompt(root, corpus, changed, extras);
+  if (bytes(whole) <= budgetBytes) return ok([whole]);
+
+  const tail = promptTail(corpus);
+  const noWording: ReviewExtras = { ...extras, wording: [] };
+  // reason: the note names the call and how many there are, which are known only after packing; its room is reserved up front
+  const NOTE_ROOM = 256;
+  const fixed = (first: boolean): number => bytes([...promptHead(corpus, changed, first ? extras : noWording), ...tail].join("\n")) + NOTE_ROOM;
+  const tooBig = (need: number, what: string): Result<never> =>
+    err("invalid", `the rule review prompt cannot be made smaller than ${kb(need)} KB (${what}), above review_max_prompt_kb = ${kb(budgetBytes)} KB: land the changed documents in several smaller changes`);
+  if (fixed(true) > budgetBytes) return tooBig(fixed(true), "the changed documents, the rule index and the accepted decisions' titles, which every call carries");
+
+  const calls: Call[] = [];
+  let cur: Call = { groups: new Map(), size: 0 };
+  calls.push(cur);
+  const fixedRest = fixed(false);
+  const roomOf = (c: Call): number => (c === calls[0] ? budgetBytes - fixed(true) : budgetBytes - fixedRest);
+
+  for (const top of contextTops(corpus, changed, extras)) {
+    const ctx = contextFor(corpus, top);
+    const only = (d: Domain, rules: Context["rules"], withLists: boolean): Context => ({ ...ctx, domains: [d], rules, ...(withLists ? {} : { decisions: [], changes: [], extras: [], others: [] }) });
+    const readme = (d: Domain): string => renderContext(root, only(d, [], d.name === top), { full: true });
+    const chain = (d: Domain): Domain[] => ctx.domains.filter((x) => x.name === d.name || d.name.startsWith(`${x.name}/`));
+    // what adding `rules` of `d` costs in `call`: the group header, the READMEs of d and its parents not there yet, the rules
+    const price = (call: Call, d: Domain, rules: readonly Rule[]): number => {
+      const g = call.groups.get(top);
+      let n = g ? 0 : bytes(contextHeader(top)) + 1;
+      for (const x of chain(d)) if (!g?.emitted.has(x.name)) n += bytes(readme(x)) + 1;
+      for (const r of rules) n += bytes(ruleSection(r)) + 1;
+      return n;
+    };
+    const add = (call: Call, d: Domain, rules: readonly Rule[]): void => {
+      call.size += price(call, d, rules);
+      let g = call.groups.get(top);
+      if (!g) call.groups.set(top, (g = { emitted: new Set(), blocks: [] }));
+      for (const x of chain(d)) {
+        if (g.emitted.has(x.name)) continue;
+        g.emitted.add(x.name);
+        g.blocks.push(readme(x));
+      }
+      for (const r of rules) g.blocks.push(ruleSection(r));
+    };
+    const empty = (): Call => ({ groups: new Map(), size: 0 });
+    for (const d of ctx.domains) {
+      const rules = ctx.rules.filter((r) => r.domain === d.name);
+      if (price(cur, d, rules) <= roomOf(cur) - cur.size) {
+        add(cur, d, rules);
+        continue;
+      }
+      // a subdomain goes whole into the next call when it fits there, one rule at a time only when it fits nowhere
+      const next = empty();
+      if (cur.size > 0 && price(next, d, rules) <= budgetBytes - fixedRest) {
+        calls.push((cur = next));
+        add(cur, d, rules);
+        continue;
+      }
+      if (rules.length === 0) return tooBig(price(next, d, rules) + fixedRest, `the README of ${d.name}`);
+      for (const r of rules) {
+        if (price(cur, d, [r]) > roomOf(cur) - cur.size) {
+          if (cur.size > 0) calls.push((cur = empty()));
+          const need = price(cur, d, [r]) + (budgetBytes - roomOf(cur));
+          if (need > budgetBytes) return tooBig(need, `${r.id} with the domain texts above it, the smallest piece of ${top} the review can be given`);
+        }
+        add(cur, d, [r]);
+      }
+    }
+  }
+
+  const prompts = calls.map((call, i) => {
+    const note = calls.length > 1 ? `This review is split into ${calls.length} calls because of its size; this is call ${i + 1} of ${calls.length}. Every call shows all changed documents, the rule index and the accepted decisions' titles, and only part of the affected domains' text: judge what is shown, and never block because a rule or domain text is not shown in this call.` : undefined;
+    const groups = [...call.groups].map(([top, g]) => `${contextHeader(top)}${g.blocks.join("\n")}`);
+    return [...promptHead(corpus, changed, i === 0 ? extras : noWording, note), ...groups, ...tail].join("\n");
+  });
+  const worst = Math.max(...prompts.map(bytes));
+  if (worst > budgetBytes) return tooBig(worst, "a call of the split review is still above the budget");
+  return ok(prompts);
+}
+
+/** `Ncalls` sizes line for the landing output, e.g. `2 calls by size (review_max_prompt_kb): 1: 241 KB, 2: 224 KB`; undefined for a single call. */
+export function splitNote(prompts: readonly string[]): string | undefined {
+  return prompts.length > 1 ? `split into ${prompts.length} calls by size (review_max_prompt_kb): ${prompts.map((p, i) => `${i + 1}: ${kb(bytes(p))} KB`).join(", ")}` : undefined;
+}
+
+/**
+ * Runs the calls of one review one after another and merges their verdicts (BR-2359, D-67): `block` if any call blocked, the
+ * findings of all calls without repeats, the wording answers of the first call. A call that fails ends the review at once (BR-2216).
+ */
+export async function runReviews(command: string, cwd: string, prompts: readonly string[], limits: ReviewLimits): Promise<Result<ReviewVerdict>> {
+  const all: ReviewVerdict[] = [];
+  for (const prompt of prompts) {
+    const one = await runReview(command, cwd, prompt, limits);
+    if (!one.ok) return one;
+    all.push(one.value);
+  }
+  const first = all[0]!;
+  return ok({ verdict: all.some((x) => x.verdict === "block") ? "block" : "ok", findings: [...new Set(all.flatMap((x) => x.findings))], ...(first.wording ? { wording: first.wording } : {}) });
 }

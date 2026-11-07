@@ -47,6 +47,15 @@ export const reviewKeys = {
     listed: 65,
     checked: 45,
   }),
+  reviewMaxPromptBytes: configKey<number>({
+    key: "review_max_prompt_kb",
+    doc: "The most kilobytes (UTF-8) one run of the rule review's prompt may have; a larger review is split by subdomain into several runs of the `review` command, each with every changed document, and their findings are merged (BR-2359, D-67). The fixed part alone above it refuses the landing.",
+    default: 250 * 1024,
+    schema: positiveNumber(250),
+    read: positiveValue("review_max_prompt_kb", 1024),
+    listed: 66,
+    checked: 46,
+  }),
   instructions: configKey<readonly string[]>({
     key: "instructions",
     doc: "Repo-relative files every session reads at start; changing one triggers the duplicate review (BR-2143).",

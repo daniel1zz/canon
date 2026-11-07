@@ -124,6 +124,15 @@ describe("config validation", () => {
     expect([zero.code, zero.err.includes("review_timeout_minutes")]).toEqual([2, true]);
   });
 
+  test("BR-2045 BR-2359: review_max_prompt_kb is 250 KB when unset, is read in KB, and must be above 0", () => {
+    const fallback = readConfig(repo());
+    expect(fallback.ok && fallback.value.reviewMaxPromptBytes).toBe(250 * 1024);
+    const set = readConfig(repo({ "canon/config.yaml": "review_max_prompt_kb: 100\n" }));
+    expect(set.ok && set.value.reviewMaxPromptBytes).toBe(100 * 1024);
+    const zero = canon(repo({ "canon/config.yaml": "review_max_prompt_kb: 0\n" }), "show", ["C", 1].join("-"));
+    expect([zero.code, zero.err.includes("review_max_prompt_kb")]).toEqual([2, true]);
+  });
+
   test("BR-2045: a template for a type that is not declared is a config error", () => {
     const root = repo({ "canon/config.yaml": "main: main\n", "canon/templates/spec.md": "## x\n" });
     const r = canon(root, "check");
