@@ -24,12 +24,12 @@ import { pushMain } from "../remote/remote.ts";
 import { settleInterrupted } from "./queue/interrupted.ts";
 
 /**
- * Landing (design §6): queue → rebase onto main → floor → canon check → sources → review → before_land →
+ * Landing (design §6): queue → rebase onto main → canon check → sources → review → before_land → floor →
  * compare-and-swap main. The only refusals are outcome guards (P4).
  */
 
 /**
- * Lands the current worktree's branch on main: queue → rebase onto main → floor → canon check →
+ * Lands the current worktree's branch on main: queue → rebase onto main → canon check → review → before_land → floor →
  * compare-and-swap main. Runs on the exact tree that becomes main.
  */
 export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<LandOutcome> {
@@ -311,22 +311,26 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   }
 
   // A landing that changes only paths the project declares no test reads has main's already-tested code tree,
-  // so the floor would prove nothing new (BR-2164).
+  // so the floor would prove nothing new (BR-2164). Decided first so a refusal below records floor_skipped.
   const skip = floorDeferred ? undefined : floorSkip(wt, base.value, tested.value, say);
+  if (skip) floorSkipped = true;
+
+  // reason: this landing's own steps run before the floor, as each member's do in a batch, so a refusal from canon check
+  // or a review never wastes a floor run (BR-2014, BR-2248, D-26, D-42, #134); the test report canon check reads is
+  // written by `canon work test`, not by this floor (D-64).
+  const head = tested;
+  const steps = await verifyChange(ws, opts, say, { wt, base: base.value, main: base.value, head: head.value, before: before.value, subject, branch: t.branch, running: t.running });
+  if (!steps.ok) return refuse(steps.reason, steps.message, steps.findings);
+
   if (floorDeferred) {
     say("floor: deferred — floor_timing is after; main is tested in the background once it moves (canon floor watch)");
   } else if (skip) {
-    floorSkipped = true;
     say(`floor: skipped — all ${skip.paths.length} changed path(s) are under floor_skip_paths (${skip.under.join(", ")})`);
     ws.db.event(ws.actor, "floor.skip", subject, { entry, paths: skip.paths.slice(0, 50), under: skip.under });
   } else {
     const floor = await runFloor(ws, say, wt, `land-${entry}.log`, t.running);
     if (floor.code !== 0) return refuse("floor", `floor exited ${floor.code} (full log: ${floor.log})\n${floor.tail}`);
   }
-
-  const head = tested;
-  const steps = await verifyChange(ws, opts, say, { wt, base: base.value, main: base.value, head: head.value, before: before.value, subject, branch: t.branch, running: t.running });
-  if (!steps.ok) return refuse(steps.reason, steps.message, steps.findings);
   const now = git(wt, "rev-parse", "HEAD");
   const edits = changesIn(wt);
   if (!now.ok || now.value !== head.value || edits.length > 0) {

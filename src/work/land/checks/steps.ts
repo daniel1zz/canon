@@ -39,7 +39,7 @@ export interface StepFailure {
 export type Steps = { readonly ok: true; readonly reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined } | StepFailure;
 
 /**
- * One change's own landing steps after the floor, on the checkout `wt` at `head` (main or the batch chain at
+ * One change's own landing steps before the floor (BR-2014), on the checkout `wt` at `head` (main or the batch chain at
  * `base` below it): canon check, decision sources, the rule and duplicate reviews, before_land (BR-2016,
  * BR-2009, BR-2111, BR-2143, BR-2057). A solo landing runs them in its worktree; a batch, per change (BR-2172).
  */

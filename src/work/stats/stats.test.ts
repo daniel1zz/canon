@@ -30,9 +30,9 @@ describe("canon stats", () => {
     d.event("agent:a", "land.refuse", "C-4", { reason: "floor" });
     d.event("agent:a", "land.refuse", "C-5", { reason: "check" });
     const s = computeStats(d, {}, "2026-11-03");
-    expect([of(s, "floor").runs, of(s, "floor").refused]).toEqual([5, 1]);
-    expect([of(s, "check").runs, of(s, "check").refused]).toEqual([4, 1]);
-    expect(of(s, "review").runs).toBe(3);
+    expect([of(s, "floor").runs, of(s, "floor").refused]).toEqual([4, 1]); // the floor runs after canon check and the reviews (BR-2014)
+    expect([of(s, "check").runs, of(s, "check").refused]).toEqual([5, 1]);
+    expect(of(s, "review").runs).toBe(4);
     d.event("agent:a", "land.refuse", "C-6", { reason: "dirty" });
     d.event("agent:a", "land.refuse", "C-7", { reason: "on-main" });
     const early = computeStats(d, {}, "2026-11-03");

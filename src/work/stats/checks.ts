@@ -8,7 +8,6 @@ export const LAND_STAGES: readonly (readonly string[])[] = [
   ["timeout"],
   ["conflict"],
   ["config"],
-  ["floor"],
   ["config-key"],
   ["check"],
   ["activate", "rule-changed", "passes"],
@@ -16,6 +15,7 @@ export const LAND_STAGES: readonly (readonly string[])[] = [
   ["source"],
   ["review"],
   ["hook"],
+  ["floor"],
   ["moved-during-land"],
   ["main-moved", "main-dirty"],
 ];
