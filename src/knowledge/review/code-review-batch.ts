@@ -146,6 +146,8 @@ export interface BatchInput {
   /** Do not wait for a review that is running (the one the brief starts). */
   readonly noWait: boolean;
   readonly say: (line: string) => void;
+  /** Called after the deferred line: starts the background wait for the due batch (D-68). */
+  readonly onDeferred?: () => void;
 }
 
 /**
@@ -181,6 +183,7 @@ export async function reviewBatch(i: BatchInput): Promise<Result<void>> {
     const n = p.value.landings.length;
     if (!i.force && !reviewDue(p.value, i.limits)) {
       i.say(`deferred — ${n} landing(s) not reviewed yet (reviewed in a batch at ${i.limits.maxUnreviewed} or after ${i.limits.maxAgeMs / 60_000} min)`);
+      i.onDeferred?.();
       return ok(undefined);
     }
     const env: Env = {
@@ -252,5 +255,93 @@ export function startTrailingReview(ws: Workspace, say: Say): string | undefined
     closeSync(fd);
   }
   say(`code-review: ${u.pending.landings.length} landing(s) not reviewed and none left to trigger it; reviewing them in the background (log: ${log})`);
+  return log;
+}
+
+/** Whether a process is waiting for the due review: a holder is recorded and its process is not provably gone (D-11, D-68). */
+export function waiterRunning(db: CoordDb): boolean {
+  const row = db.db.query<ReviewerRow, []>("SELECT pid, pid_start FROM code_review_waiter WHERE id = 1").get();
+  return row !== null && isGone({ pid: row.pid, start: row.pid_start }) !== true;
+}
+
+/** Becomes the one waiter, taking over from a holder whose process is gone; false while another is alive (D-68). */
+function claimWaiter(db: CoordDb, self: Proc): boolean {
+  return db.db
+    .transaction(() => {
+      const row = db.db.query<ReviewerRow, []>("SELECT pid, pid_start FROM code_review_waiter WHERE id = 1").get();
+      if (row && !(row.pid === self.pid && row.pid_start === self.start) && isGone({ pid: row.pid, start: row.pid_start }) !== true) return false;
+      db.db.query("INSERT OR REPLACE INTO code_review_waiter(id, pid, pid_start, started_at) VALUES (1, ?, ?, ?)").run(self.pid, self.start, new Date().toISOString());
+      return true;
+    })
+    .immediate();
+}
+
+export interface WaitInput {
+  readonly cwd: string;
+  readonly db: CoordDb;
+  /** The main branch, whose tip is reviewed when the batch is due. */
+  readonly main: string;
+  readonly ai: string;
+  readonly gh: string;
+  readonly limits: { maxUnreviewed: number; maxAgeMs: number };
+  readonly say: (line: string) => void;
+  readonly sleep: (ms: number) => Promise<void>;
+}
+
+/**
+ * The background wait a deferred review starts (D-68): sleeps until the oldest unreviewed landing is
+ * `review_max_age_minutes` old, reviews the whole range up to main's tip, and repeats while landings still wait; ends
+ * when nothing is left. One waiter at a time; a second one ends at once.
+ */
+export async function waitThenReview(i: WaitInput): Promise<Result<void>> {
+  const me: Proc = selfProcess() ?? { pid: process.pid, start: "" };
+  if (!claimWaiter(i.db, me)) {
+    i.say("another process is waiting for the due review");
+    return ok(undefined);
+  }
+  try {
+    for (;;) {
+      const reviewed = readReviewedRef(i.cwd);
+      const head = git(i.cwd, "rev-parse", "--verify", `refs/heads/${i.main}`);
+      if (!head.ok) return err("io", head.error.message);
+      // reason: without the ref no review has run yet; the next landing's after_land creates it (BR-2315).
+      if (reviewed === null) return ok(undefined);
+      const p = pendingRange(i.cwd, reviewed, head.value, landedEvents(i.db));
+      if (!p.ok) return p;
+      if (p.value.commits.length === 0 || !p.value.codeChanged || p.value.landings.length === 0) {
+        i.say("nothing left to review");
+        return ok(undefined);
+      }
+      if (!reviewDue(p.value, i.limits)) {
+        const ms = p.value.oldestAt + i.limits.maxAgeMs - nowMs();
+        i.say(`waiting ${Math.ceil(ms / 60_000)} min until ${p.value.landings.length} landing(s) are due for review`);
+        await i.sleep(ms);
+        continue;
+      }
+      const r = await reviewBatch({ cwd: i.cwd, db: i.db, base: undefined, head: head.value, ai: i.ai, gh: i.gh, landed: landedEvents(i.db), limits: i.limits, force: false, noWait: false, say: i.say });
+      if (!r.ok) return r;
+    }
+  } finally {
+    i.db.db.query("DELETE FROM code_review_waiter WHERE id = 1 AND pid = ? AND pid_start = ?").run(me.pid, me.start);
+  }
+}
+
+/**
+ * After a deferred review: starts `command` (the review script in its waiting mode) detached in the primary checkout,
+ * unless a waiter is alive (D-68). Returns the log of the started waiter, if any.
+ */
+export function startReviewWaiter(ws: Workspace, command: string[], say: Say): string | undefined {
+  if (waiterRunning(ws.db)) return undefined;
+  const log = join(dirname(ws.db.db.filename), "logs", "code-review-wait.log");
+  mkdirSync(dirname(log), { recursive: true });
+  const fd = openSync(log, "a");
+  try {
+    // reason: its own process group and its own log, so after_land ends now and the end of the landing's session does not stop it (D-68).
+    const p = Bun.spawn(command, { cwd: ws.primary, stdout: fd, stderr: fd, stdin: "ignore", detached: true, env: { ...(process.env as Record<string, string>) } });
+    p.unref();
+  } finally {
+    closeSync(fd);
+  }
+  say(`waiting in the background until the batch is due (log: ${log})`);
   return log;
 }

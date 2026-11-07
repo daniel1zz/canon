@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { git } from "../../kernel/git.ts";
 import { processOf } from "../../work/claims/liveness.ts";
 import { hang, ws } from "../../work/testkit.ts";
+import { waitThenReview } from "./code-review-batch.ts";
 
 setDefaultTimeout(60_000);
 
@@ -66,7 +67,7 @@ function review(r: Repo, l: { base: string; head: string; change: string }, env:
     stdout: "pipe",
     stderr: "pipe",
     stdin: "ignore",
-    env: { ...process.env, CANON_ACTOR: "agent:a", CANON_BASE: l.base, CANON_HEAD: l.head, CANON_CHANGE: l.change, CANON_CODE_REVIEW_AI: `sh ${r.tools}/ai.sh`, CANON_GH: `bun ${r.tools}/gh.ts`, ...env },
+    env: { ...process.env, CANON_ACTOR: "agent:a", CANON_BASE: l.base, CANON_HEAD: l.head, CANON_CHANGE: l.change, CANON_CODE_REVIEW_AI: `sh ${r.tools}/ai.sh`, CANON_GH: `bun ${r.tools}/gh.ts`, CANON_CODE_REVIEW_WAITER: "0", ...env },
   });
   return { code: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() };
 }
@@ -332,5 +333,112 @@ describe("one code review at a time, through the coordination database", () => {
     } finally {
       other.kill("SIGKILL");
     }
+  });
+});
+
+describe("the background wait for a deferred review", () => {
+  const waiters = (r: Repo) => ws(r.root).db.db.query<{ pid: number; pid_start: string }, []>("SELECT pid, pid_start FROM code_review_waiter").all();
+
+  it("BR-2356: a deferred review starts one waiter in the background; while it lives a second deferred review starts none", async () => {
+    const r = setup();
+    const first = review(r, land(r, "a.ts"), { CANON_CODE_REVIEW_WAITER: "" });
+    expect(first.out).toContain("deferred — 1 landing(s) not reviewed yet");
+    expect(first.out).toContain("code-review: waiting in the background until the batch is due (log: ");
+    const end = Date.now() + 20_000;
+    while (waiters(r).length === 0) {
+      if (Date.now() > end) throw new Error("the waiter did not claim its row");
+      await Bun.sleep(50);
+    }
+    const [w] = waiters(r);
+    try {
+      expect(processOf(w!.pid)).not.toBeUndefined();
+      const second = review(r, land(r, "b.ts"), { CANON_CODE_REVIEW_WAITER: "" });
+      expect(second.out.trim()).toBe("code-review: deferred — 2 landing(s) not reviewed yet (reviewed in a batch at 10 or after 60 min)");
+      expect(waiters(r)).toEqual([w!]);
+      expect(r.aiCalls()).toBe(0);
+    } finally {
+      process.kill(w!.pid, "SIGKILL");
+    }
+  });
+
+  it("BR-2356: with CANON_CODE_REVIEW_WAITER=0 a deferred review starts no waiter", () => {
+    const r = setup();
+    const out = review(r, land(r, "a.ts"));
+    expect(out.out.trim()).toBe("code-review: deferred — 1 landing(s) not reviewed yet (reviewed in a batch at 10 or after 60 min)");
+    expect(waiters(r)).toEqual([]);
+  });
+
+  /** Runs the wait in this process; each sleep moves CANON_NOW forward by what it was asked to sleep and runs `during`. */
+  async function runWait(r: Repo, during: () => void = () => {}) {
+    const lines: string[] = [];
+    const saved = process.env["CANON_NOW"];
+    let now = Date.now();
+    process.env["CANON_NOW"] = new Date(now).toISOString();
+    try {
+      const w = ws(r.root);
+      const res = await waitThenReview({
+        cwd: r.root,
+        db: w.db,
+        main: "main",
+        ai: `sh ${r.tools}/ai.sh`,
+        gh: `bun ${r.tools}/gh.ts`,
+        limits: { maxUnreviewed: 10, maxAgeMs: 60 * 60_000 },
+        say: (l) => lines.push(l),
+        sleep: async (ms) => {
+          during();
+          now += ms + 1000;
+          process.env["CANON_NOW"] = new Date(now).toISOString();
+        },
+      });
+      return { res, lines };
+    } finally {
+      if (saved === undefined) delete process.env["CANON_NOW"];
+      else process.env["CANON_NOW"] = saved;
+    }
+  }
+
+  it("BR-2356: the waiter sleeps until the oldest landing is due, reviews up to main's tip, then ends and clears its row", async () => {
+    const r = setup();
+    const a = land(r, "a.ts");
+    review(r, a); // deferred; sets the ref at its base
+    let b: { head: string } | undefined;
+    const { res, lines } = await runWait(r, () => {
+      b ??= land(r, "b.ts");
+    });
+    expect(res.ok).toBe(true);
+    expect(lines[0]).toBe("waiting 60 min until 1 landing(s) are due for review");
+    expect(lines).toContain(`reviewed 2 landing(s) in one batch (${a.base.slice(0, 9)}..${b!.head.slice(0, 9)})`);
+    expect(lines.at(-1)).toBe("nothing left to review");
+    expect(r.aiCalls()).toBe(1);
+    expect(reviewed(r)).toBe(b!.head);
+    expect(waiters(r)).toEqual([]);
+  });
+
+  it("BR-2356: while another waiter is alive the wait ends at once without reviewing", async () => {
+    const r = setup();
+    review(r, land(r, "a.ts"));
+    const holder = hang();
+    try {
+      const me = processOf(holder.pid)!;
+      ws(r.root).db.db.query("INSERT INTO code_review_waiter(id, pid, pid_start, started_at) VALUES (1, ?, ?, ?)").run(me.pid, me.start, new Date().toISOString());
+      const { res, lines } = await runWait(r);
+      expect(res.ok).toBe(true);
+      expect(lines).toEqual(["another process is waiting for the due review"]);
+      expect(r.aiCalls()).toBe(0);
+      expect(waiters(r)).toEqual([{ pid: me.pid, pid_start: me.start }]);
+    } finally {
+      holder.kill("SIGKILL");
+    }
+  });
+
+  it("BR-2356: a failed review ends the wait with an error, leaves the ref and clears the row", async () => {
+    const r = setup();
+    const a = land(r, "a.ts");
+    review(r, a);
+    writeFileSync(join(r.tools, "ai-fails"), "");
+    const { res } = await runWait(r);
+    expect(res.ok).toBe(false);
+    expect(reviewed(r)).toBe(a.base);
+    expect(waiters(r)).toEqual([]);
   });
 });

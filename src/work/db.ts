@@ -72,6 +72,13 @@ CREATE TABLE IF NOT EXISTS code_reviewer (
   pid_start  TEXT NOT NULL,
   started_at TEXT NOT NULL
 );
+-- The one process waiting for the due post-land code review, by pid and process start (BR-2314, D-68).
+CREATE TABLE IF NOT EXISTS code_review_waiter (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  pid        INTEGER NOT NULL,
+  pid_start  TEXT NOT NULL,
+  started_at TEXT NOT NULL
+);
 -- "main is failing": at most one row, from the background floor's last failure until it passes (BR-2220, BR-2221).
 CREATE TABLE IF NOT EXISTS red_main (
   id         INTEGER PRIMARY KEY CHECK (id = 1),

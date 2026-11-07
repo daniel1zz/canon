@@ -74,7 +74,7 @@ canon 这个仓库在 `canon/config.yaml` 里配了下面这些，是项目配�
 
 - **`dist/canon`**：只在主 checkout 里，PATH 上的 canon 指向它；`after_green` 从后台测过的提交 `bun build --compile` 出来，不从没测过的 main 构建（D-31）。
 - **`scripts/review-claude.sh`**：`review` 配的命令，用 `claude -p` 做规则评审。
-- **`scripts/code-review.ts`**：`after_land` 配的命令，攒批后让 `claude -p` 评审合入的代码，只找安全和并发问题，发现的提成 GitHub issue。
+- **`scripts/code-review.ts`**：`after_land` 配的命令，攒批后让 `claude -p` 评审合入的代码，只找安全和并发问题，发现的提成 GitHub issue；没到点时在后台留一个等待进程（`--wait`，协调数据库的 `code_review_waiter` 保证只有一个），到点评审后退出（D-59、D-68）。
 - **floor**：类型检查加 `scripts/test.sh`；`floor_timing: after`、`land_batch_max: 4`。
 
 ## 主要流程
