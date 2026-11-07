@@ -217,6 +217,11 @@ export class CoordDb {
 
   /** Writes the event unless an identical one is already recorded under a unique index on events; true when it wrote (BR-2360). */
   eventOnce(actor: string, kind: string, subject: string | null, detail: Record<string, unknown>): boolean {
+    // reason: a read first, so a lapse already recorded takes no write lock each time a command judges it again (BR-2360).
+    const seen = this.db
+      .query("SELECT 1 FROM events WHERE subject IS ? AND kind = ? AND json_extract(detail, '$.version') IS ? AND kind IN ('claim.expired', 'claim.holder-gone') LIMIT 1")
+      .get(subject, kind, (detail["version"] as number | undefined) ?? null);
+    if (seen) return false;
     return (
       this.db
         .query("INSERT OR IGNORE INTO events(ts, actor, kind, subject, detail, worktree) VALUES (?, ?, ?, ?, ?, ?)")

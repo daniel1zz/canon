@@ -368,6 +368,16 @@ describe("claim lapses become events", () => {
     expect(d.value.eventOnce("canon", "claim.expired", "C-1", { version: 3 })).toBe(false);
     expect(d.value.eventOnce("canon", "claim.expired", "C-1", { version: 4 })).toBe(true);
     expect(d.value.eventOnce("canon", "claim.holder-gone", "C-1", { version: 3 })).toBe(true);
+    // a lapse already recorded is found by a read: no write lock is taken, so it succeeds while another connection holds the lock
+    const other = CoordDb.open(d.value.db.filename);
+    if (!other.ok) throw new Error(other.error.message);
+    other.value.db.exec("BEGIN IMMEDIATE");
+    try {
+      expect(d.value.eventOnce("canon", "claim.expired", "C-1", { version: 3 })).toBe(false);
+    } finally {
+      other.value.db.exec("ROLLBACK");
+      other.value.close();
+    }
   });
 
   test("BR-2360: two connections judging the same failed claim leave one event", async () => {

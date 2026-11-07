@@ -214,4 +214,32 @@ describe("canon events --follow", () => {
     const seen = await follow(d, undefined, ["land.ok"], [() => d.event("agent:a", "land.refuse", "C-1", {}), () => d.event("agent:a", "land.ok", "C-1", {})]);
     expect(seen).toEqual([2]);
   });
+
+  test("BR-2357: claims are judged on the first round and then at most every 5 seconds, not every second", async () => {
+    const d = db();
+    let t = 0;
+    const judged: number[] = [];
+    let round = 0;
+    await followEvents(d, { kinds: [] }, undefined, () => {}, () => round >= 11, () => judged.push(t), 1000, async (ms) => {
+      t += ms;
+      round++;
+    }, () => t);
+    expect(judged).toEqual([0, 5000, 10000]);
+  });
+
+  test("BR-2357: a busy database skips the round and following goes on; any other error ends it", async () => {
+    const d = db();
+    let round = 0;
+    const seen: number[] = [];
+    const busy = Object.assign(new Error("database is locked"), { code: "SQLITE_BUSY" });
+    await followEvents(d, { kinds: [] }, 0, (r) => seen.push(r.id), () => round >= 2, () => {
+      if (round === 0) throw busy;
+    }, 1000, async () => {
+      if (round === 0) d.event("agent:a", "land.ok", "C-1", {});
+      round++;
+    }, () => round * 5000);
+    expect(seen).toEqual([1]);
+    const broken = followEvents(d, { kinds: [] }, 0, () => {}, () => false, () => { throw new Error("no such table: claims"); }, 1000, async () => {}, () => 0);
+    await expect(broken).rejects.toThrow("no such table: claims");
+  });
 });
