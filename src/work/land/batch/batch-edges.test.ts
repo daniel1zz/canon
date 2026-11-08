@@ -152,7 +152,7 @@ describe("a batch's own edges", () => {
     expect(sh(root, "show", "main:b.txt")).toBe("b");
   }, TIMED);
 
-  test("BR-2172 BR-2173: a member whose lander stops during the batch leaves it; the ones before it are tested again without it and land together", async () => {
+  test("BR-2172 BR-2173 BR-2378 BR-2377: a member whose lander stops during the batch leaves it; the ones before it are tested again without it and land together", async () => {
     const { root, floorRuns, release } = batchProject("land_batch_max: 3\n", true);
     const a = startNew(root, "Leader");
     commitFile(a.worktree, "a.txt", "a\n");
@@ -170,11 +170,13 @@ describe("a batch's own edges", () => {
     expect([oa.kind, ob.kind]).toEqual(["landed", "landed"]);
     expect(entryOf(root, c.worktree)).toMatchObject({ state: "failed", result: "killed" });
     expect(events(root, "batch.fail")).toEqual([]);
+    expect(events(root, "batch.drop").map((d) => [d["entry"], d["reason"]])).toEqual([[entryOf(root, c.worktree)!.id, "lander-gone"]]);
+    expect(events(root, "batch.end")).toMatchObject([{ leader: "landed", landed: [entryOf(root, b.worktree)!.id], sent_back: [{ entry: entryOf(root, c.worktree)!.id, reason: "lander-gone" }] }]);
     expect(events(root, "land.ok").find((o) => o["subject"] === "C-2")?.["batched_by"]).toBeDefined(); // B landed in A's batch
     expect(existsSync(join(root, "c.txt"))).toBe(false);
   }, TIMED);
 
-  test("BR-2173: a setup that fails in the batch worktree voids the batch; each change then lands alone", async () => {
+  test("BR-2173 BR-2378 BR-2377: a setup that fails in the batch worktree voids the batch; each change then lands alone", async () => {
     const { root, floorRuns } = batchProject(`land_batch_max: 2\nsetup: "case $PWD in */batch/*) exit 1;; esac"\n`);
     const a = startNew(root, "A");
     commitFile(a.worktree, "a.txt", "a\n");
@@ -186,9 +188,11 @@ describe("a batch's own edges", () => {
     expect(fails.length).toBe(1);
     expect(fails[0]!["why"]).toContain("setup exited 1");
     expect(floorRuns().length).toBe(2); // the batch never reached its floor
+    expect(events(root, "batch.drop").map((d) => [d["entry"], d["reason"]])).toEqual([[entryOf(root, b.worktree)!.id, "batch-failed"]]);
+    expect(events(root, "batch.end")).toMatchObject([{ leader: "alone", reason: "setup", landed: [], floors: 0 }]);
   }, TIMED);
 
-  test("BR-2190: when the batch worktree cannot be made, the leader lands alone, records no batch.fail, and the member goes back to the queue and lands", async () => {
+  test("BR-2190 BR-2378 BR-2377: when the batch worktree cannot be made, the leader lands alone, records no batch.fail, and the member goes back to the queue and lands", async () => {
     const { root, floorRuns } = batchProject("land_batch_max: 2\n");
     const a = startNew(root, "A");
     commitFile(a.worktree, "a.txt", "a\n");
@@ -205,12 +209,15 @@ describe("a batch's own edges", () => {
       expect(events(root, "batch.fail")).toEqual([]);
       expect(entryOf(root, b.worktree)!.state).toBe("landed");
       expect(floorRuns().length).toBe(2);
+      expect(events(root, "batch.start").length).toBe(1);
+      expect(events(root, "batch.drop").map((d) => d["reason"])).toEqual(["batch-failed"]);
+      expect(events(root, "batch.end")).toMatchObject([{ leader: "alone", reason: "no-worktree", landed: [] }]);
     } finally {
       chmodSync(batchRoot, 0o755);
     }
   }, TIMED);
 
-  test("BR-2190: a leader that finds it lost its turn before moving main sends the member back to the queue; the member lands", async () => {
+  test("BR-2190 BR-2378 BR-2377: a leader that finds it lost its turn before moving main sends the member back to the queue; the member lands", async () => {
     const { root, floorRuns, release } = batchProject("land_batch_max: 2\n", true);
     const a = startNew(root, "Leader");
     commitFile(a.worktree, "a.txt", "a\n");
@@ -226,6 +233,8 @@ describe("a batch's own edges", () => {
     expect(oa!.kind === "refused" && oa!.reason).toBe("lost-turn");
     expect(ob!.kind).toBe("landed");
     expect(events(root, "batch.fail")).toEqual([]);
+    expect(events(root, "batch.drop").map((d) => d["reason"])).toEqual(["leader-lost-turn"]);
+    expect(events(root, "batch.end")).toMatchObject([{ leader: "lost-turn", landed: [] }]);
     expect(entryOf(root, b.worktree)!.state).toBe("landed");
     expect(sh(root, "show", "main:b.txt")).toBe("b");
     expect(existsSync(join(root, "a.txt"))).toBe(false);

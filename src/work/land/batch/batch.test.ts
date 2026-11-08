@@ -35,11 +35,12 @@ describe("batched landings", () => {
     mkdirSync(dir, { recursive: true });
     const runs = join(dir, "runs");
     const sneak = join(dir, "sneak");
-    writeFileSync(join(dir, "floor.sh"), `echo run >> ${runs}\nif [ -f ${sneak} ]; then git -C "$(cat ${sneak})" commit -q --allow-empty -m sneaky; rm ${sneak}; fi\ntest ! -e FAIL\n`);
+    const dirty = join(dir, "dirty");
+    writeFileSync(join(dir, "floor.sh"), `echo run >> ${runs}\nif [ -f ${sneak} ]; then git -C "$(cat ${sneak})" commit -q --allow-empty -m sneaky; rm ${sneak}; fi\nif [ -f ${dirty} ]; then echo dirty >> "$(cat ${dirty})/app.txt"; rm ${dirty}; fi\ntest ! -e FAIL\n`);
     writeFileSync(join(root, "canon/config.yaml"), `floor: "sh ${join(dir, "floor.sh")}"\ntests: []\n${extra}`);
     sh(root, "commit", "-qam", "config");
     const floorRuns = () => (existsSync(runs) ? readFileSync(runs, "utf8").trim().split("\n").length : 0);
-    return { root, floorRuns, sneak };
+    return { root, floorRuns, sneak, dirty };
   }
   const commitFile = (wt: string, path: string, text: string) => {
     writeFileSync(join(wt, path), text);
@@ -59,6 +60,9 @@ describe("batched landings", () => {
     finishEntry(other.db, blocker, "landed", "x");
     return { out: await Promise.all(runs), said };
   }
+  const evs = (root: string, kind: string) =>
+    ws(root).db.db.query<{ subject: string | null; detail: string }, [string]>("SELECT subject, detail FROM events WHERE kind = ? ORDER BY id").all(kind).map((e): Record<string, unknown> => ({ subject: e.subject, ...(JSON.parse(e.detail) as Record<string, unknown>) }));
+  const entryId = (root: string, wt: string) => ws(root).db.db.query<{ id: number }, [string]>("SELECT id FROM queue WHERE worktree = ? ORDER BY id DESC LIMIT 1").get(wt)!.id;
   const landOks = (root: string) =>
     ws(root).db.db.query<{ subject: string; detail: string }, []>("SELECT subject, detail FROM events WHERE kind = 'land.ok' ORDER BY id").all().map((r) => ({ ...(JSON.parse(r.detail) as Record<string, unknown>), subject: r.subject }) as Record<string, unknown>);
 
@@ -87,7 +91,7 @@ describe("batched landings", () => {
     expect(computeStats(ws(root).db, {}, "2026-11-03").find((x) => x.check === "floor")!.runs).toBe(1);
   }, TIMED);
 
-  test("BR-2173: a batch whose floor fails finds the change that makes it fail: the one before it lands, that one is refused for the floor", async () => {
+  test("BR-2173 BR-2377 BR-2378: a batch whose floor fails finds the change that makes it fail: the one before it lands, that one is refused for the floor", async () => {
     const { root, floorRuns } = batchProject();
     const a = startNew(root, "Good");
     commitFile(a.worktree, "a.txt", "a\n");
@@ -104,9 +108,12 @@ describe("batched landings", () => {
     const fails = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'batch.fail'").all().map((r) => JSON.parse(r.detail) as Record<string, unknown>);
     expect(fails.length).toBe(1);
     expect(fails[0]!["floors"]).toBe(2);
+    const bid = entryId(root, b.worktree);
+    expect(evs(root, "batch.drop")).toEqual([{ subject: b.change, entry: bid, leader: entryId(root, a.worktree), reason: "floor" }]);
+    expect(evs(root, "batch.end")).toMatchObject([{ leader: "landed", landed: [], sent_back: [{ entry: bid, reason: "floor" }], floors: 2 }]);
   }, TIMED);
 
-  test("BR-2173: with the failing change in the middle, the ones ahead of it land together, it is refused, and the one after it goes back to the queue and lands", async () => {
+  test("BR-2173 BR-2378: with the failing change in the middle, the ones ahead of it land together, it is refused, and the one after it goes back to the queue and lands", async () => {
     const { root, floorRuns } = batchProject();
     const a = startNew(root, "A");
     commitFile(a.worktree, "a.txt", "a\n");
@@ -120,9 +127,12 @@ describe("batched landings", () => {
     expect(floorRuns()).toBe(4);
     expect(existsSync(join(root, "FAIL"))).toBe(false);
     expect(sh(root, "show", "main:c.txt")).toBe("c");
+    const [bid, cid] = [entryId(root, b.worktree), entryId(root, c.worktree)];
+    expect(evs(root, "batch.drop").map((d) => [d["entry"], d["reason"], d["culprit"]])).toEqual([[cid, "behind", bid], [bid, "floor", undefined]]);
+    expect(evs(root, "batch.end")[0]).toMatchObject({ leader: "landed", landed: [], floors: 3 });
   }, TIMED);
 
-  test("BR-2173: when the leader alone already fails the floor, the leader is refused for the floor and the member goes back to the queue and lands", async () => {
+  test("BR-2173 BR-2378: when the leader alone already fails the floor, the leader is refused for the floor and the member goes back to the queue and lands", async () => {
     const { root, floorRuns } = batchProject();
     const a = startNew(root, "Bad leader");
     commitFile(a.worktree, "FAIL", "x\n");
@@ -132,6 +142,35 @@ describe("batched landings", () => {
     expect(out.map((o) => (o.kind === "refused" ? o.reason : o.kind))).toEqual(["floor", "landed"]);
     expect(floorRuns()).toBe(3); // the batch, the leader alone, then B
     expect(existsSync(join(root, "FAIL"))).toBe(false);
+    expect(evs(root, "batch.drop").map((d) => [d["entry"], d["reason"]])).toEqual([[entryId(root, b.worktree), "leader-refused"]]);
+    expect(evs(root, "batch.end")).toMatchObject([{ leader: "refused", reason: "floor", landed: [], floors: 2 }]);
+  }, TIMED);
+
+  test("BR-2173 BR-2378 BR-2377: a leader its own steps refuse sends every member back as leader-refused and ends the batch refused with that step", async () => {
+    const { root } = batchProject();
+    const a = startNew(root, "Dangling leader");
+    const file = sh(a.worktree, "ls-files", "canon/changes").split("\n").find((f) => f.includes(a.change))!;
+    writeFileSync(join(a.worktree, file), `${readFileSync(join(a.worktree, file), "utf8")}\nSee D-99.\n`);
+    sh(a.worktree, "commit", "-qam", "dangling");
+    const b = startNew(root, "B");
+    commitFile(b.worktree, "b.txt", "b\n");
+    const { out } = await landTogether(root, [a.worktree, b.worktree]);
+    expect(out.map((o) => (o.kind === "refused" ? o.reason : o.kind))).toEqual(["check", "landed"]);
+    expect(evs(root, "batch.drop").map((d) => [d["entry"], d["reason"]])).toEqual([[entryId(root, b.worktree), "leader-refused"]]);
+    expect(evs(root, "batch.end")).toMatchObject([{ leader: "refused", reason: "check", landed: [] }]);
+  }, TIMED);
+
+  test("BR-2172 BR-2378 BR-2377: when main cannot move because the primary checkout is dirty, the member is recorded as main-not-moved and the batch ends refused with that reason", async () => {
+    const { root, dirty } = batchProject();
+    const a = startNew(root, "A");
+    commitFile(a.worktree, "a.txt", "a\n");
+    const b = startNew(root, "B");
+    commitFile(b.worktree, "b.txt", "b\n");
+    writeFileSync(dirty, root); // the batch floor leaves the primary checkout dirty
+    const { out } = await landTogether(root, [a.worktree, b.worktree]);
+    expect(out[0]!.kind === "refused" && out[0]!.reason).toBe("main-dirty");
+    expect(evs(root, "batch.drop").map((d) => [d["entry"], d["reason"]])).toEqual([[entryId(root, b.worktree), "main-not-moved"]]);
+    expect(evs(root, "batch.end")).toMatchObject([{ leader: "refused", reason: "main-dirty", landed: [], sent_back: [{ entry: entryId(root, b.worktree), reason: "main-not-moved" }] }]);
   }, TIMED);
 
   test("BR-2172: land_batch_max all takes every landing waiting in the queue into one batch under one floor run", async () => {
@@ -157,7 +196,7 @@ describe("batched landings", () => {
     expect(floorRuns()).toBe(0);
   }, TIMED);
 
-  test("BR-2173: a member its own steps refuse leaves the batch alone; the others land together under one floor, and it is judged again on its own turn", async () => {
+  test("BR-2173 BR-2377 BR-2378: a member its own steps refuse leaves the batch alone; the others land together under one floor, and it is judged again on its own turn", async () => {
     const { root, floorRuns } = batchProject();
     const a = startNew(root, "A");
     commitFile(a.worktree, "a.txt", "a\n");
@@ -175,9 +214,12 @@ describe("batched landings", () => {
     expect(floorRuns()).toBe(1); // A and C together; B's own landing is refused by canon check before its floor (BR-2014)
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'batch.fail'").get()?.n).toBe(0);
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'batch.drop'").get()?.n).toBe(1);
+    const bid = entryId(root, b.worktree);
+    expect(evs(root, "batch.drop")).toEqual([{ subject: b.change, entry: bid, leader: entryId(root, a.worktree), reason: "steps", step: "check" }]);
+    expect(evs(root, "batch.end")).toEqual([{ subject: a.change, entry: entryId(root, a.worktree), leader: "landed", landed: [entryId(root, c.worktree)], sent_back: [{ entry: bid, reason: "steps" }], floors: 1 }]);
   }, TIMED);
 
-  test("BR-2173 BR-2106: a member whose worktree changes during the batch goes back to the queue; the leader is tested again without it and lands", async () => {
+  test("BR-2173 BR-2106 BR-2378: a member whose worktree changes during the batch goes back to the queue; the leader is tested again without it and lands", async () => {
     const { root, floorRuns, sneak } = batchProject();
     const a = startNew(root, "A");
     commitFile(a.worktree, "a.txt", "a\n");
@@ -188,9 +230,10 @@ describe("batched landings", () => {
     expect(out.map((o) => o.kind)).toEqual(["landed", "landed"]);
     expect(floorRuns()).toBe(3);
     expect(sh(root, "log", "-1", "--format=%s", "main")).toBe("sneaky");
+    expect(evs(root, "batch.drop").map((d) => [d["entry"], d["reason"]])).toEqual([[entryId(root, b.worktree), "changed"]]);
   }, TIMED);
 
-  test("BR-2172: a member that does not rebase onto the batch is left out and lands on its own turn; land_batch_max 1 never batches", async () => {
+  test("BR-2172 BR-2378: a member that does not rebase onto the batch is left out and lands on its own turn; land_batch_max 1 never batches", async () => {
     const { root, floorRuns } = batchProject();
     const a = startNew(root, "One");
     commitFile(a.worktree, "app.txt", "one\nTWO\nthree\n");
@@ -200,6 +243,7 @@ describe("batched landings", () => {
     expect(out[0]!.kind).toBe("landed");
     expect(out[1]!.kind === "refused" && out[1]!.reason).toBe("conflict");
     expect(floorRuns()).toBe(1);
+    expect(evs(root, "batch.drop").map((d) => [d["entry"], d["reason"]])).toEqual([[entryId(root, b.worktree), "rebase"]]);
 
     const single = batchProject("");
     const c = startNew(single.root, "C");

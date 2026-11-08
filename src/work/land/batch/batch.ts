@@ -31,6 +31,15 @@ interface Link {
   readonly head: string;
 }
 
+/**
+ * Why a member left a batch without landing in it (`batch.drop`, BR-2378): a fixed set, so `canon stats` can count them.
+ * `steps` and `rebase` are the member's own; `floor` is the change whose addition made the floor fail; `behind` is sent
+ * back only because one ahead of it left; `changed` is a worktree that moved after joining; `lander-gone` is a member
+ * whose lander ended; `leader-refused` and `leader-lost-turn` end the batch for the leader; `batch-failed` is a batch
+ * that could not be tested or locked (see `batch.fail`); `main-not-moved` is a lost compare-and-swap on main.
+ */
+export type DropReason = "steps" | "rebase" | "floor" | "behind" | "changed" | "lander-gone" | "leader-refused" | "leader-lost-turn" | "batch-failed" | "main-not-moved";
+
 /** What a batch did for its leader (BR-2172, BR-2173). */
 export type BatchOutcome =
   | { readonly kind: "landed" }
@@ -59,27 +68,50 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
     members.push({ id: c.id, subject: c.subject, worktree: c.worktree, branch: branch.value, joined: head.value });
   }
   if (members.length === 0) return undefined;
+  const sentBack: { entry: number; reason: DropReason }[] = [];
+  let landedMembers: number[] = [];
+  let run = 0;
+  let ended = false;
+  // One `batch.end` per batch that started, whichever way it ended (BR-2378); a leader killed mid-batch leaves a `batch.start` without it.
+  const end = (leader: "landed" | "refused" | "lost-turn" | "alone" | "error", reason?: string) => {
+    if (ended) return;
+    ended = true;
+    ws.db.event(ws.actor, "batch.end", t.subject, { entry: t.entry, leader, ...(reason ? { reason } : {}), landed: landedMembers, sent_back: sentBack, floors: run });
+  };
   const name = (m: { subject: string | null; entry?: number; id?: number }) => m.subject ?? `entry ${m.entry ?? m.id}`;
   const names = (list: readonly { subject: string | null; id?: number; entry?: number }[]) => list.map(name).join(", ");
-  const sendBack = (list: readonly { id?: number; entry?: number }[]) => {
-    for (const m of list) leaveBatch(ws.db, (m.id ?? m.entry)!);
+  // Every member that leaves the batch without landing goes through here, so none leaves silently (BR-2378).
+  const noteDrop = (m: { id?: number; entry?: number }, reason: DropReason, extra: Record<string, unknown> = {}) => {
+    const entry = (m.id ?? m.entry)!;
+    if (sentBack.some((x) => x.entry === entry)) return false; // a member leaves once, whichever exit reaches it first
+    ws.db.event(ws.actor, "batch.drop", members.find((x) => x.id === entry)?.subject ?? null, { entry, leader: t.entry, reason, ...extra });
+    sentBack.push({ entry, reason });
+    return true;
+  };
+  const sendBack = (list: readonly { id?: number; entry?: number }[], reason: DropReason, extra: Record<string, unknown> = {}) => {
+    for (const m of list) {
+      leaveBatch(ws.db, (m.id ?? m.entry)!);
+      noteDrop(m, reason, extra);
+    }
   };
 
+  ws.db.event(ws.actor, "batch.start", t.subject, { entry: t.entry, members: members.map((m) => ({ entry: m.id, change: m.subject })) });
   const dir = batchDir(ws, t.entry);
   rmSync(dir, { recursive: true, force: true });
   pruneWorktrees(ws.primary);
   const added = addWorktree(ws.primary, "-q", "--detach", dir, t.head);
   if (!added.ok) {
-    sendBack(members);
+    sendBack(members, "batch-failed");
+    end("alone", "no-worktree");
     say(`batch: could not create a worktree to test in (${added.error.message.split("\n")[0]}); landing alone`);
     return undefined;
   }
   try {
-    ws.db.event(ws.actor, "batch.start", t.subject, { entry: t.entry, members: members.map((m) => ({ entry: m.id, change: m.subject })) });
     say(`batch: testing ${names(members)} together with ${t.subject ?? "this landing"}`);
     // The batch cannot be tested at all: every member goes back to the queue and this landing goes on alone (BR-2173).
-    const giveUp = (why: string) => {
-      sendBack(members);
+    const giveUp = (why: string, reason: string) => {
+      sendBack(members, "batch-failed");
+      end("alone", reason);
       ws.db.event(ws.actor, "batch.fail", t.subject, { entry: t.entry, why: why.slice(0, 2000), members: members.map((m) => m.id) });
       say(`batch: ${why.split("\n")[0]}; ${names(members)} go back to the queue, and ${t.subject ?? "this landing"} goes on alone`);
       return undefined;
@@ -91,7 +123,7 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
       t.running.floor = setup;
       const code = await setup.exited;
       t.running.floor = undefined;
-      if (code !== 0) return giveUp(`setup exited ${code} in the batch worktree`);
+      if (code !== 0) return giveUp(`setup exited ${code} in the batch worktree`, "setup");
     }
 
     const notes = new Map<number, Steps>();
@@ -105,7 +137,8 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
     const leader: Link = { entry: t.entry, subject: t.subject, worktree: ws.root, branch: t.branch, joined: t.head, before: t.before, base: t.base, head: t.head };
     const own = await check(leader);
     if (!own.ok) {
-      sendBack(members);
+      sendBack(members, "leader-refused");
+      end("refused", own.reason);
       say(`batch: ${name(leader)} was refused (${own.reason}); ${names(members)} go back to the queue`);
       return { kind: "refused", reason: own.reason, message: own.message, ...(own.findings ? { findings: own.findings } : {}) };
     }
@@ -122,7 +155,7 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
         // reason: a change that conflicts with the ones ahead of it in the batch is not judged here; it waits for its own turn (BR-2172).
         if (rebaseInProgress(dir)) git(dir, "rebase", "--abort");
         say(`batch: ${name(m)} does not rebase onto the batch; it goes back to the queue`);
-        sendBack([m]);
+        sendBack([m], "rebase");
         continue;
       }
       const link: Link = { entry: m.id, subject: m.subject, worktree: m.worktree, branch: m.branch, joined: m.joined, before: m.joined, base: prev, head: top.value };
@@ -131,8 +164,7 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
         // reason: its refusal here may depend on changes ahead of it that are not on main yet, and the review is a sample;
         // it is judged again on its own turn or in a later batch, and no other member is affected (BR-2173, D-42).
         say(`batch: ${name(m)} was refused in the batch (${steps.reason}); it goes back to the queue, the others go on`);
-        ws.db.event(ws.actor, "batch.drop", m.subject, { entry: m.id, leader: t.entry, reason: steps.reason });
-        sendBack([m]);
+        sendBack([m], "steps", { step: steps.reason });
         continue;
       }
       notes.set(m.id, steps);
@@ -142,7 +174,6 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
     // Settle on the longest prefix of the chain whose top passed the floor; `passed` holds the prefix lengths tested green.
     const passed = new Set<number>();
     let n = links.length;
-    let run = 0;
     const floorOn = async (len: number): Promise<{ ok: boolean; log: string; skipped: boolean }> => {
       const tip = links[len - 1]!.head;
       const co = git(dir, "checkout", "-q", "--detach", tip);
@@ -180,11 +211,13 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
         }
         const culprit = links[hi - 1]!;
         ws.db.event(ws.actor, "batch.fail", t.subject, { entry: t.entry, why: `the floor failed once ${name(culprit)} joined`, members: links.slice(1).map((l) => l.entry), culprit: culprit.entry, floors: run });
-        sendBack(links.slice(hi).map((l) => ({ entry: l.entry })));
         if (hi === 1) {
-          sendBack(links.slice(1).map((l) => ({ entry: l.entry })));
+          sendBack(links.slice(1).map((l) => ({ entry: l.entry })), "leader-refused");
+          end("refused", "floor");
           return { kind: "refused", reason: "floor", message: failLog };
         }
+        sendBack(links.slice(hi).map((l) => ({ entry: l.entry })), "behind", { culprit: culprit.entry });
+        noteDrop({ entry: culprit.entry }, "floor"); // refused below, so it does not go back to waiting
         refuseInBatch(ws.db, t.entry, culprit.entry, `the floor failed once ${name(culprit)} joined the batch of ${name(leader)}:\n${failLog}`);
         say(`batch: the floor fails once ${name(culprit)} joins; it is refused, ${links.length > hi ? `${names(links.slice(hi))} go back to the queue, ` : ""}${names(links.slice(0, hi - 1))} land`);
         n = hi - 1;
@@ -196,7 +229,8 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
       const mine = git(ws.root, "rev-parse", "HEAD");
       const mineClean = isClean(ws.root);
       if (!mine.ok || mine.value !== t.head || !mineClean.ok || !mineClean.value) {
-        sendBack(links.slice(1, n).map((l) => ({ entry: l.entry })));
+        sendBack(links.slice(1, n).map((l) => ({ entry: l.entry })), "leader-refused");
+        end("refused", "moved-during-land");
         return { kind: "refused", reason: "moved-during-land", message: `the worktree changed during the batch, so what was tested is not what would land; ${names(links.slice(1, n))} went back to the queue; land again` };
       }
       const changed = links.slice(1, n).findIndex((l) => {
@@ -207,7 +241,9 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
       if (changed === -1) break;
       const at = changed + 1;
       say(`batch: ${name(links[at]!)} changed or left during the batch; it ${n - at > 1 ? `and ${names(links.slice(at + 1, n))} go` : "goes"} back to the queue`);
-      sendBack(links.slice(at, n).map((l) => ({ entry: l.entry })));
+      const first = links[at]!;
+      sendBack([{ entry: first.entry }], inBatch(ws.db, first.entry, t.entry) ? "changed" : "lander-gone");
+      sendBack(links.slice(at + 1, n).map((l) => ({ entry: l.entry })), "behind", { because: first.entry });
       n = at;
       if (passed.has(n)) break;
     }
@@ -217,24 +253,30 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
     const memberIds = landing.slice(1).map((l) => l.entry);
     const turn = holdsTurn(ws.db, t.entry);
     if (!turn.held) {
-      sendBack(landing.slice(1).map((l) => ({ entry: l.entry })));
+      sendBack(landing.slice(1).map((l) => ({ entry: l.entry })), "leader-lost-turn");
+      end("lost-turn");
       return { kind: "lost", outcome: lostTurn(ws, t.subject, ws.root, turn.state, "before-main") };
     }
     const fingerprints = new Map(landing.map((l) => [l.entry, ownDiffId(l.worktree, main)]));
     // reason: all members are locked in at once, after the last check, so none can give its entry up while main moves (issue #42).
     if (!lockBatch(ws.db, t.entry, memberIds)) {
-      sendBack(landing.slice(1).map((l) => ({ entry: l.entry })));
-      return giveUp("a member left the batch (its lander stopped)");
+      return giveUp("a member left the batch (its lander stopped)", "lock");
     }
     const moved = moveMain(ws, t.base, tip);
     if (moved !== "moved") {
       unlockBatch(ws.db, t.entry, memberIds);
-      for (const l of landing.slice(1)) reopenForGoneLander(ws, l, say);
+      for (const l of landing.slice(1)) {
+        reopenForGoneLander(ws, l, say);
+        noteDrop({ entry: l.entry }, "main-not-moved");
+      }
+      end("refused", moved.reason);
       return { kind: "refused", reason: moved.reason, message: moved.message };
     }
     // reason: members are recorded landed before the leader, so a member never sees its leader done while it is still batched (BR-2172).
     for (const l of landing.slice(1)) landBatched(ws.db, l.entry, l.head);
     finishEntry(ws.db, t.entry, "landed", t.head);
+    landedMembers = memberIds;
+    end("landed");
     for (const l of landing) {
       const s = notes.get(l.entry);
       const reviewNotes = s?.ok ? s.reviewNotes : undefined;
@@ -245,6 +287,7 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
     for (const l of landing) afterLand(ws, say, { entry: l.entry, subject: l.subject, base: l.base, head: l.head, branch: l.branch });
     return { kind: "landed" };
   } finally {
+    end("error"); // an exception ended the batch without an outcome; the throw itself carries the cause
     removeWorktree(ws.primary, "--force", dir);
   }
 }
