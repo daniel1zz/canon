@@ -1,7 +1,9 @@
+import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, isAbsolute, join } from "node:path";
 import { git, gitEnv } from "../../kernel/git.ts";
+import { CoordDb } from "../db.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 
 /**
@@ -164,4 +166,32 @@ export function changedFiles(root: string, s: Snapshot): string[] {
 export function leftOut(root: string, s: Snapshot): string | undefined {
   const r = git(root, "log", "-1", "--format=%b", s.commit);
   return r.ok ? r.value.split("\n").find((l) => l.startsWith("left out")) : undefined;
+}
+
+/**
+ * The worktrees of `cwd`'s repository that a claim holds for this session's actors: `agent:<session>` and its
+ * subagents `agent:<session>:<name>` (BR-2023, D-71). Read from the claims table, not from the command, so `cd`, `git -C`,
+ * `pushd`, subshells and variables all count. Another session's claim is not included. The table is opened read-only
+ * and no claim is judged (judging writes events), because this runs before every Bash call.
+ */
+export function claimedWorktrees(cwd: string, sessionId: string): Result<string[]> {
+  const session = sessionId.trim().slice(0, 8);
+  if (session === "") return ok([]);
+  const path = CoordDb.pathFor(cwd);
+  if (!path.ok) return ok([]); // not a git repository: nothing is claimed
+  if (!existsSync(path.value)) return ok([]);
+  try {
+    const db = new Database(path.value, { readonly: true });
+    try {
+      const rows = db
+        .query<{ worktree: string | null }, [string, string]>("SELECT worktree FROM claims WHERE holder = ?1 OR substr(holder, 1, length(?2)) = ?2")
+        .all(`agent:${session}`, `agent:${session}:`);
+      // reason: a hold row (a clean or drop in progress) names its worktree as `hold:<path>#...`; it is no claimed worktree (BR-2025)
+      return ok([...new Set(rows.map((r) => r.worktree ?? "").filter((w) => w !== "" && !w.startsWith("hold:") && existsSync(w)))]);
+    } finally {
+      db.close();
+    }
+  } catch (e) {
+    return err("io", `cannot read the claims of this session: ${(e as Error).message}`);
+  }
 }

@@ -4,7 +4,8 @@ import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git } from "../../kernel/git.ts";
-import { project, sh } from "../testkit.ts";
+import { takeClaim } from "../claims/claims.ts";
+import { project, sh, ws } from "../testkit.ts";
 import { MAX_FILE_BYTES, snapshotKey, snapshots, takeSnapshot } from "./snapshot.ts";
 
 const MAIN = join(import.meta.dir, "../../invocation/main.ts");
@@ -109,6 +110,60 @@ describe("taking a snapshot", () => {
     expect(all).toHaveLength(1);
     expect(show(root, `${all[0]!.ref}:app.txt`)).toEqual({ ok: true, value: "in the other worktree" });
     expect(snapshots(root, snapshotKey(root))).toHaveLength(0);
+  });
+
+  describe("worktrees this session has claimed", () => {
+    function claimedSibling(root: string, name: string, actor: string, edit = true) {
+      const wt = join(mkdtempSync(join(tmpdir(), "canon-snap-claimed-")), name);
+      sh(root, "worktree", "add", "-q", "-b", `change/${name}`, wt);
+      if (edit) writeFileSync(join(wt, "app.txt"), `edited in ${name}\n`);
+      const c = takeClaim(ws(root, actor).db, name, wt, actor);
+      if (!c.ok) throw new Error(c.error.message);
+      return wt;
+    }
+    const hook = (root: string, session: string) => canon(root, JSON.stringify({ cwd: root, session_id: session, tool_name: "Bash", tool_input: { command: "cd ../x && git checkout -- ." } }), "snapshot", "take", "--hook");
+
+    test("BR-2182: with cwd in the primary checkout, a changed worktree claimed by this session or by its subagent is snapshotted too", () => {
+      const root = project();
+      claimedSibling(root, "C-11", "agent:abcd1234");
+      claimedSibling(root, "C-12", "agent:abcd1234:worker");
+      claimedSibling(root, "C-13", "agent:abcd1234:other", false);
+      writeFileSync(join(root, "app.txt"), "primary edit\n");
+      const r = hook(root, "abcd1234-0000-4000-8000-000000000000");
+      expect([r.code, r.out]).toEqual([0, ""]);
+      expect(show(root, `${snapshots(root, "C-11")[0]!.ref}:app.txt`)).toEqual({ ok: true, value: "edited in C-11" });
+      expect(snapshots(root, "C-12")).toHaveLength(1);
+      expect(snapshots(root, snapshotKey(root))).toHaveLength(1);
+      // an unchanged claimed worktree writes nothing
+      expect(snapshots(root, "C-13")).toHaveLength(0);
+    });
+
+    test("BR-2182: a changed worktree claimed by another session is not snapshotted", () => {
+      const root = project();
+      claimedSibling(root, "C-21", "agent:ffff0000");
+      claimedSibling(root, "C-22", "agent:abcd1234x"); // a longer session id that merely starts the same
+      const r = hook(root, "abcd1234-0000-4000-8000-000000000000");
+      expect([r.code, r.out]).toEqual([0, ""]);
+      expect(snapshots(root, "C-21")).toHaveLength(0);
+      expect(snapshots(root, "C-22")).toHaveLength(0);
+    });
+
+    test("BR-2182: when cwd is the claimed worktree itself it is snapshotted once", () => {
+      const root = project();
+      const wt = claimedSibling(root, "C-31", "agent:abcd1234");
+      const r = canon(root, JSON.stringify({ cwd: wt, session_id: "abcd1234-0000", tool_name: "Bash", tool_input: { command: "ls" } }), "snapshot", "take", "--hook");
+      expect(r.code).toBe(0);
+      expect(snapshots(root, "C-31")).toHaveLength(1);
+    });
+
+    test("BR-2182: without --hook only the current directory's worktree is snapshotted", () => {
+      const root = project();
+      claimedSibling(root, "C-41", "agent:abcd1234");
+      writeFileSync(join(root, "app.txt"), "primary edit\n");
+      const r = canon(root, undefined, "snapshot", "take");
+      expect(r.code).toBe(0);
+      expect(snapshots(root, "C-41")).toHaveLength(0);
+    });
   });
 
   test("BR-2182: outside a git repository, or in one that is not a canon project, nothing is snapshotted and the exit code is 0", () => {
