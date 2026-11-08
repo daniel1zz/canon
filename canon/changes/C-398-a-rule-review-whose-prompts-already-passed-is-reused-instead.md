@@ -1,8 +1,12 @@
 ---
 id: C-398
 title: A rule review whose prompts already passed is reused instead of rerun
-status: open
-rules: [BR-2361]
+status: done
+rules:
+  - BR-2361
+passes:
+  BR-2358: 76e6d2e0631093e1 test
+  BR-2361: 8cb73b64b54133d4 test
 ---
 
 ## 为什么
