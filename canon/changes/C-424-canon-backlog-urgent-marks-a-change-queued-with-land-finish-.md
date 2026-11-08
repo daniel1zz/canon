@@ -2,8 +2,10 @@
 id: C-424
 title: canon backlog urgent marks a change queued with land --finish, which is
   done on its branch but not yet on main (#153)
-status: open
+status: done
 rules: []
+passes:
+  BR-2363: 03212a2af835f40f test
 ---
 
 ## 为什么
