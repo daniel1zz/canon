@@ -357,6 +357,78 @@ interface Call {
   size: number;
 }
 
+// reason: the note names the call and how many there are, which are known only after packing; its room is reserved up front
+const NOTE_ROOM = 256;
+
+/** What every call carries apart from the changed documents and the domain text: instructions, rule index, accepted decision titles. */
+function fixedBytes(corpus: Corpus): number {
+  return bytes([...promptHead(corpus, [], {})].join("\n")) + bytes(promptTail(corpus).join("\n")) + NOTE_ROOM;
+}
+
+/** The pieces one top domain's text is packed from, and what a call pays for them (BR-2359). `g`: the group of this domain already in the call. */
+function packer(root: string, corpus: Corpus, top: string) {
+  const ctx = contextFor(corpus, top);
+  const only = (d: Domain, rules: Context["rules"], withLists: boolean): Context => ({ ...ctx, domains: [d], rules, ...(withLists ? {} : { decisions: [], changes: [], extras: [], others: [] }) });
+  const readme = (d: Domain): string => renderContext(root, only(d, [], d.name === top), { full: true });
+  const chain = (d: Domain): Domain[] => ctx.domains.filter((x) => x.name === d.name || d.name.startsWith(`${x.name}/`));
+  // what adding `rules` of `d` costs: the group header unless `g` is there, the READMEs of d and its parents not in `g` yet, the rules
+  const price = (g: { readonly emitted: Set<string> } | undefined, d: Domain, rules: readonly Rule[]): number => {
+    let n = g ? 0 : bytes(contextHeader(top)) + 1;
+    for (const x of chain(d)) if (!g?.emitted.has(x.name)) n += bytes(readme(x)) + 1;
+    for (const r of rules) n += bytes(ruleSection(r)) + 1;
+    return n;
+  };
+  return { ctx, readme, chain, price };
+}
+
+/**
+ * Whether the top domain's own README with its lists is most of a `piece` of that domain: then splitting the domain into
+ * subdomains cannot shrink it, the lists stay with the top domain (BR-2359, #145).
+ */
+function topReadmeIsLarge(root: string, corpus: Corpus, top: string, piece: number): boolean {
+  const { ctx, readme } = packer(root, corpus, top);
+  const d = ctx.domains.find((x) => x.name === top);
+  return d !== undefined && bytes(readme(d)) * 2 > piece;
+}
+
+/** The way out of a domain piece that is too large for `review_max_prompt_kb`, shared by the refusal and the early hint (BR-2359, #145). */
+export function pieceRemedy(root: string, corpus: Corpus, need: number, piece: number, where: string): string {
+  const top = where.split("/")[0]!;
+  const raise = `raise review_max_prompt_kb in canon/config.yaml to at least ${kb(need)} KB`;
+  if (topReadmeIsLarge(root, corpus, top, piece)) return `${raise}, or shorten the README of ${top}: it and the lists after it (decisions, changes and other documents that name ${top}'s rules) are most of the piece, and splitting ${top} into subdomains does not make them smaller`;
+  return `${raise}, or split ${where} into subdomains (canon rule domain ${where}/<name>) so a piece of it is smaller`;
+}
+
+/** One top domain's smallest piece the rule review can be given, with the fixed part it comes with (BR-2359, #145). */
+export interface DomainPiece {
+  readonly top: string;
+  /** The (sub)domain whose piece it is, the one to split. */
+  readonly where: string;
+  /** Bytes of the piece: its README chain and its largest rule. */
+  readonly piece: number;
+}
+
+/**
+ * The size of the smallest review piece of every top domain, for a warning before a change is refused: the same prices
+ * `reviewPrompts` packs with. `fixed` is what every call carries besides the changed documents, which are not known without a change.
+ */
+export function reviewSizes(root: string, corpus: Corpus): { readonly fixed: number; readonly pieces: readonly DomainPiece[] } {
+  const pieces: DomainPiece[] = [];
+  for (const top of corpus.domains.filter((d) => !d.parent).map((d) => d.name)) {
+    const { ctx, price } = packer(root, corpus, top);
+    let worst: DomainPiece | undefined;
+    for (const d of ctx.domains) {
+      const rules = ctx.rules.filter((r) => r.domain === d.name);
+      // reason: a subdomain that does not fit whole is packed one rule at a time, so the piece that must fit is its largest rule with the READMEs above it (BR-2359)
+      const alone = rules.length ? rules.map((r) => price(undefined, d, [r])) : [price(undefined, d, [])];
+      const piece = Math.max(...alone);
+      if (!worst || piece > worst.piece) worst = { top, where: d.name, piece };
+    }
+    if (worst) pieces.push(worst);
+  }
+  return { fixed: fixedBytes(corpus), pieces };
+}
+
 /**
  * The prompts one rule review is made of (BR-2359, D-67). Everything fits in `budgetBytes`: one prompt, exactly what
  * `reviewPrompt` gives. Otherwise every call carries the changed documents, the rule index and the accepted decisions'
@@ -368,13 +440,11 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
 
   const tail = promptTail(corpus);
   const noWording: ReviewExtras = { ...extras, wording: [] };
-  // reason: the note names the call and how many there are, which are known only after packing; its room is reserved up front
-  const NOTE_ROOM = 256;
   const fixed = (first: boolean): number => bytes([...promptHead(corpus, changed, first ? extras : noWording), ...tail].join("\n")) + NOTE_ROOM;
   // the three parts of the smallest prompt, so a refusal can say which one is too large (BR-2359, D-67, #136)
   const headEmpty = bytes([...promptHead(corpus, [], {})].join("\n"));
   const docsBytes = Math.max(0, bytes(promptHead(corpus, changed, extras).join("\n")) - headEmpty);
-  const indexBytes = headEmpty + bytes(tail.join("\n")) + NOTE_ROOM;
+  const indexBytes = fixedBytes(corpus);
   /** `piece`: the domain text the smallest call needs on top of the fixed parts, `where`: the domain to split when that is the large part. */
   const tooBig = (need: number, what: string, piece = 0, where?: string): Result<never> => {
     const sizes = `changed documents ${kb(docsBytes)} KB, review instructions + rule index + accepted decision titles ${kb(indexBytes)} KB, domain text ${kb(piece)} KB`;
@@ -382,7 +452,7 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
     const splitHelps = docsBytes >= indexBytes && docsBytes >= piece && indexBytes + piece < budgetBytes;
     const remedy = splitHelps
       ? "land the changed documents in several smaller changes"
-      : `splitting the change cannot help, the changed documents are not what makes it too large: raise review_max_prompt_kb in canon/config.yaml to at least ${kb(need)} KB${piece > 0 && where ? `, or split ${where} into subdomains (canon rule domain ${where}/<name>) so a piece of it is smaller` : ""}`;
+      : `splitting the change cannot help, the changed documents are not what makes it too large: ${piece > 0 && where ? pieceRemedy(root, corpus, need, piece, where) : `raise review_max_prompt_kb in canon/config.yaml to at least ${kb(need)} KB`}`;
     return err("invalid", `the rule review prompt cannot be made smaller than ${kb(need)} KB (${what}), above review_max_prompt_kb = ${kb(budgetBytes)} KB; sizes: ${sizes}: ${remedy}`);
   };
   if (fixed(true) > budgetBytes) return tooBig(fixed(true), "the changed documents, the rule index and the accepted decisions' titles, which every call carries");
@@ -394,18 +464,8 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   const roomOf = (c: Call): number => (c === calls[0] ? budgetBytes - fixed(true) : budgetBytes - fixedRest);
 
   for (const top of contextTops(corpus, changed, extras)) {
-    const ctx = contextFor(corpus, top);
-    const only = (d: Domain, rules: Context["rules"], withLists: boolean): Context => ({ ...ctx, domains: [d], rules, ...(withLists ? {} : { decisions: [], changes: [], extras: [], others: [] }) });
-    const readme = (d: Domain): string => renderContext(root, only(d, [], d.name === top), { full: true });
-    const chain = (d: Domain): Domain[] => ctx.domains.filter((x) => x.name === d.name || d.name.startsWith(`${x.name}/`));
-    // what adding `rules` of `d` costs in `call`: the group header, the READMEs of d and its parents not there yet, the rules
-    const price = (call: Call, d: Domain, rules: readonly Rule[]): number => {
-      const g = call.groups.get(top);
-      let n = g ? 0 : bytes(contextHeader(top)) + 1;
-      for (const x of chain(d)) if (!g?.emitted.has(x.name)) n += bytes(readme(x)) + 1;
-      for (const r of rules) n += bytes(ruleSection(r)) + 1;
-      return n;
-    };
+    const { ctx, readme, chain, price: priceIn } = packer(root, corpus, top);
+    const price = (call: Call, d: Domain, rules: readonly Rule[]): number => priceIn(call.groups.get(top), d, rules);
     const add = (call: Call, d: Domain, rules: readonly Rule[]): void => {
       call.size += price(call, d, rules);
       let g = call.groups.get(top);

@@ -6,6 +6,8 @@ import { backlogNotes, check, domainNameNotes, noteLine, staleReportNotes } from
 import { reportsFor } from "../../work/verify/changes.ts";
 import { architectureBase, changeIdsOnBranches, listedBefore } from "../../work/session/inflight.ts";
 import { budgetHint, sessionText, sizeLines } from "./session-text.ts";
+import { REVIEW_NONE } from "../review/config-keys.ts";
+import { reviewSizeHints } from "../review/size-hint.ts";
 import { testFilesFor } from "./tests.ts";
 
 /** `canon check`: corpus integrity. */
@@ -36,6 +38,8 @@ const checkCmd = defineCommand({
     if (args.sizes) for (const line of sizeLines(parts, ws.config.sessionTextBudget)) console.error(line);
     const hint = budgetHint(parts, ws.config.sessionTextBudget);
     if (hint) console.error(hint);
+    // reason: a domain close to review_max_prompt_kb is said before a change to it is refused, and never fails the check (BR-2375, D-76, #145)
+    if (ws.config.review !== REVIEW_NONE) for (const h of reviewSizeHints(ws.root, read.corpus, ws.config.reviewMaxPromptBytes)) console.error(h);
     process.exit(findings.length === 0 ? EXIT.ok : EXIT.refused);
   },
 });

@@ -127,7 +127,7 @@ describe("rule review prompt budget", () => {
     expect(msg).not.toContain("several smaller changes");
   });
 
-  test("BR-2359: a domain README that cannot fit: the refusal says splitting the change cannot help and names the README's domain", () => {
+  test("BR-2359: a top domain README that cannot fit: the refusal names its domain, says shortening the README and that a subdomain split does not shrink it", () => {
     const corpus = corpusOf({
       "canon/rules/wide/README.md": `---\ncode: [src/wide]\n---\n# wide\n\n${"y".repeat(40 * KB)}\n`,
       "canon/rules/wide/sub/README.md": "# wide/sub\n\nSub.\n",
@@ -136,7 +136,35 @@ describe("rule review prompt budget", () => {
     const msg = refusal(reviewPrompts(corpus.root, corpus.corpus, corpus.corpus.docs.filter((d) => d.id === id("BR", 7)), {}, 20 * KB));
     expect(msg).toContain("the README of wide");
     expect(msg).toContain("splitting the change cannot help");
-    expect(msg).toContain("canon rule domain wide/<name>");
+    expect(msg).toContain("raise review_max_prompt_kb");
+    expect(msg).toContain("shorten the README of wide");
+    expect(msg).toContain("does not make them smaller");
+    expect(msg).not.toContain("canon rule domain");
+  });
+
+  test("BR-2359: a subdomain README that cannot fit: the refusal names the subdomain and suggests splitting it", () => {
+    const corpus = corpusOf({
+      "canon/rules/wide/README.md": "---\ncode: [src/wide]\n---\n# wide\n\nShort.\n",
+      "canon/rules/wide/sub/README.md": `# wide/sub\n\n${"y".repeat(40 * KB)}\n`,
+      [`canon/rules/wide/sub/${id("BR", 7)}.md`]: rule(7, "Sub seven", "Short."),
+    });
+    const msg = refusal(reviewPrompts(corpus.root, corpus.corpus, corpus.corpus.docs.filter((d) => d.id === id("BR", 7)), {}, 20 * KB));
+    expect(msg).toContain("splitting the change cannot help");
+    expect(msg).toContain("canon rule domain wide/sub/<name>");
+    expect(msg).not.toContain("shorten the README");
+  });
+
+  test("BR-2359: a top README made large by its decision list, with short rules: the refusal says shortening the README, no subdomain split", () => {
+    const files: Record<string, string> = {
+      "canon/rules/listed/README.md": "---\ncode: [src/listed]\n---\n# listed\n\nShort.\n",
+      [`canon/rules/listed/${id("BR", 1)}.md`]: rule(1, "Listed one", "Short."),
+    };
+    for (let n = 1; n <= 200; n++) files[`canon/decisions/${id("D", n)}.md`] = `---\nid: ${id("D", n)}\ntitle: ${"d".repeat(120)} ${n}\nstatus: accepted\n---\nAbout ${id("BR", 1)}.\n`;
+    const c = corpusOf(files);
+    // the whole prompt is far above this budget only because of the list: the domain text alone is the README with its lists
+    const msg = refusal(reviewPrompts(c.root, c.corpus, c.corpus.docs.filter((d) => d.id === id("BR", 1)), {}, 50 * KB));
+    expect(msg).toContain("shorten the README of listed");
+    expect(msg).not.toContain("canon rule domain");
   });
 
   test("BR-2359: a rule index and decision titles that alone exceed the budget: the refusal says splitting the change cannot help and gives no domain split", () => {
