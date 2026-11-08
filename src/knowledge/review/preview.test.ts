@@ -181,11 +181,15 @@ describe("canon work review", () => {
     expect(ok.code).toBe(0);
     expect(ok.out).toContain("review: ok");
     expect(ok.out).toContain("1 commit(s) after this branch's merge base");
+    // reason: the same prompt that passed is not asked again (BR-2361), so each run below changes the rule text
+    const reword = (text: string) => writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), ruleText(text));
     t.reviewer(`echo '${t.answer("block")}'`);
+    reword("Refunds are fine, second.");
     const block = run(s.worktree);
     expect(block.code).toBe(1);
     expect(block.out).toContain(`review finding (rule): ${id} is block`);
     t.reviewer("exit 3");
+    reword("Refunds are fine, third.");
     expect(run(s.worktree).code).toBe(4);
     expect(run(t.root).code).toBe(2);
   }, 60_000);

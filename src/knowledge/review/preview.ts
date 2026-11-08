@@ -11,11 +11,12 @@ import type { Running } from "../../work/land/outcome.ts";
 import { readCorpus } from "../documents/read.ts";
 import { findDoc } from "../query/query.ts";
 import { REVIEW_NONE } from "./config-keys.ts";
-import { reviewPrompts, runReview, runReviews } from "./review.ts";
+import { passedReview, reviewKey } from "../../work/land/checks/review-reuse.ts";
+import { reviewPrompts, runReview, runReviews, type ReviewVerdict } from "./review.ts";
 
 /** What `canon work review` found, as the command turns it into text and an exit code (BR-2358). */
 export type PreviewOutcome =
-  | { readonly kind: "ok" | "block"; readonly findings: readonly { readonly review: "rule" | "duplicate"; readonly text: string }[]; readonly reviewed: readonly string[]; readonly behind: number; readonly main: string }
+  | { readonly kind: "ok" | "block"; readonly findings: readonly { readonly review: "rule" | "duplicate"; readonly text: string }[]; readonly reviewed: readonly string[]; readonly behind: number; readonly main: string; readonly reusedFrom?: number }
   | { readonly kind: "nothing" | "off"; readonly behind: number; readonly main: string }
   | { readonly kind: "unconfigured"; readonly needs: readonly string[]; readonly main: string }
   | { readonly kind: "usage" | "failed"; readonly message: string };
@@ -88,22 +89,38 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
   const limits = { timeoutMs: onMain.reviewTimeoutMs, track: (r: { kill(): void } | undefined) => (running.review = r) };
   const findings: { review: "rule" | "duplicate"; text: string }[] = [];
   let blocked = false;
+  let reusedFrom: number | undefined;
+  let rule: { hash: string; verdict: "ok" | "block"; findings: readonly string[] } | undefined;
   try {
-    const at = tree.get();
-    if (!at.ok) return { kind: "failed", message: at.error.message };
     if (scope.reviewed.length > 0) {
       const architecture = architectureOf(ws.root, base.value, head.value);
       if (!architecture.ok) return { kind: "failed", message: architecture.error.message };
       const prompts = reviewPrompts(ws.root, read.corpus, scope.changedDocs, { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change: findDoc(read.corpus, subject), ...(architecture.value ? { architecture: architecture.value } : {}) }, onMain.reviewMaxPromptBytes);
       if (!prompts.ok) return { kind: "failed", message: prompts.error.message };
-      const v = await runReviews(onMain.review, at.value, prompts.value, limits);
-      if (!v.ok) return { kind: "failed", message: couldNotRun("rule", v.error.message, at.value, main.value) };
-      findings.push(...v.value.findings.map((text) => ({ review: "rule" as const, text })));
-      blocked ||= v.value.verdict === "block";
+      // reason: a preview reuses only a passing preview of the same prompts, command and budget, never a landing's pass: the reviewer may be another model for a preview (BR-2361, D-70)
+      const hash = reviewKey("preview", onMain.review, onMain.reviewMaxPromptBytes, prompts.value);
+      const earlier = passedReview(ws.db, "preview", hash);
+      let v: ReviewVerdict;
+      if (earlier) {
+        ws.db.event(ws.actor, "review.reused", subject, { review: "preview", docs: scope.reviewed, hash, from: earlier.event });
+        reusedFrom = earlier.event;
+        v = { verdict: "ok", findings: earlier.findings };
+      } else {
+        const at = tree.get();
+        if (!at.ok) return { kind: "failed", message: at.error.message };
+        const run = await runReviews(onMain.review, at.value, prompts.value, limits);
+        if (!run.ok) return { kind: "failed", message: couldNotRun("rule", run.error.message, at.value, main.value) };
+        v = run.value;
+      }
+      rule = { hash, verdict: v.verdict, findings: v.findings };
+      findings.push(...v.findings.map((text) => ({ review: "rule" as const, text })));
+      blocked ||= v.verdict === "block";
     }
     if (standing.length > 0) {
       const prompt = duplicateReviewPrompt(ws.root, base.value, head.value, standing, onMain.instructions, guide);
       if (!prompt.ok) return { kind: "failed", message: prompt.error.message };
+      const at = tree.get();
+      if (!at.ok) return { kind: "failed", message: at.error.message };
       const v = await runReview(onMain.review, at.value, prompt.value, limits);
       if (!v.ok) return { kind: "failed", message: couldNotRun("duplicate", v.error.message, at.value, main.value) };
       findings.push(...v.value.findings.map((text) => ({ review: "duplicate" as const, text })));
@@ -116,6 +133,6 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
     if (!gone.ok) console.error(`canon: ${gone.error.message}`);
   }
   const verdict = blocked ? "block" : "ok";
-  ws.db.event(ws.actor, "review.preview", subject, { verdict, findings: findings.length, docs: scope.reviewed, standing, tree: head.value, main: main.value });
-  return { kind: verdict, findings, reviewed: needs, behind, main: main.value };
+  ws.db.event(ws.actor, "review.preview", subject, { verdict, findings: findings.length, docs: scope.reviewed, standing, tree: head.value, main: main.value, ...(rule ? { hash: rule.hash, rule: rule.verdict, ruleFindings: rule.findings } : {}) });
+  return { kind: verdict, findings, reviewed: needs, behind, main: main.value, ...(reusedFrom !== undefined ? { reusedFrom } : {}) };
 }

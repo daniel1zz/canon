@@ -12,13 +12,14 @@ import { changePort } from "../../hooks/ports.ts";
 import { type Doc } from "../../../knowledge/documents/model.ts";
 import { findDoc } from "../../../knowledge/query/query.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
-import { reviewPrompts, runReview, runReviews, splitNote } from "../../../knowledge/review/review.ts";
+import { reviewPrompts, runReview, runReviews, splitNote, type ReviewVerdict } from "../../../knowledge/review/review.ts";
 import { REVIEW_NONE, REVIEW_WAYS_OUT } from "../../../knowledge/review/config-keys.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
 import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
 import { landingAllocations } from "./allocated.ts";
 import { noticeProposedDecisions } from "./proposed.ts";
 import { reviewTree } from "./review-tree.ts";
+import { passedReview, reviewKey } from "./review-reuse.ts";
 import { architectureOf, couldNotRun, duplicateReviewPrompt, reviewScope, reviewSettingsOn, standingTouched } from "./review-scope.ts";
 import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
 import { checksAddedAndReviewed, checksAddedAndReviewedMessage, keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
@@ -139,8 +140,6 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       ws.db.event(ws.actor, "review.skip", subject, { docs: reviewed });
     } else {
       say(`review: ${[...reviewed, ...execution.wording.map((q) => `${q.id} (wording judgement)`)].join(", ")}`);
-      const at = tree.get();
-      if (!at.ok) return refuse("environment", at.error.message);
       const overview = architectureOf(wt, base.value, head.value);
       if (!overview.ok) return refuse("environment", overview.error.message);
       const architecture = overview.value;
@@ -148,16 +147,30 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       if (!prompts.ok) return refuse("review", prompts.error.message);
       const split = splitNote(prompts.value);
       if (split) say(`review: ${split}`);
-      const v = await runReviews(reviewer, at.value, prompts.value, limits);
-      if (!v.ok) return refuse("review", couldNotRun("rule", v.error.message, at.value, mainAt));
-      ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: reviewed, findings: v.value.findings, commit: head.value, ...(execution.wording.length > 0 ? { wording: v.value.wording ?? {} } : {}) });
-      if (v.value.verdict === "block") return refuse("review", `rule review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
-      const unconfirmed = unconfirmedWording(execution.wording, v.value.wording);
-      if (unconfirmed.length > 0) return refuse("review", wordingMessage(unconfirmed, v.value.wording, true));
-      for (const f of v.value.findings) say(`review note: ${f}`);
+      // reason: the same prompts, command and budget that already passed get the same answer without another model call; a pass whose wording answers did not confirm a wording-only edit is not reused, or the same refusal would repeat (BR-2361, BR-2239, D-70)
+      const hash = reviewKey("land", reviewer, onMain.reviewMaxPromptBytes, prompts.value);
+      const earlier = passedReview(ws.db, "land", hash);
+      const reused = earlier && unconfirmedWording(execution.wording, earlier.wording).length === 0 ? earlier : undefined;
+      let verdict: ReviewVerdict;
+      if (reused) {
+        say(`review: reused the passing review of the same prompts (event ${reused.event}, hash ${hash.slice(0, 12)}); the review command was not run`);
+        ws.db.event(ws.actor, "review.reused", subject, { review: "land", docs: reviewed, hash, from: reused.event, commit: head.value });
+        verdict = { verdict: "ok", findings: reused.findings, ...(reused.wording ? { wording: reused.wording } : {}) };
+      } else {
+        const at = tree.get();
+        if (!at.ok) return refuse("environment", at.error.message);
+        const run = await runReviews(reviewer, at.value, prompts.value, limits);
+        if (!run.ok) return refuse("review", couldNotRun("rule", run.error.message, at.value, mainAt));
+        verdict = run.value;
+        ws.db.event(ws.actor, `review.${verdict.verdict}`, subject, { docs: reviewed, findings: verdict.findings, commit: head.value, hash, ...(execution.wording.length > 0 ? { wording: verdict.wording ?? {} } : {}) });
+      }
+      if (verdict.verdict === "block") return refuse("review", `rule review blocked:\n${verdict.findings.map((f) => `  - ${f}`).join("\n")}`);
+      const unconfirmed = unconfirmedWording(execution.wording, verdict.wording);
+      if (unconfirmed.length > 0) return refuse("review", wordingMessage(unconfirmed, verdict.wording, true));
+      for (const f of verdict.findings) say(`review note: ${f}`);
       // reason: notes do not block and are not changes of their own; they wait on the document they name (BR-2145, D-21)
-      reviewNotes = { reviewed: [...changedDocs.map((d) => d.id), ...deleted.map((d) => d.id)], notes: v.value.findings };
-      if (v.value.findings.length > 0) say("review notes do not block and are not changes of their own: canon context shows them to whoever next changes these documents, who handles them then");
+      reviewNotes = { reviewed: [...changedDocs.map((d) => d.id), ...deleted.map((d) => d.id)], notes: verdict.findings };
+      if (verdict.findings.length > 0) say("review notes do not block and are not changes of their own: canon context shows them to whoever next changes these documents, who handles them then");
     }
   }
   if (standing.length > 0) {

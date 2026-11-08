@@ -34,6 +34,7 @@ const review = defineCommand({
       case "ok":
       case "block":
         say(`review: ${out.reviewed.join(", ")}`);
+        if (out.reusedFrom !== undefined) say(`review: reused the passing preview of the same prompts (event ${out.reusedFrom}); the review command was not run for the rule review`);
         for (const f of out.findings) say(`${out.kind === "block" ? "review finding" : "review note"} (${f.review}): ${f.text}`);
         say(out.kind === "block" ? "review: block; the landing would refuse these changes" : "review: ok");
         say("this was a preview: the landing reviews again and its result is the one that counts");
