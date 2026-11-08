@@ -1,8 +1,11 @@
 ---
 id: C-401
 title: A lander that was itself frozen does not abandon its peers (#138)
-status: open
-rules: [BR-2044]
+status: done
+rules:
+  - BR-2044
+passes:
+  BR-2044: 3f527af42e55c6f2 test
 ---
 
 ## 为什么
