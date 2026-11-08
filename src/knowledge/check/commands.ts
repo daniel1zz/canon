@@ -1,5 +1,6 @@
 import { defineCommand } from "citty";
 import { corpusOf, entry, EXIT, json, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { git } from "../../kernel/git.ts";
 import { guideFor } from "../../invocation/guide.ts";
 import { architectureHints } from "./architecture.ts";
 import { backlogNotes, check, domainNameNotes, noteLine, staleReportNotes } from "./check.ts";
@@ -7,10 +8,20 @@ import { reportsFor } from "../../work/verify/changes.ts";
 import { architectureBase, changeIdsOnBranches, listedBefore } from "../../work/session/inflight.ts";
 import { budgetHint, sessionText, sizeLines } from "./session-text.ts";
 import { REVIEW_NONE } from "../review/config-keys.ts";
+import { reviewSettingsOn } from "../../work/land/checks/review-scope.ts";
+import { thisWorkChanges } from "../review/preview.ts";
 import { reviewSizeHints } from "../review/size-hint.ts";
 import { testFilesFor } from "./tests.ts";
 
 /** `canon check`: corpus integrity. */
+
+/** The review mode and budget the landing will use: main's in a worktree, this checkout's on main (BR-2074, BR-2375). */
+function reviewSizeSettings(ws: ReturnType<typeof workspace>): { review: string | undefined; budget: number } {
+  if (ws.root === ws.primary) return { review: ws.config.review, budget: ws.config.reviewMaxPromptBytes };
+  const main = must(git(ws.root, "rev-parse", "--verify", `${ws.config.main}^{commit}`));
+  const on = must(reviewSettingsOn(ws.root, main));
+  return { review: on.review, budget: on.reviewMaxPromptBytes };
+}
 
 const checkCmd = defineCommand({
   meta: { description: "Corpus integrity: files valid, ids unique, references resolve, rules and tests name each other" },
@@ -39,7 +50,9 @@ const checkCmd = defineCommand({
     const hint = budgetHint(parts, ws.config.sessionTextBudget);
     if (hint) console.error(hint);
     // reason: a domain close to review_max_prompt_kb is said before a change to it is refused, and never fails the check (BR-2375, D-76, #145)
-    if (ws.config.review !== REVIEW_NONE) for (const h of reviewSizeHints(ws.root, read.corpus, ws.config.reviewMaxPromptBytes)) console.error(h);
+    // reason: in a worktree the landing's settings are main's (BR-2074) and this work's changed documents are counted, found as the landing finds them (BR-2375)
+    const review = reviewSizeSettings(ws);
+    if (review.review !== REVIEW_NONE) for (const h of reviewSizeHints(ws.root, read.corpus, review.budget, must(thisWorkChanges(ws, read.corpus)))) console.error(h);
     process.exit(findings.length === 0 ? EXIT.ok : EXIT.refused);
   },
 });

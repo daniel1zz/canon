@@ -12,7 +12,8 @@ import { readCorpus } from "../documents/read.ts";
 import { findDoc } from "../query/query.ts";
 import { REVIEW_NONE } from "./config-keys.ts";
 import { passedReview, reviewKey } from "../../work/land/checks/review-reuse.ts";
-import { reviewPrompts, runReview, runReviews, type ReviewVerdict } from "./review.ts";
+import type { Doc, Corpus } from "../documents/model.ts";
+import { reviewPrompts, type ReviewExtras, runReview, runReviews, type ReviewVerdict } from "./review.ts";
 
 /** What `canon work review` found, as the command turns it into text and an exit code (BR-2358). */
 export type PreviewOutcome =
@@ -43,6 +44,28 @@ function currentTree(root: string): Result<string> {
   } finally {
     rmSync(scratch, { recursive: true, force: true });
   }
+}
+
+/**
+ * The documents this work changes, found exactly as the landing's review finds them: the diff of main's merge base with the
+ * tree of everything in the worktree now (BR-2375, BR-2358). Undefined in the primary checkout and when the work changes no
+ * reviewed document, which count 0.
+ */
+export function thisWorkChanges(ws: Workspace, corpus: Corpus): Result<{ readonly changed: readonly Doc[]; readonly extras: ReviewExtras } | undefined> {
+  if (ws.root === ws.primary) return ok(undefined);
+  const main = git(ws.root, "rev-parse", "--verify", `${ws.config.main}^{commit}`);
+  if (!main.ok) return main;
+  const base = git(ws.root, "merge-base", "HEAD", main.value);
+  if (!base.ok) return ok(undefined);
+  const head = currentTree(ws.root);
+  if (!head.ok) return head;
+  const scope = reviewScope(ws.root, base.value, head.value, corpus);
+  if (scope.reviewed.length === 0) return ok(undefined);
+  const architecture = architectureOf(ws.root, base.value, head.value);
+  if (!architecture.ok) return architecture;
+  const subject = claimOfWorktree(ws.db, ws.root)?.subject ?? null;
+  const change = subject === null ? undefined : findDoc(corpus, subject);
+  return ok({ changed: scope.changedDocs, extras: { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change, ...(architecture.value ? { architecture: architecture.value } : {}) } });
 }
 
 /**

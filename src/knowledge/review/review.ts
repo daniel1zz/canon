@@ -399,6 +399,21 @@ export function pieceRemedy(root: string, corpus: Corpus, need: number, piece: n
   return `${raise}, or split ${where} into subdomains (canon rule domain ${where}/<name>) so a piece of it is smaller`;
 }
 
+/** The bytes the changed documents (and the other per-change parts of the head) add to a prompt (BR-2359); one definition for the refusal and the size hint (BR-2375). */
+export function changedBytes(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras): number {
+  const headEmpty = bytes([...promptHead(corpus, [], {})].join("\n"));
+  return Math.max(0, bytes(promptHead(corpus, changed, extras).join("\n")) - headEmpty);
+}
+
+/** What to do about a smallest prompt of `need` bytes that is over `budget`, by which part is large (BR-2359, #136, #145). */
+export function refusalRemedy(root: string, corpus: Corpus, s: { docs: number; index: number; piece: number; where: string | undefined; need: number; budget: number }): string {
+  // reason: splitting the change only shrinks the changed documents, so it helps only when they are the largest part and the rest fits alone (BR-2359, #136)
+  const splitHelps = s.docs >= s.index && s.docs >= s.piece && s.index + s.piece < s.budget;
+  if (splitHelps) return "land the changed documents in several smaller changes";
+  const rest = s.piece > 0 && s.where ? pieceRemedy(root, corpus, s.need, s.piece, s.where) : `raise review_max_prompt_kb in canon/config.yaml to at least ${kb(s.need)} KB`;
+  return `splitting the change cannot help, the changed documents are not what makes it too large: ${rest}`;
+}
+
 /** One top domain's smallest piece the rule review can be given, with the fixed part it comes with (BR-2359, #145). */
 export interface DomainPiece {
   readonly top: string;
@@ -442,17 +457,12 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   const noWording: ReviewExtras = { ...extras, wording: [] };
   const fixed = (first: boolean): number => bytes([...promptHead(corpus, changed, first ? extras : noWording), ...tail].join("\n")) + NOTE_ROOM;
   // the three parts of the smallest prompt, so a refusal can say which one is too large (BR-2359, D-67, #136)
-  const headEmpty = bytes([...promptHead(corpus, [], {})].join("\n"));
-  const docsBytes = Math.max(0, bytes(promptHead(corpus, changed, extras).join("\n")) - headEmpty);
+  const docsBytes = changedBytes(corpus, changed, extras);
   const indexBytes = fixedBytes(corpus);
   /** `piece`: the domain text the smallest call needs on top of the fixed parts, `where`: the domain to split when that is the large part. */
   const tooBig = (need: number, what: string, piece = 0, where?: string): Result<never> => {
     const sizes = `changed documents ${kb(docsBytes)} KB, review instructions + rule index + accepted decision titles ${kb(indexBytes)} KB, domain text ${kb(piece)} KB`;
-    // reason: splitting the change only shrinks the changed documents, so it helps only when they are the largest part and the rest fits alone (BR-2359, #136)
-    const splitHelps = docsBytes >= indexBytes && docsBytes >= piece && indexBytes + piece < budgetBytes;
-    const remedy = splitHelps
-      ? "land the changed documents in several smaller changes"
-      : `splitting the change cannot help, the changed documents are not what makes it too large: ${piece > 0 && where ? pieceRemedy(root, corpus, need, piece, where) : `raise review_max_prompt_kb in canon/config.yaml to at least ${kb(need)} KB`}`;
+    const remedy = refusalRemedy(root, corpus, { docs: docsBytes, index: indexBytes, piece, where, need, budget: budgetBytes });
     return err("invalid", `the rule review prompt cannot be made smaller than ${kb(need)} KB (${what}), above review_max_prompt_kb = ${kb(budgetBytes)} KB; sizes: ${sizes}: ${remedy}`);
   };
   if (fixed(true) > budgetBytes) return tooBig(fixed(true), "the changed documents, the rule index and the accepted decisions' titles, which every call carries");

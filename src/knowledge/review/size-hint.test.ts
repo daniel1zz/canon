@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readCorpus } from "../documents/read.ts";
-import { project } from "../../work/testkit.ts";
+import { project, sh, startNew } from "../../work/testkit.ts";
 import { reviewSizes } from "./review.ts";
 import { reviewSizeHints } from "./size-hint.ts";
 
@@ -72,7 +72,7 @@ describe("review size hint", () => {
     expect(near[0]).not.toContain("shorten the README");
   });
 
-  test("BR-2375: exactly 80% of the budget in bytes gives a hint, a budget one byte larger gives none", () => {
+  test("BR-2375: exactly 70% of the budget in bytes gives a hint, a budget one byte larger gives none", () => {
     let pad = 0;
     for (;; pad++) {
       const root = mkdtempSync(join(tmpdir(), "canon-size-hint-"));
@@ -80,11 +80,59 @@ describe("review size hint", () => {
       const { corpus } = readCorpus(root);
       const { fixed, pieces } = reviewSizes(root, corpus);
       const total = fixed + pieces[0]!.piece;
-      if (total % 4 !== 0) continue;
-      expect(reviewSizeHints(root, corpus, (total * 5) / 4)).toHaveLength(1);
-      expect(reviewSizeHints(root, corpus, (total * 5) / 4 + 1)).toEqual([]);
+      if (total % 7 !== 0) continue;
+      expect(reviewSizeHints(root, corpus, (total * 10) / 7)).toHaveLength(1);
+      expect(reviewSizeHints(root, corpus, (total * 10) / 7 + 1)).toEqual([]);
       return;
     }
+  });
+
+  test("BR-2375: 69% of the budget gives no hint and 71% gives one", () => {
+    const root = mkdtempSync(join(tmpdir(), "canon-size-hint-"));
+    write(root, dungeon(40));
+    const { corpus } = readCorpus(root);
+    const { fixed, pieces } = reviewSizes(root, corpus);
+    const total = fixed + pieces[0]!.piece;
+    expect(reviewSizeHints(root, corpus, Math.floor(total / 0.69) + 1)).toEqual([]);
+    expect(reviewSizeHints(root, corpus, Math.floor(total / 0.71))).toHaveLength(1);
+  });
+
+  test("BR-2375: the measured case of #145, 78% of the budget, is hinted", () => {
+    const root = mkdtempSync(join(tmpdir(), "canon-size-hint-"));
+    write(root, dungeon(100));
+    const { corpus } = readCorpus(root);
+    const { fixed, pieces } = reviewSizes(root, corpus);
+    const hints = reviewSizeHints(root, corpus, Math.round((fixed + pieces[0]!.piece) / 0.78));
+    expect(hints).toHaveLength(1);
+    expect(hints[0]).toMatch(/is 78% of review_max_prompt_kb/);
+  });
+
+  test("BR-2375: with this work's changed documents counted, 64% gives no hint, 72% gives one that does not say refused, over 100% says the landing's review will be refused", () => {
+    const mk = (kbSize: number) => {
+      const root = mkdtempSync(join(tmpdir(), "canon-size-hint-"));
+      write(root, { ...dungeon(40), [`canon/decisions/${id("D", 5)}.md`]: `---\nid: ${id("D", 5)}\ntitle: Big\nstatus: proposed\n---\n${"d".repeat(Math.round(kbSize * KB))}\n` });
+      const { corpus } = readCorpus(root);
+      return { root, corpus, work: { changed: corpus.docs.filter((d) => d.id === id("D", 5)), extras: {} } };
+    };
+    const base = mk(1);
+    const { fixed, pieces } = reviewSizes(base.root, base.corpus);
+    const static_ = fixed + pieces[0]!.piece;
+    const budget = Math.round(static_ / 0.5);
+    const at = (kbSize: number) => { const m = mk(kbSize); return reviewSizeHints(m.root, m.corpus, budget, m.work); };
+    expect(reviewSizeHints(base.root, base.corpus, budget)).toEqual([]);
+    expect(at(0.1 * budget / KB)).toEqual([]);
+    const near = at((0.22 * budget) / KB);
+    expect(near).toHaveLength(1);
+    expect(near[0]).toContain("this work's");
+    expect(near[0]).toMatch(/is 7\d% of review_max_prompt_kb/);
+    expect(near[0]).not.toContain("will be refused");
+    const over = at((0.6 * budget) / KB);
+    expect(over).toHaveLength(1);
+    expect(over[0]).toMatch(/changed documents \d+ KB \(this work's/);
+    expect(over[0]).toContain("the landing's review of this work will be refused");
+    expect(over[0]).toContain("land the changed documents in several smaller changes");
+    // without the work the same corpus counts 0 and says so
+    expect(reviewSizeHints(base.root, base.corpus, Math.round(static_ / 0.7))[0]).toContain("not known without a change");
   });
 
   test("BR-2375: a small README but a 70 KB rule gives a hint that suggests splitting into subdomains", () => {
@@ -138,5 +186,47 @@ describe("canon check review size hint", () => {
   test("BR-2375: with review: none there is no hint", () => {
     const r = canon(setup("review: none\n"), "check");
     expect([r.code, r.err.includes("hint review-size")]).toEqual([0, false]);
+  });
+});
+
+describe("canon check review size hint in a change worktree", () => {
+  const decisionOf = (kbSize: number) => `---\nid: ${id("D", 5)}\ntitle: Big\nstatus: proposed\n---\n${"d".repeat(kbSize * KB)}\n`;
+  const config = (budget: number) => `tests: []\nreview: "true"\nreview_max_prompt_kb: ${budget}\n`;
+  const setup = (budget: number) => {
+    const root = project();
+    write(root, { ...dungeon(60), "src/dungeon/.keep": "", "canon/config.yaml": config(budget) });
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "dungeon");
+    return { root, wt: startNew(root, "Change dungeon docs").worktree };
+  };
+  const hintOf = (cwd: string) => canon(cwd, "check").err.split("\n").filter((l) => l.startsWith("hint review-size:"));
+
+  test("BR-2375: in a worktree the work's real changed documents are counted and named, and main without them counts 0", () => {
+    const { root, wt } = setup(100);
+    expect(hintOf(root)).toEqual([]); // about 63% of the budget
+    write(wt, { [`canon/decisions/${id("D", 5)}.md`]: decisionOf(10) });
+    const near = hintOf(wt);
+    expect(near).toHaveLength(1);
+    expect(near[0]).toContain("this work's");
+    expect(near[0]).not.toContain("will be refused");
+    write(wt, { [`canon/decisions/${id("D", 5)}.md`]: decisionOf(60) });
+    const over = hintOf(wt);
+    expect(over).toHaveLength(1);
+    expect(over[0]).toContain("the landing's review of this work will be refused");
+    expect(hintOf(root)).toEqual([]);
+  });
+
+  test("BR-2375: a worktree that changes no reviewed document counts 0 and says so", () => {
+    const { wt } = setup(80);
+    write(wt, { "app2.txt": "x" });
+    const h = hintOf(wt);
+    expect(h).toHaveLength(1);
+    expect(h[0]).toContain("not known without a change");
+  });
+
+  test("BR-2375: the budget is main's, not the worktree's edited config", () => {
+    const { wt } = setup(100);
+    write(wt, { "canon/config.yaml": config(20) });
+    expect(hintOf(wt)).toEqual([]);
   });
 });
