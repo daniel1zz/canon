@@ -137,6 +137,8 @@ describe("the owner's priority in the coordination DB", () => {
     expect([set[0]!.subject, set[0]!.actor, JSON.parse(set[0]!.detail).relayed]).toEqual([s.change, "agent:a", "C 先合"]);
     expect(canon(root, "backlog", "urgent", s.change, "--clear").code).toBe(2);
     expect(marks(ws(root).db)).toHaveLength(1);
+    expect(canon(root, "backlog", "urgent", startNew(root, "Never marked").change, "--clear").code).toBe(2); // words are checked before whether a mark exists
+
     expect(canon(root, "backlog", "urgent", s.change, "--clear", "--relayed", "撤销").code).toBe(0);
     expect(JSON.parse(events(root, "urgent.clear")[0]!.detail).relayed).toBe("撤销");
   });
