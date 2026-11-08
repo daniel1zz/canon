@@ -122,7 +122,7 @@ export function commandFor(template: string, file: string, report?: string): str
  * recorded for the file at its content's blob hash (BR-2337, D-64); a command that wrote no usable report fails,
  * whatever its own exit code, and nothing is recorded.
  */
-async function runTestFile(ws: Workspace, template: string, file: string, groups: Set<number>): Promise<Outcome> {
+export async function runTestFile(ws: Pick<Workspace, "root" | "db">, template: string, file: string, groups: Set<number>): Promise<Outcome> {
   if (!template.includes(REPORT_PLACEHOLDER)) return runShell(ws.root, commandFor(template, file), groups);
   const dir = mkdtempSync(join(tmpdir(), "canon-report-"));
   try {

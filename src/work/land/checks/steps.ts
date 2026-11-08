@@ -7,6 +7,7 @@ import { reportsFor } from "../../verify/changes.ts";
 import { backlogAt } from "../../../knowledge/documents/backlog.ts";
 import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../../../knowledge/check/sources.ts";
 import { testFilesFor } from "../../../knowledge/check/tests.ts";
+import { testMergedFiles } from "./merged-tests.ts";
 import { runHooks } from "../../hooks/hooks.ts";
 import { changePort } from "../../hooks/ports.ts";
 import { type Doc } from "../../../knowledge/documents/model.ts";
@@ -87,6 +88,12 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   // reason: only the landing that adds a dangling backlog id is refused for it; one main already lists is a note (BR-2150, #112)
   const listed = backlogAt(wt, v.main, ws.config.types);
   if (!listed.ok) return refuse("environment", listed.error.message);
+  // reason: the rebase merged main's edits into a test file the change had tested; the landing tests the merged file itself instead of refusing it as unreported (BR-2381, #152)
+  const merged = await testMergedFiles(ws, wt, landing.value.testCommand, tests, v.base, v.head, v.before);
+  if (!merged.ok) return refuse("environment", merged.error.message);
+  for (const m of merged.value) say(`tested ${m.file} after the rebase merged main's edits into it: ${m.exitCode === 0 ? "pass" : "fail"}`);
+  const broken = merged.value.find((m) => m.exitCode !== 0);
+  if (broken) return refuse("check", `canon check: ${broken.file} fails after the rebase merged main's edits into it (BR-2381); rebase onto main, fix it, run canon work test and land again:\n${broken.output.trimEnd().split("\n").slice(-20).join("\n")}`);
   const reports = reportsFor(ws.db, wt, landing.value, read.corpus, tests);
   if (!reports.ok) return refuse("environment", reports.error.message);
   const input = { root: wt, ...read, testFiles: tests, reports: reports.value, branchChanges: onBranches.value, backlogBase: new Set(listed.value.map((e) => e.id)), architecture: { refs: [v.base], since: v.base } };
