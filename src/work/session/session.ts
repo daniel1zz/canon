@@ -11,6 +11,7 @@ import { err, ok, type Result } from "../../kernel/result.ts";
 import { slugify, type Change, type Corpus } from "../../knowledge/documents/model.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
+import { PLAN_SECTION, readPlan } from "../../knowledge/plans/parse.ts";
 import { createDoc, highestNumber } from "../../knowledge/documents/write.ts";
 import { worktreesDirOf } from "./config-keys.ts";
 import { noPort, portFor, type PortLookup } from "../hooks/ports.ts";
@@ -46,7 +47,7 @@ export interface Started {
  * up on main, and else on its own `change/C-n` branch: a change made with --title lives only there until it
  * lands, and a session that stopped without a handoff must still be able to resume it (BR-2107).
  */
-export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[] }, say: Say): Result<Started> {
+export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] } }, say: Say): Result<Started> {
   const main = ws.config.main;
   // reason: BR-2012 — checked before an id is allocated or git is called, so a repository with no commit yet loses no number (BR-2002)
   if (mainIsUnborn(ws.primary, main)) return err("io", `${main} has no commit yet, so no change can start: ${firstCommitStep(main)}`);
@@ -78,6 +79,12 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     changeId = doc.id;
     slug = slugify(doc.title);
   } else {
+    // reason: checked before an id is allocated, so a refused start leaves no number, worktree or claim behind (BR-2376, BR-2002)
+    const bad = target.plan ? planProblem(onMain.value, ws.config.main, target.plan) : undefined;
+    if (bad) {
+      ws.db.event(ws.actor, "start.refuse", target.plan!.id, { reason: "plan" });
+      return err("not_found", bad);
+    }
     const probe = createDocProbe(ws, onMain.value, target.title);
     changeId = probe.id;
     slug = slugify(target.title);
@@ -131,7 +138,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
 
   if (fresh && "title" in target) {
     const corpus = readCorpus(path, ws.config.types, ws.config).corpus;
-    const made = createDoc(path, corpus, ws.db, ws.actor, { kind: "change", title: target.title, rules: target.rules ?? [], id: changeId }, ws.config.templates);
+    const made = createDoc(path, corpus, ws.db, ws.actor, { kind: "change", title: target.title, rules: target.rules ?? [], ...(target.plan ? { plan: target.plan } : {}), id: changeId }, ws.config.templates);
     const commit = (file: string): Result<unknown> => {
       const a = git(path, "add", file);
       return a.ok ? git(path, "commit", "-q", "-m", `canon: open ${changeId} ${target.title}`) : a;
@@ -151,6 +158,16 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   // after_start never changes the result (BR-2056): the worktree and claim stand whatever it exits with.
   runHooksSync({ db: ws.db, actor: ws.actor, event: "after_start", change: changeId, cwd: path, env: { CANON_BRANCH: branch }, port: portLookup }, ws.config.hooks.after_start, say);
   return ok({ change: changeId, worktree: path, branch, created });
+}
+
+/** Why `plan` and its steps cannot be done by a new change on main's corpus, or undefined when they can (BR-2376). */
+function planProblem(corpus: Corpus, main: string, plan: { id: string; steps: readonly string[] }): string | undefined {
+  const doc = findDoc(corpus, plan.id);
+  if (!doc || doc.kind !== "change") return `${plan.id} is not a change on ${main}; --plan names the change that holds the plan`;
+  const read = readPlan(doc.body);
+  if (read.kind !== "plan") return `${plan.id} has no valid ${PLAN_SECTION} on ${main}${read.kind === "invalid" ? `: ${read.problem}` : ""}`;
+  const unknown = plan.steps.filter((s) => !read.steps.some((p) => p.name === s));
+  return unknown.length > 0 ? `${unknown.join(", ")} ${unknown.length > 1 ? "are" : "is"} not a step of the plan in ${plan.id} (steps: ${read.steps.map((p) => p.name).join(", ")})` : undefined;
 }
 
 /** Undoes a start whose worktree was created a moment ago and holds nothing but the checkout, so a retry starts clean (BR-2029). */

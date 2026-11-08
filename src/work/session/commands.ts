@@ -33,6 +33,8 @@ const startCmd = defineCommand({
     change: { type: "positional", required: false },
     title: { type: "string" },
     rules: { type: "string", description: "Rule ids the new change touches" },
+    plan: { type: "string", description: "With --title and --step: the change holding the plan this change does steps of (BR-2376)" },
+    step: { type: "string", description: "With --plan: the plan's step names this change does, comma separated (BR-2376)" },
     "fix-main": { type: "boolean", description: "Open the one change that fixes main's failing background floor (floor_timing: after, BR-2221)" },
     ...AS_ARG,
   },
@@ -41,7 +43,12 @@ const startCmd = defineCommand({
     const fixMain = Boolean(args["fix-main"]);
     if (fixMain && (args.change || args.title || args.rules)) fail({ code: "invalid", message: "--fix-main opens its own change; give no change id, --title or --rules with it" });
     if (!fixMain && !args.change && !args.title) fail({ code: "invalid", message: "give a change id, --title for a new change, or --fix-main" });
-    const target = typeof args.change === "string" && args.change ? { change: args.change } : { title: String(args.title), rules: list(args.rules) };
+    const planned = args.plan !== undefined || args.step !== undefined;
+    if (planned && (args.plan === undefined || args.step === undefined)) fail({ code: "invalid", message: "--plan and --step go together: the plan's change and the steps this change does" });
+    if (planned && (args.change || !args.title || fixMain)) fail({ code: "invalid", message: "--plan and --step go with --title for a new change, not with an existing change id or --fix-main" });
+    const steps = list(args.step);
+    if (planned && (String(args.plan).trim() === "" || steps.length === 0)) fail({ code: "invalid", message: "--plan needs a change id and --step at least one step name" });
+    const target = typeof args.change === "string" && args.change ? { change: args.change } : { title: String(args.title), rules: list(args.rules), ...(planned ? { plan: { id: String(args.plan).trim().toUpperCase(), steps } } : {}) };
     const s = must(fixMain ? startFixMain(ws, say) : start(ws, target, say));
     noticeUpdates(ws, say);
     say(`cd ${s.worktree}`);

@@ -25,6 +25,8 @@ export interface NewDoc {
   readonly supersedes?: string;
   /** change only */
   readonly rules?: readonly string[];
+  /** change only: the plan this change does steps of, and which (D-77) */
+  readonly plan?: { readonly id: string; readonly steps: readonly string[] };
   /** An id already allocated by the caller (work start allocates the change id before the worktree exists). */
   readonly id?: string;
 }
@@ -69,7 +71,7 @@ export function createDoc(root: string, corpus: Corpus, db: CoordDb, actor: stri
       type.name === "decision"
         ? { id, title, status: type.defaultStatus, supersedes: input.supersedes, ...extra }
         : type.name === "change"
-          ? { id, title, status: type.defaultStatus, rules: [...(input.rules ?? [])], ...extra }
+          ? { id, title, status: type.defaultStatus, rules: [...(input.rules ?? [])], ...(input.plan ? { plan: input.plan.id, steps: [...input.plan.steps] } : {}), ...extra }
           : { id, title, status: type.defaultStatus, ...extra };
   }
   const full = join(root, path);

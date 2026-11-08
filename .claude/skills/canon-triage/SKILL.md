@@ -75,6 +75,8 @@ gh issue close <n> --reason completed --comment "C-n 修复（main <sha>）：<o
 
 When an issue or plan is too big for one change, split it into **vertical slices**, one change each: a narrow but complete path through every layer (command, storage, output, test), verifiable on its own from the real entry point. Not horizontal layers ("all the schema first"). Prefer many thin slices; state in each change's 为什么 which slices must land first.
 
+When the slices depend on each other, write them as a plan, not as prose: the first change holds a `## 计划` section with a table of columns `步骤 | 内容 | 依赖` (a step name is letters and digits, `依赖` is `-` or step names separated by commas), and each slice's change is started with `canon work start --title "<what>" --plan C-n --step <name>`, which records `plan: C-n` and `steps: [<name>]` in its front matter. `canon plan status [C-n]` then shows per plan the steps done, working, ready (every dependency landed, so it can be dispatched) and blocked; `canon check` rejects a table that breaks the format. A step is linked to its changes only by that id, never by title.
+
 Mark each slice as one an agent can finish alone, or one that needs a human (a direction choice, a credential, a manual check only a person can do). Prefer the first kind; for the second, ask the specific question with `canon human ask` and keep the rest moving. Do not present the breakdown for approval and wait: decide it, write it down, start.
 
 ## 5. Record a rejection as a decision

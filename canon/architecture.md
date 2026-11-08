@@ -47,8 +47,8 @@ title: 架构总览
 **`canon/` 文档树**
 - 职责：项目的共享记忆，进版本库：`canon/product.md`、`canon/architecture.md`、`canon/config.yaml`、`canon/backlog.md`、`canon/rules/<领域>/`（规则和领域 README）、`canon/decisions/`、`canon/changes/`、`canon/notes/`，需要时有 `canon/releases/`。一个文档一个文件，只在合入时改。
 - 数据：Markdown 加 front matter。`canon check` 查格式、引用、路径、规则有没有被一个会运行的测试点名（读 `state.db` 里的测试报告记账，不运行测试，D-64）；`canon search`、`canon context` 读它。
-- 代码：`src/knowledge`（横跨整个领域）、`src/knowledge/documents`、`src/knowledge/check`、`src/knowledge/query`、`src/knowledge/releases`、`src/work/execution`（规则的执行状态由变更里的通过记录算出）。
-- 决策：D-1、D-12、D-14、D-15、D-32、D-61、D-64、D-65。
+- 代码：`src/knowledge`（横跨整个领域）、`src/knowledge/documents`、`src/knowledge/check`、`src/knowledge/query`、`src/knowledge/releases`、`src/knowledge/plans`（变更文件里 `## 计划` 表的读取、检查和 `canon plan status`，步骤状态由做它的变更算出）、`src/work/execution`（规则的执行状态由变更里的通过记录算出）。
+- 决策：D-1、D-12、D-14、D-15、D-32、D-61、D-64、D-65、D-77。
 
 **装进项目的 hook、skill 和 git 守卫**
 - 职责：Claude Code hook（会话开始跑 `canon brief`；每次 Bash 前快照、检查 `canon work` 命令带不带 `--as`（`canon work check-as`，只拒绝、不改写）；提问工具之后记录回答）、`.claude/skills/canon-*`、git 的 `reference-transaction` hook（main 只能由 `canon work land` 移动）。
@@ -94,4 +94,5 @@ flowchart LR
 - **一个变更**：`work start`（子 agent 带 `--as <agent_id>`）建 worktree、分支和认领；改完 `work test`；`work land --finish` 进合入流水线，只有 main 通过比较并交换前移；`work after-land <C-n> --wait` 等后台命令；`work clean` 删 worktree。每一步的要求看 `work/session`、`work/verify`、`work/land` 的规则（D-5、D-16、D-22、D-62）。
 - **后台 floor watch**：合入移动 main 后启动，在自己的进程组里；测过的结果决定 `refs/canon/green`，没通过的记进 red_main，`canon brief` 提示（D-31、D-55、D-59）。
 - **问人**：`canon human ask` 把问题记进 `state.db`（`src/work/humans`）；人在对话里回答，提问工具的 hook 记录；`canon human answer --relayed` 对照记录，对不上只标记（D-6、D-45、D-47）。
+- **计划**：大工作在变更文件的 `## 计划` 表里写步骤和依赖；做步骤的变更在 front matter 写 `plan: C-n` 和 `steps`（`canon work start --plan --step` 写好）；`canon plan status` 从变更的状态算出每步已完成、进行中、可开始还是被挡住，不另存（`src/knowledge/plans`，D-77）。
 - **发版**：规则带 `release: R-n` 标签；`canon release ship R-n` 开变更把版本设为 shipped（`src/knowledge/releases`，D-61）。

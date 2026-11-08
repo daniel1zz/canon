@@ -13,6 +13,7 @@ import { historyOf, pathFindings } from "./paths.ts";
 import { listFindings } from "./lists.ts";
 import { architectureFindings, type ArchitectureBase, type ArchitectureRule } from "./architecture.ts";
 import { releaseFindings } from "../releases/check.ts";
+import { planFindings } from "../plans/check.ts";
 import { EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, RULE_SECTION, section } from "../documents/templates.ts";
 
 /**
@@ -231,6 +232,7 @@ export function check(input: CheckInput): Finding[] {
   if (codeRoot !== undefined) findings.push(...layoutFindings(input.root, input.corpus));
   for (const f of pathFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "path-missing", message: f.message });
   findings.push(...releaseFindings(input.root, input.corpus));
+  findings.push(...planFindings(input.corpus));
   for (const f of listFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "list-mismatch", message: f.message });
   findings.push(...architectureFindings(input));
   return findings;

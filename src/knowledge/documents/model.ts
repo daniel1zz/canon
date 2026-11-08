@@ -73,6 +73,10 @@ export interface Change extends Base {
   readonly rules: readonly string[];
   /** Pass records the close commit wrote: rule id → behaviour hash and method (BR-2237, D-32). Empty when none. */
   readonly passes: Readonly<Record<string, PassRecord>>;
+  /** The change holding the plan this change does steps of (`plan: C-n`), with `steps`; both or neither (D-77). */
+  readonly plan?: string;
+  /** The steps of `plan` this change does (`steps`), as written in the plan table (D-77). */
+  readonly steps?: readonly string[];
 }
 
 /** How a rule's execution was verified (BR-2237): a test the change touched (down to the test, or only to its file when the report has no line numbers), an acceptance line, or a test that existed at migration. */

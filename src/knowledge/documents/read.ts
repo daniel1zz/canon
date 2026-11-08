@@ -2,6 +2,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { parseDocFile, parseReadme } from "./docfile.ts";
 import { parsePasses } from "./behaviour.ts";
+import { planLink } from "./planlink.ts";
 import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type DecisionStatus, type Doc, type Domain, type Layout, type ReleaseStatus, type RuleStatus } from "./model.ts";
 import { BUILTIN_TYPES, type DocType } from "./types.ts";
 
@@ -168,7 +169,12 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: passes });
           continue;
         }
-        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes });
+        const link = planLink(p.meta, type.prefix);
+        if (typeof link === "string") {
+          problems.push({ path, message: link });
+          continue;
+        }
+        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...link });
       } else if (type.name === "release") {
         const shippedAt = p.meta["shipped_at"];
         const shipped = p.status === "shipped";
