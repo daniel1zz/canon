@@ -2,7 +2,7 @@
 id: C-429
 title: A test run fails and names the processes its tests left running, then
   kills them
-status: open
+status: done
 rules: []
 ---
 
