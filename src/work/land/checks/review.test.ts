@@ -64,7 +64,7 @@ describe("rule review at land", () => {
       const prompt = readFileSync(promptFile, "utf8");
       expect(prompt).toContain("# Architecture overview (canon/architecture.md, not changed in this landing)");
       expect(prompt).toContain("- 账单：`src/billing`。");
-      expect(prompt).toContain("Block for it only when the part of the overview this landing changed");
+      expect(prompt).toContain("Use this key only when the part of the overview this landing changed");
       expect(prompt).not.toContain("## Diff of the overview in this landing");
     });
 
@@ -364,6 +364,37 @@ describe("rule review at land", () => {
     expect(out.kind === "refused" && out.reason).toBe("review");
     expect(out.kind === "refused" && out.message).toContain("rule review blocked");
     expect(existsSync(lenient.promptFile)).toBe(false); // the change's own reviewer never ran
+  });
+
+  test("BR-2367: a finding that names a blocking criterion refuses the landing even when the answer says ok; findings that are all notes land", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    const flawed = reviewer(root, `cat > /dev/null\necho '{"verdict":"ok","findings":[{"criterion":"contradiction","text":"${id} contradicts BR-9"}]}'`, "flawed");
+    configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(flawed.script)}\n`);
+    const s = startNew(root, "Rule with a flaw");
+    addRule(s.worktree);
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(out.kind === "refused" && out.message).toContain(`rule review blocked:\n  - [contradiction] ${id} contradicts BR-9`);
+    const events = ws(root).db.db.query<{ kind: string }, []>("SELECT kind FROM events WHERE kind LIKE 'review.%'").all().map((e) => e.kind);
+    expect(events).toEqual(["review.block"]);
+
+    const notes = reviewer(root, `cat > /dev/null\necho '{"findings":[{"criterion":"note","text":"${id} could be shorter"}]}'`, "notes");
+    configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(notes.script)}\n`);
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+  });
+
+  test("BR-2367: the duplicate review of standing instructions derives its verdict the same way", async () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    const strict = reviewer(root, `cat > /dev/null\necho '{"verdict":"ok","findings":[{"criterion":"duplication","text":"stated twice"}]}'`, "dup");
+    writeFileSync(join(root, "CLAUDE.md"), "# Project\n");
+    sh(root, "add", "-A");
+    configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(strict.script)}\n`);
+    const s = startNew(root, "Edit instructions");
+    writeFileSync(join(s.worktree, "CLAUDE.md"), "# Project\n\nnew\n");
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "edit");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.message).toContain("duplicate review blocked:\n  - [duplication] stated twice");
   });
 
   test("BR-2074: with no reviewer on main, a change that sets one and changes a rule is refused; the reviewer landed alone first then reviews the rule", async () => {

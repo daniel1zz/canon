@@ -50,6 +50,13 @@ export interface ReviewExtras {
   readonly architecture?: { readonly text: string; readonly diff: string };
 }
 
+/** The key of each blocking criterion in the prompts, and `note` for a remark that never blocks (BR-2367, D-74). */
+export const RULE_CRITERIA = ["contradiction", "untestable", "no-rejected-options", "release", "amends", "overview"] as const;
+export const DUPLICATE_CRITERIA = ["duplication"] as const;
+const CRITERIA: readonly string[] = [...RULE_CRITERIA, ...DUPLICATE_CRITERIA];
+const ANSWER_FORMAT_RULE = `{"findings":[{"criterion":"${RULE_CRITERIA.join('"|"')}"|"note","text":"<one sentence, naming the id>"}]`;
+const NO_VERDICT = "Do not give a verdict: canon derives it from the keys.";
+
 /** The review prompt with every affected domain's whole text in it, however large. */
 export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras = {}): string {
   const contexts = contextTops(corpus, changed, extras).map((top) => contextSection(root, corpus, top));
@@ -60,20 +67,25 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
 function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras, note?: string): string[] {
   const parts: string[] = [
     "You review changes to a project's rules and decisions. Rules are the current truth of what the product must do; decisions record why.",
-    "Block only for: a rule that contradicts another active rule (in any domain: see the rule index) or an accepted decision; a rule a test cannot decide (vague, no boundary, examples that do not pin the boundary); a decision without the options it rejected.",
+    // reason: each blocking criterion has a key the reviewer must name on a finding, so canon derives the verdict and a finding that matches a criterion cannot pass as a note (BR-2367, D-74)
+    "Every blocking criterion below has a key in backticks. A finding that matches one is given with that key; every other remark is given with the key `note`, which never blocks.",
+    "`contradiction`: a rule that contradicts another active rule (in any domain: see the rule index) or an accepted decision.",
+    "`untestable`: a rule a test cannot decide (vague, no boundary, examples that do not pin the boundary).",
+    "`no-rejected-options`: a decision without the options it rejected.",
     // reason: a release's 不做 and 范围 are promises the tagged rules must keep (D-61, BR-2009)
-    "A release is a version's PRD; the rules whose front matter says `release: R-n` are its behaviour. Block a rule tagged with a release that does something that release's 不做 excludes or lies outside its 范围; block a release whose 不做 contradicts its own 范围 or a rule tagged with it. Only a rule or release changed in this landing can be blocked for it.",
-    "A changed decision that replaces only part of an accepted decision must list it in `amends:` (one that replaces a whole decision uses `supersedes:`); block a decision that says it changes part of another decision without listing it in `amends:`.",
+    "`release`: a release is a version's PRD; the rules whose front matter says `release: R-n` are its behaviour. A rule tagged with a release that does something that release's 不做 excludes or lies outside its 范围; a release whose 不做 contradicts its own 范围 or a rule tagged with it. Only a rule or release changed in this landing can be blocked for it.",
+    "`amends`: a changed decision that replaces only part of an accepted decision must list it in `amends:` (one that replaces a whole decision uses `supersedes:`); a decision that says it changes part of another decision without listing it in `amends:`.",
     // reason: the overview is a reader's entry, so only a text this landing wrote into it can be blocked, never the overview as it stood (BR-2009, D-65)
-    "When an architecture overview is shown below, it is where readers start, not the judge: where it disagrees with the active rules and accepted decisions, they win. Block for it only when the part of the overview this landing changed (its diff is shown) contradicts an active rule or an accepted decision. When a rule or decision changed in this landing makes a statement in the overview wrong, add a note (never block for it) naming the overview section.",
+    "`overview`: when an architecture overview is shown below, it is where readers start, not the judge: where it disagrees with the active rules and accepted decisions, they win. Use this key only when the part of the overview this landing changed (its diff is shown) contradicts an active rule or an accepted decision. When a rule or decision changed in this landing makes a statement in the overview wrong, add a `note` naming the overview section.",
+    NO_VERDICT,
     "Do not block for wording, style or formatting.",
     "One rule is one trigger (one command, event or kind of input) and one outcome (D-5). The error cases, exit codes and boundaries of the same trigger belong in that rule as examples, and a definition table (such as a list of exit codes) is one rule: do not suggest splitting those. Suggest a split only when a rule covers two different triggers, or two outcomes that could change independently; never block for it.",
     "Write the findings in the language the documents are written in.",
     // reason: turning a lesson into a mechanism needs the owner's confirmation; the review only reminds, never blocks (BR-2162, D-24)
     "When the change's lessons section is shown below, add a note (never block for it) naming the change id: for a lesson marked text-only (只靠文字) without a reason although a rule, check or command could enforce it; and for a lesson whose mechanism is a rule, check or command this landing adds (in the changed documents) when the lesson does not say the owner confirmed it.",
     extras.wording?.length
-      ? 'Answer with JSON only: {"verdict":"ok"|"block","findings":["<one sentence each, naming the id>"],"wording":{"<rule id>":"wording"|"behaviour"}}, with one wording entry per rule under # Wording judgements'
-      : 'Answer with JSON only: {"verdict":"ok"|"block","findings":["<one sentence each, naming the id>"]}',
+      ? `Answer with JSON only: ${ANSWER_FORMAT_RULE}, "wording":{"<rule id>":"wording"|"behaviour"}}, with one wording entry per rule under # Wording judgements`
+      : `Answer with JSON only: ${ANSWER_FORMAT_RULE}}`,
     ...(note ? [note] : []),
     "",
   ];
@@ -242,16 +254,44 @@ export async function runReview(command: string, cwd: string, prompt: string, li
   if (code !== 0) return err("io", failureMessage(code, errText, out));
   const match = out.match(/\{[\s\S]*\}/);
   if (!match) return err("invalid", `review command printed no JSON: ${out.trim().slice(0, 300)}`);
+  let v: unknown;
   try {
-    const v = JSON.parse(match[0]) as { verdict?: unknown; findings?: unknown };
-    if (v.verdict !== "ok" && v.verdict !== "block") return err("invalid", `review verdict must be "ok" or "block", got ${JSON.stringify(v.verdict)}`);
-    const findings = Array.isArray(v.findings) ? v.findings.map(String) : [];
-    const w = (v as { wording?: unknown }).wording;
-    const wording = w !== null && typeof w === "object" && !Array.isArray(w) ? Object.fromEntries(Object.entries(w as Record<string, unknown>).map(([k, x]) => [k, String(x)])) : undefined;
-    return ok({ verdict: v.verdict, findings, ...(wording ? { wording } : {}) });
+    v = JSON.parse(match[0]);
   } catch (e) {
     return err("invalid", `review JSON does not parse: ${(e as Error).message}`);
   }
+  return parseAnswer(v);
+}
+
+/** What one review answer means: the verdict canon derives, the findings as text, the wording answers (BR-2367, D-74). */
+export function parseAnswer(v: unknown): Result<ReviewVerdict> {
+  const a = v !== null && typeof v === "object" && !Array.isArray(v) ? (v as { verdict?: unknown; findings?: unknown; wording?: unknown }) : {};
+  const w = a.wording;
+  const wording = w !== null && typeof w === "object" && !Array.isArray(w) ? Object.fromEntries(Object.entries(w as Record<string, unknown>).map(([k, x]) => [k, String(x)])) : undefined;
+  const extra = wording ? { wording } : {};
+  const list = Array.isArray(a.findings) ? a.findings : [];
+  const isObject = (f: unknown): boolean => f !== null && typeof f === "object" && !Array.isArray(f);
+  if (!list.some(isObject)) {
+    // reason: an answer in the format before BR-2367 has no criterion on its findings; its `verdict` is taken as stated, never guessed (D-74)
+    const findings = list.map(String);
+    if (a.verdict === "ok" || a.verdict === "block") return ok({ verdict: a.verdict, findings, ...extra });
+    if (a.verdict === undefined && Array.isArray(a.findings) && list.length === 0) return ok({ verdict: "ok", findings: [], ...extra });
+    return err("invalid", a.verdict === undefined ? `review answer has no verdict and no findings with a criterion: ${JSON.stringify(a.findings ?? null).slice(0, 200)}` : `review verdict must be "ok" or "block", got ${JSON.stringify(a.verdict)}`);
+  }
+  const findings: string[] = [];
+  let blocking = false;
+  for (const [i, f] of list.entries()) {
+    const bad = (why: string) => err("invalid", `review finding ${i + 1} ${why}; each finding is {"criterion":"<${CRITERIA.join("|")}|note>","text":"<sentence>"}`);
+    if (!isObject(f)) return bad("is not an object");
+    const { criterion, text } = f as { criterion?: unknown; text?: unknown };
+    if (typeof text !== "string" || text.trim() === "") return bad("has no text");
+    if (criterion === "note") findings.push(text);
+    else if (typeof criterion === "string" && CRITERIA.includes(criterion)) {
+      blocking = true;
+      findings.push(`[${criterion}] ${text}`);
+    } else return bad(`has criterion ${JSON.stringify(criterion ?? null)}, not a criterion name or "note"`);
+  }
+  return ok({ verdict: blocking ? "block" : "ok", findings, ...extra });
 }
 
 /** Text every session reads at start, gathered from the tree that is landing (BR-2143). */
@@ -288,11 +328,13 @@ export function duplicatePrompt(changed: readonly string[], standing: StandingTe
   const parts: string[] = [
     "You review the standing instructions of a project: text loaded into every AI coding session at start. The same requirement written in two places drifts apart, and the reader no longer knows which one holds.",
     "Block only duplication this landing introduces: one requirement (an instruction, a condition or a qualifier) is stated in two standing texts below, or twice in one of them, in any wording or language, and at least one of the two places is in a line this landing added or changed (a `+` line of the diffs below). A moved line (removed in one place, added in another) counts as added; a deleted line creates no duplication.",
-    "Duplication that lies entirely in unchanged text was already there: do not block for it; you may list it as a finding in a verdict of ok, which is only a note.",
+    "Duplication that lies entirely in unchanged text was already there: do not block for it; you may list it as a `note`.",
     "Do not block for: a one-line pointer to where a requirement is stated; a project-specific qualifier added to a general requirement stated elsewhere; facts or descriptions that are not requirements; wording, style or formatting.",
     "Each finding names both places (file or source, and the sentence) and which one to keep.",
     "Write the findings in the language the changed text is written in.",
-    'Answer with JSON only: {"verdict":"ok"|"block","findings":["<one sentence each>"]}',
+    // reason: same answer format as the rule review, so canon derives the verdict here too (BR-2367, D-74)
+    `\`duplication\` is the only blocking criterion: a finding that matches it is given with the key \`duplication\`; every other remark (old duplication in unchanged text, a pointer, a qualifier) is given with the key \`note\`, which never blocks. ${NO_VERDICT}`,
+    'Answer with JSON only: {"findings":[{"criterion":"duplication"|"note","text":"<one sentence>"}]}',
     "",
     `# Changed in this landing: ${changed.join(", ")}`,
   ];

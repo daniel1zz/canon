@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readCorpus } from "../documents/read.ts";
-import { duplicatePrompt, reviewPrompt, runReview, standingText } from "./review.ts";
+import { DUPLICATE_CRITERIA, RULE_CRITERIA, duplicatePrompt, reviewPrompt, runReview, standingText } from "./review.ts";
 
 const id = (p: string, n: number) => [p, n].join("-");
 
@@ -137,6 +137,56 @@ describe("review command", () => {
     expect(await run("echo '  ' >&2; exit 4")).toBe("review command exited 4: no output");
     const long = await run("printf 'A%.0s' $(seq 1 100); printf 'B%.0s' $(seq 1 500); exit 1");
     expect(long).toBe(`review command exited 1 (stdout): ${"B".repeat(500)}`);
+  });
+});
+
+describe("review verdict derived from the criteria findings name (BR-2367)", () => {
+  const answer = (out: string) => runReview(`printf '%s' '${out}'`, tmpdir(), "prompt", { timeoutMs: 60_000, kind: "land" });
+  const f = (criterion: string, text: string) => `{"criterion":"${criterion}","text":"${text}"}`;
+
+  test("BR-2367: a finding naming a criterion blocks whatever verdict the answer states; notes alone are ok", async () => {
+    const amends = "D-66 changes part of D-21 without amends";
+    expect(await answer(`{"findings":[${f("amends", amends)}]}`)).toEqual({ ok: true, value: { verdict: "block", findings: [`[amends] ${amends}`] } });
+    expect(await answer(`{"verdict":"ok","findings":[${f("contradiction", "BR-1 contradicts BR-2")}]}`)).toEqual({ ok: true, value: { verdict: "block", findings: ["[contradiction] BR-1 contradicts BR-2"] } });
+    expect(await answer(`{"verdict":"block","findings":[${f("note", "style")}]}`)).toEqual({ ok: true, value: { verdict: "ok", findings: ["style"] } });
+    expect(await answer(`{"findings":[${f("note", "BR-3 could be shorter")},${f("untestable", "BR-4 is vague")}]}`)).toEqual({ ok: true, value: { verdict: "block", findings: ["BR-3 could be shorter", "[untestable] BR-4 is vague"] } });
+    expect(await answer('{"findings":[]}')).toEqual({ ok: true, value: { verdict: "ok", findings: [] } });
+    const wording = await answer(`{"findings":[${f("note", "n")}],"wording":{"BR-1":"wording"}}`);
+    expect(wording).toEqual({ ok: true, value: { verdict: "ok", findings: ["n"], wording: { "BR-1": "wording" } } });
+  });
+
+  test("BR-2367: a finding without a usable criterion or text, or a string among objects, is an invalid answer that says which finding and the names", async () => {
+    for (const out of [`{"findings":[${f("vague", "x")}]}`, '{"findings":[{"text":"x"}]}', `{"findings":[${f("note", "")}]}`, `{"findings":[${f("note", "a")},"b"]}`]) {
+      const r = await answer(out);
+      expect(r.ok).toBe(false);
+      expect(!r.ok && r.error.code).toBe("invalid");
+    }
+    const r = await answer(`{"findings":[${f("note", "a")},${f("vague", "x")}]}`);
+    expect(!r.ok && r.error.message).toContain("finding 2");
+    expect(!r.ok && r.error.message).toContain("contradiction|untestable");
+  });
+
+  test("BR-2367: an answer without findings that name a criterion is the old format: its verdict is taken as stated, and without one it is invalid", async () => {
+    expect(await answer('{"verdict":"block","findings":["BR-1 is vague"]}')).toEqual({ ok: true, value: { verdict: "block", findings: ["BR-1 is vague"] } });
+    expect(await answer('{"verdict":"ok","findings":["BR-1 is vague"]}')).toEqual({ ok: true, value: { verdict: "ok", findings: ["BR-1 is vague"] } });
+    expect(await answer('{"verdict":"block"}')).toEqual({ ok: true, value: { verdict: "block", findings: [] } });
+    for (const out of ['{"findings":["BR-1 is vague"]}', '{"verdict":"maybe","findings":[]}', "{}"]) {
+      const r = await answer(out);
+      expect(r.ok).toBe(false);
+      expect(!r.ok && r.error.code).toBe("invalid");
+    }
+  });
+
+  test("BR-2367: the rule review prompt lists every criterion key and the answer format; the duplicate review prompt lists duplication", () => {
+    const { root, corpus } = corpusOf(files);
+    const prompt = reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 4)));
+    for (const key of RULE_CRITERIA) expect(prompt).toContain(`\`${key}\`:`);
+    expect(prompt).toContain('{"findings":[{"criterion":"contradiction"|"untestable"');
+    expect(prompt).toContain("canon derives it from the keys");
+    expect(prompt).not.toContain('"verdict"');
+    const dup = duplicatePrompt(["CLAUDE.md"], { files: [], skills: [] }, undefined);
+    for (const key of DUPLICATE_CRITERIA) expect(dup).toContain(`"criterion":"${key}"|"note"`);
+    expect(dup).not.toContain('"verdict"');
   });
 });
 
