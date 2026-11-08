@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { enqueue, finishEntry, tryTurn, joinBatch, lockBatch, landBatched } from "./queue.ts";
 import { recordFailure } from "../../watch/redmain.ts";
@@ -107,6 +107,26 @@ describe("the owner's priority in the coordination DB", () => {
     // a name that is not a change is refused, nothing recorded
     expect(canon(root, "backlog", "urgent", "C-999", "--relayed", "x").code).not.toBe(0);
     expect(marks(ws(root).db)).toEqual([]);
+  });
+
+  test("BR-2363: a change closed on its own branch by land --finish but not yet on main can be marked; one dropped on its branch cannot (#153)", () => {
+    const root = project();
+    const s = startNew(root, "Queued one");
+    const setStatus = (status: string) => {
+      const file = sh(s.worktree, "ls-files", "canon/changes").trim().split("\n").find((f) => f.includes(`${s.change}-`))!;
+      const path = join(s.worktree, file);
+      writeFileSync(path, readFileSync(path, "utf8").replace(/^status: \w+$/m, `status: ${status}`));
+      sh(s.worktree, "commit", "-qam", `${status} on its branch`);
+    };
+    setStatus("done"); // what land --finish writes before it waits in the queue
+    const got = canon(root, "backlog", "urgent", s.change, "--relayed", "可以，提");
+    expect(got.code).toBe(0);
+    expect(marks(ws(root).db).map((m) => m.change)).toEqual([s.change]);
+    expect(canon(root, "backlog", "urgent", s.change, "--clear", "--relayed", "撤销").code).toBe(0);
+    setStatus("dropped");
+    const r = canon(root, "backlog", "urgent", s.change, "--relayed", "x");
+    expect([r.code, marks(ws(root).db)]).toEqual([2, []]);
+    expect(r.out).toContain("is dropped");
   });
 
   test("BR-2363: a change that is done on main cannot be marked: exit 2, nothing recorded", () => {

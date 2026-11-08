@@ -7,18 +7,21 @@ import { err, ok, type Result } from "../../../kernel/result.ts";
 import type { Workspace } from "../../workspace.ts";
 import { clear, mark } from "./urgent.ts";
 
-/** The status of change `id`, from main or from its own branch. */
-function changeStatus(ws: Workspace, id: string): Result<string> {
+/** Change `id`'s status and whether it can still land: open on main, or open or closed by `land --finish` on its own branch and not yet on main. */
+function changeStatus(ws: Workspace, id: string): Result<{ status: string; canLand: boolean }> {
   const onMain = mainCorpus(ws);
   if (!onMain.ok) return onMain;
   const doc = findDoc(onMain.value, id);
-  if (doc?.kind === "change") return ok(doc.status);
+  if (doc?.kind === "change") return ok({ status: doc.status, canLand: doc.status === "open" });
   const off = changeOffMain(ws, id);
   if (!off.ok) return off;
-  return off.value ? ok(off.value.doc.status) : err("not_found", `${id} is not a change`);
+  if (!off.value) return err("not_found", `${id} is not a change`);
+  const status = off.value.doc.status;
+  // reason: land --finish commits status: done on the branch before it waits in the queue, so done there still has to land (BR-2363, #153)
+  return ok({ status, canLand: status === "open" || status === "done" });
 }
 
-/** `canon backlog urgent`: the owner's priority for the landing queue (BR-2375, D-69). */
+/** `canon backlog urgent`: the owner's priority for the landing queue (BR-2363, D-69). */
 
 const urgent = defineCommand({
   meta: {
@@ -34,12 +37,12 @@ const urgent = defineCommand({
     const ws = workspace();
     const relayed = typeof args.relayed === "string" ? args.relayed : undefined;
     const name = String(args.change);
-    // reason: only an open change can be waiting to land; anything else is a typo, not a priority (BR-2375)
+    // reason: only a change that can still land can be waiting to land; anything else is a typo, not a priority (BR-2363)
     const subject = must(namedChange(ws, name));
-    const status = must(changeStatus(ws, subject));
-    if (status !== "open" && !args.clear) {
+    const { status, canLand } = must(changeStatus(ws, subject));
+    if (!canLand && !args.clear) {
       ws.db.event(ws.actor, "urgent.refuse", subject, { reason: "not-open", status });
-      fail({ code: "invalid", message: `${subject} is ${status}, not open: only a change that can still land has a priority` });
+      fail({ code: "invalid", message: `${subject} is ${status} and cannot land: only a change that can still land has a priority` });
     }
     if (args.clear) {
       must(clear(ws.db, ws.actor, subject, relayed));
