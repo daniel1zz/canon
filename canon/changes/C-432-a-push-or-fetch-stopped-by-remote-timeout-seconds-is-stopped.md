@@ -2,9 +2,11 @@
 id: C-432
 title: A push or fetch stopped by remote_timeout_seconds is stopped with the
   processes git started (#162)
-status: open
+status: done
 rules:
   - BR-2260
+passes:
+  BR-2260: 9957e665f4604759 test
 ---
 
 ## 为什么
