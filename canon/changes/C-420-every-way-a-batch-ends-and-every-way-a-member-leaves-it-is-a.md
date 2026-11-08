@@ -2,8 +2,13 @@
 id: C-420
 title: Every way a batch ends and every way a member leaves it is an event, and
   canon stats counts them
-status: open
+status: done
 rules: []
+passes:
+  BR-2190: d36bdc3ed0ca2736 test
+  BR-2377: 873789498ff38616 test
+  BR-2378: f1f2df8532fc5b24 test
+  BR-2379: f65d8a03b0528d7d test
 ---
 
 ## 为什么
