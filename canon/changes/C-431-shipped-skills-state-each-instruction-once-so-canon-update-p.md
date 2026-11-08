@@ -2,7 +2,7 @@
 id: C-431
 title: Shipped skills state each instruction once so canon update passes the
   duplicate review (#159)
-status: open
+status: done
 rules: []
 ---
 
