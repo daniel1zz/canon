@@ -3,10 +3,13 @@ id: C-411
 title: The rule review verdict is derived by canon from the blocking criterion
   each finding names, so a finding that matches a criterion cannot pass as a
   note (#147)
-status: open
+status: done
 rules:
   - BR-2367
   - BR-2216
+passes:
+  BR-2216: f46cd15aa7b088f7 test
+  BR-2367: c357da7acdde3488 test
 ---
 
 ## 为什么
