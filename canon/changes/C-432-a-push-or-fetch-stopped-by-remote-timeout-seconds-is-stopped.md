@@ -22,4 +22,4 @@ git 放进自己的进程组（`detached: true`），超时后给整个组发 SI
 
 ## 任务
 
-- [ ] 同步停组函数、gitRemote 用进程组、BR-2260 和两个测试
+- [x] 同步停组函数、gitRemote 用进程组、BR-2260 和两个测试
