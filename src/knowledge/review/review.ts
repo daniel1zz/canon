@@ -324,8 +324,20 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   // reason: the note names the call and how many there are, which are known only after packing; its room is reserved up front
   const NOTE_ROOM = 256;
   const fixed = (first: boolean): number => bytes([...promptHead(corpus, changed, first ? extras : noWording), ...tail].join("\n")) + NOTE_ROOM;
-  const tooBig = (need: number, what: string): Result<never> =>
-    err("invalid", `the rule review prompt cannot be made smaller than ${kb(need)} KB (${what}), above review_max_prompt_kb = ${kb(budgetBytes)} KB: land the changed documents in several smaller changes`);
+  // the three parts of the smallest prompt, so a refusal can say which one is too large (BR-2359, D-67, #136)
+  const headEmpty = bytes([...promptHead(corpus, [], {})].join("\n"));
+  const docsBytes = Math.max(0, bytes(promptHead(corpus, changed, extras).join("\n")) - headEmpty);
+  const indexBytes = headEmpty + bytes(tail.join("\n")) + NOTE_ROOM;
+  /** `piece`: the domain text the smallest call needs on top of the fixed parts, `where`: the domain to split when that is the large part. */
+  const tooBig = (need: number, what: string, piece = 0, where?: string): Result<never> => {
+    const sizes = `changed documents ${kb(docsBytes)} KB, review instructions + rule index + accepted decision titles ${kb(indexBytes)} KB, domain text ${kb(piece)} KB`;
+    // reason: splitting the change only shrinks the changed documents, so it helps only when they are the largest part and the rest fits alone (BR-2359, #136)
+    const splitHelps = docsBytes >= indexBytes && docsBytes >= piece && indexBytes + piece < budgetBytes;
+    const remedy = splitHelps
+      ? "land the changed documents in several smaller changes"
+      : `splitting the change cannot help, the changed documents are not what makes it too large: raise review_max_prompt_kb in canon/config.yaml to at least ${kb(need)} KB${piece > 0 && where ? `, or split ${where} into subdomains (canon rule domain ${where}/<name>) so a piece of it is smaller` : ""}`;
+    return err("invalid", `the rule review prompt cannot be made smaller than ${kb(need)} KB (${what}), above review_max_prompt_kb = ${kb(budgetBytes)} KB; sizes: ${sizes}: ${remedy}`);
+  };
   if (fixed(true) > budgetBytes) return tooBig(fixed(true), "the changed documents, the rule index and the accepted decisions' titles, which every call carries");
 
   const calls: Call[] = [];
@@ -372,12 +384,12 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
         add(cur, d, rules);
         continue;
       }
-      if (rules.length === 0) return tooBig(price(next, d, rules) + fixedRest, `the README of ${d.name}`);
+      if (rules.length === 0) return tooBig(price(next, d, rules) + fixedRest, `the README of ${d.name}`, price(next, d, rules), d.name);
       for (const r of rules) {
         if (price(cur, d, [r]) > roomOf(cur) - cur.size) {
           if (cur.size > 0) calls.push((cur = empty()));
           const need = price(cur, d, [r]) + (budgetBytes - roomOf(cur));
-          if (need > budgetBytes) return tooBig(need, `${r.id} with the domain texts above it, the smallest piece of ${top} the review can be given`);
+          if (need > budgetBytes) return tooBig(need, `${r.id} with the domain texts above it, the smallest piece of ${top} the review can be given`, price(cur, d, [r]), d.name);
         }
         add(cur, d, [r]);
       }
@@ -390,7 +402,7 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
     return [...promptHead(corpus, changed, i === 0 ? extras : noWording, note), ...groups, ...tail].join("\n");
   });
   const worst = Math.max(...prompts.map(bytes));
-  if (worst > budgetBytes) return tooBig(worst, "a call of the split review is still above the budget");
+  if (worst > budgetBytes) return tooBig(worst, "a call of the split review is still above the budget", Math.max(0, worst - indexBytes - docsBytes));
   return ok(prompts);
 }
 

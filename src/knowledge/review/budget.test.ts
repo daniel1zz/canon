@@ -101,12 +101,52 @@ describe("rule review prompt budget", () => {
     }
   });
 
-  test("BR-2359: a fixed part over the budget, or one rule that cannot fit with it, is an error that says how many KB and how many are allowed", () => {
+  const refusal = (r: ReturnType<typeof reviewPrompts>) => {
+    if (r.ok) throw new Error("expected a refusal");
+    return r.error.message;
+  };
+
+  test("BR-2359: changed documents that are the large part: the refusal gives the part sizes and says to land smaller changes", () => {
     const { root, corpus } = bigDomain(30);
     const huge = changedRule(corpus, 1); // BR-1 is 30 KB and travels in every call
-    const fixed = reviewPrompts(root, corpus, huge, {}, 20 * KB);
-    expect(!fixed.ok && fixed.error.message).toMatch(/cannot be made smaller than \d+ KB .*review_max_prompt_kb = 20 KB.*several smaller changes/);
-    const tight = reviewPrompts(root, corpus, changedRule(corpus, 6), {}, 25 * KB); // every rule is 30 KB
-    expect(!tight.ok && tight.error.message).toContain("review_max_prompt_kb = 25 KB");
+    const msg = refusal(reviewPrompts(root, corpus, huge, {}, 20 * KB));
+    expect(msg).toMatch(/cannot be made smaller than \d+ KB .*review_max_prompt_kb = 20 KB/);
+    expect(msg).toMatch(/changed documents 3\d KB, review instructions \+ rule index \+ accepted decision titles \d KB, domain text 0 KB/);
+    expect(msg).toContain("land the changed documents in several smaller changes");
+    expect(msg).not.toContain("cannot help");
+  });
+
+  test("BR-2359: a domain rule that cannot fit with a small change: the refusal says splitting the change cannot help and names the budget and the domain split", () => {
+    const { root, corpus } = bigDomain(30);
+    const msg = refusal(reviewPrompts(root, corpus, changedRule(corpus, 6), {}, 25 * KB)); // every rule is 30 KB
+    expect(msg).toContain("review_max_prompt_kb = 25 KB");
+    expect(msg).toMatch(/changed documents 1 KB, .*domain text 3\d KB/);
+    expect(msg).toContain("splitting the change cannot help");
+    expect(msg).toMatch(/raise review_max_prompt_kb in canon\/config.yaml to at least 3\d KB/);
+    expect(msg).toContain("canon rule domain big/a/<name>");
+    expect(msg).not.toContain("several smaller changes");
+  });
+
+  test("BR-2359: a domain README that cannot fit: the refusal says splitting the change cannot help and names the README's domain", () => {
+    const corpus = corpusOf({
+      "canon/rules/wide/README.md": `---\ncode: [src/wide]\n---\n# wide\n\n${"y".repeat(40 * KB)}\n`,
+      "canon/rules/wide/sub/README.md": "# wide/sub\n\nSub.\n",
+      [`canon/rules/wide/sub/${id("BR", 7)}.md`]: rule(7, "Sub seven", "Short."),
+    });
+    const msg = refusal(reviewPrompts(corpus.root, corpus.corpus, corpus.corpus.docs.filter((d) => d.id === id("BR", 7)), {}, 20 * KB));
+    expect(msg).toContain("the README of wide");
+    expect(msg).toContain("splitting the change cannot help");
+    expect(msg).toContain("canon rule domain wide/<name>");
+  });
+
+  test("BR-2359: a rule index and decision titles that alone exceed the budget: the refusal says splitting the change cannot help and gives no domain split", () => {
+    const files: Record<string, string> = { "canon/rules/many/README.md": "---\ncode: [src/many]\n---\n# many\n\nMany.\n" };
+    for (let n = 1; n <= 300; n++) files[`canon/rules/many/${id("BR", n)}.md`] = rule(n, `Rule number ${n} ${"t".repeat(80)}`, "Short.");
+    const c = corpusOf(files);
+    const msg = refusal(reviewPrompts(c.root, c.corpus, c.corpus.docs.filter((d) => d.id === id("BR", 1)), {}, 20 * KB));
+    expect(msg).toContain("splitting the change cannot help");
+    expect(msg).toContain("raise review_max_prompt_kb");
+    expect(msg).not.toContain("canon rule domain");
+    expect(msg).not.toContain("several smaller changes");
   });
 });
