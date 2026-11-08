@@ -1,7 +1,8 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { alive, processReaper, waitGone } from "../src/work/testkit.ts";
 
 // C-376, #126: scripts/test.sh gives the tests a TMPDIR of their own. bun reads the listing of every directory above a
 // process's cwd, so a shared TMPDIR with hundreds of thousands of leftover test directories made every canon process a
@@ -62,5 +63,99 @@ describe("scripts/test.sh temporary directory", () => {
     const r = Bun.spawnSync(["sh", SCRIPT], { stdout: "pipe", stderr: "pipe", env: { ...process.env, PATH: `${join(f.dir, "bin")}:${process.env["PATH"]}`, TMPDIR: f.shared, CANON_TEST_TMP_ROOT: join(f.dir, "no-such-root") } });
     expect(r.exitCode).not.toBe(0);
     expect(existsSync(join(f.shared, "git"))).toBe(false);
+  });
+});
+
+// C-429: processes a test run leaves running are named and killed, and fail the run. They are found by their working
+// directory inside the run's directory, because a detached process has its own group and pid 1 as its parent.
+const REAP = join(import.meta.dir, "reap-test-procs.sh");
+const reaper = processReaper();
+afterEach(() => reaper.killAll());
+
+/** A process that lives until killed (at most 61 s), with its working directory at `cwd`. */
+function sleeper(cwd: string, detached = true): number {
+  const p = Bun.spawn(["sleep", "61"], { cwd, stdout: "ignore", stderr: "ignore", stdin: "ignore", detached });
+  return reaper.pid(p.pid);
+}
+
+function reap(args: string[], root?: string) {
+  const r = Bun.spawnSync(["sh", REAP, ...args], { stdout: "pipe", stderr: "pipe", env: { ...process.env, ...(root ? { CANON_TEST_TMP_ROOT: root } : {}) } });
+  return { code: r.exitCode, err: r.stderr.toString() };
+}
+
+describe("scripts/test.sh processes left running", () => {
+  const LEAK = 'mkdir -p "$TMPDIR/repo"\ncd "$TMPDIR/repo"\nsleep 61 </dev/null >/dev/null 2>&1 &\necho $! > "$SEEN"';
+
+  test("a run whose tests all pass but leave a process running fails, names the process and kills it", async () => {
+    const f = fixture(`${LEAK}\nexit 0`);
+    const r = f.run();
+    const pid = reaper.pid(Number(readFileSync(f.seen, "utf8").trim()));
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("test run left processes behind");
+    expect(r.err).toContain(`${pid} sleep 61`);
+    await waitGone(pid, "leftover of a passing run");
+  });
+
+  test("a failing run that leaves a process keeps bun's exit code and kills the process", async () => {
+    const f = fixture(`${LEAK}\nexit 3`);
+    expect(f.run().code).toBe(3);
+    await waitGone(reaper.pid(Number(readFileSync(f.seen, "utf8").trim())), "leftover of a failing run");
+  });
+
+  test("a run that leaves nothing passes and says nothing about processes", () => {
+    const f = fixture("exit 0");
+    const r = f.run();
+    expect(r.code).toBe(0);
+    expect(r.err).not.toContain("process");
+  });
+
+  test("a new run kills what an ended run left in its directory, and not what a run still going has in its own", async () => {
+    const f = fixture("exit 0");
+    const ended = join(f.root, "canon-test.999999999.abcdef");
+    const going = join(f.root, `canon-test.${process.pid}.abcdef`);
+    for (const d of [ended, going]) mkdirSync(join(d, "repo"), { recursive: true });
+    const old = sleeper(join(ended, "repo"));
+    const live = sleeper(join(going, "repo"));
+    expect(f.run().code).toBe(0);
+    await waitGone(old, "leftover of an ended run");
+    expect(existsSync(ended)).toBe(false);
+    expect(alive(live)).toBe(true);
+  });
+});
+
+describe("scripts/reap-test-procs.sh", () => {
+  test("--run kills only the processes inside the directory, not others in the same process group", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "canon-reap-"));
+    const outside = mkdtempSync(join(tmpdir(), "canon-reap-out-"));
+    const inside = sleeper(dir, false);
+    const sameGroup = sleeper(outside, false);
+    const r = reap(["--run", dir]);
+    expect(r.code).toBe(1);
+    await waitGone(inside, "process inside the run directory");
+    expect(alive(sameGroup)).toBe(true);
+    expect(reap(["--run", dir]).code).toBe(0);
+  });
+
+  test("run by hand it lists what ended runs left without killing it, kills it with --kill, and leaves runs still going alone", async () => {
+    const root = mkdtempSync(join(tmpdir(), "canon-reap-root-"));
+    const ended = join(root, "canon-test.999999999.abcdef");
+    const going = join(root, `canon-test.${process.pid}.abcdef`);
+    for (const d of [ended, going]) mkdirSync(d);
+    const old = sleeper(ended);
+    const live = sleeper(going);
+    const listed = reap([], root);
+    expect(listed.code).toBe(1);
+    expect(listed.err).toContain(`${old} sleep 61`);
+    expect(listed.err).not.toContain(`${live} sleep 61`);
+    expect(listed.err).toContain("--kill");
+    expect(alive(old)).toBe(true);
+    expect(reap(["--kill"], root).code).toBe(1);
+    await waitGone(old, "leftover killed with --kill");
+    expect(alive(live)).toBe(true);
+    expect(reap([], root).code).toBe(0);
+  });
+
+  test("an unknown argument is a usage error", () => {
+    expect(reap(["--nope"]).code).toBe(2);
   });
 });

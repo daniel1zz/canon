@@ -803,10 +803,18 @@ describe("canon work test stops on a signal", () => {
     let hurriedAtEnd = false;
     let stopping = false;
     const { d, signals } = fakeDeps({
-      stop: async (_groups, hurried) => {
+      stop: async (groups, hurried) => {
         stopping = true;
         for (let i = 0; i < 100 && !hurried(); i++) await Bun.sleep(20);
         hurriedAtEnd = hurried();
+        // reason: this stop stands in for the real one, so it ends the file groups itself; nothing else would (C-429)
+        for (const g of groups) {
+          try {
+            process.kill(-g, "SIGKILL");
+          } catch {
+            // already gone
+          }
+        }
         return undefined;
       },
     });
