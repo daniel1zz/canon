@@ -1,12 +1,11 @@
 import { createHash } from "node:crypto";
+import type { ReviewKind } from "../../../knowledge/review/review.ts";
 import type { CoordDb } from "../../db.ts";
 
 /**
  * The key of one rule review (BR-2361, D-70): a SHA-256 over the kind of review (the landing's or `canon work review`'s), the review command, the prompt budget in bytes and every prompt
  * the review would send, in order. Anything the model would read, or the way it is asked and split, changes the key.
  */
-export type ReviewKind = "land" | "preview";
-
 export function reviewKey(kind: ReviewKind, command: string, budgetBytes: number, prompts: readonly string[]): string {
   // reason: length-prefixed parts, so no two different (command, budget, prompts) can give the same byte stream (BR-2361)
   const h = createHash("sha256");

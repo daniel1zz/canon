@@ -193,9 +193,14 @@ function deletedDomains(corpus: Corpus, deleted: readonly DeletedDoc[]): string[
   return [...out];
 }
 
+/** The two ways a review runs: for a landing (`land`) or for `canon work review` (`preview`). */
+export type ReviewKind = "land" | "preview";
+
 /** How a review run is bounded: its time limit, and where a signal handler finds it to stop it (BR-2296). */
 export interface ReviewLimits {
   readonly timeoutMs: number;
+  /** Which review this is; the command is told in `CANON_REVIEW_KIND` (BR-2366). */
+  readonly kind: ReviewKind;
   /** Called with the running review's stopper when it starts, and with undefined when it has ended. */
   readonly track?: (running: { kill(): void } | undefined) => void;
 }
@@ -212,7 +217,7 @@ function failureMessage(code: number, errText: string, out: string): string {
 
 export async function runReview(command: string, cwd: string, prompt: string, limits: ReviewLimits): Promise<Result<ReviewVerdict>> {
   // reason: its own process group, so a timeout or a signal stops the reviewer's children too (claude under sh), not only sh (BR-2296)
-  const proc = Bun.spawn(["sh", "-c", command], { cwd, stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe", detached: true });
+  const proc = Bun.spawn(["sh", "-c", command], { cwd, stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe", detached: true, env: { ...process.env, CANON_REVIEW_KIND: limits.kind } });
   const kill = () => {
     try {
       process.kill(-proc.pid, "SIGKILL");

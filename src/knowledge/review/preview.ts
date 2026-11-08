@@ -86,7 +86,7 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
   };
   process.on("SIGTERM", onSignal);
   process.on("SIGINT", onSignal);
-  const limits = { timeoutMs: onMain.reviewTimeoutMs, track: (r: { kill(): void } | undefined) => (running.review = r) };
+  const limits = { timeoutMs: onMain.reviewTimeoutMs, kind: "preview" as const, track: (r: { kill(): void } | undefined) => (running.review = r) };
   const findings: { review: "rule" | "duplicate"; text: string }[] = [];
   let blocked = false;
   let reusedFrom: number | undefined;

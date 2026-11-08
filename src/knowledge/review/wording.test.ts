@@ -52,7 +52,7 @@ describe("wording judgements", () => {
   });
 
   test("BR-2239: the verdict carries the wording answers when the reviewer gave them, and none otherwise", async () => {
-    const answer = (out: string) => runReview(`printf '%s' '${out}'`, tmpdir(), "prompt", { timeoutMs: 60_000 });
+    const answer = (out: string) => runReview(`printf '%s' '${out}'`, tmpdir(), "prompt", { timeoutMs: 60_000, kind: "land" });
     expect(await answer(`{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`)).toEqual({ ok: true, value: { verdict: "ok", findings: [], wording: { [br(1)]: "wording" } } });
     expect(await answer(`{"verdict":"ok","findings":[],"wording":{"${br(1)}":"behaviour"}}`)).toEqual({ ok: true, value: { verdict: "ok", findings: [], wording: { [br(1)]: "behaviour" } } });
     expect(await answer('{"verdict":"ok","findings":[]}')).toEqual({ ok: true, value: { verdict: "ok", findings: [] } });

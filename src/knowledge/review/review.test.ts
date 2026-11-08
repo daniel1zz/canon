@@ -106,16 +106,16 @@ describe("rule review prompt", () => {
 });
 
 describe("review command", () => {
-  const answer = (out: string) => runReview(`printf '%s' '${out}'`, tmpdir(), "prompt", { timeoutMs: 60_000 });
+  const answer = (out: string) => runReview(`printf '%s' '${out}'`, tmpdir(), "prompt", { timeoutMs: 60_000, kind: "land" });
 
   test("BR-2216: the prompt goes in on stdin; the verdict JSON may be surrounded by other text; missing findings are none", async () => {
     const dir = mkdtempSync(join(tmpdir(), "canon-review-cmd-"));
     const seen = join(dir, "stdin.txt");
-    const r = await runReview(`cat > ${seen}; echo 'Here is my answer: {"verdict":"block","findings":["BR-1 is vague"]} done'`, dir, "the prompt text", { timeoutMs: 60_000 });
+    const r = await runReview(`cat > ${seen}; echo 'Here is my answer: {"verdict":"block","findings":["BR-1 is vague"]} done'`, dir, "the prompt text", { timeoutMs: 60_000, kind: "land" });
     expect(r).toEqual({ ok: true, value: { verdict: "block", findings: ["BR-1 is vague"] } });
     expect(await Bun.file(seen).text()).toBe("the prompt text");
     expect(await answer('{"verdict":"ok"}')).toEqual({ ok: true, value: { verdict: "ok", findings: [] } });
-    await runReview(`pwd > ${join(dir, "cwd.txt")}; echo '{"verdict":"ok"}'`, dir, "p", { timeoutMs: 60_000 });
+    await runReview(`pwd > ${join(dir, "cwd.txt")}; echo '{"verdict":"ok"}'`, dir, "p", { timeoutMs: 60_000, kind: "land" });
     expect(realpathSync((await Bun.file(join(dir, "cwd.txt")).text()).trim())).toBe(realpathSync(dir)); // run in the given directory
   });
 
@@ -125,13 +125,13 @@ describe("review command", () => {
       expect(r.ok).toBe(false);
       expect(!r.ok && r.error.code).toBe("invalid");
     }
-    const failed = await runReview("echo boom >&2; exit 3", tmpdir(), "p", { timeoutMs: 60_000 });
+    const failed = await runReview("echo boom >&2; exit 3", tmpdir(), "p", { timeoutMs: 60_000, kind: "land" });
     expect(failed.ok).toBe(false);
     expect(!failed.ok && failed.error.message).toBe("review command exited 3: boom");
   });
 
   test("BR-2216: a non-zero exit names its reason from stdout when stderr is empty, from both when both exist, and says no output when neither does", async () => {
-    const run = (cmd: string) => runReview(cmd, tmpdir(), "p", { timeoutMs: 60_000 }).then((r) => (!r.ok ? r.error.message : "ok"));
+    const run = (cmd: string) => runReview(cmd, tmpdir(), "p", { timeoutMs: 60_000, kind: "land" }).then((r) => (!r.ok ? r.error.message : "ok"));
     expect(await run("echo 'Prompt is too long'; exit 1")).toBe("review command exited 1 (stdout): Prompt is too long");
     expect(await run("echo 'err text' >&2; echo 'out text'; exit 2")).toBe("review command exited 2 (stderr): err text; (stdout): out text");
     expect(await run("echo '  ' >&2; exit 4")).toBe("review command exited 4: no output");

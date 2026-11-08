@@ -29,7 +29,7 @@ export function readReview(v: unknown): Result<string | undefined> {
 export const reviewKeys = {
   review: configKey<string | undefined>({
     key: "review",
-    doc: `Reviewer for rule and decision text and for standing instructions, the built-in first \`before_land\` step (D-3). Receives the review prompt on stdin and prints JSON \`{"verdict":"ok"|"block","findings":["..."]}\`. Unset refuses a landing that changes them (BR-2074); \`${REVIEW_NONE}\` skips the reviews on purpose (D-51).`,
+    doc: `Reviewer for rule and decision text and for standing instructions, the built-in first \`before_land\` step (D-3). Receives the review prompt on stdin, and in \`CANON_REVIEW_KIND\` \`land\` when a landing runs it or \`preview\` when \`canon work review\` does (BR-2366), and prints JSON \`{"verdict":"ok"|"block","findings":["..."]}\`. Unset refuses a landing that changes them (BR-2074); \`${REVIEW_NONE}\` skips the reviews on purpose (D-51).`,
     default: undefined,
     schema: optionalString,
     read: readReview,

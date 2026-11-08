@@ -122,7 +122,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   const onMain = trusted.value;
   // reason: `review: none` turns the reviews off on purpose; unset refuses, so they are never skipped silently (BR-2074, D-51)
   const reviewer = onMain.review === REVIEW_NONE ? undefined : onMain.review;
-  const limits = { timeoutMs: onMain.reviewTimeoutMs, track: (r: { kill(): void } | undefined) => (v.running.review = r) };
+  const limits = { timeoutMs: onMain.reviewTimeoutMs, kind: "land" as const, track: (r: { kill(): void } | undefined) => (v.running.review = r) };
   // Standing instructions added or edited by this landing are reviewed for requirements stated twice (BR-2143), by main's list.
   const standing = standingTouched(wt, base.value, head.value, onMain.instructions);
   // reason: a wording-only record needs the review's judgement even when no rule file changed in this landing (BR-2239)
