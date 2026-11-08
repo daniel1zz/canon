@@ -13,6 +13,7 @@ import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
 import { claimOfWorktree, claimsWithState, type ClaimState } from "../claims/claims.ts";
 import { questions } from "../humans/questions.ts";
 import { activeQueue, keptPlaces } from "../land/queue/queue.ts";
+import { marks } from "../land/queue/urgent.ts";
 import { attemptIn, describeAttempt, goneLanders, openAttempts } from "../land/queue/interrupted.ts";
 import { openWorkspace, type Workspace } from "../workspace.ts";
 import { handoffs } from "./handoffs.ts";
@@ -66,7 +67,7 @@ const status = defineCommand({
     const gone = goneLanders(ws.db);
     const untested = untestedNotice(ws);
     const unreviewed = unreviewedNotice(ws);
-    const data = { ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending") };
+    const data = { ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending"), urgent: marks(ws.db) };
     if (args.json) return json(data);
     for (const line of [...untested, ...unreviewed]) say(line);
     say("Claims:");
@@ -79,6 +80,9 @@ const status = defineCommand({
     // Landings with no recorded result: still running, or killed where no signal handler could run (BR-2308, D-58).
     say("Landings with no result yet:");
     for (const a of data.landings) for (const line of describeAttempt(a)) say(`  ${line}`);
+    // The owner's priorities that put a change ahead in the landing queue (BR-2363).
+    if (data.urgent.length > 0) say("Urgent by the owner:");
+    for (const m of data.urgent) say(`  ${m.change}  relayed by ${m.actor} (${m.at}): ${m.words}`);
     say("Handoffs:");
     for (const h of data.handoffs) say(`  ${h.subject.padEnd(8)} next: ${h.next}  (${h.actor}, ${h.updated_at})`);
     say(`Questions waiting for a human: ${data.questions.length}`);

@@ -102,11 +102,14 @@ export interface Turn {
 const REFUSED_IN_BATCH = "refused in batch: ";
 
 /**
- * Who lands first among waiting entries (BR-2232, D-34): the change that fixes a failing main, then the changes the
- * owner lists under 优先合入 in canon/backlog.md on main, then everyone else; within one rank, queue order.
+ * Who lands first among waiting entries (BR-2232, BR-2363, D-34, D-73): the change that fixes a failing main, then the
+ * changes the owner marked with `canon backlog urgent` (in the coordination DB), then the changes the owner lists
+ * under 优先合入 in canon/backlog.md on main, then everyone else; within one rank, queue order.
  */
 export interface Priority {
   readonly fix?: string | undefined;
+  /** Marked with `canon backlog urgent` (BR-2363). */
+  readonly marked?: ReadonlySet<string> | undefined;
   readonly urgent: ReadonlySet<string>;
 }
 
@@ -114,7 +117,8 @@ export const NO_PRIORITY: Priority = { urgent: new Set() };
 
 export function rankOf(subject: string | null, p: Priority): number {
   if (subject === null) return 0;
-  if (p.fix !== undefined && subject === p.fix) return 2;
+  if (p.fix !== undefined && subject === p.fix) return 3;
+  if (p.marked?.has(subject)) return 2;
   return p.urgent.has(subject) ? 1 : 0;
 }
 
@@ -201,6 +205,12 @@ export function holdsTurn(db: CoordDb, entryId: number): { readonly held: boolea
 
 export function finishEntry(db: CoordDb, entryId: number, state: "landed" | "failed", result: string): void {
   db.db.query("UPDATE queue SET state = ?, result = ?, heartbeat = ?, keep_until = NULL WHERE id = ?").run(state, result, iso(now()), entryId);
+  if (state === "landed") endMark(db, entryId);
+}
+
+/** A change that landed is no longer marked urgent (BR-2363). */
+function endMark(db: CoordDb, entryId: number): void {
+  db.db.query("DELETE FROM urgent WHERE change = (SELECT subject FROM queue WHERE id = ?)").run(entryId);
 }
 
 /**
@@ -332,6 +342,8 @@ export function settleLocked(db: CoordDb, entryId: number, staleMs = QUEUE_STALE
 
 /** Records a locked member as landed at `sha`, its own commit on main; false when it had left the batch. */
 export function landBatched(db: CoordDb, entryId: number, sha: string): boolean {
-  return db.db.query("UPDATE queue SET state = 'landed', result = ?, heartbeat = ? WHERE id = ? AND state = 'landing' AND batch IS NOT NULL").run(sha, iso(now()), entryId).changes > 0;
+  const landed = db.db.query("UPDATE queue SET state = 'landed', result = ?, heartbeat = ? WHERE id = ? AND state = 'landing' AND batch IS NOT NULL").run(sha, iso(now()), entryId).changes > 0;
+  if (landed) endMark(db, entryId);
+  return landed;
 }
 

@@ -5,6 +5,7 @@ import { redMain } from "../../watch/redmain.ts";
 import type { LandOutcome } from "../outcome.ts";
 import { ownDiffId } from "../worktree-state.ts";
 import type { Priority } from "./queue.ts";
+import { marks } from "./urgent.ts";
 
 /** How often a waiting lander tries for its turn, at most. */
 const POLL_MS = 2000;
@@ -16,14 +17,14 @@ const POLL_MS = 2000;
 export const waitPollMs = (staleMs: number) => Math.min(POLL_MS, Math.max(50, staleMs / 3));
 
 /**
- * Who goes first right now (BR-2232): the fix change of a failing main, and the changes listed under 优先合入 in the
- * backlog committed on main. Read from main, never from a worktree, so no change can promote itself by editing its own copy.
+ * Who goes first right now (BR-2232, BR-2363): the fix change of a failing main, the changes the owner marked with
+ * `canon backlog urgent`, and the changes listed under 优先合入 in the backlog committed on main. Read from main, never from a worktree, so no change can promote itself by editing its own copy.
  */
 export function priorityNow(ws: Workspace): Priority {
   const text = git(ws.primary, "cat-file", "-p", `refs/heads/${ws.config.main}:${BACKLOG_FILE}`);
   // reason: a main without canon/backlog.md lists nothing urgent; a backlog that cannot be read otherwise is checked by canon check (BR-2148).
   const urgent = text.ok ? parseUrgent(text.value, ws.config.types) : new Set<string>();
-  return { fix: redMain(ws.db)?.change ?? undefined, urgent };
+  return { fix: redMain(ws.db)?.change ?? undefined, marked: new Set(marks(ws.db).map((m) => m.change)), urgent };
 }
 
 /** What a conflict refusal tells the lander about the place it keeps in the queue (BR-2177). */

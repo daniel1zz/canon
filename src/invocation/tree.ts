@@ -15,6 +15,7 @@ import { hooksCommands } from "../work/hooks/commands.ts";
 import { humanCommands } from "../work/humans/commands.ts";
 import { issueCommands } from "../work/issues/commands.ts";
 import { landCommands } from "../work/land/commands.ts";
+import { urgentCommands } from "../work/land/queue/commands.ts";
 import { sessionCommands } from "../work/session/commands.ts";
 import { snapshotCommands } from "../work/snapshots/commands.ts";
 import { statsCommands } from "../work/stats/commands.ts";
@@ -42,6 +43,7 @@ export const main = defineCommand({
     workCommands,
     sessionCommands,
     landCommands,
+    urgentCommands,
     verifyCommands,
     watchCommands,
     remoteCommands,

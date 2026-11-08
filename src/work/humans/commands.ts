@@ -12,7 +12,7 @@ import { answer, answeredBy, ask, parseAsked, questions, recordActor, recordAske
  * The change `--change` names, as its id: a change on main or on its own change branch, matched in any case as
  * `canon work start` matches it. Not found when it is neither, so a question is never attached to nothing (BR-2075).
  */
-function namedChange(ws: Workspace, name: string): Result<string> {
+export function namedChange(ws: Workspace, name: string): Result<string> {
   const onMain = mainCorpus(ws);
   if (!onMain.ok) return onMain;
   const doc = findDoc(onMain.value, name);

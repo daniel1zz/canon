@@ -98,6 +98,13 @@ CREATE TABLE IF NOT EXISTS red_main (
   fix_start  TEXT,
   updated_at TEXT NOT NULL
 );
+-- The owner's priority for a change, set with canon backlog urgent and gone when the change lands or it is cleared (BR-2363, D-73).
+CREATE TABLE IF NOT EXISTS urgent (
+  change TEXT PRIMARY KEY,
+  words  TEXT NOT NULL,                -- the owner's own words the relaying actor passed on, for the record only
+  actor  TEXT NOT NULL,                -- who relayed them
+  at     TEXT NOT NULL
+);
 -- What each test file held when a report was read: one row per path and git blob hash, the last few per path kept (BR-2337, D-64).
 CREATE TABLE IF NOT EXISTS test_reports (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
