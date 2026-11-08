@@ -45,3 +45,13 @@ export async function stopGroups(pids: readonly number[], hurried: () => boolean
   const left = pids.filter(groupAlive).length;
   return left === 0 ? `sent SIGKILL ${why}` : `sent SIGKILL ${why}, and ${left} process group(s) still run`;
 }
+
+/**
+ * The blocking form of stopGroups for one group, for callers that are themselves synchronous (BR-2260): SIGTERM, then
+ * SIGKILL if the group is still there after `termWaitMs`; returns when no process is left or `killWaitMs` more has passed.
+ */
+export function stopGroupSync(pid: number, termWaitMs = 2_000, killWaitMs = KILL_WAIT_MS): void {
+  signalGroup(pid, "SIGTERM");
+  for (let end = Date.now() + termWaitMs; groupAlive(pid) && Date.now() < end; ) Bun.sleepSync(20);
+  for (let end = Date.now() + killWaitMs; groupAlive(pid) && Date.now() < end; Bun.sleepSync(20)) signalGroup(pid, "SIGKILL");
+}

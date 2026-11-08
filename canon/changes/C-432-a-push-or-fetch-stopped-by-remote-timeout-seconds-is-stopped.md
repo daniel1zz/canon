@@ -3,25 +3,23 @@ id: C-432
 title: A push or fetch stopped by remote_timeout_seconds is stopped with the
   processes git started (#162)
 status: open
-rules: []
+rules:
+  - BR-2260
 ---
 
 ## 为什么
 
-<要解决什么问题。>
+超过 `remote_timeout_seconds` 的推送或取远端只杀了 git 本身，它启动的 pre-push hook、`git-receive-pack`、`ssh` 被交给 pid 1 继续跑，canon 已经记了 push.fail，它们还在（#162）。
 
 ## 要改什么
 
-<具体改动，以及会新增或修改哪些规则。>
+git 放进自己的进程组（`detached: true`），超时后给整个组发 SIGTERM，宽限期后 SIGKILL（复用 `work/verify/stop-groups.ts`，加一个同步版本，因为 `gitRemote` 是同步的，调用方 `pushMain`、`sync` 不变）。BR-2260 的规则和例子写明终止包括 git 启动的进程。
 
-## 陷阱和假设
-
-<新会话接手时最容易踩的坑，以及这个变更依赖的假设；没有就删掉这一节。>
 
 ## 教训
 
-<每条教训一行：教训 → 现在由哪条规则、检查或命令保证（写编号），或“只靠文字：原因”，或“待负责人确认是否固化”；没有教训就写“无”。>
+无
 
 ## 任务
 
-- [ ] <任务>
+- [ ] 同步停组函数、gitRemote 用进程组、BR-2260 和两个测试

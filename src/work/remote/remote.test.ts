@@ -1,11 +1,11 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmodSync, existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { land } from "../land/land.ts";
 import { ensureGuard } from "../../install/githook.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
-import { HANG_SECONDS, FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { HANG_SECONDS, FAST, project, quiet, sh, startNew, waitFor, waitGone, ws } from "../testkit.ts";
 import { pushMain } from "./remote.ts";
 
 setDefaultTimeout(60_000);
@@ -58,6 +58,15 @@ const commitFile = (wt: string, file: string) => {
 
 const events = (root: string, kind: string) =>
   ws(root).db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = ? ORDER BY id").all(kind).map((r) => JSON.parse(r.detail) as Record<string, unknown>);
+
+/** A script that starts `sleep` in the background, writes the sleep's pid to `pidFile` and waits for it. */
+const sleeperScript = (pidFile: string) => `#!/bin/sh\nsleep ${HANG_SECONDS} &\necho $! > ${pidFile}\nwait\n`;
+
+/** The pid a sleeper script wrote; fails loudly when it never started. */
+async function sleeperPid(pidFile: string): Promise<number> {
+  await waitFor("the sleeper to write its pid", () => existsSync(pidFile) && readFileSync(pidFile, "utf8").trim() !== "");
+  return Number(readFileSync(pidFile, "utf8").trim());
+}
 
 const bareMain = (bare: string) => sh(bare, "rev-parse", "refs/heads/main");
 
@@ -169,12 +178,13 @@ describe("a failed push", () => {
     expect(String(events(root, "push.fail").at(-1)!["reason"])).toContain("nowhere");
   });
 
-  test("BR-2260: a push slower than remote_timeout_seconds is stopped and recorded with how long it waited", async () => {
+  test("BR-2260: a push slower than remote_timeout_seconds is stopped with what git started (the hook's child, git-receive-pack) and recorded with how long it waited", async () => {
     const { root, bare } = withRemote("remote: origin\nremote_timeout_seconds: 1\n");
     seed(root);
     const before = bareMain(bare);
     const hook = join(sh(root, "rev-parse", "--absolute-git-dir"), "hooks", "pre-push");
-    writeFileSync(hook, `#!/bin/sh\nexec sleep ${HANG_SECONDS}\n`);
+    const pidFile = join(sh(root, "rev-parse", "--absolute-git-dir"), "hook-child.pid");
+    writeFileSync(hook, sleeperScript(pidFile));
     chmodSync(hook, 0o755);
     const s = startNew(root, "Slow");
     commitFile(s.worktree, "a.txt");
@@ -183,9 +193,19 @@ describe("a failed push", () => {
     expect(Date.now() - t).toBeLessThan(20_000);
     expect(String(events(root, "push.fail").at(-1)!["reason"])).toContain("1 s");
     expect(bareMain(bare)).toBe(before);
+    const child = await sleeperPid(pidFile);
+    try {
+      await waitGone(child, "the pre-push hook's child");
+    } finally {
+      try {
+        process.kill(child, "SIGKILL");
+      } catch {
+        // reason: already gone, which is what the assertion above wants
+      }
+    }
   });
 
-  test("BR-2259, BR-2260: a failed push and the fetch after it together wait at most remote_timeout_seconds, not twice that", () => {
+  test("BR-2259, BR-2260: a failed push and the fetch after it together wait at most remote_timeout_seconds, not twice that, and the stalled fetch's processes are stopped", async () => {
     const { root, bare } = withRemote("remote: origin\nremote_timeout_seconds: 3\n");
     seed(root);
     const gitDir = sh(root, "rev-parse", "--absolute-git-dir");
@@ -194,7 +214,8 @@ describe("a failed push", () => {
     writeFileSync(hook, "#!/bin/sh\nsleep 2\nexit 1\n");
     chmodSync(hook, 0o755);
     const stall = join(gitDir, "stall.sh");
-    writeFileSync(stall, `#!/bin/sh\nexec sleep ${HANG_SECONDS}\n`);
+    const pidFile = join(gitDir, "stall-child.pid");
+    writeFileSync(stall, sleeperScript(pidFile));
     chmodSync(stall, 0o755);
     sh(root, "config", "remote.origin.uploadpack", stall);
     const before = bareMain(bare);
@@ -203,7 +224,18 @@ describe("a failed push", () => {
     expect(Date.now() - t).toBeLessThan(4500);
     expect(r?.ok).toBe(false);
     expect(events(root, "push.fail")).toHaveLength(1);
+    expect(String(events(root, "push.fail")[0]!["reason"])).not.toContain("was stopped");
     expect(bareMain(bare)).toBe(before);
+    const child = await sleeperPid(pidFile);
+    try {
+      await waitGone(child, "the stalled upload-pack's child");
+    } finally {
+      try {
+        process.kill(child, "SIGKILL");
+      } catch {
+        // reason: already gone, which is what the assertion above wants
+      }
+    }
   });
 });
 

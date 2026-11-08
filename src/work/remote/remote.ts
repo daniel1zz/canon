@@ -4,6 +4,7 @@ import { err, ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
 import { moveMain } from "../land/finish/finish.ts";
 import { ensureWatcher } from "../watch/watch.ts";
+import { stopGroupSync } from "../verify/stop-groups.ts";
 import { remoteKeys } from "./config-keys.ts";
 
 /**
@@ -48,10 +49,14 @@ type Timed = { readonly ok: true; readonly out: string } | { readonly ok: false;
 
 /** git talking to the remote: never prompts for a password, stopped after `ms` (BR-2260). */
 function gitRemote(cwd: string, ms: number, args: readonly string[]): Timed {
-  const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", timeout: ms, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
+  // reason: git leads its own process group so a timeout stops what it started (pre-push hook, receive-pack, ssh), not only git (BR-2260)
+  const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", timeout: ms, detached: true, env: { ...process.env, GIT_TERMINAL_PROMPT: "0" } });
   const stdout = r.stdout.toString();
   const stderr = r.stderr.toString();
-  if (r.exitedDueToTimeout) return { ok: false, reason: `git ${args[0]} was stopped after waiting ${ms / 1000} s (remote_timeout_seconds)` };
+  if (r.exitedDueToTimeout) {
+    stopGroupSync(r.pid);
+    return { ok: false, reason: `git ${args[0]} was stopped after waiting ${ms / 1000} s (remote_timeout_seconds)` };
+  }
   if (r.exitCode === 0) return { ok: true, out: stdout };
   // reason: a rejected ref is a `!` line of --porcelain on stdout; it comes first so the reason starts with what was refused (BR-2261)
   const refused = stdout.split("\n").filter((l) => l.startsWith("!"));
