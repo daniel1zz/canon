@@ -1,9 +1,11 @@
 ---
 id: C-430
 title: A split rule review reserves the real size of its split note (#160)
-status: open
+status: done
 rules:
   - BR-2359
+passes:
+  BR-2359: 8e423eb3be5993b9 test
 ---
 
 ## 为什么
