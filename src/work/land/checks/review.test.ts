@@ -594,6 +594,29 @@ tests: []
     expect(await gone(Number(readFileSync(pidFile, "utf8").trim()))).toBe(true);
   }, 75_000);
 
+  test("BR-2074 BR-2359: review_max_prompt_kb comes from main: the change's own larger budget does not lift main's, and its smaller one does not lower it", async () => {
+    const tight = billingProject(`floor: "true"\ntests: []\n`);
+    const r1 = reviewer(tight);
+    configOnMain(tight, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r1.script)}\nreview_max_prompt_kb: 1\n`);
+    const s1 = startNew(tight, "New rule");
+    writeFileSync(join(s1.worktree, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: ${JSON.stringify(r1.script)}\nreview_max_prompt_kb: 10000\n`);
+    addRule(s1.worktree);
+    const out1 = await land(ws(s1.worktree), FAST, quiet);
+    expect(out1.kind === "refused" && out1.reason).toBe("review");
+    expect(out1.kind === "refused" && out1.message).toContain("above review_max_prompt_kb = 1 KB");
+    expect(existsSync(r1.promptFile)).toBe(false); // refused before the reviewer ran
+
+    const roomy = billingProject(`floor: "true"\ntests: []\n`);
+    const r2 = reviewer(roomy);
+    configOnMain(roomy, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r2.script)}\nreview_max_prompt_kb: 10000\n`);
+    const s2 = startNew(roomy, "New rule");
+    writeFileSync(join(s2.worktree, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: ${JSON.stringify(r2.script)}\nreview_max_prompt_kb: 1\n`);
+    addRule(s2.worktree);
+    const out2 = await land(ws(s2.worktree), FAST, quiet);
+    expect(out2.kind).toBe("landed");
+    expect(existsSync(r2.promptFile)).toBe(true);
+  }, 60_000);
+
   test("BR-2296 BR-2099: canon work land stopped by SIGTERM while the reviewer runs exits 143 and stops the reviewer", async () => {
     const root = billingProject(`floor: "true"\ntests: []\n`);
     const pidFile = join(root, "..", `${root.split("/").pop()}-reviewer.pid`);
