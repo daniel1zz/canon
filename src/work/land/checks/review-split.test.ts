@@ -37,9 +37,9 @@ if [ "$mode" = block2 ] && [ "$n" = 2 ]; then echo '{"verdict":"block","findings
   }
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "domain");
-  const change = () => {
+  const change = (extra = "") => {
     const s = startNew(root, "New rule");
-    writeFileSync(join(s.worktree, "canon/rules/billing/BR-1.md"), `---\nid: BR-1\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nCHANGED-1 refunds are fine.\n\n## 例子\n\n- a → b\n`);
+    writeFileSync(join(s.worktree, "canon/rules/billing/BR-1.md"), `---\nid: BR-1\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nCHANGED-1 refunds are fine.${extra}\n\n## 例子\n\n- a → b\n`);
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "rule");
     return s;
@@ -93,12 +93,26 @@ describe("rule review split by size at land (BR-2359, D-67)", () => {
     expect(prompts()).toHaveLength(1);
   });
 
-  test("BR-2359: a fixed part over the budget refuses the landing with reason review, the sizes and the advice to split the change; the reviewer never runs", async () => {
+  test("BR-2359: the review's fixed part alone over the budget refuses the landing with reason review, the sizes and the remedy that fits (splitting the change cannot help); the reviewer never runs", async () => {
     const { change, prompts, dir } = splitProject(2, "ok");
     const out = await land(ws(change().worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("review");
-    expect(out.kind === "refused" && out.message).toMatch(/cannot be made smaller than \d+ KB.*review_max_prompt_kb = 2 KB.*several smaller changes/);
+    const message = out.kind === "refused" ? out.message : "";
+    expect(message).toMatch(/cannot be made smaller than \d+ KB.*review_max_prompt_kb = 2 KB; sizes: changed documents \d+ KB, .* \d+ KB, domain text 0 KB/);
+    expect(message).toContain("splitting the change cannot help");
+    expect(message).toContain("raise review_max_prompt_kb");
+    expect(message).not.toContain("several smaller changes");
     expect(prompts()).toHaveLength(0);
     expect(existsSync(join(dir, "review.sh"))).toBe(true);
+  });
+
+  test("BR-2359: changed documents that are the large part refuse the landing with the advice to land several smaller changes; the reviewer never runs", async () => {
+    const { change, prompts } = splitProject(20, "ok");
+    const out = await land(ws(change(` ${"z".repeat(25 * KB)}`).worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    const message = out.kind === "refused" ? out.message : "";
+    expect(message).toMatch(/review_max_prompt_kb = 20 KB; sizes: changed documents 2\d KB/);
+    expect(message).toContain("land the changed documents in several smaller changes");
+    expect(prompts()).toHaveLength(0);
   });
 });
