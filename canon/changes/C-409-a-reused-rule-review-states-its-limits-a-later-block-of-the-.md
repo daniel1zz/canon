@@ -2,8 +2,11 @@
 id: C-409
 title: A reused rule review states its limits, a later block of the same prompts
   wins, and D-70 and D-73 are accepted
-status: open
-rules: [BR-2361]
+status: done
+rules:
+  - BR-2361
+passes:
+  BR-2361: f2698b469512b969 test
 ---
 
 ## 为什么
