@@ -20,6 +20,16 @@ export interface Claim {
 }
 
 /**
+ * Inserts a claim row, or takes over the existing one with its version raised. A new row starts above every
+ * version a lapse event already recorded for this change: a released claim's row is deleted, and a new row at
+ * version 1 would match that old lapse, so its own lapse would never be written (BR-2360, issue #137).
+ */
+const INSERT_CLAIM =
+  "INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start, version) VALUES (?, ?, ?, ?, ?, ?, " +
+  "COALESCE((SELECT MAX(json_extract(detail, '$.version')) FROM events WHERE subject = ? AND kind IN ('claim.expired', 'claim.holder-gone')), 0) + 1) " +
+  "ON CONFLICT(subject) DO UPDATE SET holder = excluded.holder, worktree = excluded.worktree, expires_at = excluded.expires_at, pid = excluded.pid, pid_start = excluded.pid_start, version = version + 1";
+
+/**
  * Takes or refreshes the claim on a change. The holder is the worktree: one change, one worktree, one actor.
  * Refused while another worktree or another actor holds a live lease (BR-2011): every session starting a change
  * gets the same worktree path, so the path alone never tells two sessions apart. An expired lease can be taken over.
@@ -50,11 +60,7 @@ export function takeClaim(db: CoordDb, subject: string, holder: string, actor: s
       );
     }
     const expires = iso(new Date(now().getTime() + leaseMs));
-    db.db
-      .query(
-        "INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(subject) DO UPDATE SET holder = excluded.holder, worktree = excluded.worktree, expires_at = excluded.expires_at, pid = excluded.pid, pid_start = excluded.pid_start, version = version + 1",
-      )
-      .run(subject, actor, holder, expires, owner?.pid ?? null, owner?.start ?? null);
+    db.db.query(INSERT_CLAIM).run(subject, actor, holder, expires, owner?.pid ?? null, owner?.start ?? null, subject);
     db.event(actor, "claim.take", subject, { worktree: holder, ...(gone ? { from: cur.holder, reason: "holder-process-gone" } : {}) });
     return ok({ subject, holder, actor, expires_at: expires });
   });
@@ -170,8 +176,8 @@ export function holdClaim(db: CoordDb, subject: string, worktree: string, actor:
     }
     // The hold names this process, so it frees as soon as a killed clean or drop is gone (BR-2100, issue #16).
     db.db
-      .query("INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start) VALUES (?, ?, ?, ?, ?, ?) ON CONFLICT(subject) DO UPDATE SET holder = excluded.holder, worktree = excluded.worktree, expires_at = excluded.expires_at, pid = excluded.pid, pid_start = excluded.pid_start, version = version + 1")
-      .run(subject, actor, mark, iso(new Date(now().getTime() + leaseMs)), self?.pid ?? null, self?.start ?? null);
+      .query(INSERT_CLAIM)
+      .run(subject, actor, mark, iso(new Date(now().getTime() + leaseMs)), self?.pid ?? null, self?.start ?? null, subject);
     return ok({ subject, mark, prior: cur });
   });
   return tx.immediate();
@@ -203,7 +209,8 @@ export function unholdClaim(db: CoordDb, hold: Hold): void {
   const tx = db.db.transaction(() => {
     const gone = db.db.query("DELETE FROM claims WHERE subject = ? AND worktree = ?").run(hold.subject, hold.mark).changes > 0;
     const p = hold.prior;
-    if (gone && p) db.db.query("INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start) VALUES (?, ?, ?, ?, ?, ?)").run(p.subject, p.holder, p.worktree, p.expires_at, p.pid, p.pid_start);
+    // reason: the restored row is the same claim, so it keeps its version and a lapse already recorded for it is not written again (BR-2360).
+    if (gone && p) db.db.query("INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start, version) VALUES (?, ?, ?, ?, ?, ?, ?)").run(p.subject, p.holder, p.worktree, p.expires_at, p.pid, p.pid_start, p.version);
   });
   tx.immediate();
 }

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../db.ts";
 import { isGone, processOf, selfProcess, sessionProcess, type Proc } from "./liveness.ts";
-import { claims, claimsWithState, holdClaim, liveClaim, keepClaim, renewClaim, takeClaim, unholdClaim } from "./claims.ts";
+import { claims, claimsWithState, holdClaim, liveClaim, keepClaim, releaseClaim, releaseOwnClaim, renewClaim, takeClaim, unholdClaim } from "./claims.ts";
 import { enqueue, finishEntry, tryTurn } from "../land/queue/queue.ts";
 import { land } from "../land/land.ts";
 import { stop } from "../session/session.ts";
@@ -344,6 +344,38 @@ describe("claim lapses become events", () => {
       ["claim.holder-gone", "agent:a", 1],
       ["claim.holder-gone", "agent:b", 2],
     ]);
+  });
+
+  test("BR-2360: a claim released and taken again is a new claim, so its own failure is a new event", async () => {
+    const d = db();
+    takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * HOUR, await deadProcess());
+    claimsWithState(d);
+    releaseClaim(d, "C-1", "agent:owner");
+    takeClaim(d, "C-1", "/wt/C-1", "agent:b", 12 * HOUR, await deadProcess());
+    claimsWithState(d);
+    releaseOwnClaim(d, "C-1", "/wt/C-1", "agent:b");
+    takeClaim(d, "C-1", "/wt/C-1", "agent:c", 12 * HOUR, await deadProcess());
+    claimsWithState(d);
+    expect(lapses(d).map((e) => [e.kind, e.detail.holder])).toEqual([
+      ["claim.holder-gone", "agent:a"],
+      ["claim.holder-gone", "agent:b"],
+      ["claim.holder-gone", "agent:c"],
+    ]);
+  });
+
+  test("BR-2360: a hold that gives the change back restores the claim it replaced, so that claim's recorded failure is not written again", async () => {
+    const d = db();
+    takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * HOUR, await deadProcess());
+    claimsWithState(d);
+    const h = holdClaim(d, "C-1", "/wt/C-1", "agent:clean");
+    if (!h.ok) throw new Error(h.error.message);
+    unholdClaim(d, h.value);
+    claimsWithState(d);
+    expect(lapses(d).map((e) => [e.kind, e.detail.holder])).toEqual([["claim.holder-gone", "agent:a"]]);
+    releaseClaim(d, "C-1", "agent:owner");
+    takeClaim(d, "C-1", "/wt/C-1", "agent:b", 12 * HOUR, await deadProcess());
+    claimsWithState(d);
+    expect(lapses(d).map((e) => e.detail.holder)).toEqual(["agent:a", "agent:b"]);
   });
 
   test("BR-2360: a hold left by a killed clean is not a claim on the change and writes nothing", async () => {
