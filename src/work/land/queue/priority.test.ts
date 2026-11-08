@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { parseUrgent } from "../../../knowledge/documents/backlog.ts";
 import { recordFailure } from "../../watch/redmain.ts";
 import { priorityNow } from "./wait.ts";
+import { rankOf } from "./queue.ts";
 import { project, sh, startNew, ws } from "../../testkit.ts";
 
 describe("what jumps the landing queue", () => {
@@ -34,5 +35,10 @@ describe("what jumps the landing queue", () => {
     recordFailure(w.db, { sha: "a".repeat(40), log: "/x.log", tail: "boom", green: null });
     w.db.db.query("UPDATE red_main SET change = 'C-7' WHERE id = 1").run();
     expect(priorityNow(w).fix).toBe("C-7");
+  });
+
+  test("BR-2232: a change that is the fix change and also listed urgent or marked counts once, at its highest rank, above a marked and a listed change", () => {
+    const p = { fix: "C-1", marked: new Set(["C-1", "C-2"]), urgent: new Set(["C-1", "C-3"]) };
+    expect([rankOf("C-1", p), rankOf("C-2", p), rankOf("C-3", p), rankOf("C-4", p), rankOf(null, p)]).toEqual([3, 2, 1, 0, 0]);
   });
 });
