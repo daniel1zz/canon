@@ -1,8 +1,11 @@
 ---
 id: C-408
 title: The review command is told whether it runs for a preview or for the landing
-status: open
-rules: [BR-2366]
+status: done
+rules:
+  - BR-2366
+passes:
+  BR-2366: 5de09e27b31bd042 test
 ---
 
 ## 为什么
