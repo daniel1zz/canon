@@ -18,6 +18,10 @@ rules: []
   - 只杀查到的单个进程，不杀进程组：不是 detached 的子进程和 bun、test.sh、终端在同一个组里。
 - `scripts/test.sh`：`bun test` 结束后对本次运行目录跑 `--run`；有残留就点名、杀掉，并让这次运行失败（bun 本来失败就保留 bun 的退出码，否则退出 1）。开始清理上一轮被 SIGKILL 留下的目录时，先杀掉还在里面的进程。被信号停止时也回收。
 - `scripts/test-sh.test.ts`：覆盖以上几点；换回旧的 test.sh 时其中 3 条失败。
+- 新检查在全量测试里查出的残留：
+  - `src/work/verify/verify.test.ts` 的 "a second signal while the stop waits turns the hurry flag on" 用假的 `stop` 代替真的，没有结束被测文件的进程组：假 `stop` 现在自己 SIGKILL 这些组。
+  - `src/work/watch/watch.test.ts`：after_green 通过后 watcher 把下一次测试交给 PATH 上的（假）`canon floor watch`（BR-2251），这个进程不在 watcher 表里，负载高时会比测试活得久（6 次里 1 次）。假 canon 现在记下自己的 pid，afterEach 等每次 `floor.handoff` 交出去的假 canon 都结束。改后连跑 6 次没有残留。
+  - `src/work/remote/remote.test.ts` 的残留是产品缺陷：push/fetch 超时只杀 `git`，它启动的钩子和传输进程留下。单独记成 #162 修，本变更等它合入后再合入，否则 main 的 floor 会被这个残留拦下。
 - 不改产品代码，不加规则：和 C-376 一样，这是本仓库自己的测试脚本，不是产品行为。
 
 ## 陷阱和假设
@@ -34,4 +38,5 @@ rules: []
 - [x] scripts/reap-test-procs.sh
 - [x] test.sh 结束时检查、开始时清理、信号时回收
 - [x] scripts/test-sh.test.ts
-- [ ] 全量测试跑一遍，修掉新检查查出的残留
+- [x] 全量测试跑一遍，修掉新检查查出的测试残留（verify、watch）
+- [ ] #162 合入后在 main 上重跑全量测试，再合入

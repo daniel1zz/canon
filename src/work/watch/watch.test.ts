@@ -18,7 +18,9 @@ const reaper = processReaper();
 // reason: a row left by a killed watcher can name a pid since reused, so only a live process that leads its own group is killed
 const leadsItsGroup = (pid: number) => pid > 1 && pid !== process.pid && Bun.spawnSync(["ps", "-o", "pgid=", "-p", String(pid)], { stdout: "pipe", stderr: "ignore" }).stdout.toString().trim() === String(pid);
 const roots: string[] = [];
-afterEach(() => {
+// every fake canon a test made: a watcher hands the next test to it (BR-2251) and does not wait for it
+const fakes: { root: string; bin: string }[] = [];
+afterEach(async () => {
   for (const root of roots.splice(0)) {
     try {
       for (const w of ws(root).db.db.query<{ pid: number }, []>("SELECT pid FROM watcher").all()) if (leadsItsGroup(w.pid)) reaper.group(w.pid);
@@ -27,6 +29,20 @@ afterEach(() => {
     }
   }
   reaper.killAll();
+  // reason: a fake `canon floor watch` started by a handoff runs detached and is in no watcher row, so under load it
+  // could outlive its test; each records its pid, and every handoff's fake is waited for until it has ended (C-429)
+  for (const { root, bin } of fakes.splice(0)) {
+    const pidsFile = join(bin, "pids");
+    const pids = () => (existsSync(pidsFile) ? readFileSync(pidsFile, "utf8").trim().split("\n").filter(Boolean).map(Number) : []);
+    let handoffs = 0;
+    try {
+      handoffs = ws(root).db.db.query<{ n: number }, []>("SELECT count(*) AS n FROM events WHERE kind = 'floor.handoff'").get()!.n;
+    } catch {
+      // the repository is gone
+    }
+    await waitFor(`the ${handoffs} fake canon(s) the handoffs started to record their pid`, () => pids().length >= handoffs, 5000);
+    for (const pid of pids()) await waitGone(pid, "a fake canon floor watch started by a handoff");
+  }
 });
 
 function canon(cwd: string, ...args: string[]) {
@@ -102,9 +118,10 @@ function fakeCanon(root: string, reads = 0, real = false) {
   const bin = `${root}-bin`;
   mkdirSync(bin, { recursive: true });
   const started = join(bin, "started");
+  fakes.push({ root, bin });
   writeFileSync(
     join(bin, "canon"),
-    `#!/bin/sh\nif [ "$1" = config ]; then exit ${reads}; fi\nif [ "$1 $2" = "floor watch" ]; then printf '%s\\n' "$(pwd -P)" >> ${started}; fi\n${real ? `exec bun ${MAIN} "$@"\n` : ""}`,
+    `#!/bin/sh\nif [ "$1" = config ]; then exit ${reads}; fi\nif [ "$1 $2" = "floor watch" ]; then echo $$ >> ${join(bin, "pids")}; printf '%s\\n' "$(pwd -P)" >> ${started}; fi\n${real ? `exec bun ${MAIN} "$@"\n` : ""}`,
     { mode: 0o755 },
   );
   return { bin, started };
