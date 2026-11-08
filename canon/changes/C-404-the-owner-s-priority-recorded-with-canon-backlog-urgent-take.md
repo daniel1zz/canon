@@ -2,8 +2,19 @@
 id: C-404
 title: The owner's priority recorded with canon backlog urgent takes effect at
   the next turn (#141)
-status: open
-rules: [BR-2363, BR-2364, BR-2365, BR-2232, BR-2192]
+status: done
+rules:
+  - BR-2363
+  - BR-2364
+  - BR-2365
+  - BR-2232
+  - BR-2192
+passes:
+  BR-2192: d5c9e1542b603fa2 test
+  BR-2232: 67b8add6d35fbc0d test
+  BR-2363: ee4a784cbfc327ad test
+  BR-2364: 75002e5cf6966225 test
+  BR-2365: ad621ff607b59209 test
 ---
 
 ## 为什么
