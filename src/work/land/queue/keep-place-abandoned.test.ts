@@ -94,13 +94,14 @@ describe("an entry another lander marks abandoned", () => {
     expect(enter(d, "/wt/s", "C-3", "x").id).toBeGreaterThan(b);
   });
 
-  test("BR-2380 BR-2144: the lander that was marked abandoned reads lost and never lands, though its place is kept for its next landing", () => {
+  test("BR-2380 BR-2144: the lander that was marked abandoned reads lost and never lands, and its next landing takes the kept place back", () => {
     const d = db();
     const a = enqueue(d, "/wt/a", "C-2", "x");
     const b = enqueue(d, "/wt/b", "C-3", "x");
     beat(d, a, 11 * MIN);
     tryTurn(d, b, STALE, NO_PRIORITY, KEEP);
     expect(tryTurn(d, a).lost).toBe("abandoned: no heartbeat");
+    expect(enter(d, "/wt/a", "C-2", "x")).toMatchObject({ id: a, kept: { after: "abandoned" } }); // its next landing takes the place back
   });
 
   test("BR-2380: a landing that does not pass keep (an older caller) abandons without keeping, as before", () => {
