@@ -2,13 +2,19 @@
 id: C-410
 title: A landing that timed out or was killed while waiting gets its queue place
   back when the same change lands again
-status: open
+status: done
 rules:
   - BR-2368
   - BR-2177
   - BR-2099
   - BR-2048
   - BR-2155
+passes:
+  BR-2048: 017cd088bd874e16 test
+  BR-2099: bb8e4e3f61d55ec7 test
+  BR-2155: 7a39436794a84d87 test
+  BR-2177: 6b241f7680372678 test
+  BR-2368: 7d67686aae668a55 test
 ---
 
 ## 为什么
