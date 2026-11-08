@@ -2,8 +2,10 @@
 id: C-403
 title: The snapshot hook snapshots only the claims of the calling actor, not of
   sibling subagents (#139)
-status: open
+status: done
 rules: []
+passes:
+  BR-2182: 33e5a232f02c557d test
 ---
 
 ## 为什么
