@@ -2,8 +2,11 @@
 id: C-407
 title: The oversized-review refusal names the part that is too large and a
   remedy that fits it
-status: open
-rules: [BR-2359]
+status: done
+rules:
+  - BR-2359
+passes:
+  BR-2359: e70ebf0a36737c01 test
 ---
 
 ## 为什么
