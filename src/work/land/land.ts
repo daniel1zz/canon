@@ -24,7 +24,7 @@ import { pushMain } from "../remote/remote.ts";
 import { settleInterrupted } from "./queue/interrupted.ts";
 
 /** What a landing that took its kept place back says it stopped for (BR-2177, BR-2368). */
-const KEPT_AFTER = { conflict: "its conflict", timeout: "its timeout", killed: "it was stopped by a signal" } as const;
+const KEPT_AFTER = { conflict: "its conflict", timeout: "its timeout", killed: "it was stopped by a signal", abandoned: "another lander marked it abandoned" } as const;
 
 /**
  * Landing (design §6): queue → rebase onto main → canon check → sources → review → before_land → floor →
@@ -195,7 +195,7 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
   let batchedSince: number | undefined;
   const poll = waitPollMs(ws.config.landerStaleMs);
   for (;;) {
-    const turn = tryTurn(ws.db, entry, ws.config.landerStaleMs, priorityNow(ws));
+    const turn = tryTurn(ws.db, entry, ws.config.landerStaleMs, priorityNow(ws), { ms: ws.config.landKeepPlaceMs, actor: ws.actor });
     if (!turn.batched && batchedSince !== undefined) {
       // reason: the deadline moves later by the time spent in the batch, so a member that comes back keeps the wait it had left (BR-2048, issue #75).
       deadline += Date.now() - batchedSince;

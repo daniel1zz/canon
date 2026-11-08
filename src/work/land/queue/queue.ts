@@ -29,11 +29,11 @@ export function enqueue(db: CoordDb, worktree: string, subject: string | null, a
 
 /**
  * Where a landing entered the queue: `kept` when it took back the place its last attempt kept for it, after a conflict
- * refusal (BR-2177), a timeout or a signal (BR-2368); `after` says which.
+ * refusal (BR-2177), a timeout or a signal (BR-2368), or after another lander marked it abandoned (BR-2380); `after` says which.
  */
 export interface Entered {
   readonly id: number;
-  readonly kept?: { readonly resolveMs: number; readonly after: "conflict" | "timeout" | "killed" };
+  readonly kept?: { readonly resolveMs: number; readonly after: "conflict" | "timeout" | "killed" | "abandoned" };
 }
 
 /**
@@ -47,18 +47,18 @@ export function enter(db: CoordDb, worktree: string, subject: string | null, act
     const t = iso(now());
     const kept = db.db
       .query<{ id: number; heartbeat: string; result: string | null }, [string, string | null, string]>(
-        "SELECT id, heartbeat, result FROM queue WHERE worktree = ? AND subject IS ? AND state = 'failed' AND keep_until IS NOT NULL AND keep_until >= ? ORDER BY id DESC LIMIT 1",
+        "SELECT id, heartbeat, result FROM queue WHERE worktree = ? AND subject IS ? AND state IN ('failed','abandoned') AND keep_until IS NOT NULL AND keep_until >= ? ORDER BY id DESC LIMIT 1",
       )
       .get(worktree, subject, t);
     if (kept) {
       // reason: the row keeps its id, and queue order is id order, so it is back where it was (BR-2177); it is a fresh attempt otherwise (solo, batch reset).
       db.db
-        .query("UPDATE queue SET state = 'waiting', result = NULL, heartbeat = ?, pid = ?, pid_start = ?, solo = 0, batch = NULL, head = NULL, keep_until = NULL WHERE id = ? AND state = 'failed'")
+        .query("UPDATE queue SET state = 'waiting', result = NULL, heartbeat = ?, pid = ?, pid_start = ?, solo = 0, batch = NULL, head = NULL, keep_until = NULL WHERE id = ? AND state IN ('failed','abandoned')")
         .run(t, lander?.pid ?? null, lander?.start ?? null, kept.id);
-      // The heartbeat of a failed entry is the time it was refused (finishEntry), so this is how long the conflict took to resolve.
+      // The heartbeat of a failed entry is the time it was refused (finishEntry), of an abandoned one the last time its lander beat, so this is how long the stop took to resolve.
       const resolveMs = Date.parse(t) - Date.parse(kept.heartbeat);
-      // reason: the row's result says why the place was kept: `conflict: ...`, `timeout` or `killed` (BR-2368); stats count them apart (BR-2155).
-      const after = kept.result === "timeout" || kept.result === "killed" ? kept.result : "conflict";
+      // reason: the row's result says why the place was kept: `conflict: ...`, `timeout`, `killed` (BR-2368) or an abandoned entry's `lander process gone` / `no heartbeat` (BR-2380); stats count them apart (BR-2155).
+      const after = kept.result === "timeout" || kept.result === "killed" ? kept.result : ABANDONED_RESULTS.includes(kept.result ?? "") ? "abandoned" : "conflict";
       db.event(actor, "queue.enter", subject, { worktree, kept_place: kept.id, resolve_ms: resolveMs, kept_after: after });
       return { id: kept.id, kept: { resolveMs, after } };
     }
@@ -83,10 +83,29 @@ export function failKeepingPlace(db: CoordDb, entryId: number, result: string, k
   return until;
 }
 
-/** Entries refused for a conflict whose place is still kept: their landers are resolving it (BR-2177). */
+/** The `result` another lander gives an entry it marks abandoned (BR-2144, BR-2307). */
+const ABANDONED_RESULTS = ["lander process gone", "no heartbeat"];
+
+/**
+ * How an entry another lander marks abandoned keeps its place (BR-2380): for `ms` after its last heartbeat, so the
+ * time the lander was silent already counts. `actor` is written on the `queue.abandon` event.
+ */
+export interface KeepAbandoned {
+  readonly ms: number;
+  readonly actor: string;
+}
+
+/** Last heartbeat plus the keep time, or null when nothing is kept: 0 minutes, or the time is already past (BR-2380). */
+function keepUntilAfter(heartbeat: string, ms: number): string | null {
+  if (ms <= 0) return null;
+  const until = Date.parse(heartbeat) + ms;
+  return until >= now().getTime() ? iso(new Date(until)) : null;
+}
+
+/** Entries refused for a conflict, stopped, or abandoned whose place is still kept: their landers are resolving it (BR-2177, BR-2380). */
 export function keptPlaces(db: CoordDb): (QueueEntry & { readonly keep_until: string })[] {
   return db.db
-    .query<QueueEntry & { keep_until: string }, [string]>("SELECT id, worktree, subject, 'resolving' AS state, enqueued_at, heartbeat, keep_until FROM queue WHERE state = 'failed' AND keep_until >= ? ORDER BY id")
+    .query<QueueEntry & { keep_until: string }, [string]>("SELECT id, worktree, subject, 'resolving' AS state, enqueued_at, heartbeat, keep_until FROM queue WHERE state IN ('failed','abandoned') AND keep_until >= ? ORDER BY id")
     .all(iso(now()));
 }
 
@@ -141,7 +160,7 @@ export function landsBefore(a: { id: number; subject: string | null }, b: { id: 
  * Only an entry that is still 'waiting' can take the turn: one another lander marked abandoned (it stopped
  * heart-beating, or looked gone) gets `lost` and never lands after the landing that skipped it (BR-2144, issue #29).
  */
-export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS, priority: Priority = NO_PRIORITY): Turn {
+export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS, priority: Priority = NO_PRIORITY, keep?: KeepAbandoned): Turn {
   // reason: with priorities any other active entry can be ahead (BR-2232), and an entry that took its kept place back
   // can be ahead of one that is landing (BR-2177, BR-2178), so every other active entry is probed.
   const ahead = db.db
@@ -173,9 +192,12 @@ export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS, 
       own.state = "waiting";
     }
     if (!own || own.state !== "waiting") return { mine: false, ahead: 0, lost: own ? `${own.state}${own.result ? `: ${own.result}` : ""}` : "no such queue entry" };
-    for (const e of gone) abandonGone(db, e.id, { pid: e.pid, start: e.pid_start });
+    for (const e of gone) abandonGone(db, e.id, { pid: e.pid, start: e.pid_start }, keep);
     const stale = iso(new Date(now().getTime() - staleMs));
-    if (!frozen) db.db.query("UPDATE queue SET state = 'abandoned', result = 'no heartbeat' WHERE state IN ('waiting','landing') AND heartbeat < ? AND id != ?").run(stale, entryId);
+    if (!frozen) {
+      const silent = db.db.query<{ id: number }, [string, number]>("SELECT id FROM queue WHERE state IN ('waiting','landing') AND heartbeat < ? AND id != ? ORDER BY id").all(stale, entryId);
+      for (const e of silent) abandonSilent(db, e.id, keep);
+    }
     db.db.query("UPDATE queue SET heartbeat = ? WHERE id = ?").run(iso(now()), entryId);
     // reason: a landing that is under way is never interrupted, even by an entry ahead of it in order that took its kept place back (BR-2178).
     const me = db.db.query<{ id: number; subject: string | null }, [number]>("SELECT id, subject FROM queue WHERE id = ?").get(entryId)!;
@@ -192,10 +214,29 @@ export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS, 
  * Marks an entry abandoned because the lander probed as gone, only while that lander still owns it: a landing that
  * took the entry back as its kept place meanwhile (BR-2177) is another, live lander (issue #45). False when it did not.
  */
-export function abandonGone(db: CoordDb, entryId: number, probed: Proc): boolean {
-  return db.db
-    .query("UPDATE queue SET state = 'abandoned', result = 'lander process gone' WHERE id = ? AND pid = ? AND pid_start = ? AND state IN ('waiting','landing')")
-    .run(entryId, probed.pid, probed.start).changes > 0;
+export function abandonGone(db: CoordDb, entryId: number, probed: Proc, keep?: KeepAbandoned): boolean {
+  const row = db.db.query<{ heartbeat: string; subject: string | null; worktree: string }, [number, number, string]>("SELECT heartbeat, subject, worktree FROM queue WHERE id = ? AND pid = ? AND pid_start = ? AND state IN ('waiting','landing')").get(entryId, probed.pid, probed.start);
+  if (!row) return false;
+  return abandon(db, entryId, row, "lander process gone", keep, "AND pid = ? AND pid_start = ?", [probed.pid, probed.start]);
+}
+
+/** Marks a silent entry abandoned (its heartbeat is stale); it keeps its place for the keep time after its last heartbeat (BR-2380). */
+function abandonSilent(db: CoordDb, entryId: number, keep?: KeepAbandoned): boolean {
+  const row = db.db.query<{ heartbeat: string; subject: string | null; worktree: string }, [number]>("SELECT heartbeat, subject, worktree FROM queue WHERE id = ? AND state IN ('waiting','landing')").get(entryId);
+  return row ? abandon(db, entryId, row, "no heartbeat", keep, "", []) : false;
+}
+
+/**
+ * Sets the entry abandoned and, with `keep`, `keep_until` = last heartbeat + keep time (BR-2380); `guard` repeats the
+ * ownership check and the heartbeat just read, so an entry that beat or was taken back meanwhile is left alone (issue #45).
+ */
+function abandon(db: CoordDb, entryId: number, row: { heartbeat: string; subject: string | null; worktree: string }, result: string, keep: KeepAbandoned | undefined, guard: string, params: (string | number)[]): boolean {
+  const until = keep ? keepUntilAfter(row.heartbeat, keep.ms) : null;
+  const changed = db.db
+    .query(`UPDATE queue SET state = 'abandoned', result = ?, keep_until = ? WHERE id = ? AND heartbeat = ? AND state IN ('waiting','landing') ${guard}`)
+    .run(result, until, entryId, row.heartbeat, ...params).changes > 0;
+  if (changed && keep) db.event(keep.actor, "queue.abandon", row.subject, { entry: entryId, worktree: row.worktree, reason: result, keeps_place_until: until });
+  return changed;
 }
 
 /** Beats only while the entry is landing; false once another lander marked it abandoned (BR-2144). */

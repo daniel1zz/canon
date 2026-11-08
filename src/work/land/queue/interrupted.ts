@@ -4,7 +4,7 @@ import type { CoordDb } from "../../db.ts";
 import { git } from "../../../kernel/git.ts";
 import { isGone } from "../../claims/liveness.ts";
 import { closeSubject, reopen } from "../finish/finish.ts";
-import { finishEntry } from "./queue.ts";
+import { abandonGone, finishEntry } from "./queue.ts";
 import { rebaseInProgress } from "../worktree-state.ts";
 
 /**
@@ -160,8 +160,9 @@ export function settleInterrupted(ws: Workspace, say: Say): { sha: string } | un
   }
   if (a.state !== "interrupted") return undefined;
   for (const line of describeAttempt(a)) say(line);
-  for (const q of a.leftovers.queue) {
-    ws.db.db.query(`UPDATE queue SET state = 'abandoned', result = 'lander process gone' WHERE id = ? AND pid = ? AND pid_start = ? AND ${OPEN_ENTRY}`).run(q, a.pid, a.pidStart);
+  // reason: leftovers are only found for a dead process, so pid and start are recorded; the entry is this worktree's own, and its next landing takes the kept place back (BR-2380).
+  if (a.pid !== null && a.pidStart !== null) {
+    for (const q of a.leftovers.queue) abandonGone(ws.db, q, { pid: a.pid, start: a.pidStart }, { ms: ws.config.landKeepPlaceMs, actor: ws.actor });
   }
   const close = a.leftovers.rebase ? undefined : closeCommitOf(ws.root, a.subject);
   const reopened = close !== undefined && reopen(ws.root, close, say);

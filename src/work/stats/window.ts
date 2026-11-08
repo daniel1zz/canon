@@ -86,7 +86,7 @@ export interface WindowSummary {
    * Refusals with reason `conflict`; `early` of them were predicted before the turn. `keptPlace` landings came back
    * at the place their conflict refusal kept (BR-2177), with the median time from that refusal to coming back.
    */
-  /** Landings that stopped waiting for a signal or a timeout, and the ones that came back at their kept place (BR-2368). */
+  /** Landings that stopped waiting for a signal, a timeout or being marked abandoned, and the ones that came back at their kept place (BR-2368). */
   readonly stopped: { readonly total: number; readonly keptPlace: number; readonly resolveMedianMs: number | null };
   readonly conflicts: { readonly total: number; readonly early: number; readonly keptPlace: number; readonly resolveMedianMs: number | null };
   readonly overlapNotices: number;
@@ -121,8 +121,10 @@ export function windowSummary(db: CoordDb, since: number, until = lastEventId(db
   const conflicts = refusals.filter((r) => r.detail["reason"] === "conflict");
   // reason: a place kept after a timeout or a signal (BR-2368) is counted apart from one kept after a conflict; events from before `kept_after` existed are conflicts (BR-2155).
   const kept = of("queue.enter").flatMap((r) => (typeof r.detail["kept_place"] === "number" && typeof r.detail["resolve_ms"] === "number" ? [{ ms: r.detail["resolve_ms"], after: r.detail["kept_after"] }] : []));
-  const resolves = kept.filter((k) => k.after !== "timeout" && k.after !== "killed").map((k) => k.ms);
-  const stoppedResolves = kept.filter((k) => k.after === "timeout" || k.after === "killed").map((k) => k.ms);
+  // reason: an abandoned entry's place (BR-2380) is counted with the timeout and signal stops: it is a landing that stopped without a conflict.
+  const isStop = (after: unknown) => after === "timeout" || after === "killed" || after === "abandoned";
+  const resolves = kept.filter((k) => !isStop(k.after)).map((k) => k.ms);
+  const stoppedResolves = kept.filter((k) => isStop(k.after)).map((k) => k.ms);
   return {
     since,
     until,
@@ -132,7 +134,7 @@ export function windowSummary(db: CoordDb, since: number, until = lastEventId(db
     landings: { ok: of("land.ok").length, refused: sortedRefused, lost: of("land.lost").length, killed: of("land.killed").length },
     waits: { count: waits.length, medianMs: median(waits), maxMs: waits.length ? Math.max(...waits) : null },
     conflicts: { total: conflicts.length, early: conflicts.filter((r) => r.detail["early"] === true).length, keptPlace: resolves.length, resolveMedianMs: median(resolves) },
-    stopped: { total: of("land.killed").length + refusals.filter((r) => r.detail["reason"] === "timeout").length, keptPlace: stoppedResolves.length, resolveMedianMs: median(stoppedResolves) },
+    stopped: { total: of("land.killed").length + refusals.filter((r) => r.detail["reason"] === "timeout").length + of("queue.abandon").length, keptPlace: stoppedResolves.length, resolveMedianMs: median(stoppedResolves) },
     overlapNotices: of("overlap.notice").length,
     claimRefusals: of("claim.refuse").length,
     claimHandovers: of("claim.handover").length,
@@ -152,7 +154,7 @@ export function renderWindow(w: WindowSummary): string {
     `  landings: ${w.landings.ok} ok, ${total} refused${total ? ` (${refused.map(([r, c]) => `${r} ${c}`).join(", ")})` : ""}, ${w.landings.lost} lost, ${w.landings.killed} killed`,
     `  queue waits: ${w.waits.count} turn(s), median ${secs(w.waits.medianMs)}, max ${secs(w.waits.maxMs)}`,
     `  conflicts: ${w.conflicts.total} (${w.conflicts.early} predicted before the turn); ${w.conflicts.keptPlace} landed again at their kept place, median resolve ${secs(w.conflicts.resolveMedianMs)}`,
-    `  stopped waiting: ${w.stopped.total} (timeout or signal); ${w.stopped.keptPlace} landed again at their kept place, median ${secs(w.stopped.resolveMedianMs)}`,
+    `  stopped waiting: ${w.stopped.total} (timeout, signal or abandoned); ${w.stopped.keptPlace} landed again at their kept place, median ${secs(w.stopped.resolveMedianMs)}`,
     `  overlap notices: ${w.overlapNotices}; claim refusals: ${w.claimRefusals}; claim handovers: ${w.claimHandovers}; hook skips: ${w.hookSkips}`,
     `  actors (${w.actors.length}): ${w.actors.join(", ") || "-"}`,
     `  worktrees (${w.worktrees.length}): ${w.worktrees.join(", ") || "-"}`,

@@ -325,6 +325,18 @@ describe("the next landing and the other commands report a killed landing", () =
     expect(kinds(p.root, p.s.change).filter((k) => k === "land.interrupt")).toHaveLength(1);
   }, TIMED);
 
+  test("BR-2380: a landing killed with SIGKILL and run again from the same worktree takes its old queue entry back, whichever lander finds it gone", async () => {
+    const p = slowProject();
+    const lander = await landingInFloor(p);
+    await kill9(p, lander);
+    const r = await run(p.s.worktree, ["work", "land"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("landing INTERRUPTED");
+    expect(queueRows(p.root)).toEqual([{ id: 1, state: "landed", result: expect.any(String) }]); // entry 1 again, not a new entry at the tail
+    expect(detail(p.root, "queue.enter")).toMatchObject({ kept_place: 1, kept_after: "abandoned" });
+    expect(detail(p.root, "queue.abandon")).toMatchObject({ entry: 1, reason: "lander process gone" });
+  }, TIMED);
+
   test("BR-2309: a rebase stopped midway is named with git rebase --abort and left as it is", async () => {
     const p = slowProject();
     const lander = await landingInFloor(p);

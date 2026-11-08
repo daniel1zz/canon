@@ -94,7 +94,19 @@ describe("window summary", () => {
     const w = windowSummary(d, 0);
     expect(w.stopped).toEqual({ total: 2, keptPlace: 2, resolveMedianMs: 80_000 });
     expect(w.conflicts).toEqual({ total: 0, early: 0, keptPlace: 1, resolveMedianMs: 9000 });
-    expect(renderWindow(w)).toContain("stopped waiting: 2 (timeout or signal); 2 landed again at their kept place, median 80.0s");
+    expect(renderWindow(w)).toContain("stopped waiting: 2 (timeout, signal or abandoned); 2 landed again at their kept place, median 80.0s");
+  });
+
+  test("BR-2155 BR-2380: entries marked abandoned and their places taken back count on the stopped waiting line", () => {
+    const d = db();
+    d.event("agent:b", "queue.abandon", "C-1", { entry: 1, worktree: "/wt/a", reason: "lander process gone", keeps_place_until: "2026-11-08T12:00:00.000Z" });
+    d.event("agent:b", "queue.abandon", "C-2", { entry: 2, worktree: "/wt/b", reason: "no heartbeat", keeps_place_until: null });
+    d.event("agent:a", "queue.enter", "C-1", { worktree: "/wt/a", kept_place: 1, resolve_ms: 30_000, kept_after: "abandoned" });
+    d.event("agent:a", "queue.enter", "C-3", { worktree: "/wt/c", kept_place: 3, resolve_ms: 9000, kept_after: "conflict" });
+    const w = windowSummary(d, 0);
+    expect(w.stopped).toEqual({ total: 2, keptPlace: 1, resolveMedianMs: 30_000 });
+    expect(w.conflicts).toMatchObject({ keptPlace: 1, resolveMedianMs: 9000 });
+    expect(renderWindow(w)).toContain("stopped waiting: 2 (timeout, signal or abandoned); 1 landed again at their kept place, median 30.0s");
   });
 
   test("BR-2155: an even number of waits takes the mean of the middle two", () => {
