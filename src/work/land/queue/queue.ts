@@ -27,23 +27,27 @@ export function enqueue(db: CoordDb, worktree: string, subject: string | null, a
   return enter(db, worktree, subject, actor, lander).id;
 }
 
-/** Where a landing entered the queue: `kept` when it took back the place a conflict refusal kept for it (BR-2177). */
+/**
+ * Where a landing entered the queue: `kept` when it took back the place its last attempt kept for it, after a conflict
+ * refusal (BR-2177), a timeout or a signal (BR-2368); `after` says which.
+ */
 export interface Entered {
   readonly id: number;
-  readonly kept?: { readonly resolveMs: number };
+  readonly kept?: { readonly resolveMs: number; readonly after: "conflict" | "timeout" | "killed" };
 }
 
 /**
- * Enters the landing queue. A landing from the same worktree and change whose last entry was refused for a conflict
- * within its keep time takes that entry back, so it is ahead of every entry queued after it (BR-2177, D-29);
+ * Enters the landing queue. A landing from the same worktree and change whose last entry stopped (refused for a
+ * conflict, timed out, or killed by a signal) and kept its place takes that entry back within its keep time, so it is
+ * ahead of every entry queued after it (BR-2177, BR-2368, D-29, D-75);
  * otherwise it gets a new entry at the tail. Looked up and taken in one transaction, so it is taken at most once.
  */
 export function enter(db: CoordDb, worktree: string, subject: string | null, actor: string, lander?: Proc): Entered {
   const tx = db.db.transaction((): Entered => {
     const t = iso(now());
     const kept = db.db
-      .query<{ id: number; heartbeat: string }, [string, string | null, string]>(
-        "SELECT id, heartbeat FROM queue WHERE worktree = ? AND subject IS ? AND state = 'failed' AND keep_until IS NOT NULL AND keep_until >= ? ORDER BY id DESC LIMIT 1",
+      .query<{ id: number; heartbeat: string; result: string | null }, [string, string | null, string]>(
+        "SELECT id, heartbeat, result FROM queue WHERE worktree = ? AND subject IS ? AND state = 'failed' AND keep_until IS NOT NULL AND keep_until >= ? ORDER BY id DESC LIMIT 1",
       )
       .get(worktree, subject, t);
     if (kept) {
@@ -53,8 +57,10 @@ export function enter(db: CoordDb, worktree: string, subject: string | null, act
         .run(t, lander?.pid ?? null, lander?.start ?? null, kept.id);
       // The heartbeat of a failed entry is the time it was refused (finishEntry), so this is how long the conflict took to resolve.
       const resolveMs = Date.parse(t) - Date.parse(kept.heartbeat);
-      db.event(actor, "queue.enter", subject, { worktree, kept_place: kept.id, resolve_ms: resolveMs });
-      return { id: kept.id, kept: { resolveMs } };
+      // reason: the row's result says why the place was kept: `conflict: ...`, `timeout` or `killed` (BR-2368); stats count them apart (BR-2155).
+      const after = kept.result === "timeout" || kept.result === "killed" ? kept.result : "conflict";
+      db.event(actor, "queue.enter", subject, { worktree, kept_place: kept.id, resolve_ms: resolveMs, kept_after: after });
+      return { id: kept.id, kept: { resolveMs, after } };
     }
     const r = db.db
       // reason: solo = 0 says this lander understands batches; an older canon leaves it NULL and is never batched (BR-2172).
@@ -67,10 +73,10 @@ export function enter(db: CoordDb, worktree: string, subject: string | null, act
 }
 
 /**
- * Refuses an entry for a conflict: failed, and keeping its place for `keepMs` so that its own next landing takes it
- * back (BR-2177). Returns until when, or null when `keepMs` is 0 (the landing goes to the tail, as before D-29).
+ * Fails an entry that stopped for a conflict, a timeout or a signal, keeping its place for `keepMs` so that its own
+ * next landing takes it back (BR-2177, BR-2368). Returns until when, or null when `keepMs` is 0 (the landing goes to the tail, as before D-29).
  */
-export function failForConflict(db: CoordDb, entryId: number, result: string, keepMs: number): string | null {
+export function failKeepingPlace(db: CoordDb, entryId: number, result: string, keepMs: number): string | null {
   const t = now();
   const until = keepMs > 0 ? iso(new Date(t.getTime() + keepMs)) : null;
   db.db.query("UPDATE queue SET state = 'failed', result = ?, heartbeat = ?, keep_until = ? WHERE id = ?").run(result, iso(t), until, entryId);
@@ -218,11 +224,19 @@ function endMark(db: CoordDb, entryId: number): void {
  * (the lander that entered it, null when none was recorded), only while that lander still owns it: a later landing
  * may have taken the entry back as its kept place (BR-2177, issue #45).
  */
-export function failIfActive(db: CoordDb, entryId: number, result: string, owner?: Proc | null): boolean {
+export function failIfActive(db: CoordDb, entryId: number, result: string, owner?: Proc | null, keepMs = 0): boolean {
   // reason: a member its leader locked in is about to be on main; giving it up now would reopen a change that lands (BR-2172, issue #42).
   const active = "id = ? AND state IN ('waiting','landing') AND NOT (state = 'landing' AND batch IS NOT NULL)";
-  if (owner === undefined) return db.db.query(`UPDATE queue SET state = 'failed', result = ?, heartbeat = ? WHERE ${active}`).run(result, iso(now()), entryId).changes > 0;
-  return db.db.query(`UPDATE queue SET state = 'failed', result = ?, heartbeat = ? WHERE ${active} AND pid IS ? AND pid_start IS ?`).run(result, iso(now()), entryId, owner?.pid ?? null, owner?.start ?? null).changes > 0;
+  const t = now();
+  // reason: a lander killed by a signal keeps its place for its own next landing, like a timeout (BR-2368, D-75); the keep time is set in the same statement that fails it.
+  const until = keepMs > 0 ? iso(new Date(t.getTime() + keepMs)) : null;
+  if (owner === undefined) return db.db.query(`UPDATE queue SET state = 'failed', result = ?, heartbeat = ?, keep_until = ? WHERE ${active}`).run(result, iso(t), until, entryId).changes > 0;
+  return db.db.query(`UPDATE queue SET state = 'failed', result = ?, heartbeat = ?, keep_until = ? WHERE ${active} AND pid IS ? AND pid_start IS ?`).run(result, iso(t), until, entryId, owner?.pid ?? null, owner?.start ?? null).changes > 0;
+}
+
+/** Until when a failed entry keeps its place, or null (BR-2368). */
+export function keptUntil(db: CoordDb, entryId: number): string | null {
+  return db.db.query<{ keep_until: string | null }, [number]>("SELECT keep_until FROM queue WHERE id = ?").get(entryId)?.keep_until ?? null;
 }
 
 export function activeQueue(db: CoordDb): QueueEntry[] {

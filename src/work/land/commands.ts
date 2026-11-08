@@ -28,7 +28,7 @@ const landCmd = defineCommand({
       return;
     }
     if (out.kind === "timeout") {
-      console.error(`canon: still ${out.ahead} landing(s) ahead after ${timeoutMs / 60_000} min; run again`);
+      console.error(`canon: still ${out.ahead} landing(s) ahead after ${timeoutMs / 60_000} min; run again${out.keepsPlaceUntil ? ` (this landing keeps its place in the queue until ${out.keepsPlaceUntil}: landing again from this worktree before then puts it back ahead of the landings queued after it)` : ""}`);
       process.exit(EXIT.timeout);
     }
     console.error(`canon: land refused (${out.reason}): ${out.message}`);

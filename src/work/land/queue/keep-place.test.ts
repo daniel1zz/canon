@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { CoordDb } from "../../db.ts";
 import { readConfig } from "../../../invocation/config.ts";
-import { abandonGone, batchCandidates, enqueue, enter, failForConflict, failIfActive, finishEntry, keptPlaces, tryTurn } from "./queue.ts";
+import { abandonGone, batchCandidates, enqueue, enter, failKeepingPlace, failIfActive, finishEntry, keptPlaces, tryTurn } from "./queue.ts";
 import { selfProcess } from "../../claims/liveness.ts";
 import { land } from "../land.ts";
 import { FAST, boundedLoop, project, quiet, sh, startNew, waitFor, ws } from "../../testkit.ts";
@@ -25,7 +25,7 @@ describe("a landing refused for a conflict keeps its place", () => {
     const r = enqueue(d, "/wt/r", "C-2", "x");
     const b = enqueue(d, "/wt/b", "C-3", "x");
     expect(tryTurn(d, a).mine).toBe(true);
-    expect(failForConflict(d, r, "conflict: app.txt", KEEP)).not.toBeNull(); // predicted while waiting
+    expect(failKeepingPlace(d, r, "conflict: app.txt", KEEP)).not.toBeNull(); // predicted while waiting
     expect(keptPlaces(d).map((e) => [e.id, e.state, e.subject])).toEqual([[r, "resolving", "C-2"]]);
     finishEntry(d, a, "landed", "sa");
     expect(tryTurn(d, b)).toEqual({ mine: true, ahead: 0 }); // the resolving entry does not block
@@ -47,14 +47,14 @@ describe("a landing refused for a conflict keeps its place", () => {
   test("BR-2177: after the time, with 0 minutes, after another refusal, or from another worktree, the landing goes to the tail", () => {
     const d = db();
     const r = enqueue(d, "/wt/r", "C-2", "x");
-    failForConflict(d, r, "conflict", KEEP);
+    failKeepingPlace(d, r, "conflict", KEEP);
     d.db.query("UPDATE queue SET keep_until = ? WHERE id = ?").run(new Date(Date.now() - 1000).toISOString(), r); // the time is up
     expect(keptPlaces(d)).toEqual([]);
     const late = enter(d, "/wt/r", "C-2", "x");
     expect(late.id).toBeGreaterThan(r);
     expect(late.kept).toBeUndefined();
 
-    expect(failForConflict(d, late.id, "conflict", 0)).toBeNull(); // land_keep_place_minutes: 0
+    expect(failKeepingPlace(d, late.id, "conflict", 0)).toBeNull(); // land_keep_place_minutes: 0
     expect(enter(d, "/wt/r", "C-2", "x").id).toBeGreaterThan(late.id);
 
     const f = enqueue(d, "/wt/f", "C-5", "x");
@@ -62,7 +62,7 @@ describe("a landing refused for a conflict keeps its place", () => {
     expect(enter(d, "/wt/f", "C-5", "x").id).toBeGreaterThan(f);
 
     const o = enqueue(d, "/wt/o", "C-6", "x");
-    failForConflict(d, o, "conflict", KEEP);
+    failKeepingPlace(d, o, "conflict", KEEP);
     expect(enter(d, "/wt/elsewhere", "C-6", "x").id).toBeGreaterThan(o);
     expect(enter(d, "/wt/o", "C-6", "x").id).toBe(o); // still kept for its own worktree
     expect(enter(d, "/wt/o", "C-6", "x").id).not.toBe(o); // taken back once only: o is waiting now
@@ -136,7 +136,7 @@ describe("a landing back at its kept place", () => {
   test("BR-2178: it waits for a landing under way, but not for one whose lander is gone", () => {
     const d = db();
     const r = enqueue(d, "/wt/r", "C-2", "x");
-    failForConflict(d, r, "conflict", KEEP);
+    failKeepingPlace(d, r, "conflict", KEEP);
     const b = enqueue(d, "/wt/b", "C-3", "x", { pid: 2 ** 22 + 12345, start: "never" });
     expect(tryTurn(d, b).mine).toBe(true);
     expect(enter(d, "/wt/r", "C-2", "x").id).toBe(r);
@@ -148,7 +148,7 @@ describe("a landing back at its kept place", () => {
     const d = db();
     const old = { pid: 2 ** 22 + 12345, start: "never" };
     const r = enqueue(d, "/wt/r", "C-2", "x", old);
-    failForConflict(d, r, "conflict", KEEP); // the old lander is refused and exits
+    failKeepingPlace(d, r, "conflict", KEEP); // the old lander is refused and exits
     const me = selfProcess()!;
     expect(enter(d, "/wt/r", "C-2", "x", me).id).toBe(r);
     expect(abandonGone(d, r, old)).toBe(false); // a waiter probed the old lander before the entry was taken back
@@ -162,7 +162,7 @@ describe("a landing back at its kept place", () => {
     const d = db();
     const me = selfProcess();
     const r = enqueue(d, "/wt/r", "C-2", "x", me);
-    failForConflict(d, r, "conflict", KEEP);
+    failKeepingPlace(d, r, "conflict", KEEP);
     const lead = enqueue(d, "/wt/a", "C-3", "x", me);
     const c = enqueue(d, "/wt/c", "C-4", "x", me);
     expect(tryTurn(d, lead).mine).toBe(true);
@@ -189,7 +189,7 @@ describe("kept places end to end, through real landings", () => {
     commitFile(c2.worktree, "c2.txt", "c2\n");
     const d = ws(root, "agent:b").db;
     const r = enqueue(d, c2.worktree, c2.change, "agent:a");
-    failForConflict(d, r, "conflict: app.txt", KEEP);
+    failKeepingPlace(d, r, "conflict: app.txt", KEEP);
     return { c2, r, d };
   }
 

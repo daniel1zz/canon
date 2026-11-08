@@ -84,6 +84,19 @@ describe("window summary", () => {
     expect(renderWindow(w)).toContain("conflicts: 2 (1 predicted before the turn); 2 landed again at their kept place, median resolve 173.0s");
   });
 
+  test("BR-2155 BR-2368: places kept after a timeout or a signal are counted apart from conflicts", () => {
+    const d = db();
+    d.event("agent:a", "land.killed", "C-1", { signal: "SIGTERM", keeps_place_until: "2026-11-08T12:00:00.000Z" });
+    d.event("agent:a", "queue.enter", "C-1", { worktree: "/wt/a", kept_place: 1, resolve_ms: 40_000, kept_after: "killed" });
+    d.event("agent:a", "land.refuse", "C-2", { reason: "timeout", ahead: 1 });
+    d.event("agent:a", "queue.enter", "C-2", { worktree: "/wt/b", kept_place: 2, resolve_ms: 120_000, kept_after: "timeout" });
+    d.event("agent:a", "queue.enter", "C-3", { worktree: "/wt/c", kept_place: 3, resolve_ms: 9000, kept_after: "conflict" });
+    const w = windowSummary(d, 0);
+    expect(w.stopped).toEqual({ total: 2, keptPlace: 2, resolveMedianMs: 80_000 });
+    expect(w.conflicts).toEqual({ total: 0, early: 0, keptPlace: 1, resolveMedianMs: 9000 });
+    expect(renderWindow(w)).toContain("stopped waiting: 2 (timeout or signal); 2 landed again at their kept place, median 80.0s");
+  });
+
   test("BR-2155: an even number of waits takes the mean of the middle two", () => {
     const d = db();
     for (const ms of [9000, 1000, 4000, 2000]) d.event("agent:a", "land.turn", "C-1", { waited_ms: ms });

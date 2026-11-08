@@ -66,7 +66,7 @@ export const landKeys = {
   }),
   landKeepPlaceMs: configKey<number>({
     key: "land_keep_place_minutes",
-    doc: "A landing refused for a conflict keeps its place in the queue this long: landing again from the same worktree within it puts it back ahead of the entries queued after it (D-29, BR-2177); 0 sends it to the tail.",
+    doc: "A landing refused for a conflict, timed out, or stopped by a signal keeps its place in the queue this long: landing the same change again from the same worktree within it puts it back ahead of the entries queued after it (D-29, D-75, BR-2177, BR-2368); 0 sends it to the tail.",
     default: 15 * MINUTE,
     schema: { type: "number", minimum: 0, default: 15 },
     read: (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? ok(v * MINUTE) : err("invalid", "`land_keep_place_minutes` must be a number of minutes, 0 or more")),
