@@ -3,10 +3,13 @@ id: C-413
 title: canon check warns before a domain outgrows review_max_prompt_kb, and the
   refusal does not suggest a subdomain split when the top README is the large
   part
-status: open
+status: done
 rules:
   - BR-2375
   - BR-2359
+passes:
+  BR-2359: 9f2374e437c1b3db test
+  BR-2375: 48858ac72f502f6f test
 ---
 
 ## 为什么
