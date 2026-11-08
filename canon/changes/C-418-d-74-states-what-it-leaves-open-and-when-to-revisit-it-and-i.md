@@ -1,7 +1,7 @@
 ---
 id: C-418
 title: D-74 states what it leaves open and when to revisit it, and is accepted
-status: open
+status: done
 rules: []
 ---
 
