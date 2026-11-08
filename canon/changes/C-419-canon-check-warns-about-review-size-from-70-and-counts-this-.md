@@ -2,8 +2,11 @@
 id: C-419
 title: canon check warns about review size from 70% and counts this work's real
   changed documents
-status: open
-rules: [BR-2375]
+status: done
+rules:
+  - BR-2375
+passes:
+  BR-2375: 0f5147e552b46bd9 test
 ---
 
 ## 为什么
