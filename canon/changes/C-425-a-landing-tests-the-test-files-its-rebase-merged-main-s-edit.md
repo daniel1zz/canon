@@ -2,8 +2,10 @@
 id: C-425
 title: A landing tests the test files its rebase merged main's edits into and
   records their reports, instead of refusing them as unreported (#152)
-status: open
+status: done
 rules: []
+passes:
+  BR-2381: c3d619a1389a26a6 test
 ---
 
 ## 为什么
