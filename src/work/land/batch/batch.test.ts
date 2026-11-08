@@ -160,6 +160,19 @@ describe("batched landings", () => {
     expect(evs(root, "batch.end")).toMatchObject([{ leader: "refused", reason: "check", landed: [] }]);
   }, TIMED);
 
+  test("BR-2173 BR-2378 BR-2377: a leader whose worktree changes during the batch is refused as moved-during-land, and the member is leader-refused, not main-not-moved", async () => {
+    const { root, sneak } = batchProject();
+    const a = startNew(root, "A");
+    commitFile(a.worktree, "a.txt", "a\n");
+    const b = startNew(root, "B");
+    commitFile(b.worktree, "b.txt", "b\n");
+    writeFileSync(sneak, a.worktree);
+    const { out } = await landTogether(root, [a.worktree, b.worktree]);
+    expect(out[0]!.kind === "refused" && out[0]!.reason).toBe("moved-during-land");
+    expect(evs(root, "batch.drop").map((d) => [d["entry"], d["reason"]])).toEqual([[entryId(root, b.worktree), "leader-refused"]]);
+    expect(evs(root, "batch.end")).toMatchObject([{ leader: "refused", reason: "moved-during-land", landed: [] }]);
+  }, TIMED);
+
   test("BR-2172 BR-2378 BR-2377: when main cannot move because the primary checkout is dirty, the member is recorded as main-not-moved and the batch ends refused with that reason", async () => {
     const { root, dirty } = batchProject();
     const a = startNew(root, "A");
