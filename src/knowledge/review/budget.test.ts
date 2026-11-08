@@ -101,6 +101,31 @@ describe("rule review prompt budget", () => {
     }
   });
 
+  test("BR-2359: a split into ten or more calls never has a call over the budget, whatever the budget (#160)", () => {
+    // 24 subdomains of 10 KB each: the call count has two digits, and the note of "call 10 of 12" is longer than the one of "call 1 of 2"
+    const files: Record<string, string> = {
+      "canon/rules/wide/README.md": "---\ncode: [src/wide]\n---\n# wide\n\nTop.\n",
+      [`canon/rules/wide/${id("BR", 99)}.md`]: rule(99, "Wide changed", "CHANGED-99 short."),
+    };
+    for (let n = 1; n <= 24; n++) {
+      files[`canon/rules/wide/s${n}/README.md`] = `# wide/s${n}\n\nSub ${n}.\n`;
+      files[`canon/rules/wide/s${n}/${id("BR", n)}.md`] = rule(n, `Sub rule ${n}`, fat(`TEXT-${n}`, 10));
+    }
+    const { root, corpus } = corpusOf(files);
+    const changed = corpus.docs.filter((d) => d.id === id("BR", 99));
+    // a budget that holds two pieces per call: measure the real size of such a call, then try every budget within 200 bytes of it,
+    // so the packing ends within a few bytes of the budget for some of them
+    const probe = prompts(reviewPrompts(root, corpus, changed, {}, 30 * KB));
+    const target = Math.max(...probe.map(size));
+    let long = 0;
+    for (let budget = target - 200; budget <= target + 200; budget++) {
+      const calls = prompts(reviewPrompts(root, corpus, changed, {}, budget));
+      if (calls.length >= 10) long++;
+      for (const p of calls) if (size(p) > budget) throw new Error(`budget ${budget}: a call of ${calls.length} is ${size(p)} bytes`);
+    }
+    expect(long).toBeGreaterThan(300);
+  });
+
   const refusal = (r: ReturnType<typeof reviewPrompts>) => {
     if (r.ok) throw new Error("expected a refusal");
     return r.error.message;

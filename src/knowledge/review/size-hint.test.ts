@@ -132,7 +132,7 @@ describe("review size hint", () => {
     expect(over[0]).toContain("the landing's review of this work will be refused");
     expect(over[0]).toContain("land the changed documents in several smaller changes");
     // without the work the same corpus counts 0 and says so
-    expect(reviewSizeHints(base.root, base.corpus, Math.round(static_ / 0.7))[0]).toContain("not known without a change");
+    expect(reviewSizeHints(base.root, base.corpus, Math.round(static_ / 0.72))[0]).toContain("not known without a change");
   });
 
   test("BR-2375: a small README but a 70 KB rule gives a hint that suggests splitting into subdomains", () => {

@@ -357,12 +357,34 @@ interface Call {
   size: number;
 }
 
-// reason: the note names the call and how many there are, which are known only after packing; its room is reserved up front
-const NOTE_ROOM = 256;
+/** The note a call of a split review carries: which call it is and how many there are (BR-2359). */
+function callNote(i: number, n: number): string {
+  return `This review is split into ${n} calls because of its size; this is call ${i} of ${n}. Every call shows all changed documents, the rule index and the accepted decisions' titles, and only part of the affected domains' text: judge what is shown, and never block because a rule or domain text is not shown in this call.`;
+}
 
-/** What every call carries apart from the changed documents and the domain text: instructions, rule index, accepted decision titles. */
-function fixedBytes(corpus: Corpus): number {
-  return bytes([...promptHead(corpus, [], {})].join("\n")) + bytes(promptTail(corpus).join("\n")) + NOTE_ROOM;
+/**
+ * The bytes the note adds to a call when there are at most `maxCalls` calls, joining newline included. The count is known only
+ * after packing, but its digits can only be fewer than those of `maxCalls`, so the note of call `maxCalls` of `maxCalls` is the
+ * largest, and reserving its measured size up front makes the estimate exact or above, never below (BR-2359, #160).
+ */
+function noteRoom(corpus: Corpus, maxCalls: number): number {
+  const n = Math.max(2, maxCalls);
+  return bytes(promptHead(corpus, [], {}, callNote(n, n)).join("\n")) - bytes(promptHead(corpus, [], {}).join("\n"));
+}
+
+/** The most calls packing the top domains can make: each call holds at least one piece, a rule or a README without rules. */
+function maxCalls(root: string, corpus: Corpus, tops: readonly string[]): number {
+  let n = 1;
+  for (const top of tops) {
+    const { ctx } = packer(root, corpus, top);
+    n += ctx.domains.length + ctx.rules.length;
+  }
+  return n;
+}
+
+/** What every call carries apart from the changed documents and the domain text: instructions, rule index, accepted decision titles, the split note. */
+function fixedBytes(corpus: Corpus, room: number): number {
+  return bytes([...promptHead(corpus, [], {})].join("\n")) + bytes(promptTail(corpus).join("\n")) + room;
 }
 
 /** The pieces one top domain's text is packed from, and what a call pays for them (BR-2359). `g`: the group of this domain already in the call. */
@@ -441,7 +463,8 @@ export function reviewSizes(root: string, corpus: Corpus): { readonly fixed: num
     }
     if (worst) pieces.push(worst);
   }
-  return { fixed: fixedBytes(corpus), pieces };
+  const tops = corpus.domains.filter((d) => !d.parent).map((d) => d.name);
+  return { fixed: fixedBytes(corpus, noteRoom(corpus, maxCalls(root, corpus, tops))), pieces };
 }
 
 /**
@@ -455,10 +478,11 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
 
   const tail = promptTail(corpus);
   const noWording: ReviewExtras = { ...extras, wording: [] };
-  const fixed = (first: boolean): number => bytes([...promptHead(corpus, changed, first ? extras : noWording), ...tail].join("\n")) + NOTE_ROOM;
+  const room = noteRoom(corpus, maxCalls(root, corpus, contextTops(corpus, changed, extras)));
+  const fixed = (first: boolean): number => bytes([...promptHead(corpus, changed, first ? extras : noWording), ...tail].join("\n")) + room;
   // the three parts of the smallest prompt, so a refusal can say which one is too large (BR-2359, D-67, #136)
   const docsBytes = changedBytes(corpus, changed, extras);
-  const indexBytes = fixedBytes(corpus);
+  const indexBytes = fixedBytes(corpus, room);
   /** `piece`: the domain text the smallest call needs on top of the fixed parts, `where`: the domain to split when that is the large part. */
   const tooBig = (need: number, what: string, piece = 0, where?: string): Result<never> => {
     const sizes = `changed documents ${kb(docsBytes)} KB, review instructions + rule index + accepted decision titles ${kb(indexBytes)} KB, domain text ${kb(piece)} KB`;
@@ -514,12 +538,13 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   }
 
   const prompts = calls.map((call, i) => {
-    const note = calls.length > 1 ? `This review is split into ${calls.length} calls because of its size; this is call ${i + 1} of ${calls.length}. Every call shows all changed documents, the rule index and the accepted decisions' titles, and only part of the affected domains' text: judge what is shown, and never block because a rule or domain text is not shown in this call.` : undefined;
+    const note = calls.length > 1 ? callNote(i + 1, calls.length) : undefined;
     const groups = [...call.groups].map(([top, g]) => `${contextHeader(top)}${g.blocks.join("\n")}`);
     return [...promptHead(corpus, changed, i === 0 ? extras : noWording, note), ...groups, ...tail].join("\n");
   });
   const worst = Math.max(...prompts.map(bytes));
-  if (worst > budgetBytes) return tooBig(worst, "a call of the split review is still above the budget", Math.max(0, worst - indexBytes - docsBytes));
+  // reason: every piece fits and the note room is its measured size, so this is a defect of the packer, not something raising the budget fixes (BR-2359, #160)
+  if (worst > budgetBytes) throw new Error(`canon bug: a call of the split rule review is ${worst} bytes, above review_max_prompt_kb = ${kb(budgetBytes)} KB (${budgetBytes} bytes) although every piece fits; report it with the change that was reviewed (#160)`);
   return ok(prompts);
 }
 
