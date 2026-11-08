@@ -2,9 +2,11 @@
 id: C-402
 title: A landing that adds a rule or decision id allocated to another change's
   worktree is refused, naming its holder
-status: open
+status: done
 rules:
   - BR-2362
+passes:
+  BR-2362: 09ce049e52923fd7 test
 ---
 
 ## 为什么
