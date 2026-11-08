@@ -1,17 +1,25 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, readFileSync, unlinkSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync, unlinkSync, utimesSync, writeFileSync, mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git } from "../../kernel/git.ts";
 import { takeClaim } from "../claims/claims.ts";
+import { CoordDb } from "../db.ts";
 import { project, sh, ws } from "../testkit.ts";
 import { MAX_FILE_BYTES, snapshotKey, snapshots, takeSnapshot } from "./snapshot.ts";
 
 const MAIN = join(import.meta.dir, "../../invocation/main.ts");
 
 function canon(cwd: string, stdin: string | undefined, ...args: string[]) {
-  const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: stdin === undefined ? "ignore" : new TextEncoder().encode(stdin), env: { ...process.env, CANON_ACTOR: "agent:test" } });
+  return canonWith({}, cwd, stdin, ...args);
+}
+
+/** Runs canon with extra environment; CLAUDE_CODE_SESSION_ID is cleared unless given, so the test session's own id never leaks in. */
+function canonWith(env: Record<string, string>, cwd: string, stdin: string | undefined, ...args: string[]) {
+  const base: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: "agent:test" };
+  delete base["CLAUDE_CODE_SESSION_ID"];
+  const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: stdin === undefined ? "ignore" : new TextEncoder().encode(stdin), env: { ...base, ...env } });
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
 }
 
@@ -166,6 +174,38 @@ describe("taking a snapshot", () => {
       const r = canon(root, JSON.stringify({ cwd: wt, session_id: "abcd1234-0000", tool_name: "Bash", tool_input: { command: "ls" } }), "snapshot", "take", "--hook");
       expect(r.code).toBe(0);
       expect(snapshots(root, "C-31")).toHaveLength(1);
+    });
+
+    test("BR-2182: when the claims cannot be read, the cwd worktree is still snapshotted and the error is reported", () => {
+      const root = project();
+      writeFileSync(join(root, "app.txt"), "primary edit\n");
+      const db = CoordDb.pathFor(root);
+      if (!db.ok) throw new Error(db.error.message);
+      mkdirSync(dirname(db.value), { recursive: true });
+      writeFileSync(db.value, "this is not a database");
+      const r = hook(root, "abcd1234-0000-4000-8000-000000000000");
+      expect(snapshots(root, snapshotKey(root))).toHaveLength(1);
+      expect(r.code).not.toBe(0);
+      expect(r.err).toContain("cannot read the claims");
+    });
+
+    test("BR-2182: without session_id in the hook input the session comes from CLAUDE_CODE_SESSION_ID; with neither only cwd is snapshotted", () => {
+      const root = project();
+      claimedSibling(root, "C-51", "agent:abcd1234");
+      const input = JSON.stringify({ cwd: root, tool_name: "Bash", tool_input: { command: "ls" } });
+      expect(canonWith({}, root, input, "snapshot", "take", "--hook").code).toBe(0);
+      expect(snapshots(root, "C-51")).toHaveLength(0);
+      expect(canonWith({ CLAUDE_CODE_SESSION_ID: "abcd1234-0000-4000-8000-000000000000" }, root, input, "snapshot", "take", "--hook").code).toBe(0);
+      expect(snapshots(root, "C-51")).toHaveLength(1);
+    });
+
+    test("BR-2182: a claimed worktree whose directory is gone is skipped", () => {
+      const root = project();
+      const gone = claimedSibling(root, "C-61", "agent:abcd1234");
+      rmSync(gone, { recursive: true, force: true });
+      const r = hook(root, "abcd1234-0000-4000-8000-000000000000");
+      expect([r.code, r.out]).toEqual([0, ""]);
+      expect(snapshots(root, "C-61")).toHaveLength(0);
     });
 
     test("BR-2182: without --hook only the current directory's worktree is snapshotted", () => {

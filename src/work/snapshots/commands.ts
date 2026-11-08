@@ -28,9 +28,11 @@ const take = defineCommand({
     }
     // reason: Claude Code reports the session's start folder as cwd while the Bash call works in a worktree `canon work start` made, so the worktrees the calling actor claimed are snapshotted too (BR-2182, D-71)
     const targets = [cwd];
+    // reason: a claims table that cannot be read must not cost the cwd snapshot the hook always took; the error is reported after the snapshots (BR-2182, P4)
+    let claimsError: Parameters<typeof fail>[0] | undefined;
     if (args.hook) {
       const claimed = claimedWorktrees(cwd, session, agentId);
-      if (!claimed.ok) fail(claimed.error);
+      if (!claimed.ok) claimsError = claimed.error;
       const real = (p: string) => {
         try {
           return realpathSync(p);
@@ -39,11 +41,12 @@ const take = defineCommand({
         }
       };
       const seen = new Set([real(cwd)]);
-      for (const w of claimed.value) if (!seen.has(real(w))) targets.push(w), seen.add(real(w));
+      for (const w of claimed.ok ? claimed.value : []) if (!seen.has(real(w))) targets.push(w), seen.add(real(w));
     }
     const results = targets.map((t) => takeSnapshot(t));
     const failed = results.find((x) => !x.ok);
     if (failed && !failed.ok) fail(failed.error);
+    if (claimsError) fail(claimsError);
     const r = results[0]!;
     if (!r.ok) return;
     const pruneErrors = results.flatMap((x) => (x.ok && x.value.kind === "taken" && x.value.pruneError ? [`snapshot ${x.value.ref} taken, but deleting old snapshots failed: ${x.value.pruneError}`] : []));
