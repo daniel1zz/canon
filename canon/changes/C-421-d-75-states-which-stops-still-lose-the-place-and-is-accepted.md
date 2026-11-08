@@ -1,7 +1,7 @@
 ---
 id: C-421
 title: D-75 states which stops still lose the place and is accepted
-status: open
+status: done
 rules: []
 ---
 
