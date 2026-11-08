@@ -2,8 +2,12 @@
 id: C-422
 title: Queue entries another lander marks abandoned keep their place for the
   keep window
-status: open
+status: done
 rules: []
+passes:
+  BR-2155: f2623d48c20a8da1 test
+  BR-2368: bebc17700668801d test
+  BR-2380: 49a37b0280c10938 test
 ---
 
 ## 为什么
