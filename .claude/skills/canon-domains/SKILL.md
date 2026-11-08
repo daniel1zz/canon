@@ -104,7 +104,7 @@ Stop dividing and start writing rules when all hold:
 
 The division is a decision (`canon decision new`). It must contain: the domains, each with class and one-line purpose; the alternative divisions you rejected, with why (keep as is, by layer, per entity, by team); the term-conflict list; the context map (who depends on whom, relation type).
 
-Unsure about a boundary: `canon human ask` with two or three candidate divisions, and keep working on the undisputed domains.
+Unsure about a boundary: `canon human ask` with two or three candidate divisions, then carry on as `canon-rules` §5 says.
 
 ## 11. Map to code and move rules
 
