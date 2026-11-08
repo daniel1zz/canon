@@ -2,7 +2,7 @@
 id: C-417
 title: D-77 states that step names are permanent and that two changes may start
   the same step, and is accepted
-status: open
+status: done
 rules: []
 ---
 
