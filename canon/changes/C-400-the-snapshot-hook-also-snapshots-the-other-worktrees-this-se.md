@@ -2,8 +2,10 @@
 id: C-400
 title: The snapshot hook also snapshots the other worktrees this session's
   actors have claimed (#139)
-status: open
+status: done
 rules: []
+passes:
+  BR-2182: b1f09417b064c90b test
 ---
 
 ## 为什么
