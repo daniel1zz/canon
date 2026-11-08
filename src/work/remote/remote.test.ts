@@ -206,12 +206,12 @@ describe("a failed push", () => {
   });
 
   test("BR-2259, BR-2260: a failed push and the fetch after it together wait at most remote_timeout_seconds, not twice that, and the stalled fetch's processes are stopped", async () => {
-    const { root, bare } = withRemote("remote: origin\nremote_timeout_seconds: 3\n");
+    const { root, bare } = withRemote("remote: origin\nremote_timeout_seconds: 10\n");
     seed(root);
     const gitDir = sh(root, "rev-parse", "--absolute-git-dir");
-    // The push fails after 2 s; the fetch that follows would hang (a remote that answers nothing).
+    // The push fails after 4 s; the fetch that follows would hang (a remote that answers nothing).
     const hook = join(gitDir, "hooks", "pre-push");
-    writeFileSync(hook, "#!/bin/sh\nsleep 2\nexit 1\n");
+    writeFileSync(hook, "#!/bin/sh\nsleep 4\nexit 1\n");
     chmodSync(hook, 0o755);
     const stall = join(gitDir, "stall.sh");
     const pidFile = join(gitDir, "stall-child.pid");
@@ -221,7 +221,7 @@ describe("a failed push", () => {
     const before = bareMain(bare);
     const t = Date.now();
     const r = pushMain(ws(root), quiet);
-    expect(Date.now() - t).toBeLessThan(4500);
+    expect(Date.now() - t).toBeLessThan(12_500);
     expect(r?.ok).toBe(false);
     expect(events(root, "push.fail")).toHaveLength(1);
     expect(String(events(root, "push.fail")[0]!["reason"])).not.toContain("was stopped");
