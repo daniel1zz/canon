@@ -2,7 +2,7 @@
 id: C-412
 title: A change file can hold a plan of steps, and canon plan status shows each
   step done, working, ready or blocked
-status: open
+status: done
 rules:
   - BR-2369
   - BR-2370
@@ -11,6 +11,14 @@ rules:
   - BR-2373
   - BR-2374
   - BR-2376
+passes:
+  BR-2369: 2ebc5de1f10a778d test
+  BR-2370: 79638451a447d979 test
+  BR-2371: 45cca4a565cdbd9f test
+  BR-2372: 6b5e81a3776c6b31 test
+  BR-2373: 16a87997ee8015df test
+  BR-2374: e6d64825142e7caf test
+  BR-2376: 9194551b905a4cf1 test
 ---
 
 ## 为什么
