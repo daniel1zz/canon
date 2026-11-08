@@ -102,7 +102,7 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
       const earlier = passedReview(ws.db, "preview", hash);
       let v: ReviewVerdict;
       if (earlier) {
-        ws.db.event(ws.actor, "review.reused", subject, { review: "preview", docs: scope.reviewed, hash, from: earlier.event });
+        ws.db.event(ws.actor, "review.reused", subject, { review: "preview", docs: scope.reviewed, hash, from: earlier.event, tree: head.value });
         reusedFrom = earlier.event;
         v = { verdict: "ok", findings: earlier.findings };
       } else {

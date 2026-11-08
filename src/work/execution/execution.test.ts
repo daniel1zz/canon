@@ -389,6 +389,17 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     }
   }, TIMED * 2);
 
+  test("BR-2361 BR-2239: a review that answered behaviour is not reused for the same prompt: the review command runs again", async () => {
+    const { root, s } = await wordingProject((r) => `echo run >> ${promptOf(r)}.runs; cat > /dev/null; echo '{"verdict":"ok","findings":[],"wording":{"${br(1)}":"behaviour"}}'`);
+    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+    for (let i = 0; i < 2; i++) {
+      const out = await land(ws(s.worktree), FINISH, quiet);
+      expect(out.kind === "refused" && out.reason).toBe("review");
+    }
+    expect(readFileSync(`${promptOf(root)}.runs`, "utf8").trim().split("\n")).toHaveLength(2);
+    expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'review.reused'").get()?.n).toBe(0);
+  }, TIMED);
+
   test("BR-2239 BR-2074: with no review command, review unset or review: none, the wording record is refused with reason review", async () => {
     // "" is unset (BR-2074); "none" is the explicit opt-out, which still leaves nobody to judge the wording
     for (const review of ["", "none"]) {

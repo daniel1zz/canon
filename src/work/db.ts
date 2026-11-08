@@ -60,7 +60,9 @@ CREATE TABLE IF NOT EXISTS events (
 -- A claim that failed is recorded once per change, claim version and kind (BR-2360, D-66); also added to old databases by this statement.
 CREATE UNIQUE INDEX IF NOT EXISTS events_claim_lapse ON events(subject, kind, json_extract(detail, '$.version')) WHERE kind IN ('claim.expired', 'claim.holder-gone');
 -- A passed rule review is found by the hash of its prompts, to be reused (BR-2361, D-70).
-CREATE INDEX IF NOT EXISTS events_review_hash ON events(json_extract(detail, '$.hash')) WHERE kind = 'review.ok';
+-- (the index of an earlier version covered only review.ok; the newest verdict of a hash must see blocks too)
+DROP INDEX IF EXISTS events_review_hash;
+CREATE INDEX IF NOT EXISTS events_review_verdict_hash ON events(json_extract(detail, '$.hash')) WHERE kind IN ('review.ok', 'review.block');
 CREATE INDEX IF NOT EXISTS events_preview_hash ON events(json_extract(detail, '$.hash')) WHERE kind = 'review.preview';
 -- The one \`canon floor watch\` running for this repository, by pid and process start (BR-2219, D-11).
 CREATE TABLE IF NOT EXISTS watcher (

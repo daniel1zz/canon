@@ -22,14 +22,17 @@ export interface PassedReview {
 }
 
 /**
- * The newest passing rule review of this kind with this key, or undefined: for a landing a `review.ok` event, for a preview a
- * `review.preview` event whose rule review passed. A block, the other kind's pass or a `review.reused` event never is (BR-2361).
+ * The newest rule review of this kind with this key, when it passed: for a landing the newest of the `review.ok` and
+ * `review.block` events, for a preview the newest `review.preview` event (its rule review's verdict). A later block of the
+ * same prompts wins over an earlier pass, so a block is never stepped around by retrying; the other kind's events and
+ * `review.reused` events are never looked at (BR-2361).
  */
 export function passedReview(db: CoordDb, kind: ReviewKind, hash: string): PassedReview | undefined {
-  const where = kind === "land" ? "kind = 'review.ok'" : "kind = 'review.preview' AND json_extract(detail, '$.rule') = 'ok'";
-  const row = db.db.query<{ id: number; detail: string }, [string]>(`SELECT id, detail FROM events WHERE ${where} AND json_extract(detail, '$.hash') = ? ORDER BY id DESC LIMIT 1`).get(hash);
+  const where = kind === "land" ? "kind IN ('review.ok', 'review.block')" : "kind = 'review.preview'";
+  const row = db.db.query<{ id: number; kind: string; detail: string }, [string]>(`SELECT id, kind, detail FROM events WHERE ${where} AND json_extract(detail, '$.hash') = ? ORDER BY id DESC LIMIT 1`).get(hash);
   if (!row) return undefined;
-  const d = JSON.parse(row.detail) as { findings?: unknown; ruleFindings?: unknown; wording?: unknown };
+  const d = JSON.parse(row.detail) as { findings?: unknown; ruleFindings?: unknown; rule?: unknown; wording?: unknown };
+  if (kind === "land" ? row.kind !== "review.ok" : d.rule !== "ok") return undefined;
   const found = kind === "land" ? d.findings : d.ruleFindings;
   const wording = d.wording !== null && typeof d.wording === "object" && !Array.isArray(d.wording) ? (d.wording as Record<string, string>) : undefined;
   return { event: row.id, findings: Array.isArray(found) ? found.map(String) : [], wording };
