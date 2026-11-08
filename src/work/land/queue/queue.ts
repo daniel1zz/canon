@@ -141,7 +141,11 @@ export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS, 
   const dead = gone.map((e) => e.id);
   const tx = db.db.transaction((): Turn => {
     // reason: the state is read and set in this one write transaction, so a skipped entry cannot slip back in (BR-2144).
-    const own = db.db.query<{ state: string; result: string | null; batch: number | null; head: string | null }, [number]>("SELECT state, result, batch, head FROM queue WHERE id = ?").get(entryId);
+    const own = db.db.query<{ state: string; result: string | null; batch: number | null; head: string | null; heartbeat: string }, [number]>("SELECT state, result, batch, head, heartbeat FROM queue WHERE id = ?").get(entryId);
+    // reason: a poller whose own last heartbeat is older than the stale time was itself not running (system sleep), so every
+    // heartbeat it sees is stale because of that; it only refreshes its own and judges nobody on this poll (BR-2044, issue #138).
+    // A stale time of 0 has no window to be frozen for: every heartbeat is older than it, so the grace never applies.
+    const frozen = staleMs > 0 && !!own && own.heartbeat < iso(new Date(now().getTime() - staleMs));
     if (own?.state === "landed" && own.batch !== null && own.result && own.head) return { mine: false, ahead: 0, landedBy: { leader: own.batch, sha: own.result, head: own.head } };
     if (own?.state === "failed" && own.batch !== null && own.result?.startsWith(REFUSED_IN_BATCH)) return { mine: false, ahead: 0, refusedBy: { leader: own.batch, reason: "floor", message: own.result.slice(REFUSED_IN_BATCH.length) } };
     // reason: a batched entry stays 'waiting' with `batch` set, since the state column's CHECK constraint predates batches (D-26).
@@ -151,7 +155,7 @@ export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS, 
       // its signal handler) frees its members to wait again; nothing else would, so they would wait forever (BR-2173, issue #41).
       const leader = db.db.query<{ state: string; heartbeat: string }, [number]>("SELECT state, heartbeat FROM queue WHERE id = ?").get(own.batch);
       const fresh = iso(new Date(now().getTime() - staleMs));
-      if (leader?.state === "landing" && leader.heartbeat >= fresh && !dead.includes(own.batch)) {
+      if (leader?.state === "landing" && (leader.heartbeat >= fresh || frozen) && !dead.includes(own.batch)) {
         db.db.query("UPDATE queue SET heartbeat = ? WHERE id = ?").run(iso(now()), entryId);
         return { mine: false, ahead: 0, batched: { leader: own.batch, head: own.head } };
       }
@@ -161,7 +165,7 @@ export function tryTurn(db: CoordDb, entryId: number, staleMs = QUEUE_STALE_MS, 
     if (!own || own.state !== "waiting") return { mine: false, ahead: 0, lost: own ? `${own.state}${own.result ? `: ${own.result}` : ""}` : "no such queue entry" };
     for (const e of gone) abandonGone(db, e.id, { pid: e.pid, start: e.pid_start });
     const stale = iso(new Date(now().getTime() - staleMs));
-    db.db.query("UPDATE queue SET state = 'abandoned', result = 'no heartbeat' WHERE state IN ('waiting','landing') AND heartbeat < ? AND id != ?").run(stale, entryId);
+    if (!frozen) db.db.query("UPDATE queue SET state = 'abandoned', result = 'no heartbeat' WHERE state IN ('waiting','landing') AND heartbeat < ? AND id != ?").run(stale, entryId);
     db.db.query("UPDATE queue SET heartbeat = ? WHERE id = ?").run(iso(now()), entryId);
     // reason: a landing that is under way is never interrupted, even by an entry ahead of it in order that took its kept place back (BR-2178).
     const me = db.db.query<{ id: number; subject: string | null }, [number]>("SELECT id, subject FROM queue WHERE id = ?").get(entryId)!;

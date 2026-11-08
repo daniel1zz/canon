@@ -43,6 +43,50 @@ describe("landing queue", () => {
     expect(tryTurn(d, b, 10 * 60_000)).toEqual({ mine: true, ahead: 0 });
   });
 
+  test("BR-2044: after all landers were frozen longer than the stale time, the first to wake abandons nobody and keeps queue order", () => {
+    const d = db();
+    const me = selfProcess();
+    const [a, b, c] = ["C-1", "C-2", "C-3"].map((s) => enqueue(d, `/wt/${s}`, s, "x", me));
+    const old = new Date(Date.now() - QUEUE_STALE_MS - 60_000).toISOString();
+    d.db.query("UPDATE queue SET heartbeat = ?").run(old);
+    expect(tryTurn(d, c!)).toEqual({ mine: false, ahead: 2 });
+    const states = () => d.db.query<{ id: number; state: string }, []>("SELECT id, state FROM queue ORDER BY id").all().map((r) => r.state);
+    expect(states()).toEqual(["waiting", "waiting", "waiting"]);
+    expect(tryTurn(d, a!)).toEqual({ mine: true, ahead: 0 });
+    expect(states()).toEqual(["landing", "waiting", "waiting"]);
+    finishEntry(d, a!, "landed", "sha");
+    expect(tryTurn(d, b!)).toEqual({ mine: true, ahead: 0 }); // b was frozen too, so it was not swept either
+  });
+
+  test("BR-2044: a frozen poller still abandons an entry whose lander process is gone", () => {
+    const d = db();
+    const me = selfProcess();
+    const a = enqueue(d, "/wt/a", "C-1", "x", { pid: 2 ** 22 - 3, start: "gone" });
+    const b = enqueue(d, "/wt/b", "C-2", "x", me);
+    d.db.query("UPDATE queue SET heartbeat = ?").run(new Date(Date.now() - QUEUE_STALE_MS - 60_000).toISOString());
+    expect(tryTurn(d, b)).toEqual({ mine: true, ahead: 0 });
+    expect(d.db.query<{ state: string }, [number]>("SELECT state FROM queue WHERE id = ?").get(a)?.state).toBe("abandoned");
+  });
+
+  test("BR-2044: a peer silent for the stale time while the poller kept running is still abandoned", () => {
+    const d = db();
+    const me = selfProcess();
+    const a = enqueue(d, "/wt/a", "C-1", "x", me);
+    const b = enqueue(d, "/wt/b", "C-2", "x", me);
+    d.db.query("UPDATE queue SET heartbeat = ? WHERE id = ?").run(new Date(Date.now() - QUEUE_STALE_MS - 60_000).toISOString(), a);
+    expect(tryTurn(d, b)).toEqual({ mine: true, ahead: 0 });
+    expect(d.db.query<{ state: string; result: string }, [number]>("SELECT state, result FROM queue WHERE id = ?").get(a)).toEqual({ state: "abandoned", result: "no heartbeat" });
+  });
+
+  test("BR-2044: with a stale time of 0 the frozen-poller grace does not apply", () => {
+    const d = db();
+    const a = enqueue(d, "/wt/a", "C-1", "x");
+    const b = enqueue(d, "/wt/b", "C-2", "x");
+    d.db.query("UPDATE queue SET heartbeat = ?").run(new Date(Date.now() - 1000).toISOString());
+    expect(tryTurn(d, b, 0)).toEqual({ mine: true, ahead: 0 });
+    expect(d.db.query<{ state: string }, [number]>("SELECT state FROM queue WHERE id = ?").get(a)?.state).toBe("abandoned");
+  });
+
   test("BR-2144: an entry a later lander marked abandoned never takes a turn again, even once the queue is empty", () => {
     const d = db();
     const a = enqueue(d, "/wt/a", "C-1", "x");
