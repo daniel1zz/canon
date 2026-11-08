@@ -62,7 +62,7 @@ describe("boundaries record and clean up", () => {
     const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
     expect(tryTurn(other.db, ahead).mine).toBe(true); // someone else is landing right now
     const out = await land(ws(s.worktree), { finish: false, timeoutMs: 0 }, quiet);
-    expect(out).toEqual({ kind: "timeout", ahead: 1 });
+    expect(out).toMatchObject({ kind: "timeout", ahead: 1 }); // and it keeps its place (BR-2368)
     expect(events(root, "land.refuse").map((e) => JSON.parse(e.detail).reason)).toEqual(["timeout"]);
   });
 

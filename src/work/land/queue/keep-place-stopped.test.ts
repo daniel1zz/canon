@@ -36,11 +36,15 @@ describe("the queue entry of a landing that timed out or was killed", () => {
     const back = enter(d, "/wt/t", "C-2", "x");
     expect(back).toMatchObject({ id: t, kept: { after: "timeout" } });
     expect(enter(d, "/wt/k", "C-3", "x")).toMatchObject({ id: k, kept: { after: "killed" } });
-    expect(enter(d, "/wt/t", "C-2", "x").id).toBeGreaterThan(later); // taken back once: the second time is a new entry at the tail
+    const tail = enter(d, "/wt/t", "C-2", "x").id;
+    expect(tail).toBeGreaterThan(later); // taken back once: the second time is a new entry at the tail
     expect(eventsOf(d, "queue.enter").filter((e) => e["kept_place"] !== undefined).map((e) => [e["kept_place"], e["kept_after"]])).toEqual([[t, "timeout"], [k, "killed"]]);
     expect(tryTurn(d, t)).toEqual({ mine: false, ahead: 1 }); // C-4 is landing: it is not interrupted (BR-2178)
     finishEntry(d, later, "landed", "x");
-    expect(tryTurn(d, k).mine).toBe(true); // ahead of the entry that went to the tail
+    expect(tryTurn(d, t).mine).toBe(true);
+    finishEntry(d, t, "landed", "x");
+    expect(tryTurn(d, tail)).toEqual({ mine: false, ahead: 1 }); // C-3 kept its place ahead of the entry that went to the tail
+    expect(tryTurn(d, k).mine).toBe(true);
   });
 
   test("BR-2368: after the time, with 0 minutes, from another worktree or for another change, or after another refusal, the landing goes to the tail", () => {
