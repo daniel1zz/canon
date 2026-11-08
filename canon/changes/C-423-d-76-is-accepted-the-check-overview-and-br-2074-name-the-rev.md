@@ -2,8 +2,10 @@
 id: C-423
 title: D-76 is accepted; the check overview and BR-2074 name the review-size
   hint and budget
-status: open
+status: done
 rules: []
+passes:
+  BR-2074: a60b2a28e1bb3fd5 test
 ---
 
 ## 为什么
