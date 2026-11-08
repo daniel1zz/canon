@@ -169,14 +169,16 @@ export function leftOut(root: string, s: Snapshot): string | undefined {
 }
 
 /**
- * The worktrees of `cwd`'s repository that a claim holds for this session's actors: `agent:<session>` and its
- * subagents `agent:<session>:<name>` (BR-2023, D-71). Read from the claims table, not from the command, so `cd`, `git -C`,
- * `pushd`, subshells and variables all count. Another session's claim is not included. The table is opened read-only
- * and no claim is judged (judging writes events), because this runs before every Bash call.
+ * The worktrees of `cwd`'s repository that a claim holds for the calling actor (BR-2023, D-71): a subagent's call
+ * (`agentId` given) names `agent:<session>:<agentId>`, the main session's call exactly `agent:<session>`. Siblings'
+ * worktrees are not included: each one's own hook covers it. Read from the claims table, not from the command, so `cd`,
+ * `git -C`, `pushd`, subshells and variables all count. The table is opened read-only and no claim is judged
+ * (judging writes events), because this runs before every Bash call.
  */
-export function claimedWorktrees(cwd: string, sessionId: string): Result<string[]> {
+export function claimedWorktrees(cwd: string, sessionId: string, agentId?: string): Result<string[]> {
   const session = sessionId.trim().slice(0, 8);
   if (session === "") return ok([]);
+  const actor = agentId === undefined || agentId === "" ? `agent:${session}` : `agent:${session}:${agentId}`;
   const path = CoordDb.pathFor(cwd);
   if (!path.ok) return ok([]); // not a git repository: nothing is claimed
   if (!existsSync(path.value)) return ok([]);
@@ -184,8 +186,8 @@ export function claimedWorktrees(cwd: string, sessionId: string): Result<string[
     const db = new Database(path.value, { readonly: true });
     try {
       const rows = db
-        .query<{ worktree: string | null }, [string, string]>("SELECT worktree FROM claims WHERE holder = ?1 OR substr(holder, 1, length(?2)) = ?2")
-        .all(`agent:${session}`, `agent:${session}:`);
+        .query<{ worktree: string | null }, [string]>("SELECT worktree FROM claims WHERE holder = ?")
+        .all(actor);
       // reason: a hold row (a clean or drop in progress) names its worktree as `hold:<path>#...`; it is no claimed worktree (BR-2025)
       return ok([...new Set(rows.map((r) => r.worktree ?? "").filter((w) => w !== "" && !w.startsWith("hold:") && existsSync(w)))]);
     } finally {

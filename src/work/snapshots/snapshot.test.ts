@@ -121,21 +121,33 @@ describe("taking a snapshot", () => {
       if (!c.ok) throw new Error(c.error.message);
       return wt;
     }
-    const hook = (root: string, session: string) => canon(root, JSON.stringify({ cwd: root, session_id: session, tool_name: "Bash", tool_input: { command: "cd ../x && git checkout -- ." } }), "snapshot", "take", "--hook");
+    const hook = (root: string, session: string, agentId?: string) => canon(root, JSON.stringify({ cwd: root, session_id: session, ...(agentId ? { agent_id: agentId } : {}), tool_name: "Bash", tool_input: { command: "cd ../x && git checkout -- ." } }), "snapshot", "take", "--hook");
 
-    test("BR-2182: with cwd in the primary checkout, a changed worktree claimed by this session or by its subagent is snapshotted too", () => {
+    test("BR-2182: the main session's call snapshots the worktrees held by agent:<session> only, not a subagent's", () => {
       const root = project();
       claimedSibling(root, "C-11", "agent:abcd1234");
       claimedSibling(root, "C-12", "agent:abcd1234:worker");
-      claimedSibling(root, "C-13", "agent:abcd1234:other", false);
+      claimedSibling(root, "C-13", "agent:abcd1234", false);
       writeFileSync(join(root, "app.txt"), "primary edit\n");
       const r = hook(root, "abcd1234-0000-4000-8000-000000000000");
       expect([r.code, r.out]).toEqual([0, ""]);
       expect(show(root, `${snapshots(root, "C-11")[0]!.ref}:app.txt`)).toEqual({ ok: true, value: "edited in C-11" });
-      expect(snapshots(root, "C-12")).toHaveLength(1);
       expect(snapshots(root, snapshotKey(root))).toHaveLength(1);
+      expect(snapshots(root, "C-12")).toHaveLength(0);
       // an unchanged claimed worktree writes nothing
       expect(snapshots(root, "C-13")).toHaveLength(0);
+    });
+
+    test("BR-2182: a subagent's call snapshots the worktree held by agent:<session>:<agent_id>, not a sibling's or the main session's", () => {
+      const root = project();
+      claimedSibling(root, "C-14", "agent:abcd1234:worker");
+      claimedSibling(root, "C-15", "agent:abcd1234:other");
+      claimedSibling(root, "C-16", "agent:abcd1234");
+      const r = hook(root, "abcd1234-0000-4000-8000-000000000000", "worker");
+      expect([r.code, r.out]).toEqual([0, ""]);
+      expect(snapshots(root, "C-14")).toHaveLength(1);
+      expect(snapshots(root, "C-15")).toHaveLength(0);
+      expect(snapshots(root, "C-16")).toHaveLength(0);
     });
 
     test("BR-2182: a changed worktree claimed by another session is not snapshotted", () => {

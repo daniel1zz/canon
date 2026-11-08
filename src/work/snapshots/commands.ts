@@ -12,22 +12,24 @@ const take = defineCommand({
   async run({ args }) {
     let cwd = process.cwd();
     let session = process.env["CLAUDE_CODE_SESSION_ID"] ?? "";
+    let agentId: string | undefined;
     if (args.hook) {
       // reason: the Bash call may run in another directory than the hook process; the input names it (BR-2182)
       const input = (() => {
         try {
-          return JSON.parse(readFileSync(0, "utf8")) as { cwd?: unknown; session_id?: unknown };
+          return JSON.parse(readFileSync(0, "utf8")) as { cwd?: unknown; session_id?: unknown; agent_id?: unknown };
         } catch {
           return {};
         }
       })();
       if (typeof input.cwd === "string" && input.cwd !== "") cwd = input.cwd;
       if (typeof input.session_id === "string" && input.session_id !== "") session = input.session_id;
+      if (typeof input.agent_id === "string" && input.agent_id !== "") agentId = input.agent_id;
     }
-    // reason: Claude Code reports the session's start folder as cwd while the Bash call works in a worktree `canon work start` made, so the worktrees this session claimed are snapshotted too (BR-2182, D-71)
+    // reason: Claude Code reports the session's start folder as cwd while the Bash call works in a worktree `canon work start` made, so the worktrees the calling actor claimed are snapshotted too (BR-2182, D-71)
     const targets = [cwd];
     if (args.hook) {
-      const claimed = claimedWorktrees(cwd, session);
+      const claimed = claimedWorktrees(cwd, session, agentId);
       if (!claimed.ok) fail(claimed.error);
       const real = (p: string) => {
         try {

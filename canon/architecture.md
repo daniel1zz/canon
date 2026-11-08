@@ -33,7 +33,7 @@ title: 架构总览
 - 决策：D-6、D-11、D-18、D-33、D-41、D-45、D-47。
 
 **主 checkout 与变更 worktree**
-- 职责：主 checkout 签出 main，main 只通过 `canon work land` 前移；每个变更一个 worktree `<仓库名>.worktrees/C-n`、一个分支 `change/C-n`、一个认领（租约加进程探测）。认领的持有者是会话，子 agent 的名字写在后面（`agent:<会话>:<名字>`）：子 agent 的认领类命令（`work start`、`land`、`stop`、`drop`）带 `--as <自己的 agent_id>`，主会话不带；主会话用 `canon work take <C-n> --from <agent_id>` 接手子 agent 的变更。快照（每次 Bash 前给 hook 的 `cwd` 所在 worktree 和本会话认领的其他 worktree 各做一个，D-71）和归档是 git ref：`refs/canon/snapshots/*`、`refs/canon/archive/*`。
+- 职责：主 checkout 签出 main，main 只通过 `canon work land` 前移；每个变更一个 worktree `<仓库名>.worktrees/C-n`、一个分支 `change/C-n`、一个认领（租约加进程探测）。认领的持有者是会话，子 agent 的名字写在后面（`agent:<会话>:<名字>`）：子 agent 的认领类命令（`work start`、`land`、`stop`、`drop`）带 `--as <自己的 agent_id>`，主会话不带；主会话用 `canon work take <C-n> --from <agent_id>` 接手子 agent 的变更。快照（每次 Bash 前给 hook 的 `cwd` 所在 worktree 和调用者自己认领的其他 worktree 各做一个，D-71）和归档是 git ref：`refs/canon/snapshots/*`、`refs/canon/archive/*`。
 - 数据：worktree 里的代码和 `canon/changes/C-n.md`；每个 worktree 的 `.canon/`（生成的 schema，被 git 忽略）。
 - 代码：`src/work/session`（开始、停下、交接、`canon brief`）、`src/work/claims`（认领、`--as` 的解析、`check-as` hook 的检查）、`src/work/drop`、`src/work/snapshots`。
 - 决策：D-11、D-13、D-18、D-30、D-62、D-71。
