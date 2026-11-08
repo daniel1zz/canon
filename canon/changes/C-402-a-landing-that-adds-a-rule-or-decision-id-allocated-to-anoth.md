@@ -3,25 +3,26 @@ id: C-402
 title: A landing that adds a rule or decision id allocated to another change's
   worktree is refused, naming its holder
 status: open
-rules: []
+rules:
+  - BR-2362
 ---
 
 ## 为什么
 
-<要解决什么问题。>
+#140：合入的 `canon check` 只看被合入的树，查不出别的变更已经分配、还没合入的编号；`id.allocate` 事件写了没人读。一个变更合入手写的编号，会让真正分配它的变更之后被拒为 `id-duplicate`、只能改号。
 
 ## 要改什么
 
-<具体改动，以及会新增或修改哪些规则。>
+新增 BR-2362：合入新增的规则或决策编号，分配记录在别的 worktree 时拒绝，原因 `check`；分配在自己的 worktree、主 checkout、没有记录都通过。代码在 `src/work/land/checks/allocated.ts`，由 `steps.ts` 在 `canon check` 之后调用；`ChangeInput` 加上变更自己的 worktree（一起测时是成员的 worktree）。
 
 ## 陷阱和假设
 
-<新会话接手时最容易踩的坑，以及这个变更依赖的假设；没有就删掉这一节。>
+主 checkout 里分配的编号不算别的变更（#140 的证据：会话在主 checkout 分配后从变更里合入）。
 
 ## 教训
 
-<每条教训一行：教训 → 现在由哪条规则、检查或命令保证（写编号），或“只靠文字：原因”，或“待负责人确认是否固化”；没有教训就写“无”。>
+无
 
 ## 任务
 
-- [ ] <任务>
+- [ ] 规则、代码、测试

@@ -99,7 +99,7 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
       const co = git(dir, "checkout", "-q", "--detach", l.head);
       if (!co.ok) return { ok: false, reason: "environment", message: `checkout of ${l.head.slice(0, 9)} failed: ${co.error.message}` };
       // reason: the whole batch moves main at once, so every member is compared with main, not the member before it (BR-2248)
-      return verifyChange(ws, opts, say, { wt: dir, base: l.base, main: t.base, head: l.head, before: l.before, subject: l.subject, branch: l.branch, running: t.running });
+      return verifyChange(ws, opts, say, { wt: dir, base: l.base, main: t.base, head: l.head, before: l.before, subject: l.subject, branch: l.branch, running: t.running, worktree: l.worktree });
     };
     // The leader's own steps first: they are exactly what it would get landing alone (BR-2173).
     const leader: Link = { entry: t.entry, subject: t.subject, worktree: ws.root, branch: t.branch, joined: t.head, before: t.before, base: t.base, head: t.head };

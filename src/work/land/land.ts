@@ -319,7 +319,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   // or a review never wastes a floor run (BR-2014, BR-2248, D-26, D-42, #134); the test report canon check reads is
   // written by `canon work test`, not by this floor (D-64).
   const head = tested;
-  const steps = await verifyChange(ws, opts, say, { wt, base: base.value, main: base.value, head: head.value, before: before.value, subject, branch: t.branch, running: t.running });
+  const steps = await verifyChange(ws, opts, say, { wt, base: base.value, main: base.value, head: head.value, before: before.value, subject, branch: t.branch, running: t.running, worktree: wt });
   if (!steps.ok) return refuse(steps.reason, steps.message, steps.findings);
 
   if (floorDeferred) {

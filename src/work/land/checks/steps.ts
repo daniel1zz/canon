@@ -16,6 +16,7 @@ import { reviewPrompts, runReview, runReviews, splitNote } from "../../../knowle
 import { REVIEW_NONE, REVIEW_WAYS_OUT } from "../../../knowledge/review/config-keys.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
 import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
+import { landingAllocations } from "./allocated.ts";
 import { noticeProposedDecisions } from "./proposed.ts";
 import { reviewTree } from "./review-tree.ts";
 import { architectureOf, couldNotRun, duplicateReviewPrompt, reviewScope, reviewSettingsOn, standingTouched } from "./review-scope.ts";
@@ -43,7 +44,7 @@ export type Steps = { readonly ok: true; readonly reviewNotes: { reviewed: strin
  * `base` below it): canon check, decision sources, the rule and duplicate reviews, before_land (BR-2016,
  * BR-2009, BR-2111, BR-2143, BR-2057). A solo landing runs them in its worktree; a batch, per change (BR-2172).
  */
-type ChangeInput = { wt: string; base: string; main: string; head: string; before: string; subject: string | null; branch: string; running: Running };
+type ChangeInput = { wt: string; base: string; main: string; head: string; before: string; subject: string | null; branch: string; running: Running; worktree: string };
 export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: ChangeInput): Promise<Steps> {
   // reason: the review commands run in one temporary worktree at main's commit, so the change cannot edit its own reviewer (BR-2216, #115);
   // it is removed after every outcome, and a removal that fails is an environment problem, never a verdict turned ok
@@ -92,6 +93,9 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   for (const n of backlogNotes(input)) say(noteLine(n));
   for (const n of staleReportNotes(input)) say(noteLine(n));
   if (findings.length > 0) return refuse("check", `canon check: ${findings.length} finding(s)`, findings);
+  // An id the landing adds must not be one another change's worktree allocated (BR-2362, #140).
+  const allocated = landingAllocations({ db: ws.db, primary: ws.primary, wt, worktree: v.worktree, base: base.value, head: head.value, corpus: read.corpus });
+  if (!allocated.ok) return refuse(allocated.reason, allocated.message);
   // Execution records (D-32): planned rules made active by their change only, pass records written only by canon, and
   // still matching their rules after the rebase (BR-2240, BR-2242, BR-2244).
   const execution = landingExecution({ db: ws.db, config: landing.value, wt, base: base.value, head: head.value, before: v.before, corpus: read.corpus, subject, main: ws.config.main });
