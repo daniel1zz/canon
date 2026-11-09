@@ -2,10 +2,13 @@
 id: C-437
 title: canon work review also judges the rules a landing would record as
   wording-only (#166)
-status: open
+status: done
 rules:
   - BR-2358
   - BR-2239
+passes:
+  BR-2239: 12b4e5c00b4e7ede test
+  BR-2358: 69dd8d6553e19c85 test
 ---
 
 ## 为什么
