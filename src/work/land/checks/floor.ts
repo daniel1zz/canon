@@ -90,9 +90,8 @@ export function floorScope(wt: string, base: string, head: string, why: (line: s
   if (!d.ok || d.value === "") return undefined;
   const paths = d.value.split("\n");
   const under = (p: string, list: readonly string[]) => list.some((e) => p === e || p.startsWith(`${e}/`));
-  const index = config.floorScopes.findIndex((sc) => paths.every((p) => under(p, sc.paths) || under(p, config.floorSkipPaths)) && paths.some((p) => under(p, sc.paths)));
-  if (index < 0) return undefined;
-  const scope = config.floorScopes[index]!;
+  const covering = config.floorScopes.map((sc, index) => ({ sc, index })).filter(({ sc }) => paths.every((p) => under(p, sc.paths) || under(p, config.floorSkipPaths)) && paths.some((p) => under(p, sc.paths)));
+  if (covering.length === 0) return undefined;
   const found = testFilesFor(wt, config);
   if (!found.ok) return undefined;
   const asked = runSelectCommand(wt, select, paths, new Set(found.value));
@@ -100,12 +99,13 @@ export function floorScope(wt: string, base: string, head: string, why: (line: s
     why(`floor scope not used: ${asked.error.message}`);
     return undefined;
   }
-  const outside = asked.value.chosen.filter((c) => !under(c.file, scope.paths));
-  if (outside.length > 0) {
-    why(`floor scope not used: test_select_command selects ${outside.length} test file(s) outside ${scope.paths.join(", ")}: ${outside.slice(0, 5).map((c) => c.file).join("; ")}${outside.length > 5 ? "; …" : ""}`);
-    return undefined;
+  for (const { sc, index } of covering) {
+    if (asked.value.chosen.every((c) => under(c.file, sc.paths))) return { index, paths: [...sc.paths], command: sc.command };
   }
-  return { index, paths: [...scope.paths], command: scope.command };
+  const scope = covering[0]!.sc;
+  const outside = asked.value.chosen.filter((c) => !under(c.file, scope.paths));
+  why(`floor scope not used: test_select_command selects ${outside.length} test file(s) outside ${scope.paths.join(", ")}: ${outside.slice(0, 5).map((c) => c.file).join("; ")}${outside.length > 5 ? "; …" : ""}`);
+  return undefined;
 }
 
 /** Whether a path matches a configured `tests` glob, so a deleted test file counts too (BR-2164). */

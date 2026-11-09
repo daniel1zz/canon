@@ -46,7 +46,7 @@ const events = (root: string, kind: string) =>
   ws(root).db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = ? ORDER BY id").all(kind).map((r) => JSON.parse(r.detail) as Record<string, unknown>);
 
 describe("floor scopes (D-82)", () => {
-  test("BR-2398: a landing that changes only paths of a floor scope runs that scope's command instead of the floor, says so and records floor.scope", async () => {
+  test("BR-2398 BR-2014: a landing that changes only paths of a floor scope runs that scope's command instead of the floor, says so and records floor.scope", async () => {
     const root = scoped();
     const s = startNew(root, "Tooling");
     commitFile(s.worktree, "tools/devlog.py", "print(1)\n");
@@ -75,6 +75,16 @@ describe("floor scopes (D-82)", () => {
     expect(said.some((l) => l.startsWith("floor scope not used: test_select_command selects 1 test file(s) outside tools: game/tests/b_test.py"))).toBe(true);
   });
 
+  test("BR-2398: when two entries cover the change, the first one's command runs", async () => {
+    // the first entry passes, the second fails: landing proves the first one ran
+    const root = scoped(CONFIG.replace('command: "true"\n', 'command: "true"\n  - paths: [tools, docs]\n    command: "false"\n'));
+    const s = startNew(root, "Two scopes");
+    commitFile(s.worktree, "tools/devlog.py", "print(1)\n");
+    const said: string[] = [];
+    expect((await land(ws(s.worktree), FAST, (l) => said.push(l))).kind).toBe("landed");
+    expect(said.some((l) => l.includes("floor_scopes entry 1 (tools)"))).toBe(true);
+  });
+
   test("BR-2398: a failing scope command refuses with reason floor", async () => {
     const root = scoped(CONFIG.replace('command: "true"', 'command: "false"'));
     const s = startNew(root, "Broken tool");
@@ -91,6 +101,11 @@ describe("floor scopes (D-82)", () => {
     writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ntest_select_command: "true"\nfloor_scopes:\n  - paths: [canon/config.yaml]\n    command: "true"\n');
     const r2 = readConfig(root);
     expect(!r2.ok && r2.error.message).toContain("covers canon/config.yaml");
+    for (const bad of ["  - paths: [tools]\n", '  - paths: [tools]\n    command: "true"\n    extra: 1\n']) {
+      writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntest_select_command: "true"\nfloor_scopes:\n${bad}`);
+      const r = readConfig(root);
+      expect(!r.ok && r.error.code).toBe("invalid");
+    }
     writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ntest_select_command: "true"\nfloor_scopes:\n  - paths: [tools]\n    command: "true"\n');
     expect(readConfig(root).ok).toBe(true);
   });
@@ -116,6 +131,13 @@ describe("scoped entries in the queue (D-82)", () => {
     expect(landsBefore({ id: scoped4, subject: "C-4" }, { id: scoped3, subject: "C-3" }, p)).toBe(false);
     const urgent = { ...p, urgent: new Set(["C-1"]) };
     expect(landsBefore({ id: full1, subject: "C-1" }, { id: scoped3, subject: "C-3" }, urgent)).toBe(true);
+  });
+
+  test("BR-2399 BR-2020 BR-2178: a full-floor entry that took its kept place back, with a lower id, still lands after a scoped one of the same rank", () => {
+    const { full1, scoped4 } = entries();
+    const p = { urgent: new Set<string>(), scoped: new Set([scoped4]) };
+    expect(landsBefore({ id: scoped4, subject: "C-4" }, { id: full1, subject: "C-1" }, p)).toBe(true);
+    expect(landsBefore({ id: full1, subject: "C-1" }, { id: scoped4, subject: "C-4" }, p)).toBe(false);
   });
 
   test("BR-2399: the scoped entry takes the turn ahead of waiting full-floor ones, but not from one already landing", () => {
