@@ -2,9 +2,11 @@
 id: C-442
 title: canon human ask refuses --option given more than once instead of
   recording no options (#169)
-status: open
+status: done
 rules:
   - BR-2382
+passes:
+  BR-2382: d82a481656ea9017 test
 ---
 
 ## 为什么
