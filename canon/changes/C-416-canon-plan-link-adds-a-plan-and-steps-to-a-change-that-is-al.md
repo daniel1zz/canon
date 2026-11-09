@@ -1,9 +1,11 @@
 ---
 id: C-416
 title: canon plan link adds a plan and steps to a change that is already started
-status: open
+status: done
 rules:
   - BR-2389
+passes:
+  BR-2389: 44aadc41d90bd842 test
 ---
 
 ## 为什么
