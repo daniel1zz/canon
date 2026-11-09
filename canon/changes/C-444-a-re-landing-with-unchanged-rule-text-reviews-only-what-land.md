@@ -2,13 +2,19 @@
 id: C-444
 title: A re-landing with unchanged rule text reviews only what landed on main
   since its last pass (#170)
-status: open
+status: done
 rules:
   - BR-2396
   - BR-2397
   - BR-2361
   - BR-2009
   - BR-2036
+passes:
+  BR-2009: 2dbd10487126b128 test
+  BR-2036: 1b6ad65ed0a6e360 test
+  BR-2361: 823ccd6a1988da7c test
+  BR-2396: b2e3bd7ba3acf3b0 test
+  BR-2397: ea57d0fab17aaa1d test
 ---
 
 ## 为什么
