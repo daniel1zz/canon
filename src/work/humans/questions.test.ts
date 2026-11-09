@@ -101,7 +101,7 @@ describe("human questions", () => {
     expect(pending.split("\n").filter((l) => l.includes("[not one of the options]"))).toHaveLength(2); // the two free answers, not the option answer yes
   });
 
-  test("BR-2021: a --multi question takes a relayed answer naming one or more of its options, each once and the same set in the words, or words naming something else recorded exactly; anything else is refused with exit 1 and nothing recorded", () => {
+  test("BR-2021 BR-2075: --multi needs --option and names multiSelect; a --multi question takes a relayed answer naming one or more of its options, each once and the same set in the words, or words naming something else recorded exactly; anything else is refused with exit 1 and nothing recorded", () => {
     const root = project();
     const d = ws(root).db;
     // reason: one real CLI run each for asking, a refusal and an acceptance; the other cases call answer() in this process (C-375, #126)
