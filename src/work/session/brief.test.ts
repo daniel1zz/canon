@@ -150,6 +150,13 @@ describe("what other changes in flight work on, at start", () => {
     expect(startSaying(root, "New")).toEqual([`in flight: ${busy.change} changes README.md, src/work/`]);
   });
 
+  test("BR-2394: a change with more than 5 areas lists 5 and counts the rest", () => {
+    const root = project();
+    const busy = startNew(root, "Busy");
+    for (const f of ["a", "b", "c", "d", "e", "f", "g"]) commitFile(busy.worktree, `${f}.txt`, "x\n");
+    expect(startSaying(root, "New")).toEqual([`in flight: ${busy.change} changes a.txt, b.txt, c.txt, d.txt, e.txt, … (2 more)`]);
+  });
+
   test("BR-2394: more than 10 changes in flight are cut to 10 lines and a count", () => {
     const root = project();
     for (let i = 0; i < 12; i++) commitFile(startNew(root, `Busy ${i}`).worktree, `f${i}.txt`, "x\n");
