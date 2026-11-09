@@ -2,7 +2,7 @@
 id: C-443
 title: A test run counts as leaving a process behind only a process still
   running when it is named (#171)
-status: open
+status: done
 rules: []
 ---
 
