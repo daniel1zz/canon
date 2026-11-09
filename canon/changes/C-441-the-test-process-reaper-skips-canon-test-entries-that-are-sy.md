@@ -2,7 +2,7 @@
 id: C-441
 title: The test-process reaper skips canon-test entries that are symlinks or
   belong to another user (#163)
-status: open
+status: done
 rules: []
 ---
 
