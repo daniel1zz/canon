@@ -6,7 +6,7 @@ import { claimOfWorktree } from "../claims/claims.ts";
 import { changeOffMain, mainCorpus } from "../session/session.ts";
 import type { Workspace } from "../workspace.ts";
 import { hookStatus } from "../../install/hook.ts";
-import { answer, answeredBy, ask, parseAsked, questions, recordActor, recordAsked, refuseRecord, witnessMark } from "./questions.ts";
+import { answer, answeredBy, ask, isFreeAnswer, parseAsked, questions, recordActor, recordAsked, refuseRecord, witnessMark } from "./questions.ts";
 
 /**
  * The change `--change` names, as its id: a change on main or on its own change branch, matched in any case as
@@ -50,7 +50,7 @@ const human = defineCommand({
         const ws = workspace();
         const qs = questions(ws.db, args.all ? "all" : "pending");
         if (args.json) return json(qs);
-        for (const q of qs) say(`#${q.id} [${q.subject ?? "-"}] ${q.question}${q.options.length ? `  (${q.options.join(" | ")}${q.multi ? "; multi-select: ask with multiSelect: true" : ""})` : ""}${q.answer ? `\n    → ${q.answer} (${answeredBy(q)})${witnessMark(q)}` : ""}`);
+        for (const q of qs) say(`#${q.id} [${q.subject ?? "-"}] ${q.question}${q.options.length ? `  (${q.options.join(" | ")}${q.multi ? "; multi-select: ask with multiSelect: true" : ""})` : ""}${q.answer ? `\n    → ${q.answer} (${answeredBy(q)})${q.options.length && isFreeAnswer(q.options, q.answer) ? " [not one of the options]" : ""}${witnessMark(q)}` : ""}`);
         if (qs.length === 0) say("(nothing waiting)");
       },
     }),

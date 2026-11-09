@@ -46,7 +46,7 @@ describe("human questions", () => {
     expect([got.answer, got.answered_by, got.relayed]).toEqual(["yes", "agent:x", "好的"]);
   });
 
-  test("BR-2021: with options a relay is recorded only as the option the human's words name; a different word, a different option or a free sentence is refused with exit 1 and nothing recorded", () => {
+  test("BR-2021: with options a relay is recorded only as the option the human's words name; a different word, a different option or a free sentence recorded as an option is refused with exit 1 and nothing recorded", () => {
     const root = project();
     const d = ws(root).db;
     // reason: one real CLI run each for a refusal and for an acceptance (the entry point, its exit codes); the other
@@ -76,7 +76,29 @@ describe("human questions", () => {
     expect(refused(free, "yes", "好的，发吧")).toBe("ok");
   });
 
-  test("BR-2021: a --multi question takes a relayed answer naming one or more of its options, each once and the same set in the words; anything else is refused with exit 1 and nothing recorded", () => {
+  test("BR-2021: with options, words that name none of them are recorded exactly as said and marked in pending; an answer rewritten into an option or changed in any letter is refused", () => {
+    const root = project();
+    const d = ws(root).db;
+    for (let i = 0; i < 4; i++) ask(d, "agent:x", null, `Ship it ${i}?`, ["yes", "no"]);
+    const stored = (n: number) => questions(d, "all").find((q) => q.id === n)!;
+    const code = (id: number, text: string, words: string) => {
+      const r = answer(d, id, text, "agent:x", words, false, NO_CTX);
+      return r.ok ? "ok" : r.error.code;
+    };
+    // reason: one real CLI run for the acceptance and the pending mark (the entry point); the refusals call answer() in this process (C-375, #126)
+    const ok = canon(root, "agent:x", false, "human", "answer", "1", "先等 C-428 合入再发", "--relayed", "先等 C-428 合入再发");
+    expect(ok.code).toBe(0);
+    expect([stored(1).answer, stored(1).relayed]).toEqual(["先等 C-428 合入再发", "先等 C-428 合入再发"]);
+    expect(code(2, "no", "不发")).toBe("refused"); // own words rewritten into an option
+    expect(code(3, "Yes, Please", "yes, please")).toBe("refused"); // own words, a letter changed
+    expect(refusals(root)).toEqual(["option-mismatch", "option-mismatch"]);
+    expect(code(4, "yes", "yes")).toBe("ok");
+    const pending = canon(root, "agent:x", false, "human", "pending", "--all").out;
+    expect(pending).toContain("→ 先等 C-428 合入再发 (agent:x relaying the human: \"先等 C-428 合入再发\") [not one of the options]");
+    expect(pending.split("\n").filter((l) => l.includes("[not one of the options]"))).toHaveLength(1);
+  });
+
+  test("BR-2021: a --multi question takes a relayed answer naming one or more of its options, each once and the same set in the words, or words naming something else recorded exactly; anything else is refused with exit 1 and nothing recorded", () => {
     const root = project();
     const d = ws(root).db;
     // reason: one real CLI run each for asking, a refusal and an acceptance; the other cases call answer() in this process (C-375, #126)
@@ -94,15 +116,16 @@ describe("human questions", () => {
       const r = relay(id, text, words);
       return r.ok ? "ok" : r.error.code;
     };
-    const bad = canon(root, "agent:x", false, "human", "answer", "1", "A, C", "--relayed", "A, C");
-    expect(bad.code).toBe(1);
+    const bad = canon(root, "agent:x", false, "human", "answer", "1", "A, B", "--relayed", "A");
+    expect(bad.code).toBe(1); // the words name another set
     expect(questions(d, "pending").map((q) => q.id)).toEqual([1, 2, 3, 4, 5, 6]);
-    expect(code(2, "A, B", "A")).toBe("refused"); // the words name another set
+    expect(code(2, "A, B", "A, C")).toBe("refused"); // C is the human's own words: the answer must be the words exactly
     expect(code(3, "A, A", "A, A")).toBe("refused"); // an option twice
     expect(code(4, "A, ", "A, ")).toBe("refused"); // an empty part
     const note = relay(single, "A, B", "A, B");
     expect(!note.ok && note.error.message).toContain("not asked with --multi");
     expect(refusals(root)).toEqual(["option-mismatch", "option-mismatch", "option-mismatch", "option-mismatch", "option-mismatch"]);
+    expect(code(5, "A, C", "A, C")).toBe("ok"); // C is not an option: recorded as said
     const ok = canon(root, "agent:x", false, "human", "answer", "1", "A, 都不做", "--relayed", "A, 都不做");
     expect(ok.code).toBe(0);
     expect(code(2, "B, A", "a,b")).toBe("ok");

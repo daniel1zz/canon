@@ -56,7 +56,8 @@ export function questions(db: CoordDb, which: "pending" | "all"): Question[] {
  *
  * The write is atomic: two answers racing for one question cannot both succeed (BR-2040). A relay is compared with the
  * question tool's records of the relaying session (`ctx`, BR-2276); the comparison never refuses. A question with options
- * takes a relay only when the words are one of them and the answer is that same option (BR-2021).
+ * takes a relay only when the words name its options and the answer is those same options, or when the words name none
+ * of them and the answer is the words exactly (BR-2021).
  */
 export function answer(db: CoordDb, id: number, text: string, by: string, relayed: string | undefined, tty: boolean, ctx: WitnessContext): Result<void> {
   const quote = relayed?.trim();
@@ -81,7 +82,10 @@ export function answer(db: CoordDb, id: number, text: string, by: string, relaye
       const parts = (t: string) => t.split(",").map((p) => p.trim());
       const named = (t: string) => parts(t).map((p) => options.find((o) => same(o, p)));
       const bad = (hint: string) => err("refused", `question #${id} offers the options ${options.join(" | ")}: ${hint} (answer ${JSON.stringify(text)}, relayed ${JSON.stringify(quote)}); nothing recorded`);
-      if (q.multi === 1) {
+      if (isFreeAnswer(options, quote)) {
+        // reason: the human typed their own words instead of an option (the question tool's "Other"); the agent records them as said, never rewritten into an option (BR-2021)
+        if (text.trim() !== quote) return bad("the human's words are not one of the options, so the recorded answer must be those words exactly");
+      } else if (q.multi === 1) {
         const a = named(text);
         const w = named(quote);
         const sameSet = a.length === w.length && a.every((o) => o !== undefined && w.includes(o)) && new Set(a).size === a.length;
@@ -108,6 +112,11 @@ export function answer(db: CoordDb, id: number, text: string, by: string, relaye
 }
 
 /** Who answered, in words: the human, or an agent relaying the human's own words. */
+/** The words hold a non-empty comma-separated part that names none of the options: the human answered in their own words (BR-2021). */
+export function isFreeAnswer(options: readonly string[], words: string): boolean {
+  return words.split(",").map((p) => p.trim()).some((p) => p !== "" && !options.some((o) => o.trim().toLowerCase() === p.toLowerCase()));
+}
+
 export function answeredBy(q: Pick<Question, "answered_by" | "relayed">): string {
   return q.relayed ? `${q.answered_by} relaying the human: "${q.relayed}"` : (q.answered_by ?? "");
 }
