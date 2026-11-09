@@ -293,3 +293,19 @@ describe("plans in canon change list", () => {
     expect(plain).not.toContain("plan");
   });
 });
+
+describe("plan marks next to the other marks", () => {
+  test("BR-2384: the step mark comes after on branch and handoff in change list; brief's order line has no plan mark", () => {
+    const root = repo([changeFile(1, "open", { plan: FOUR, title: "Build it" })]);
+    // reason: started and stopped through the CLI, so the same actor holds and releases the claim
+    const started = canon(root, "work", "start", "--title", "Step one", "--plan", "C-1", "--step", "1").out;
+    const id = started.match(/(C-\d+) →/)![1]!;
+    const wt = started.match(/cd (.+)/)![1]!.trim();
+    expect(canon(wt, "work", "stop", "--next", "write it", "--release").code).toBe(0);
+    const line = canon(root, "change", "list").out.split("\n").find((l) => l.startsWith(`${id} `))!;
+    expect(line).toMatch(new RegExp(`\\(on branch change/${id}-[^;]+; handoff: write it; plan C-1 step 1\\)$`));
+    const order = canon(root, "brief").out.split("\n").find((l) => l.startsWith("Open changes in the owner's order"))!;
+    expect(order).toContain(`${id} (on branch`);
+    expect(order).not.toContain("plan C-1");
+  });
+});
