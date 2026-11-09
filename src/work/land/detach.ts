@@ -18,6 +18,7 @@ import { EXIT } from "../../invocation/command.ts";
 export const RUN_ENV = "CANON_LAND_RUN";
 
 const POLL_MS = 100;
+const GONE_MS = 5_000;
 
 /**
  * This process's run directory when it is the background landing (D-80): RUN_ENV holds `<follower pid>:<dir>`, and only
@@ -103,6 +104,12 @@ export type Lander = { readonly proc: Subprocess } | { readonly recorded: Proc }
 
 const ended = (l: Lander): boolean => ("proc" in l ? l.proc.exitCode !== null || l.proc.signalCode !== null : "recorded" in l ? isGone(l.recorded) === true : true);
 
+/** Waits until the landing process has ended; a recorded process is given at most GONE_MS, as its exit code is already known. */
+async function gone(l: Lander): Promise<void> {
+  if ("proc" in l) await l.proc.exited;
+  else if ("recorded" in l) for (const until = Date.now() + GONE_MS; isGone(l.recorded) === false && Date.now() < until; ) await Bun.sleep(POLL_MS / 4);
+}
+
 /**
  * Follows a background landing (BR-2390): prints its standard output and standard error as they grow, from the start,
  * and returns its exit code once it ends, marking it seen. A landing whose process ended without writing its exit
@@ -131,6 +138,8 @@ export async function follow(ws: Workspace, dir: string, lander: Lander, pid: nu
         out = drain(join(dir, "out"), 1, out);
         err = drain(join(dir, "err"), 2, err);
         writeFileSync(join(dir, "seen"), "");
+        // reason: the exit file is written just before the process ends; returning only once it is gone leaves no landing process behind the command (BR-2390)
+        await gone(lander);
         if (last !== undefined) return last;
         writeSync(2, `canon: the landing process${pid !== null ? ` ${pid}` : ""} ended without recording a result (killed where no handler runs); run canon work land again: it says what was left and cleans it up\n`);
         return EXIT.timeout;
