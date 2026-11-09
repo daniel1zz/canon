@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { project, quiet, sh, ws } from "../../work/testkit.ts";
 import { start } from "../../work/session/session.ts";
@@ -326,6 +326,16 @@ describe("canon plan link", () => {
     const steps = (JSON.parse(canon(root, "plan", "status", "C-1", "--json").out) as { steps: { step: string; state: string; changes: string[] }[] }).steps;
     expect(steps.filter((x) => x.changes.includes(s.id)).map((x) => x.step)).toEqual(["2", "3"]);
     expect(steps.find((x) => x.step === "2")!.state).toBe("working");
+  });
+
+  test("BR-2389: a step name like 3.1 is written quoted, so the file reads back as the same name and canon check passes", () => {
+    const root = repo([changeFile(1, "open", { plan: table("| 1 | a | - |", "| 3.1 | b | - |") })]);
+    const s = started(root);
+    expect(canon(s.wt, "plan", "link", s.id, "--plan", "C-1", "--step", "1,3.1").code).toBe(0);
+    const file = sh(s.wt, "status", "--porcelain").trim().split(/\s+/).pop()!;
+    expect(readFileSync(join(s.wt, file), "utf8")).toMatch(/["']3\.1["']/);
+    sh(s.wt, "commit", "-qam", "link");
+    expect(canon(s.wt, "check").out).not.toContain("file-invalid");
   });
 
   test("BR-2389: an unknown step, a change without a plan, an existing plan, a closed change, and a change not in this checkout are refused with nothing written", () => {
