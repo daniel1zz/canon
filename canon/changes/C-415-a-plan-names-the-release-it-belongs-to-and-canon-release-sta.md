@@ -3,7 +3,10 @@ id: C-415
 title: A plan names the release it belongs to, and canon release status shows
   its progress next to the rule counts
 status: open
-rules: []
+rules:
+  - BR-2328
+  - BR-2333
+  - BR-2386
 ---
 
 ## 为什么
@@ -19,8 +22,12 @@ rules: []
 - 要先写一条决定：已发布版本的计划标签要不要冻结，`canon release ship` 要不要要求标着它的计划全部完成。倾向：`ship` 要求标着它的计划所有步骤已完成（和要求规则全部已通过一样），需要一个决策写明理由；如果这里有真正的取舍，记成 proposed 决策，不替负责人定。
 - 不做：改计划的格式；从规则推出计划；`canon plan status` 的输出。
 
+## 教训
+
+无
+
 ## 任务
 
-- [ ] 决策（如上）
-- [ ] 规则、测试、实现
-- [ ] `canon release status` 原有的测试不改动仍然通过
+- [x] 决策 D-79（负责人 2026-11-09 选了“要求全部完成（推荐）”，canon human #13）
+- [x] 规则、测试、实现：BR-2386（新）、BR-2328、BR-2333
+- [x] `canon release status` 原有的测试不改动仍然通过

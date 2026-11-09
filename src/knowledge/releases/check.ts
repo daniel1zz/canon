@@ -1,5 +1,6 @@
 import { parseDocFile } from "../documents/docfile.ts";
-import type { Corpus, Release, Rule } from "../documents/model.ts";
+import type { Change, Corpus, Release, Rule } from "../documents/model.ts";
+import { readPlan } from "../plans/parse.ts";
 import { section } from "../documents/templates.ts";
 import { git } from "../../kernel/git.ts";
 import type { Finding } from "../check/check.ts";
@@ -28,7 +29,29 @@ export function releaseFindings(root: string, corpus: Corpus): Finding[] {
       if (!corpus.docs.some((d) => d.id === id)) out.push({ path: rule.path, rule: "ref-dangling", message: `${rule.id} \`${key}\` names ${id}, which does not exist` });
     }
   }
-  for (const release of corpus.docs.filter((d): d is Release => d.kind === "release" && d.status === "shipped")) out.push(...frozenFindings(root, release, rules));
+  const plans = corpus.docs.filter((d): d is Change => d.kind === "change" && d.release !== undefined);
+  for (const change of plans) {
+    if (!corpus.docs.some((d) => d.id === change.release)) out.push({ path: change.path, rule: "ref-dangling", message: `${change.id} \`release\` names ${change.release!}, which does not exist` });
+    // reason: `release` on a change says which release its plan belongs to; without a plan it says nothing (D-79)
+    if (readPlan(change.body).kind !== "plan") out.push({ path: change.path, rule: "file-invalid", message: `${change.id} has \`release: ${change.release!}\` but no valid ## 计划: \`release\` on a change names the release its plan belongs to (D-79)` });
+  }
+  for (const release of corpus.docs.filter((d): d is Release => d.kind === "release" && d.status === "shipped")) out.push(...frozenFindings(root, release, rules), ...frozenPlans(root, release, plans, corpus));
+  return out;
+}
+
+/** A shipped release's set of plans does not change either: the plan changes tagged with it at `shipped_at` (D-79, like BR-2326 for rules). */
+function frozenPlans(root: string, release: Release, tagged: readonly Change[], corpus: Corpus): Finding[] {
+  const at = release.shippedAt!;
+  const then = taggedAt(root, at, release.id, "canon/changes");
+  if (typeof then === "string") return [{ path: release.path, rule: "release-frozen", message: then }];
+  const out: Finding[] = [];
+  for (const id of then) {
+    const now = corpus.docs.find((d): d is Change => d.kind === "change" && d.id === id);
+    if (now && now.release !== release.id) out.push({ path: now.path, rule: "release-frozen", message: `${id}'s plan was tagged ${release.id} when it shipped (${at.slice(0, 9)}); its \`release\` is ${now.release ?? "gone"} now, and the plans of a shipped release do not change (D-79)` });
+  }
+  for (const change of tagged) {
+    if (change.release === release.id && !then.has(change.id)) out.push({ path: change.path, rule: "release-frozen", message: `${change.id}'s plan is tagged ${release.id}, but it was not when ${release.id} shipped (${at.slice(0, 9)}); a plan added to a shipped release changes what shipped: tag it with a later release (D-79)` });
+  }
   return out;
 }
 
@@ -45,7 +68,7 @@ function frozenFindings(root: string, release: Release, rules: readonly Rule[]):
       out.push(frozen(`${release.id} shipped at ${at.slice(0, 9)}: its ## ${name} changed since; a shipped release's ${FROZEN_SECTIONS.map((s) => `## ${s}`).join(", ")} do not change (D-61)`));
     }
   }
-  const tagged = taggedAt(root, at, release.id);
+  const tagged = taggedAt(root, at, release.id, "canon/rules");
   if (typeof tagged === "string") return [...out, frozen(tagged)];
   const byId = new Map(rules.map((r) => [r.id, r]));
   for (const id of tagged) {
@@ -58,12 +81,12 @@ function frozenFindings(root: string, release: Release, rules: readonly Rule[]):
   return out;
 }
 
-/** The ids of the rules tagged `release` in the tree of commit `at`, or why that cannot be read. */
-function taggedAt(root: string, at: string, release: string): Set<string> | string {
+/** The ids of the documents under `dir` tagged `release` in the tree of commit `at`, or why that cannot be read. */
+function taggedAt(root: string, at: string, release: string, dir: string): Set<string> | string {
   const pattern = `^release:[[:space:]]*["']?${release}["']?[[:space:]]*$`;
   // reason: git grep exits 1 for "no match", which git() reports as a failure; only exit 0 and 1 are answers (D-61)
-  const r = Bun.spawnSync(["git", "grep", "-l", "-E", pattern, at, "--", "canon/rules"], { cwd: root, stdout: "pipe", stderr: "pipe" });
-  if (r.exitCode !== 0 && r.exitCode !== 1) return `${release} shipped at ${at}, but git cannot read that commit's rules: ${r.stderr.toString().trim().split("\n")[0]}`;
+  const r = Bun.spawnSync(["git", "grep", "-l", "-E", pattern, at, "--", dir], { cwd: root, stdout: "pipe", stderr: "pipe" });
+  if (r.exitCode !== 0 && r.exitCode !== 1) return `${release} shipped at ${at}, but git cannot read that commit's ${dir}: ${r.stderr.toString().trim().split("\n")[0]}`;
   const ids = new Set<string>();
   for (const line of r.stdout.toString().split("\n").filter(Boolean)) {
     const file = line.slice(at.length + 1);

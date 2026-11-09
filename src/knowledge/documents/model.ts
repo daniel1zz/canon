@@ -77,6 +77,8 @@ export interface Change extends Base {
   readonly plan?: string;
   /** The steps of `plan` this change does (`steps`), as written in the plan table (D-77). */
   readonly steps?: readonly string[];
+  /** The release the plan in this change belongs to (`release: R-n`); only on a change holding a plan (D-79). */
+  readonly release?: string;
 }
 
 /** How a rule's execution was verified (BR-2237): a test the change touched (down to the test, or only to its file when the report has no line numbers), an acceptance line, or a test that existed at migration. */

@@ -9,7 +9,10 @@ export function shipBlockers(corpus: Parameters<typeof releaseStatuses>[0], stat
   const status = releaseStatuses(corpus, states).find((s) => s.release.id === id);
   if (!status) return [`${id} is not a release`];
   if (status.rules.length === 0) return [`no rule is tagged ${id}: there is no behaviour to ship (a rule says \`release: ${id}\` in its front matter)`];
-  return status.rules.filter((r) => r.state !== "passed").map((r) => `${r.id} ${r.title}: ${STATE_LABEL[r.state]}${r.change ? ` (${r.change})` : ""}`);
+  const rules = status.rules.filter((r) => r.state !== "passed").map((r) => `${r.id} ${r.title}: ${STATE_LABEL[r.state]}${r.change ? ` (${r.change})` : ""}`);
+  // reason: a release ships only when the plans tagged with it are done too, as with its rules (D-79, #146)
+  const plans = status.plans.filter((p) => p.counts.done < p.steps.length).map((p) => `plan ${p.change.id} ${p.change.title}: 已完成 ${p.counts.done}/${p.steps.length}; not done: ${p.steps.filter((x) => x.state !== "done").map((x) => x.step.name).join(", ")}`);
+  return [...rules, ...plans];
 }
 
 /** The text a question must contain to be about shipping `id`: `ship R-3`, whole (R-3 does not match R-30). */

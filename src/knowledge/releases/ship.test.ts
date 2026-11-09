@@ -179,6 +179,22 @@ describe("canon release ship: what must be passed", () => {
     expect(agent(shippedRoot, "release", "ship", R(1)).code).toBe(5);
   });
 
+  test("BR-2333: a plan tagged with the release blocks shipping until all its steps are done, naming the steps not done", () => {
+    const plan = "| 步骤 | 内容 | 依赖 |\n|---|---|---|\n| 1 | 建表 | - |\n| 2 | 接口 | 1 |\n| 3 | 界面 | 1 |\n| 4 | 联调 | 2, 3 |\n";
+    const change = (n: number, status: string, front: string, body = "") => `---\nid: ${C(n)}\ntitle: 变更${n}\nstatus: ${status}\nrules: []\n${front}---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n${body}## 任务\n\n- [x] x\n`;
+    const files = (done: string) => ({
+      [`canon/changes/${C(5)}.md`]: change(5, "open", `release: ${R(1)}\n`, `## 计划\n\n${plan}\n`),
+      [`canon/changes/${C(6)}.md`]: change(6, "done", `plan: ${C(5)}\nsteps: [${done}]\n`),
+    });
+    const half = agent(fixture(files("1, 2")), "release", "ship", R(1));
+    expect(half.code).toBe(1);
+    expect(half.err).toContain(`plan ${C(5)} 变更5: 已完成 2/4; not done: 3, 4`);
+    expect(half.err).not.toContain("canon human ask"); // the plans come before the owner's yes, like the rules
+    const all = agent(fixture(files("1, 2, 3, 4")), "release", "ship", R(1));
+    expect(all.err).not.toContain(`plan ${C(5)}`);
+    expect(all.err).toContain("canon human ask"); // past the blockers: the owner's yes is what is missing now
+  });
+
   test("BR-2333: a retired tagged rule does not block", () => {
     const root = fixture({ [`canon/rules/billing/${BR(6)}.md`]: ruleText(6, `release: ${R(1)}\n`, "retired") });
     ask(root, question(1), "no"); // stops after the blockers: the answer is the next refusal, not a blocker

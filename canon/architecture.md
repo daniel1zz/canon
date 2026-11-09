@@ -95,4 +95,4 @@ flowchart LR
 - **后台 floor watch**：合入移动 main 后启动，在自己的进程组里；测过的结果决定 `refs/canon/green`，没通过的记进 red_main，`canon brief` 提示（D-31、D-55、D-59）。
 - **问人**：`canon human ask` 把问题记进 `state.db`（`src/work/humans`）；人在对话里回答，提问工具的 hook 记录；`canon human answer --relayed` 对照记录，对不上只标记（D-6、D-45、D-47）；例外是带选项的问题，回答和原话说的选项不同、或把人自己的话改写了，按 BR-2021 拒绝。
 - **计划**：大工作在变更文件的 `## 计划` 表里写步骤和依赖；做步骤的变更在 front matter 写 `plan: C-n` 和 `steps`（`canon work start --plan --step` 写好）；`canon plan status` 从变更的状态算出每步已完成、进行中、可开始还是被挡住，不另存；`canon brief`（没认领变更的地方）列出有可开始步骤的计划，`canon change list` 标出步骤和计划进度，`canon work start --step` 提示这一步已有哪个变更在做，都用同一个算法（`src/knowledge/plans`，D-77）。
-- **发版**：规则带 `release: R-n` 标签；`canon release ship R-n` 开变更把版本设为 shipped（`src/knowledge/releases`，D-61）。
+- **发版**：规则带 `release: R-n` 标签，计划变更也可以带（它的计划属于这个版本）；`canon release status` 按规则的执行状态和计划的进度算版本进度；`canon release ship R-n` 在规则全部通过、计划全部完成、负责人确认后开变更把版本设为 shipped（`src/knowledge/releases`，D-61、D-79）。

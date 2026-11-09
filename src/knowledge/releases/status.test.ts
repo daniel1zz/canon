@@ -133,3 +133,68 @@ describe("show and context mark a rule's release", () => {
     expect(canon(root, "show", R(1)).out.split("\n")[0]).toBe(`canon/releases/${R(1)}.md`);
   });
 });
+
+const PLAN4 = "| 步骤 | 内容 | 依赖 |\n|---|---|---|\n| 1 | 建表 | - |\n| 2 | 接口 | 1 |\n| 3 | 界面 | 1 |\n| 4 | 联调 | 2, 3 |\n";
+const changeText = (n: number, status: string, front = "", plan = "") =>
+  `---\nid: ${C(n)}\ntitle: 变更${n}\nstatus: ${status}\nrules: []\n${front}---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n${plan ? `## 计划\n\n${plan}\n` : ""}## 任务\n\n- [x] x\n`;
+const commitAll = (root: string, msg: string) => {
+  sh(root, "add", "-A");
+  sh(root, "commit", "-qm", msg);
+};
+
+describe("plans tagged with a release", () => {
+  test("BR-2328: a plan tagged with a release adds its progress after the counts, and --json a plans array; other releases are unchanged", () => {
+    const root = fixture();
+    write(root, {
+      [`canon/changes/${C(5)}.md`]: changeText(5, "open", `release: ${R(2)}\n`, PLAN4),
+      [`canon/changes/${C(6)}.md`]: changeText(6, "done", `plan: ${C(5)}\nsteps: [1]\n`),
+    });
+    commitAll(root, "plan");
+    const lines = canon(root, "release", "status").out.trim().split("\n").map((l) => l.replace(/\s+/g, " "));
+    expect(lines[1]).toBe(`${R(2)} active 版本2 规划中 1 已通过 0 待 main 测试 0 待重新执行 1 计划 ${C(5)} 已完成 1/4 (25%)`);
+    expect(lines[0]).toBe(`${R(1)} shipped 版本1 规划中 0 已通过 3 待 main 测试 0 待重新执行 0 发布后又改了 1`);
+    const j = JSON.parse(canon(root, "release", "status", "--json").out) as { id: string; plans?: unknown }[];
+    expect(j[1]!.plans).toEqual([{ id: C(5), title: "变更5", total: 4, done: 1, percent: 25 }]);
+    expect(j[0]).not.toHaveProperty("plans");
+    expect(canon(root, "release", "status", R(2)).out.split("\n")[0]!.replace(/\s+/g, " ")).toContain(`计划 ${C(5)} 已完成 1/4 (25%)`);
+  });
+
+  test("BR-2386: release on a change names an existing release and needs a plan; a bad id is file-invalid", () => {
+    const root = fixture();
+    write(root, {
+      [`canon/changes/${C(5)}.md`]: changeText(5, "open", `release: ${R(2)}\n`, PLAN4),
+      [`canon/changes/${C(6)}.md`]: changeText(6, "open", `release: ${R(9)}\n`, PLAN4),
+      [`canon/changes/${C(10)}.md`]: changeText(10, "open", `release: ${R(2)}\n`),
+      [`canon/changes/${C(11)}.md`]: changeText(11, "open", "release: 1\n", PLAN4),
+    });
+    const out = canon(root, "check").out;
+    expect(out).not.toContain(`${C(5)}.md`);
+    expect(out).toMatch(new RegExp(`ref-dangling\\s+canon/changes/${C(6)}\\.md: ${C(6)} \`release\` names ${R(9)}`));
+    expect(out).toMatch(new RegExp(`file-invalid\\s+canon/changes/${C(10)}\\.md: .*no valid ## 计划`));
+    expect(out).toMatch(new RegExp(`file-invalid\\s+canon/changes/${C(11)}\\.md: .*must be one release id`));
+  });
+
+  test("BR-2386: a shipped release keeps its plans: a plan retagged or newly tagged after shipping is release-frozen, an unchanged one is not", () => {
+    const root = project();
+    write(root, {
+      [`canon/releases/${R(1)}.md`]: releaseFile(1, "active"),
+      [`canon/releases/${R(2)}.md`]: releaseFile(2, "active"),
+      [`canon/changes/${C(1)}.md`]: changeText(1, "open", `release: ${R(1)}\n`, PLAN4),
+      [`canon/changes/${C(2)}.md`]: changeText(2, "open", `release: ${R(1)}\n`, PLAN4),
+      [`canon/changes/${C(3)}.md`]: changeText(3, "open", "", PLAN4),
+    });
+    commitAll(root, "before shipping");
+    const at = sh(root, "rev-parse", "HEAD").trim();
+    write(root, { [`canon/releases/${R(1)}.md`]: releaseFile(1, "shipped", `shipped_at: ${at}\n`) });
+    commitAll(root, "shipped");
+    expect(canon(root, "check").out).not.toContain("release-frozen");
+    write(root, {
+      [`canon/changes/${C(2)}.md`]: changeText(2, "open", `release: ${R(2)}\n`, PLAN4),
+      [`canon/changes/${C(3)}.md`]: changeText(3, "open", `release: ${R(1)}\n`, PLAN4),
+    });
+    const out = canon(root, "check").out;
+    expect(out).toMatch(new RegExp(`release-frozen\\s+canon/changes/${C(2)}\\.md: ${C(2)}'s plan was tagged ${R(1)}`));
+    expect(out).toMatch(new RegExp(`release-frozen\\s+canon/changes/${C(3)}\\.md: ${C(3)}'s plan is tagged ${R(1)}, but it was not`));
+    expect(out).not.toMatch(new RegExp(`release-frozen\\s+canon/changes/${C(1)}\\.md`));
+  });
+});

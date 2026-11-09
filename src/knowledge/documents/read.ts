@@ -174,7 +174,13 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: link });
           continue;
         }
-        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...link });
+        // reason: whether the id names a release, and whether the change holds a plan, is canon check's to say (D-79)
+        const release = p.meta["release"];
+        if (release !== undefined && (typeof release !== "string" || !new RegExp(`^${releasePrefix}-\\d+$`).test(release))) {
+          problems.push({ path, message: `\`release\` must be one release id such as ${releasePrefix}-1: the release this change's plan belongs to (D-79)` });
+          continue;
+        }
+        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...link, ...(release !== undefined ? { release: release as string } : {}) });
       } else if (type.name === "release") {
         const shippedAt = p.meta["shipped_at"];
         const shipped = p.status === "shipped";
