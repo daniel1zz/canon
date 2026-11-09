@@ -2,10 +2,13 @@
 id: C-436
 title: canon work review and canon context list other domains' rules and
   decisions that share the edited document's identifiers (#165)
-status: open
+status: done
 rules:
   - BR-2358
   - BR-2387
+passes:
+  BR-2358: e14e6d50a8d74d95 test
+  BR-2387: 31041718f8ff7c2e test
 ---
 
 ## 为什么
