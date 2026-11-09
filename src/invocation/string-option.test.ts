@@ -59,6 +59,9 @@ describe("a string option takes the next word as its value", () => {
     expect(argumentProblem(tree, ["x", "--title", "--title"])).toBeUndefined();
     expect(argumentProblem(tree, ["x", "--json", "--json"])).toBeUndefined();
     expect(argumentProblem(tree, ["g", "--name", "a", "leaf", "--title", "b"])).toBeUndefined();
+    const afterDashes = argumentProblem(tree, ["x", "--title", "a", "--", "--title"]);
+    expect(afterDashes).not.toContain("more than once");
+    expect(afterDashes).toContain("positional");
   });
 
   test("BR-2382: canon human ask with --option twice exits 2 and records nothing; comma-separated options are recorded", () => {
@@ -68,6 +71,9 @@ describe("a string option takes the next word as its value", () => {
     expect(twice.err).toContain("--option is given more than once");
     expect(canon(root, "human", "pending").out).not.toContain("Q?");
     expect(canon(root, "decision", "new", "--title", "A", "--title", "B").code).toBe(2);
+    expect(readdirSync(join(root, "canon/decisions"))).toEqual([]);
+    const help = canon(root, "decision", "new", "--title", "A", "--title", "B", "--help");
+    expect([help.code, help.out.includes("USAGE")]).toEqual([0, true]);
     expect(readdirSync(join(root, "canon/decisions"))).toEqual([]);
     expect(canon(root, "human", "ask", "Q?", "--option", "yes,no").code).toBe(0);
     expect(canon(root, "human", "pending").out).toContain("Q?  (yes | no)");
