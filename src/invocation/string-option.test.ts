@@ -52,6 +52,27 @@ describe("a string option takes the next word as its value", () => {
     expect(argumentProblem(tree, ["x", "--json", "-x"])).toContain("has no option -x");
   });
 
+  test("BR-2382: a string option given twice, in either form, is a usage problem; once, a value naming it, or a repeated boolean is not", () => {
+    expect(argumentProblem(tree, ["x", "--title", "a", "--title", "b"])).toContain("--title is given more than once");
+    expect(argumentProblem(tree, ["x", "--title", "a", "--title=b"])).toContain("--title is given more than once");
+    expect(argumentProblem(tree, ["x", "--title=a", "--title=b"])).toContain("--title is given more than once");
+    expect(argumentProblem(tree, ["x", "--title", "--title"])).toBeUndefined();
+    expect(argumentProblem(tree, ["x", "--json", "--json"])).toBeUndefined();
+    expect(argumentProblem(tree, ["g", "--name", "a", "leaf", "--title", "b"])).toBeUndefined();
+  });
+
+  test("BR-2382: canon human ask with --option twice exits 2 and records nothing; comma-separated options are recorded", () => {
+    const root = project();
+    const twice = canon(root, "human", "ask", "Q?", "--option", "yes", "--option", "no");
+    expect(twice.code).toBe(2);
+    expect(twice.err).toContain("--option is given more than once");
+    expect(canon(root, "human", "pending").out).not.toContain("Q?");
+    expect(canon(root, "decision", "new", "--title", "A", "--title", "B").code).toBe(2);
+    expect(readdirSync(join(root, "canon/decisions"))).toEqual([]);
+    expect(canon(root, "human", "ask", "Q?", "--option", "yes,no").code).toBe(0);
+    expect(canon(root, "human", "pending").out).toContain("Q?  (yes | no)");
+  });
+
   test("BR-2228: canon decision new --title \"-x\" creates a decision titled -x; --title=-x gives the same title", () => {
     const spaced = project();
     expect(canon(spaced, "decision", "new", "--title", "-x").code).toBe(0);

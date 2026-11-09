@@ -90,11 +90,17 @@ export function bindValues(main: CommandDef<ArgsDef>, raw: readonly string[]): s
 export function unknownArgument(cmd: CommandDef<ArgsDef>, name: string, args: readonly string[]): string | undefined {
   const defs = argsOf(cmd);
   const kinds = new Map<string, string>();
+  const owner = new Map<string, string>();
   for (const [name, d] of Object.entries(defs)) {
     if (d.type === "positional") continue;
     kinds.set(name, d.type ?? "string");
-    for (const a of d.alias === undefined ? [] : Array.isArray(d.alias) ? d.alias : [d.alias]) kinds.set(a, d.type ?? "string");
+    owner.set(name, name);
+    for (const a of d.alias === undefined ? [] : Array.isArray(d.alias) ? d.alias : [d.alias]) {
+      kinds.set(a, d.type ?? "string");
+      owner.set(a, name);
+    }
   }
+  const seen = new Set<string>();
   const flags = Object.entries(defs).filter(([, d]) => d.type !== "positional").map(([n]) => `--${n}`);
   const valid = flags.length ? `valid options: ${flags.join(", ")}` : "it takes no options";
   const unknown = (flag: string) => `\`${name}\` has no option ${flag}; ${valid}`;
@@ -128,6 +134,11 @@ export function unknownArgument(cmd: CommandDef<ArgsDef>, name: string, args: re
       if (v === undefined && (args[i + 1] === "true" || args[i + 1] === "false")) i++;
       continue;
     }
+    // reason: citty turns a repeated string option into an array, which each command read differently: a title joined
+    // with commas, options dropped, a number refused with an odd message (BR-2382, #169)
+    const option = owner.get(flag)!;
+    if (seen.has(option)) return `\`${name}\`: --${option} is given more than once; give it once (an option that takes several values takes them in one, separated by commas)`;
+    seen.add(option);
     // reason: a string option always takes the next word, also one starting with "-" (BR-2228; bindValues joins such pairs for citty)
     if (eq < 0 && i + 1 < args.length) i++;
   }
