@@ -29,6 +29,8 @@ const review = defineCommand({
         return;
       case "off":
         say("review: none: canon/config.yaml on main is set not to review; nothing was run");
+        // reason: with nobody to judge them, the landing refuses the wording-only records (BR-2239); said now, not after the queue turn (BR-2358)
+        for (const id of out.wording) say(`wording judgement: ${id}: no review command to judge it; the landing would refuse it as a wording-only edit: change a line in a running test whose title names ${id}, or for a rule with untested:, a line under ## 验收`);
         for (const line of out.related) say(line);
         behind(out.behind, out.main);
         return;

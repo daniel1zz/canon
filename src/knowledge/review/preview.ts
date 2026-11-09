@@ -20,7 +20,7 @@ import { reviewPrompts, type ReviewExtras, runReview, runReviews, type ReviewVer
 /** What `canon work review` found, as the command turns it into text and an exit code (BR-2358). */
 export type PreviewOutcome =
   | { readonly kind: "ok" | "block"; readonly findings: readonly { readonly review: "rule" | "duplicate"; readonly text: string }[]; readonly reviewed: readonly string[]; readonly behind: number; readonly main: string; readonly reusedFrom?: number; readonly related: readonly string[]; readonly wording: readonly { readonly id: string; readonly answer: string | undefined }[] }
-  | { readonly kind: "off"; readonly behind: number; readonly main: string; readonly related: readonly string[] }
+  | { readonly kind: "off"; readonly behind: number; readonly main: string; readonly related: readonly string[]; readonly wording: readonly string[] }
   | { readonly kind: "nothing"; readonly behind: number; readonly main: string }
   | { readonly kind: "unconfigured"; readonly needs: readonly string[]; readonly main: string }
   | { readonly kind: "usage" | "failed"; readonly message: string };
@@ -105,7 +105,7 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
   if (!onMain.review) return { kind: "unconfigured", needs, main: main.value };
   // Other domains' rules and decisions sharing names with the changed ones: a hint, never part of the verdict (BR-2387).
   const related = scope.changedDocs.filter((d) => d.kind === "rule" || d.kind === "decision").flatMap((d) => relatedLines(d, relatedElsewhere(read.corpus, d)));
-  if (onMain.review === REVIEW_NONE) return { kind: "off", behind, main: main.value, related };
+  if (onMain.review === REVIEW_NONE) return { kind: "off", behind, main: main.value, related, wording: wording.questions.map((q) => q.id) };
 
   const running: Running = {};
   const tree = reviewTree(ws, running, main.value);

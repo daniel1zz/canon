@@ -387,6 +387,14 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     expect(readFileSync(promptOf(root), "utf8")).not.toContain("# Wording judgements");
   }, TIMED);
 
+  test("BR-2358 BR-2239: with review: none, canon work review says the wording-only record has no one to judge it and the landing would refuse it; exit 0", async () => {
+    const { s } = await wordingProject(() => "none");
+    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+    const cli = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "review"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    expect(cli.exitCode).toBe(0);
+    expect(cli.stdout.toString()).toContain(`wording judgement: ${br(1)}: no review command to judge it; the landing would refuse it as a wording-only edit`);
+  }, TIMED);
+
   test("BR-2243 BR-2239: only the statement changed and the review answers wording: the record copies the method with wording; the prompt had the judgement", async () => {
     const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`));
     write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
