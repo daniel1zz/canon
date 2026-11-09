@@ -2,10 +2,13 @@
 id: C-428
 title: A change learns which open changes touch the same files while it is being
   worked on, not only at landing (#156)
-status: open
+status: done
 rules:
   - BR-2394
   - BR-2395
+passes:
+  BR-2394: eba419d4bbbffb1a test
+  BR-2395: e69202d3af80977f test
 ---
 
 ## 为什么
