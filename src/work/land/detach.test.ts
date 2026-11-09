@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { boundedLoop, project, sh, startNew, waitFor, ws } from "../testkit.ts";
 import { isGone, processOf } from "../claims/liveness.ts";
@@ -153,7 +153,8 @@ describe("following a landing again (D-80)", () => {
     expect((await result(follower(h.s.worktree, [], false))).code).toBe(2);
     sh(h.s.worktree, "add", "loose.txt");
     sh(h.s.worktree, "commit", "-qm", "loose");
-    expect((await result(follower(h.s.worktree, [], false))).code).toBe(0);
+    const again = await result(follower(h.s.worktree, [], false));
+    expect(again.code).toBe(0);
     expect(starts(h.root).length).toBe(2);
   }, TIMED);
 });
@@ -185,6 +186,35 @@ describe("two canon work land at once (#172)", () => {
     writeFileSync(h.release, "");
     const r = await result(again);
     expect(r.code).toBe(0);
+    expect(starts(h.root).length).toBe(1);
+  }, TIMED);
+  test("BR-2392: a landing whose starting canon work land died before it started the landing is not waited for; a new landing starts", async () => {
+    const h = heldProject();
+    const gone = Bun.spawn(["true"]);
+    await gone.exited;
+    const dir = `${h.root}.dead-run`;
+    mkdirSync(dir);
+    ws(h.s.worktree).db.event("agent:a", "land.spawn", null, { run: dir, pid: gone.pid, pid_start: "Mon Jan  1 00:00:00 2024" });
+    const r = await result(follower(h.s.worktree, [], false));
+    expect(r.code).toBe(0);
+    expect(r.err).not.toContain("still starting");
+    expect(starts(h.root).length).toBe(1);
+  }, TIMED);
+
+  test("BR-2392: a landing that ended before land.start while nothing followed it is reported, not started again", async () => {
+    const h = heldProject();
+    const dir = `${h.root}.ended-run`;
+    mkdirSync(dir);
+    writeFileSync(join(dir, "out"), "");
+    writeFileSync(join(dir, "err"), "canon: refused before it started\n");
+    writeFileSync(join(dir, "exit"), "5\n");
+    ws(h.s.worktree).db.event("agent:a", "land.spawn", null, { run: dir, pid: null, pid_start: null });
+    const r = await result(follower(h.s.worktree, [], false));
+    expect(r.code).toBe(5);
+    expect(r.err).toContain("refused before it started");
+    expect(starts(h.root).length).toBe(0);
+    const again = await result(follower(h.s.worktree, [], false));
+    expect(again.code).toBe(0);
     expect(starts(h.root).length).toBe(1);
   }, TIMED);
 });

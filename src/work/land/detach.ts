@@ -95,19 +95,21 @@ function runProcess(dir: string): Proc | undefined {
  * the latest `land.spawn` of this worktree with no `land.start` of the same run after it, whose run has no exit code and
  * whose landing process is alive, or, before that process is written down, whose starting `canon work land` is alive.
  */
-function startingRun(ws: Workspace): { ts: string; dir: string } | undefined {
+function startingRun(ws: Workspace): { ts: string; dir: string; ended: boolean } | undefined {
   const r = ws.db.db.query<{ id: number; ts: string; detail: string }, [string]>("SELECT id, ts, detail FROM events WHERE kind = 'land.spawn' AND worktree = ? ORDER BY id DESC LIMIT 1").get(ws.root);
   if (!r) return undefined;
   const run = (JSON.parse(r.detail) as { run?: unknown }).run;
   if (typeof run !== "string") return undefined;
   const started = ws.db.db.query<{ one: number }, [number, string, string]>("SELECT 1 AS one FROM events WHERE id > ? AND kind = 'land.start' AND worktree = ? AND json_extract(detail, '$.run') = ? LIMIT 1").get(r.id, ws.root, run);
-  if (started || exitOf(run) !== undefined) return undefined;
+  if (started) return undefined;
+  // reason: a landing that ended before land.start (e.g. refused as claimed) is reported like any unseen result (BR-2392)
+  if (exitOf(run) !== undefined) return existsSync(join(run, "seen")) ? undefined : { ts: r.ts, dir: run, ended: true };
   const proc = runProcess(run);
-  if (proc) return isGone(proc) === false ? { ts: r.ts, dir: run } : undefined;
+  if (proc) return isGone(proc) === false ? { ts: r.ts, dir: run, ended: false } : undefined;
   // reason: a starter killed before it started the landing leaves no landing; it is not waited for (BR-2392)
   const d = JSON.parse(r.detail) as { pid?: unknown; pid_start?: unknown };
   const starter = typeof d.pid === "number" && typeof d.pid_start === "string" ? { pid: d.pid, start: d.pid_start } : undefined;
-  return starter && isGone(starter) === false ? { ts: r.ts, dir: run } : undefined;
+  return starter && isGone(starter) === false ? { ts: r.ts, dir: run, ended: false } : undefined;
 }
 
 /** Copies what a stream file gained since `at` to the file descriptor `fd`; returns the new offset. */
@@ -201,7 +203,7 @@ export async function landInBackground(ws: Workspace, args: readonly string[]): 
   // `canon work land` started together cannot both start a landing for this worktree (BR-2392, #172)
   const decided = ws.db.db.transaction((): Decision => {
     const starting = startingRun(ws);
-    if (starting) return { starting };
+    if (starting) return starting.ended ? { unseen: starting } : { starting };
     const last = lastRun(ws);
     if (last) {
       const a = attemptIn(ws.db, ws.config.main, ws.root);
