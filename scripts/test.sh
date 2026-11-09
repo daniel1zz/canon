@@ -16,7 +16,9 @@ reap="$(dirname "$0")/reap-test-procs.sh"
 # a run killed with SIGKILL ran no trap: its directory (canon-test.<runner pid>.<random>) goes once that runner is gone,
 # and so do the processes its tests left running in it (C-429)
 for old in "$run_root"/canon-test.*; do
-  [ -d "$old" ] || continue
+  # reason: only a real directory this user owns is a run; a symlink named like one (another user can make it in a
+  # shared /tmp) would point the reaper at a directory that is not a test run and kill what runs there (#163)
+  [ -d "$old" ] && [ ! -L "$old" ] && [ -O "$old" ] || continue
   pid=${old##*/canon-test.}
   pid=${pid%%.*}
   case $pid in '' | *[!0-9]*) continue ;; esac

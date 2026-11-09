@@ -48,6 +48,8 @@ cwds() {
 
 # pids whose cwd is <dir> or inside it, except this script and the one that started it
 inside() {
+  # reason: --run is given the directory scripts/test.sh made; a symlink there is never one, so it is not followed (#163)
+  [ ! -L "$1" ] || return 0
   real=$(cd "$1" 2>/dev/null && pwd -P) || return 0
   cwds | awk -F '\t' -v d="$real" -v me="$$" -v parent="$PPID" \
     '$1 != me && $1 != parent && ($2 == d || index($2, d "/") == 1) { print $1 }'
@@ -85,7 +87,8 @@ case ${1:-} in
   root=${CANON_TEST_TMP_ROOT:-/tmp}
   found=0
   for dir in "$root"/canon-test.*; do
-    [ -d "$dir" ] || continue
+    # reason: a symlink named like a run, or a run of another user, is not this user's to reap (#163)
+    [ -d "$dir" ] && [ ! -L "$dir" ] && [ -O "$dir" ] || continue
     pid=${dir##*/canon-test.}
     pid=${pid%%.*}
     case $pid in '' | *[!0-9]*) continue ;; esac

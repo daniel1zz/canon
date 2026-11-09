@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { alive, processReaper, waitGone } from "../src/work/testkit.ts";
@@ -153,6 +153,24 @@ describe("scripts/reap-test-procs.sh", () => {
     await waitGone(old, "leftover killed with --kill");
     expect(alive(live)).toBe(true);
     expect(reap([], root).code).toBe(0);
+  });
+
+  test("a symlink named like an ended run is not followed: what runs in its target is neither listed, killed nor removed (#163)", async () => {
+    const root = mkdtempSync(join(tmpdir(), "canon-reap-root-"));
+    const victim = mkdtempSync(join(tmpdir(), "canon-reap-victim-"));
+    const link = join(root, "canon-test.999999999.abcdef");
+    symlinkSync(victim, link);
+    const bystander = sleeper(victim);
+    const listed = reap([], root);
+    expect(listed.code).toBe(0);
+    expect(listed.err).not.toContain(`${bystander}`);
+    expect(reap(["--kill"], root).code).toBe(0);
+    expect(reap(["--run", link]).code).toBe(0);
+    const f = fixture("exit 0");
+    symlinkSync(victim, join(f.root, "canon-test.999999998.abcdef"));
+    expect(f.run().code).toBe(0);
+    expect(alive(bystander)).toBe(true);
+    expect(existsSync(victim)).toBe(true);
   });
 
   test("an unknown argument is a usage error", () => {
