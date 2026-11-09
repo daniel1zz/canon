@@ -157,6 +157,8 @@ describe("plans tagged with a release", () => {
     expect(j[1]!.plans).toEqual([{ id: C(5), title: "变更5", total: 4, done: 1, percent: 25 }]);
     expect(j[0]).not.toHaveProperty("plans");
     expect(canon(root, "release", "status", R(2)).out.split("\n")[0]!.replace(/\s+/g, " ")).toContain(`计划 ${C(5)} 已完成 1/4 (25%)`);
+    write(root, { [`canon/changes/${C(5)}.md`]: changeText(5, "open", `release: ${R(2)}\n`, "| 步骤 | 内容 | 依赖 |\n|---|---|---|\n| 1 | a | - |\n| 2 | b | - |\n| 3 | c | - |\n") });
+    expect(canon(root, "release", "status").out).toContain(`计划 ${C(5)} 已完成 1/3 (33%)`); // rounded down
   });
 
   test("BR-2386: release on a change names an existing release and needs a plan; a bad id is file-invalid", () => {

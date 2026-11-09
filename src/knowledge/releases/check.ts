@@ -42,6 +42,8 @@ export function releaseFindings(root: string, corpus: Corpus): Finding[] {
 /** A shipped release's set of plans does not change either: the plan changes tagged with it at `shipped_at` (D-79, like BR-2326 for rules). */
 function frozenPlans(root: string, release: Release, tagged: readonly Change[], corpus: Corpus): Finding[] {
   const at = release.shippedAt!;
+  // reason: a shipped_at the repository does not know is reported once, by the release's own freeze check (BR-2325)
+  if (!git(root, "cat-file", "-e", `${at}^{commit}`).ok) return [];
   const then = taggedAt(root, at, release.id, "canon/changes");
   if (typeof then === "string") return [{ path: release.path, rule: "release-frozen", message: then }];
   const out: Finding[] = [];

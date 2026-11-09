@@ -190,6 +190,11 @@ describe("canon release ship: what must be passed", () => {
     expect(half.code).toBe(1);
     expect(half.err).toContain(`plan ${C(5)} 变更5: 已完成 2/4; not done: 3, 4`);
     expect(half.err).not.toContain("canon human ask"); // the plans come before the owner's yes, like the rules
+    const both = agent(fixture({ ...files("1, 2"), [`canon/rules/billing/${BR(3)}.md`]: ruleText(3, `release: ${R(1)}\n`, "planned") }), "release", "ship", R(1));
+    expect(both.code).toBe(1);
+    expect(both.err.indexOf(`${BR(3)} 规则3: 规划中`)).toBeGreaterThanOrEqual(0);
+    expect(both.err.indexOf(`plan ${C(5)}`)).toBeGreaterThan(both.err.indexOf(`${BR(3)} 规则3`)); // rules first, then plans
+    expect(both.err).not.toContain("canon human ask");
     const all = agent(fixture(files("1, 2, 3, 4")), "release", "ship", R(1));
     expect(all.err).not.toContain(`plan ${C(5)}`);
     expect(all.err).toContain("canon human ask"); // past the blockers: the owner's yes is what is missing now
@@ -302,8 +307,8 @@ describe("canon release ship: shipping and the landing gate", () => {
 
 describe("canon release ship: conditions checked again when the change lands", () => {
   /** Ships R-1 while main's floor fails, so the ship change is committed but not landed; then main is repaired. Returns the ship change's worktree. */
-  function stuckShip(): { root: string; worktree: string } {
-    const root = fixture();
+  function stuckShip(extra: Record<string, string> = {}): { root: string; worktree: string } {
+    const root = fixture(extra);
     write(root, { FAIL: "x\n" });
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "floor fails");
@@ -334,6 +339,25 @@ describe("canon release ship: conditions checked again when the change lands", (
     }
     writeFileSync(rule1(root), original);
     sh(root, "commit", "-qam", "rule 1 as it was");
+    const again = land(worktree);
+    expect([again.code, shipped(root)]).toEqual([0, true]);
+  });
+
+  test("BR-2335: a step added to a tagged plan after ship started refuses the landing with reason release; once it is done the landing goes through", () => {
+    const table = (rows: string) => `| 步骤 | 内容 | 依赖 |\n|---|---|---|\n${rows}`;
+    const change = (n: number, status: string, front: string, body = "") => `---\nid: ${C(n)}\ntitle: 变更${n}\nstatus: ${status}\nrules: []\n${front}---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n${body}## 任务\n\n- [x] x\n`;
+    const plan = (rows: string) => change(5, "open", `release: ${R(1)}\n`, `## 计划\n\n${table(rows)}\n`);
+    const { root, worktree } = stuckShip({ [`canon/changes/${C(5)}.md`]: plan("| 1 | 建表 | - |\n"), [`canon/changes/${C(6)}.md`]: change(6, "done", `plan: ${C(5)}\nsteps: [1]\n`) });
+    write(root, { [`canon/changes/${C(5)}.md`]: plan("| 1 | 建表 | - |\n| 2 | 接口 | 1 |\n") });
+    sh(root, "commit", "-qam", "a step more");
+    const r = land(worktree);
+    expect([r.code, r.err.includes("release")]).toEqual([1, true]);
+    expect(r.err).toContain(`plan ${C(5)} 变更5: 已完成 1/2; not done: 2`);
+    expect(shipped(root)).toBe(false);
+    // reason: C-7 is the fixture's passing change and C-8 the change ship opened
+    write(root, { [`canon/changes/${C(20)}.md`]: change(20, "done", `plan: ${C(5)}\nsteps: [2]\n`) });
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "step 2 done");
     const again = land(worktree);
     expect([again.code, shipped(root)]).toEqual([0, true]);
   });

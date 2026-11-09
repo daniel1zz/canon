@@ -35,7 +35,7 @@ export function landingReleases(i: { readonly primary: string; readonly timing: 
     }
     // reason: ship checked these when it started; the landing may wait behind others, so they are checked again on the tree that lands (BR-2335)
     const blockers = shipBlockers(i.corpus, executionStates(i.primary, i.corpus, i.timing), now.id);
-    if (blockers.length > 0) problems.push(`${now.id} no longer meets its conditions to ship (every rule tagged with it must be passed):\n${blockers.map((b) => `  - ${b}`).join("\n")}\nrun \`canon release ship ${now.id}\` again once they are`);
+    if (blockers.length > 0) problems.push(`${now.id} no longer meets its conditions to ship (every rule tagged with it must be passed and every plan tagged with it done):\n${blockers.map((b) => `  - ${b}`).join("\n")}\nrun \`canon release ship ${now.id}\` again once they are`);
     const confirmed = ownerConfirmation(i.db, now.id);
     if (!confirmed.ok) problems.push(`${now.id}: the owner's confirmation no longer stands: ${confirmed.message}`);
   }
