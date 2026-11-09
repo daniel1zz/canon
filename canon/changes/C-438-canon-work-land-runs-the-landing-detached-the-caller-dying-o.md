@@ -33,7 +33,7 @@ rules:
 
 ## 教训
 
-- Bun 不带 `env` 启动子进程时用的是进程启动时的环境，之后改 `process.env`（包括删掉一个变量）对这些子进程不起作用；所以后台合入按父进程判断，而不是把 `CANON_LAND_RUN` 从环境里去掉。写进了 D-80 的决定和 `src/work/land/detach.ts` 的 reason 注释；要不要做成检查（例如不许在 `src` 里写 `delete process.env`）：待负责人确认是否固化。
+- Bun 不带 `env` 启动子进程时用的是进程启动时的环境，之后改 `process.env`（包括删掉一个变量）对这些子进程不起作用；所以后台合入按父进程判断，而不是把 `CANON_LAND_RUN` 从环境里去掉。写进了 D-80 的决定和 `src/work/land/detach.ts` 的 reason 注释；可以做成检查（例如 `canon check` 或测试不许 `src` 里写 `delete process.env` 或给 `process.env` 赋值后再不带 `env` 启动子进程），现在 `src` 里没有别的代码这样用；做不做：待负责人确认是否固化。
 
 ## 任务
 

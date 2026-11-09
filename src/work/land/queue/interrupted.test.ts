@@ -373,7 +373,7 @@ describe("the next landing and the other commands report a killed landing", () =
     expect(kinds(root, s.change)).not.toContain("land.interrupt");
   }, TIMED);
 
-  test("BR-2309: when the previous landing's process is still running, the next one only says so", async () => {
+  test("BR-2309: a landing process that finds the previous landing still running only says so", async () => {
     const p = slowProject();
     const lander = await landingInFloor(p);
     const r = await run(p.s.worktree, ["work", "land", "--timeout", "0.02"]);

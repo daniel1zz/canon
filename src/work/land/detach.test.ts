@@ -185,4 +185,13 @@ describe("canon work land --stop (D-80)", () => {
     writeFileSync(h.release, "");
     expect((await result(p)).code).toBe(0);
   }, TIMED);
+
+  test("BR-2393 BR-2022: --stop exits 4 when the running landing's process cannot be signalled", async () => {
+    const h = heldProject();
+    const init = processOf(1)!; // another user's process: signalling it is refused
+    ws(h.s.worktree).db.event("agent:a", "land.start", h.s.change, { pid: init.pid, pid_start: init.start });
+    const r = await result(follower(h.s.worktree, ["--stop"], false));
+    expect(r.code).toBe(4);
+    expect(r.err).toContain("cannot signal the landing process 1");
+  }, TIMED);
 });
