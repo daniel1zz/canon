@@ -91,7 +91,8 @@ describe("human questions", () => {
     expect([stored(1).answer, stored(1).relayed]).toEqual(["先等 C-428 合入再发", "先等 C-428 合入再发"]);
     expect(code(2, "no", "不发")).toBe("refused"); // own words rewritten into an option
     expect(code(3, "Yes, Please", "yes, please")).toBe("refused"); // own words, a letter changed
-    expect(refusals(root)).toEqual(["option-mismatch", "option-mismatch"]);
+    expect(code(4, ",", ",")).toBe("refused"); // no non-empty part: an option answer naming no option
+    expect(refusals(root)).toEqual(["option-mismatch", "option-mismatch", "option-mismatch"]);
     expect(code(4, "yes", "yes")).toBe("ok");
     const pending = canon(root, "agent:x", false, "human", "pending", "--all").out;
     expect(pending).toContain("→ 先等 C-428 合入再发 (agent:x relaying the human: \"先等 C-428 合入再发\") [not one of the options]");
