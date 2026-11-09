@@ -110,7 +110,7 @@ describe("canon stats", () => {
     expect(of(computeStats(d, {}, "2026-11-03"), "floor").outcomes).toEqual({ changed: 0, same: 0, abandoned: 0, pending: 3, unknown: 1 });
   });
 
-  test("BR-2068 BR-2388: refusals repeated before queueing are not counted again; only the first is classified", () => {
+  test("BR-2067 BR-2068 BR-2388: refusals repeated before queueing are neither runs nor refusals; only the first is classified", () => {
     const opened = CoordDb.open(join(mkdtempSync(join(tmpdir(), "canon-stats-")), "state.db"));
     if (!opened.ok) throw new Error(opened.error.message);
     const d = opened.value;
@@ -119,6 +119,7 @@ describe("canon stats", () => {
     d.event("a", "land.refuse", "C-4", { reason: "check", diff: "x", repeat_of: first });
     d.event("a", "land.refuse", "C-4", { reason: "check", diff: "x", repeat_of: first });
     const s = of(computeStats(d, {}, "2026-11-03"), "check");
+    expect(s.runs).toBe(1);
     expect(s.refused).toBe(1);
     expect(s.outcomes).toMatchObject({ pending: 1 });
   });
