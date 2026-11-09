@@ -134,15 +134,25 @@ export function landingExecution(i: Input): LandingExecution {
     const want = Object.entries(expected.records).map(([id, r]) => `${id}: ${formatPass(r)}`);
     return { ok: false, reason: "passes", message: `the pass records of ${change.id} are not the ones canon computes on the landing tree (BR-2242, BR-2245)${expected.missing.length ? `; without evidence: ${expected.missing.map((m) => m.id).join(", ")}` : ""}\n  computed: ${want.length ? want.join(", ") : "(none)"}\n  in ${change.path}: ${Object.entries(change.passes).map(([id, r]) => `${id}: ${formatPass(r)}`).join(", ") || "(none)"}\nLand --finish again from the change's worktree; canon writes them itself` };
   }
-  const others = recordsOf(corpus, change.id);
+  return { ok: true, wording: wordingQuestions(wt, head, corpus, change.id, change.passes) };
+}
+
+/**
+ * The review's wording questions (BR-2239) for the records marked wording-only: each rule's 规则 at the version that last
+ * passed and now, and its unchanged 例子. The landing asks them of the close commit's records; `canon work review` of the
+ * records the close commit would write (BR-2358).
+ */
+export function wordingQuestions(wt: string, head: string, corpus: Corpus, changeId: string, records: Readonly<Record<string, PassRecord>>): WordingQuestion[] {
+  const rules = new Map(corpus.docs.filter((d): d is Rule => d.kind === "rule").map((r) => [r.id, r]));
+  const others = recordsOf(corpus, changeId);
   const wording: WordingQuestion[] = [];
-  for (const [id, r] of Object.entries(change.passes)) {
-    if (!r.wording) continue;
-    const rule = rules.get(id)!;
+  for (const [id, r] of Object.entries(records)) {
+    const rule = rules.get(id);
+    if (!r.wording || !rule) continue;
     const before = passedVersion(wt, head, rule, others);
     wording.push({ id, title: rule.title, before: before ? (section(before.body, RULE_SECTION) ?? "") : "", after: section(rule.body, RULE_SECTION) ?? "", examples: section(rule.body, EXAMPLE_SECTION) ?? "" });
   }
-  return { ok: true, wording };
+  return wording;
 }
 
 /** BR-2239: the rules the review did not judge as wording-only edits; empty when every one is "wording". */

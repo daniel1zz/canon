@@ -14,11 +14,12 @@ import { findDoc } from "../query/query.ts";
 import { REVIEW_NONE } from "./config-keys.ts";
 import { passedReview, reviewKey } from "../../work/land/checks/review-reuse.ts";
 import type { Doc, Corpus } from "../documents/model.ts";
+import { planClose, wordingQuestions } from "../../work/execution/landing.ts";
 import { reviewPrompts, type ReviewExtras, runReview, runReviews, type ReviewVerdict } from "./review.ts";
 
 /** What `canon work review` found, as the command turns it into text and an exit code (BR-2358). */
 export type PreviewOutcome =
-  | { readonly kind: "ok" | "block"; readonly findings: readonly { readonly review: "rule" | "duplicate"; readonly text: string }[]; readonly reviewed: readonly string[]; readonly behind: number; readonly main: string; readonly reusedFrom?: number; readonly related: readonly string[] }
+  | { readonly kind: "ok" | "block"; readonly findings: readonly { readonly review: "rule" | "duplicate"; readonly text: string }[]; readonly reviewed: readonly string[]; readonly behind: number; readonly main: string; readonly reusedFrom?: number; readonly related: readonly string[]; readonly wording: readonly { readonly id: string; readonly answer: string | undefined }[] }
   | { readonly kind: "off"; readonly behind: number; readonly main: string; readonly related: readonly string[] }
   | { readonly kind: "nothing"; readonly behind: number; readonly main: string }
   | { readonly kind: "unconfigured"; readonly needs: readonly string[]; readonly main: string }
@@ -96,7 +97,10 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
   const read = readCorpus(ws.root, ws.config.types, ws.config);
   const scope = reviewScope(ws.root, base.value, head.value, read.corpus);
   const standing = standingTouched(ws.root, base.value, head.value, onMain.instructions);
-  const needs = [...scope.reviewed, ...standing];
+  // The rules the close commit would record as wording-only edits, judged here as the landing will (BR-2358, BR-2239, #166).
+  const wording = previewWording(ws, read.corpus, subject);
+  if (!wording.ok) return { kind: "failed", message: `the rules the close commit would record as wording-only edits cannot be computed: ${wording.error}` };
+  const needs = [...new Set([...scope.reviewed, ...wording.questions.map((q) => q.id), ...standing])];
   if (needs.length === 0) return { kind: "nothing", behind, main: main.value };
   if (!onMain.review) return { kind: "unconfigured", needs, main: main.value };
   // Other domains' rules and decisions sharing names with the changed ones: a hint, never part of the verdict (BR-2387).
@@ -117,12 +121,12 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
   const findings: { review: "rule" | "duplicate"; text: string }[] = [];
   let blocked = false;
   let reusedFrom: number | undefined;
-  let rule: { hash: string; verdict: "ok" | "block"; findings: readonly string[] } | undefined;
+  let rule: { hash: string; verdict: "ok" | "block"; findings: readonly string[]; wording?: Readonly<Record<string, string>> } | undefined;
   try {
-    if (scope.reviewed.length > 0) {
+    if (scope.reviewed.length > 0 || wording.questions.length > 0) {
       const architecture = architectureOf(ws.root, base.value, head.value);
       if (!architecture.ok) return { kind: "failed", message: architecture.error.message };
-      const prompts = reviewPrompts(ws.root, read.corpus, scope.changedDocs, { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change: findDoc(read.corpus, subject), ...(architecture.value ? { architecture: architecture.value } : {}) }, onMain.reviewMaxPromptBytes);
+      const prompts = reviewPrompts(ws.root, read.corpus, scope.changedDocs, { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change: findDoc(read.corpus, subject), wording: wording.questions, ...(architecture.value ? { architecture: architecture.value } : {}) }, onMain.reviewMaxPromptBytes);
       if (!prompts.ok) return { kind: "failed", message: prompts.error.message };
       // reason: a preview reuses only a passing preview of the same prompts, command and budget, never a landing's pass: the reviewer may be another model for a preview (BR-2361, D-70)
       const hash = reviewKey("preview", onMain.review, onMain.reviewMaxPromptBytes, prompts.value);
@@ -131,7 +135,7 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
       if (earlier) {
         ws.db.event(ws.actor, "review.reused", subject, { review: "preview", docs: scope.reviewed, hash, from: earlier.event, tree: head.value });
         reusedFrom = earlier.event;
-        v = { verdict: "ok", findings: earlier.findings };
+        v = { verdict: "ok", findings: earlier.findings, ...(earlier.wording ? { wording: earlier.wording } : {}) };
       } else {
         const at = tree.get();
         if (!at.ok) return { kind: "failed", message: at.error.message };
@@ -139,7 +143,7 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
         if (!run.ok) return { kind: "failed", message: couldNotRun("rule", run.error.message, at.value, main.value) };
         v = run.value;
       }
-      rule = { hash, verdict: v.verdict, findings: v.findings };
+      rule = { hash, verdict: v.verdict, findings: v.findings, ...(wording.questions.length > 0 ? { wording: v.wording ?? {} } : {}) };
       findings.push(...v.findings.map((text) => ({ review: "rule" as const, text })));
       blocked ||= v.verdict === "block";
     }
@@ -160,6 +164,22 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
     if (!gone.ok) console.error(`canon: ${gone.error.message}`);
   }
   const verdict = blocked ? "block" : "ok";
-  ws.db.event(ws.actor, "review.preview", subject, { verdict, findings: findings.length, docs: scope.reviewed, standing, tree: head.value, main: main.value, ...(rule ? { hash: rule.hash, rule: rule.verdict, ruleFindings: rule.findings } : {}) });
-  return { kind: verdict, findings, reviewed: needs, behind, main: main.value, related, ...(reusedFrom !== undefined ? { reusedFrom } : {}) };
+  ws.db.event(ws.actor, "review.preview", subject, { verdict, findings: findings.length, docs: scope.reviewed, standing, tree: head.value, main: main.value, ...(rule ? { hash: rule.hash, rule: rule.verdict, ruleFindings: rule.findings, ...(rule.wording ? { wording: rule.wording } : {}) } : {}) });
+  const answers = wording.questions.map((q) => ({ id: q.id, answer: rule?.wording?.[q.id] }));
+  return { kind: verdict, findings, reviewed: needs, behind, main: main.value, related, wording: answers, ...(reusedFrom !== undefined ? { reusedFrom } : {}) };
+}
+
+/**
+ * The wording questions of the records the close commit would write now (BR-2358): the change's evidence plan on this
+ * worktree's commits, as `canon work land --finish` computes it before its close commit (BR-2241, BR-2243). None for a
+ * change that is not open.
+ */
+function previewWording(ws: Workspace, corpus: Corpus, subject: string): { ok: true; questions: ReturnType<typeof wordingQuestions> } | { ok: false; error: string } {
+  const change = findDoc(corpus, subject);
+  if (change?.kind !== "change" || change.status !== "open") return { ok: true, questions: [] };
+  const planned = planClose(ws.db, ws.config, ws.root, ws.config.main, corpus, change);
+  if ("error" in planned) return { ok: false, error: planned.error };
+  const head = git(ws.root, "rev-parse", "HEAD");
+  if (!head.ok) return { ok: false, error: head.error.message };
+  return { ok: true, questions: wordingQuestions(ws.root, head.value, corpus, change.id, planned.records) };
 }

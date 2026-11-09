@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { land } from "../land/land.ts";
+import { previewReview } from "../../knowledge/review/preview.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { behaviourHash } from "../../knowledge/documents/behaviour.ts";
 import type { Change } from "../../knowledge/documents/model.ts";
@@ -363,6 +364,28 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     setChange(s.worktree, s.change, [br(1)]);
     return { root, s };
   }
+
+  test("BR-2358 BR-2239: canon work review asks the landing's wording judgement of a statement-only edit and reports wording; the change stays open", async () => {
+    const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`));
+    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+    const out = await previewReview(ws(s.worktree), undefined);
+    expect(out.kind).toBe("ok");
+    expect(out.kind === "ok" && out.wording).toEqual([{ id: br(1), answer: "wording" }]);
+    expect(readFileSync(promptOf(root), "utf8")).toContain("# Wording judgements");
+    expect(changeOn(s.worktree, "HEAD", s.change).status).toBe("open");
+  }, TIMED);
+
+  test("BR-2358 BR-2239: canon work review reports a behaviour answer as what the landing would refuse, with exit 0; an edit with new evidence asks nothing", async () => {
+    const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"behaviour"}}`));
+    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, changed." }) });
+    const cli = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "review"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    expect(cli.exitCode).toBe(0);
+    expect(cli.stdout.toString()).toContain(`wording judgement: ${br(1)}: behaviour; the landing would refuse it as a wording-only edit: change a line in a running test whose title names ${br(1)}`);
+    write(s.worktree, { "src/billing/a.test.ts": testFile([1, 2]).replace("toBe(1)", "toBe(1); // changed") });
+    const after = await previewReview(ws(s.worktree), undefined);
+    expect(after.kind === "ok" && after.wording).toEqual([]);
+    expect(readFileSync(promptOf(root), "utf8")).not.toContain("# Wording judgements");
+  }, TIMED);
 
   test("BR-2243 BR-2239: only the statement changed and the review answers wording: the record copies the method with wording; the prompt had the judgement", async () => {
     const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`));

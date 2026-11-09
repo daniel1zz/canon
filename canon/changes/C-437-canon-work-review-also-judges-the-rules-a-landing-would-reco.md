@@ -3,7 +3,9 @@ id: C-437
 title: canon work review also judges the rules a landing would record as
   wording-only (#166)
 status: open
-rules: []
+rules:
+  - BR-2358
+  - BR-2239
 ---
 
 ## 为什么
@@ -26,6 +28,6 @@ rules: []
 
 ## 任务
 
-- [ ] 改 BR-2358、BR-2239
-- [ ] 预览评审加措辞判断
-- [ ] 测试按规则命名
+- [x] 改 BR-2358、BR-2239
+- [x] 预览评审加措辞判断
+- [x] 测试按规则命名（`src/work/execution/execution.test.ts`）
