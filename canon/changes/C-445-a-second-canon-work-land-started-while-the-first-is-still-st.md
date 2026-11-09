@@ -2,9 +2,12 @@
 id: C-445
 title: A second canon work land started while the first is still starting up
   follows it instead of starting another landing (#172)
-status: open
+status: done
 rules:
   - BR-2392
+passes:
+  BR-2390: 1e413a5035d79394 test
+  BR-2392: 5c074ea2aed5c59f test
 ---
 
 ## 为什么
