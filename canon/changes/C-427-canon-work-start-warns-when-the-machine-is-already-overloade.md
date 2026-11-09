@@ -5,6 +5,7 @@ title: canon work start warns when the machine is already overloaded by the work
 status: open
 rules:
   - BR-2400
+  - BR-2122
 ---
 
 ## 为什么

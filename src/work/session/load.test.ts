@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { project, startNew, ws } from "../testkit.ts";
-import { machineNow, overloadLines, startHint } from "./load.ts";
+import { loadDetail, machineNow, overloadLines, startHint } from "./load.ts";
 
 /** A landing turn at `load` on 8 CPUs that ended in land.ok `minutes` later. */
 function turn(db: ReturnType<typeof ws>["db"], subject: string, load: number, minutes: number) {
@@ -19,9 +19,10 @@ describe("canon work start on an overloaded machine (BR-2400)", () => {
     expect(lines).toHaveLength(1);
     expect(lines[0]).toStartWith("machine busy: 5-minute load 16.0 on 8 CPUs (at or over 16); 1 change(s) claimed.");
     expect(overloadLines(db, { load5: 15.9, cpus: 8 })).toEqual([]);
+    expect(overloadLines(db, { load5: 15.96, cpus: 8 })).toEqual([]); // shown as 16.0, but under twice the CPUs
   });
 
-  test("BR-2400: --fix-main, a worktree taken back, or no load average from the platform give no hint", () => {
+  test("BR-2400 BR-2122: --fix-main, a worktree taken back, or no load average from the platform give no hint; a turn records the load it ran at", () => {
     const db = ws(project()).db;
     const busy = { load5: 40, cpus: 8 };
     expect(startHint(db, busy, { fixMain: true, created: true })).toEqual([]);
@@ -30,11 +31,16 @@ describe("canon work start on an overloaded machine (BR-2400)", () => {
     expect(startHint(db, busy, { fixMain: false, created: true })).toHaveLength(1);
     const now = machineNow();
     expect(now === undefined || (now.cpus > 0 && now.load5 > 0)).toBe(true);
+    const detail = loadDetail();
+    expect(now === undefined ? detail : { cpus: detail.cpus, rounded: detail.load === Math.round(detail.load! * 10) / 10 }).toEqual(now === undefined ? {} : { cpus: now.cpus, rounded: true });
   });
 
   test("BR-2400: with at least 3 landed turns at that load and 3 below it, the hint adds both median turn times; with fewer it does not", () => {
     const db = ws(project()).db;
     for (const [i, load] of [20, 20, 20, 2, 2].entries()) turn(db, `C-${i + 1}`, load, load === 20 ? 10 : 4);
+    expect(overloadLines(db, { load5: 16, cpus: 8 })).toHaveLength(1);
+    db.event("agent:a", "land.turn", "C-8", { entry: 1, waited_ms: 0, load: 2, cpus: 8 });
+    db.event("agent:a", "land.refuse", "C-8", { reason: "floor" }); // a refused turn is not counted
     expect(overloadLines(db, { load5: 16, cpus: 8 })).toHaveLength(1);
     turn(db, "C-9", 2, 4);
     const lines = overloadLines(db, { load5: 16, cpus: 8 });
