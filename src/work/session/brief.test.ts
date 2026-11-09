@@ -7,7 +7,7 @@ import { processOf, type Proc } from "../claims/liveness.ts";
 import { ask } from "../humans/questions.ts";
 import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { noticeOverlaps } from "./overlap.ts";
-import { LESSON_REMINDER, stop } from "./session.ts";
+import { LESSON_REMINDER, start, stop } from "./session.ts";
 import { hang, project, sh, startNew, ws } from "../testkit.ts";
 
 // reason: these cases spawn the CLI, which under load can take seconds per run (C-111)
@@ -129,6 +129,40 @@ describe("stop while the worktree is being deleted", () => {
     const dead = await deadProcess();
     db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(dead.pid, dead.start, s.change);
     expect(canon(s.worktree, "work", "stop", "--next", "x").code).toBe(3);
+  });
+});
+
+describe("what other changes in flight work on, at start", () => {
+  const startSaying = (root: string, title: string) => {
+    const lines: string[] = [];
+    const r = start(ws(root), { title }, (l) => lines.push(l));
+    if (!r.ok) throw new Error(r.error.message);
+    return lines.filter((l) => l.startsWith("in flight:"));
+  };
+
+  test("BR-2394: starting a change lists each other change with committed work and the areas it changes; one with only its change file is not listed", () => {
+    const root = project();
+    const busy = startNew(root, "Busy");
+    mkdirSync(join(busy.worktree, "src/work/land"), { recursive: true });
+    commitFile(busy.worktree, "src/work/land/a.ts", "x\n");
+    commitFile(busy.worktree, "README.md", "busy\n");
+    startNew(root, "Idle");
+    expect(startSaying(root, "New")).toEqual([`in flight: ${busy.change} changes README.md, src/work/`]);
+  });
+
+  test("BR-2394: more than 10 changes in flight are cut to 10 lines and a count", () => {
+    const root = project();
+    for (let i = 0; i < 12; i++) commitFile(startNew(root, `Busy ${i}`).worktree, `f${i}.txt`, "x\n");
+    const lines = startSaying(root, "New");
+    expect(lines.length).toBe(11);
+    expect(lines[10]).toBe("in flight: … and 2 more change(s)");
+  });
+
+  test("BR-2394: a branch git cannot compare with main is said and the start goes on", () => {
+    const root = project();
+    const o = orphanWorktree(root);
+    const lines = startSaying(root, "New");
+    expect(lines[0]).toStartWith(`in flight: cannot compare ${o.branch} with main: `);
   });
 });
 

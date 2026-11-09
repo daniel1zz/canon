@@ -64,3 +64,46 @@ export function noticeOverlaps(ws: Workspace, worktree: string, change: string |
   }
   return found;
 }
+
+/** At most this many changes in flight are listed when a change starts (BR-2394). */
+export const IN_FLIGHT_LIMIT = 10;
+const DIRS_SHOWN = 5;
+
+/** Where a file is, for telling where a change works: its directory, cut to two levels; a file at the top is itself. */
+const areaOf = (file: string): string => {
+  const parts = file.split("/");
+  return parts.length === 1 ? file : `${parts.slice(0, Math.min(2, parts.length - 1)).join("/")}/`;
+};
+
+/**
+ * The other change worktrees whose branches have committed changes outside canon/changes, with the areas they change
+ * (BR-2394): what a session starting a change should know others are working on. Not an overlap verdict.
+ */
+export function inFlight(ws: Workspace, worktree: string): { lines: string[]; unreadable: string[] } {
+  const wts = listWorktreesLocked(ws.primary);
+  if (!wts.ok) return { lines: [], unreadable: [`cannot list worktrees: ${wts.error.message}`] };
+  const dir = `${worktreesDirOf(ws.config, ws.primary)}/`;
+  const found: { change: string; areas: string[] }[] = [];
+  const unreadable: string[] = [];
+  for (const w of wts.value) {
+    if (w.path === worktree || !w.path.startsWith(dir) || !w.branch || w.branch === ws.config.main) continue;
+    const files = changedFiles(ws, w.branch);
+    if (!files.ok) {
+      unreadable.push(`cannot compare ${w.branch} with ${ws.config.main}: ${files.error.message}`);
+      continue;
+    }
+    // reason: every change commits its own change file; that says nothing about where it works (BR-2394)
+    const areas = [...new Set([...files.value].filter((f) => !f.startsWith("canon/changes/")).map(areaOf))].sort();
+    if (areas.length > 0) found.push({ change: basename(w.path), areas });
+  }
+  found.sort((a, b) => a.change.localeCompare(b.change, undefined, { numeric: true }));
+  const shown = found.slice(0, IN_FLIGHT_LIMIT).map((f) => `in flight: ${f.change} changes ${f.areas.slice(0, DIRS_SHOWN).join(", ")}${f.areas.length > DIRS_SHOWN ? `, … (${f.areas.length - DIRS_SHOWN} more)` : ""}`);
+  if (found.length > IN_FLIGHT_LIMIT) shown.push(`in flight: … and ${found.length - IN_FLIGHT_LIMIT} more change(s)`);
+  return { lines: shown, unreadable };
+}
+
+/** The overlap lines `canon work test` prints before it runs anything (BR-2395): like the landing's, but no event is written. */
+export function overlapLines(ws: Workspace, worktree: string): string[] {
+  const { found, unreadable } = overlapsOf(ws, worktree);
+  return [...unreadable.map((u) => `overlap: ${u}`), ...found.map((o) => `overlap: ${o.change} also changes ${o.files.join(", ")}; whoever lands second resolves the conflict`)];
+}

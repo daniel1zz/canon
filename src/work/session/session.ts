@@ -6,7 +6,7 @@ import { deletionOf, holdClaim, liveClaims, unholdClaim, releaseClaim, releaseOw
 import { writeHandoff } from "./handoffs.ts";
 import { sessionProcess } from "../claims/liveness.ts";
 import { runHooksSync } from "../hooks/hooks.ts";
-import { noticeOverlaps } from "./overlap.ts";
+import { inFlight, noticeOverlaps } from "./overlap.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { slugify, type Change, type Corpus } from "../../knowledge/documents/model.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
@@ -155,6 +155,10 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   ws.db.event(ws.actor, "start.ok", changeId, { created, setup: created && ws.config.setup !== undefined });
   say(`${changeId} → ${path} (branch ${branch})`);
   noticeOverlaps(ws, path, changeId, "start", say);
+  // Where the other changes in flight work, so the session sees it before it has changed anything to compare (BR-2394).
+  const flying = inFlight(ws, path);
+  for (const u of flying.unreadable) say(`in flight: ${u}`);
+  for (const line of flying.lines) say(line);
   // after_start never changes the result (BR-2056): the worktree and claim stand whatever it exits with.
   runHooksSync({ db: ws.db, actor: ws.actor, event: "after_start", change: changeId, cwd: path, env: { CANON_BRANCH: branch }, port: portLookup }, ws.config.hooks.after_start, say);
   return ok({ change: changeId, worktree: path, branch, created });

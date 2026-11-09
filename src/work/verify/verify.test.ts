@@ -1020,3 +1020,31 @@ describe("canon work test stops its process tree on a real signal", () => {
     await waitGone(pid, "the test file's child, which ignored SIGTERM"); // SIGKILLed: gone a moment later, not at the instant canon exits
   }, 30_000);
 });
+
+describe("overlap with other changes in flight", () => {
+  const overlapRun = async (otherFile: string, commitOther = true) => {
+    const { root, wt } = fixture();
+    const other = startNew(root, "Other").worktree;
+    writeFileSync(join(other, otherFile), "other\n");
+    if (commitOther) sh(other, "commit", "-qam", "other");
+    writeFileSync(join(wt, "src/a.ts"), "export const a = 2;\n");
+    sh(wt, "commit", "-qam", "mine");
+    const lines: string[] = [];
+    const r = await workTest(ws(wt), false, (l) => lines.push(l));
+    if (!r.ok) throw new Error(r.error.message);
+    const notices = ws(root).db.db.query("SELECT 1 FROM events WHERE kind = 'overlap.notice'").all().length;
+    return { lines: lines.filter((l) => l.startsWith("overlap:")), ran: runs(wt).length, notices, change: other.split("/").pop()! };
+  };
+
+  test("BR-2395: canon work test says each change that also changes the same file, runs the tests, and writes no overlap.notice", async () => {
+    const r = await overlapRun("src/a.ts");
+    expect(r.lines).toEqual([`overlap: ${r.change} also changes src/a.ts; whoever lands second resolves the conflict`]);
+    expect(r.ran).toBeGreaterThan(0);
+    expect(r.notices).toBe(0);
+  });
+
+  test("BR-2395: no line when the other change changes another file or has not committed the same one", async () => {
+    expect((await overlapRun("src/b.ts")).lines).toEqual([]);
+    expect((await overlapRun("src/a.ts", false)).lines).toEqual([]);
+  });
+});

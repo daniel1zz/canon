@@ -1,4 +1,5 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { overlapLines } from "../session/overlap.ts";
 import { tmpdir } from "node:os";
 import { architectureBase, changeIdsOnBranches, listedBefore } from "../session/inflight.ts";
 import { join } from "node:path";
@@ -232,6 +233,8 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
     for (const s of selected) say(`  ${s.file.padEnd(width)}  ${s.reasons.join("; ")}`);
     say("Not selected: tests that only read changed files at run time; canon work test --all runs every test file.");
   }
+  // reason: the change has commits by now, so same-file overlap with other changes in flight can be found before landing (BR-2395, #156)
+  for (const line of overlapLines(ws, ws.root)) say(line);
   const subject = claimOfWorktree(ws.db, ws.root)?.subject ?? null;
   const t0 = performance.now();
   const tail = (output: string) => {
