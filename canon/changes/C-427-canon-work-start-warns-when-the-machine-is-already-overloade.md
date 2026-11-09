@@ -2,10 +2,13 @@
 id: C-427
 title: canon work start warns when the machine is already overloaded by the work
   in progress (#155)
-status: open
+status: done
 rules:
   - BR-2400
   - BR-2122
+passes:
+  BR-2122: 1bb930048ecfb61f test
+  BR-2400: 43431c5fc19a7caf test
 ---
 
 ## 为什么
