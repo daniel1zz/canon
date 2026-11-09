@@ -12,13 +12,13 @@ import { git } from "../../../kernel/git.ts";
 import type { Running } from "../outcome.ts";
 
 /** Runs the floor in `cwd`, its whole output in the log `name`; `running` lets a signal stop it (BR-2014, BR-2099). */
-export async function runFloor(ws: Workspace, say: Say, cwd: string, name: string, running: Running): Promise<{ code: number; log: string; tail: string }> {
-  say(`floor: ${ws.config.floor}`);
+export async function runFloor(ws: Workspace, say: Say, cwd: string, name: string, running: Running, command: string = ws.config.floor!): Promise<{ code: number; log: string; tail: string }> {
+  say(`floor: ${command}`);
   const log = join(dirname(ws.db.db.filename), "logs", name);
   mkdirSync(dirname(log), { recursive: true });
   const fd = openSync(log, "w");
   const notes: string[] = [];
-  const code = await floorWithReport(ws.db, ws.config, cwd, ws.config.floor!, async (command) => {
+  const code = await floorWithReport(ws.db, ws.config, cwd, command, async (command) => {
     const proc = Bun.spawn(["sh", "-c", command], { cwd, stdout: fd, stderr: fd });
     running.floor = proc;
     const exit = await proc.exited;
@@ -71,6 +71,41 @@ export function floorSkip(wt: string, base: string, head: string, why: (line: st
     return undefined;
   }
   return { paths, under: [...under].sort() };
+}
+
+/**
+ * The `floor_scopes` entry whose command is this landing's floor (BR-2398, D-82): the first one such that every path
+ * `base..head` changes lies under its paths or under `floor_skip_paths`, at least one under its paths, and every test
+ * file `test_select_command` selects for them lies under its paths. Undefined when the whole floor runs; `why` is told
+ * when the command is the reason.
+ */
+export function floorScope(wt: string, base: string, head: string, why: (line: string) => void = () => {}): { index: number; paths: string[]; command: string } | undefined {
+  // reason: the config of the tree that is landing decides, as for floor_skip_paths (BR-2398, BR-2164)
+  const read = readConfig(wt);
+  if (!read.ok || read.value.floorScopes.length === 0) return undefined;
+  const config = read.value;
+  const select = config.testSelectCommand;
+  if (select === undefined) return undefined;
+  const d = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", base, head);
+  if (!d.ok || d.value === "") return undefined;
+  const paths = d.value.split("\n");
+  const under = (p: string, list: readonly string[]) => list.some((e) => p === e || p.startsWith(`${e}/`));
+  const index = config.floorScopes.findIndex((sc) => paths.every((p) => under(p, sc.paths) || under(p, config.floorSkipPaths)) && paths.some((p) => under(p, sc.paths)));
+  if (index < 0) return undefined;
+  const scope = config.floorScopes[index]!;
+  const found = testFilesFor(wt, config);
+  if (!found.ok) return undefined;
+  const asked = runSelectCommand(wt, select, paths, new Set(found.value));
+  if (!asked.ok) {
+    why(`floor scope not used: ${asked.error.message}`);
+    return undefined;
+  }
+  const outside = asked.value.chosen.filter((c) => !under(c.file, scope.paths));
+  if (outside.length > 0) {
+    why(`floor scope not used: test_select_command selects ${outside.length} test file(s) outside ${scope.paths.join(", ")}: ${outside.slice(0, 5).map((c) => c.file).join("; ")}${outside.length > 5 ? "; …" : ""}`);
+    return undefined;
+  }
+  return { index, paths: [...scope.paths], command: scope.command };
 }
 
 /** Whether a path matches a configured `tests` glob, so a deleted test file counts too (BR-2164). */

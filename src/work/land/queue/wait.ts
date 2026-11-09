@@ -24,7 +24,8 @@ export function priorityNow(ws: Workspace): Priority {
   const text = git(ws.primary, "cat-file", "-p", `refs/heads/${ws.config.main}:${BACKLOG_FILE}`);
   // reason: a main without canon/backlog.md lists nothing urgent; a backlog that cannot be read otherwise is checked by canon check (BR-2148).
   const urgent = text.ok ? parseUrgent(text.value, ws.config.types) : new Set<string>();
-  return { fix: redMain(ws.db)?.change ?? undefined, marked: new Set(marks(ws.db).map((m) => m.change)), urgent };
+  const scoped = new Set(ws.db.db.query<{ id: number }, []>("SELECT id FROM queue WHERE scoped = 1 AND state IN ('waiting','landing')").all().map((r) => r.id));
+  return { fix: redMain(ws.db)?.change ?? undefined, marked: new Set(marks(ws.db).map((m) => m.change)), urgent, scoped };
 }
 
 /** What a conflict refusal tells the lander about the place it keeps in the queue (BR-2177). */

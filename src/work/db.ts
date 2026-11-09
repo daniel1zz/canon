@@ -140,6 +140,8 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ["questions", "witness TEXT"],
   // Whether the question was asked as multi-select, so a relayed answer may name several of its options (BR-2021, issue #130).
   ["questions", "multi INTEGER NOT NULL DEFAULT 0"],
+  // Whether the entry runs a floor scope's command instead of the floor, so it goes ahead of full-floor landings (BR-2399, D-82).
+  ["queue", "scoped INTEGER"],
 ];
 
 /**

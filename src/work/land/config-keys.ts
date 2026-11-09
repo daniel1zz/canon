@@ -54,6 +54,18 @@ export const landKeys = {
     listed: 180,
     checked: 100,
   }),
+  floorScopes: configKey<readonly FloorScope[]>({
+    key: "floor_scopes",
+    doc: "Parts of the repository with a floor of their own: a list of {paths, command}. A landing whose changes all lie under one entry's paths (or floor_skip_paths), and whose tests test_select_command selects all lie under those paths, runs that command instead of the floor and goes ahead of the full-floor landings not yet started (BR-2398, BR-2399, D-82).",
+    default: [],
+    schema: { type: ["array", "null"], items: { type: "object", required: ["paths", "command"], additionalProperties: false, properties: { paths: { type: "array", minItems: 1, items: relPath }, command: { type: "string", minLength: 1 } } }, default: [] },
+    read: readFloorScopes,
+    commands: (v) => v.map((s) => s.command),
+    // reason: a landing runs only a scope's command because test_select_command says no test outside the scope reads its changes (BR-2398, D-82)
+    needs: ["test_select_command"],
+    listed: 185,
+    checked: 105,
+  }),
   landBatchMax: configKey<number>({
     key: "land_batch_max",
     doc: "At most this many landings are tested together under one floor run (D-26, BR-2172); 1 means never batch, `all` takes every landing waiting in the queue (D-42).",
@@ -95,4 +107,37 @@ function readFloorSkipPaths(v: unknown, ctx: KeyContext): Result<string[]> {
     return err("invalid", "`floor_skip_paths` needs `test_select_command`: the command that says which test files a change to those paths can break (e.g. test_select_command: \"bun scripts/select-tests/main.ts\")");
   }
   return ok(v as string[]);
+}
+
+/** One `floor_scopes` entry (BR-2398, D-82). */
+export interface FloorScope {
+  readonly paths: readonly string[];
+  readonly command: string;
+}
+
+/**
+ * `floor_scopes` (BR-2398): a list of {paths, command}; no path may cover the files that decide how a landing runs, as
+ * for `floor_skip_paths` (BR-2165), and it needs `test_select_command`.
+ */
+function readFloorScopes(v: unknown, ctx: KeyContext): Result<FloorScope[]> {
+  if (v === null || v === undefined) return ok([]);
+  const shape = "`floor_scopes` must be a list of entries with `paths` (a list of paths relative to the repository root, such as tools) and `command` (the shell command that is that part's floor)";
+  if (!Array.isArray(v)) return err("invalid", shape);
+  const out: FloorScope[] = [];
+  for (const e of v) {
+    if (e === null || typeof e !== "object" || Array.isArray(e)) return err("invalid", shape);
+    const { paths, command, ...rest } = e as Record<string, unknown>;
+    if (Object.keys(rest).length > 0 || !Array.isArray(paths) || paths.length === 0 || paths.some((t) => typeof t !== "string" || !REL_DIR.test(t)) || typeof command !== "string" || command.trim() === "") return err("invalid", shape);
+    for (const p of paths as string[]) {
+      if (p === "canon" || p === "canon/config.yaml" || p === "canon/templates" || p.startsWith("canon/templates/")) {
+        return err("invalid", `\`floor_scopes\` path \`${p}\` covers canon/config.yaml or canon/templates, which decide how a landing runs; a change to them must run the floor`);
+      }
+    }
+    out.push({ paths: paths as string[], command });
+  }
+  const select = ctx.raw["test_select_command"];
+  if (out.length > 0 && (typeof select !== "string" || select === "")) {
+    return err("invalid", "`floor_scopes` needs `test_select_command`: the command that says which test files a change can break, so a landing runs only its scope's command when no test outside the scope is selected");
+  }
+  return ok(out);
 }

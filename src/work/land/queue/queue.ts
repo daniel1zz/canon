@@ -42,7 +42,7 @@ export interface Entered {
  * ahead of every entry queued after it (BR-2177, BR-2368, D-29, D-75);
  * otherwise it gets a new entry at the tail. Looked up and taken in one transaction, so it is taken at most once.
  */
-export function enter(db: CoordDb, worktree: string, subject: string | null, actor: string, lander?: Proc): Entered {
+export function enter(db: CoordDb, worktree: string, subject: string | null, actor: string, lander?: Proc, scoped = false): Entered {
   const tx = db.db.transaction((): Entered => {
     const t = iso(now());
     const kept = db.db
@@ -53,8 +53,8 @@ export function enter(db: CoordDb, worktree: string, subject: string | null, act
     if (kept) {
       // reason: the row keeps its id, and queue order is id order, so it is back where it was (BR-2177); it is a fresh attempt otherwise (solo, batch reset).
       db.db
-        .query("UPDATE queue SET state = 'waiting', result = NULL, heartbeat = ?, pid = ?, pid_start = ?, solo = 0, batch = NULL, head = NULL, keep_until = NULL WHERE id = ? AND state IN ('failed','abandoned')")
-        .run(t, lander?.pid ?? null, lander?.start ?? null, kept.id);
+        .query("UPDATE queue SET state = 'waiting', result = NULL, heartbeat = ?, pid = ?, pid_start = ?, solo = ?, batch = NULL, head = NULL, keep_until = NULL, scoped = ? WHERE id = ? AND state IN ('failed','abandoned')")
+        .run(t, lander?.pid ?? null, lander?.start ?? null, scoped ? 1 : 0, scoped ? 1 : null, kept.id);
       // The heartbeat of a failed entry is the time it was refused (finishEntry), of an abandoned one the last time its lander beat, so this is how long the stop took to resolve.
       const resolveMs = Date.parse(t) - Date.parse(kept.heartbeat);
       // reason: the row's result says why the place was kept: `conflict: ...`, `timeout`, `killed` (BR-2368) or an abandoned entry's `lander process gone` / `no heartbeat` (BR-2380); stats count them apart (BR-2155).
@@ -64,9 +64,10 @@ export function enter(db: CoordDb, worktree: string, subject: string | null, act
     }
     const r = db.db
       // reason: solo = 0 says this lander understands batches; an older canon leaves it NULL and is never batched (BR-2172).
-      .query("INSERT INTO queue(worktree, subject, state, enqueued_at, heartbeat, pid, pid_start, solo) VALUES (?, ?, 'waiting', ?, ?, ?, ?, 0)")
-      .run(worktree, subject, t, t, lander?.pid ?? null, lander?.start ?? null);
-    db.event(actor, "queue.enter", subject, { worktree });
+      // reason: a scoped entry is solo, so no batch takes it as a member: its floor is not the batch's (BR-2399, BR-2172)
+      .query("INSERT INTO queue(worktree, subject, state, enqueued_at, heartbeat, pid, pid_start, solo, scoped) VALUES (?, ?, 'waiting', ?, ?, ?, ?, ?, ?)")
+      .run(worktree, subject, t, t, lander?.pid ?? null, lander?.start ?? null, scoped ? 1 : 0, scoped ? 1 : null);
+    db.event(actor, "queue.enter", subject, { worktree, ...(scoped ? { scoped: true } : {}) });
     return { id: Number(r.lastInsertRowid) };
   });
   return tx.immediate();
@@ -136,6 +137,8 @@ export interface Priority {
   /** Marked with `canon backlog urgent` (BR-2363). */
   readonly marked?: ReadonlySet<string> | undefined;
   readonly urgent: ReadonlySet<string>;
+  /** Queue entries that run a floor scope's command (BR-2399). */
+  readonly scoped?: ReadonlySet<number> | undefined;
 }
 
 export const NO_PRIORITY: Priority = { urgent: new Set() };
@@ -147,11 +150,17 @@ export function rankOf(subject: string | null, p: Priority): number {
   return p.urgent.has(subject) ? 1 : 0;
 }
 
-/** Whether entry `a` lands before entry `b`: higher rank first, then the lower queue id (BR-2232, BR-2020). */
+/**
+ * Whether entry `a` lands before entry `b`: higher rank first; within a rank a scoped entry before a full-floor one
+ * (BR-2399, D-82); then the lower queue id (BR-2232, BR-2020).
+ */
 export function landsBefore(a: { id: number; subject: string | null }, b: { id: number; subject: string | null }, p: Priority): boolean {
   const ra = rankOf(a.subject, p);
   const rb = rankOf(b.subject, p);
-  return ra !== rb ? ra > rb : a.id < b.id;
+  if (ra !== rb) return ra > rb;
+  const sa = p.scoped?.has(a.id) ?? false;
+  const sb = p.scoped?.has(b.id) ?? false;
+  return sa !== sb ? sa : a.id < b.id;
 }
 
 /**

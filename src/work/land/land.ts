@@ -18,7 +18,7 @@ import { checkNow, CONTENT_REASONS, contentTree, repeatedRefusal } from "./repea
 import { keptNote, lostTurn, predictedConflicts, priorityNow, waitPollMs } from "./queue/wait.ts";
 import { removeReviewTree } from "./checks/review-tree.ts";
 import { findingDetail, verifyChange } from "./checks/steps.ts";
-import { floorSkip, runFloor } from "./checks/floor.ts";
+import { floorScope, floorSkip, runFloor } from "./checks/floor.ts";
 import { afterLand, closeLeftNote, closeSubject, finishLanding, moveMain, reopen, type CloseCommit } from "./finish/finish.ts";
 import { batchDir, landBatch, landedInBatch } from "./batch/batch.ts";
 import { pushMain } from "../remote/remote.ts";
@@ -153,7 +153,10 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
 
     // Same-file overlap with other changes in flight: a notice only, never a refusal (BR-2062).
     noticeOverlaps(ws, wt, subject, "land", say);
-    const entered = enter(ws.db, wt, subject, ws.actor, lander);
+    // A landing whose changes lie in one floor scope goes ahead of the full-floor landings not yet started (BR-2399, D-82).
+    const forkPoint = git(wt, "merge-base", main, "HEAD");
+    const scopedNow = forkPoint.ok && timingOf(wt) !== "after" && floorScope(wt, forkPoint.value, "HEAD") !== undefined;
+    const entered = enter(ws.db, wt, subject, ws.actor, lander, scopedNow);
     entry = entered.id;
     if (entered.kept) say(`back in the landing queue at the place it kept after ${KEPT_AFTER[entered.kept.after]} (queue entry ${entry}, ${Math.round(entered.kept.resolveMs / 1000)}s after it stopped)`);
     // The claim names this lander until the landing ends, so the session exiting meanwhile frees it to no one (BR-2142, issue #17).
@@ -330,7 +333,9 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
 
   // Landings waiting right behind this one are tested with it under one floor run (BR-2172, D-26); only a member that
   // is refused or changes leaves the batch, and a failing floor is traced to the change that makes it fail (BR-2173, D-42).
-  if (ws.config.landBatchMax > 1 && !floorDeferred) {
+  // The floor scope is decided again on the rebased tree, whose config decides (BR-2398, D-82); a scoped landing joins no batch.
+  const scope = floorDeferred ? undefined : floorScope(wt, base.value, tested.value, say);
+  if (ws.config.landBatchMax > 1 && !floorDeferred && !scope) {
     const batched = await landBatch(ws, opts, say, { ...t, base: base.value, head: tested.value, before: before.value });
     if (batched?.kind === "landed") return finishLanding(ws, opts, say, { entry, subject, sha: tested.value });
     if (batched?.kind === "lost") return batched.outcome;
@@ -354,6 +359,11 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   } else if (skip) {
     say(`floor: skipped — all ${skip.paths.length} changed path(s) are under floor_skip_paths (${skip.under.join(", ")})`);
     ws.db.event(ws.actor, "floor.skip", subject, { entry, paths: skip.paths.slice(0, 50), under: skip.under });
+  } else if (scope) {
+    say(`floor: scoped — every changed path is under floor_scopes entry ${scope.index + 1} (${scope.paths.join(", ")}) or floor_skip_paths`);
+    ws.db.event(ws.actor, "floor.scope", subject, { entry, scope: scope.paths });
+    const floor = await runFloor(ws, say, wt, `land-${entry}.log`, t.running, scope.command);
+    if (floor.code !== 0) return refuse("floor", `floor scope command exited ${floor.code} (full log: ${floor.log})\n${floor.tail}`);
   } else {
     const floor = await runFloor(ws, say, wt, `land-${entry}.log`, t.running);
     if (floor.code !== 0) return refuse("floor", `floor exited ${floor.code} (full log: ${floor.log})\n${floor.tail}`);
