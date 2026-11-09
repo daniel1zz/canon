@@ -133,7 +133,7 @@ describe("scoped entries in the queue (D-82)", () => {
     expect(landsBefore({ id: full1, subject: "C-1" }, { id: scoped3, subject: "C-3" }, urgent)).toBe(true);
   });
 
-  test("BR-2399 BR-2020 BR-2178: a full-floor entry that took its kept place back, with a lower id, still lands after a scoped one of the same rank", () => {
+  test("BR-2399 BR-2020 BR-2178 BR-2177: a full-floor entry that took its kept place back, with a lower id, still lands after a scoped one of the same rank", () => {
     const { full1, scoped4 } = entries();
     const p = { urgent: new Set<string>(), scoped: new Set([scoped4]) };
     expect(landsBefore({ id: scoped4, subject: "C-4" }, { id: full1, subject: "C-1" }, p)).toBe(true);
