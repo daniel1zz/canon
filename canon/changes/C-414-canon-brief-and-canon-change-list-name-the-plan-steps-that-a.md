@@ -2,11 +2,15 @@
 id: C-414
 title: canon brief and canon change list name the plan steps that are ready, so
   a coordinator sees what to dispatch
-status: open
+status: done
 rules:
   - BR-2383
   - BR-2384
   - BR-2385
+passes:
+  BR-2383: ef3bcffa47700643 test
+  BR-2384: 4681a5c16b9b3e4d test
+  BR-2385: 19907c287dc75f35 test
 ---
 
 ## 为什么
