@@ -2,11 +2,15 @@
 id: C-434
 title: A change's own rules and regression tests are not lessons and need no
   owner confirmation (#167)
-status: open
+status: done
 rules:
   - BR-2037
   - BR-2162
   - BR-2163
+passes:
+  BR-2037: 1b13baa7fbf6e39c test
+  BR-2162: de8d957956a8b718 test
+  BR-2163: d54cad0ee482118b test
 ---
 
 ## 为什么
