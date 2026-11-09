@@ -2,7 +2,7 @@
 id: C-440
 title: canon-design writes rules for behaviour not yet built with status planned
   (#168)
-status: open
+status: done
 rules: []
 ---
 
