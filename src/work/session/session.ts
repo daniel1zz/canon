@@ -11,7 +11,7 @@ import { err, ok, type Result } from "../../kernel/result.ts";
 import { slugify, type Change, type Corpus } from "../../knowledge/documents/model.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
-import { PLAN_SECTION, readPlan } from "../../knowledge/plans/parse.ts";
+import { planProblem } from "../../knowledge/plans/link.ts";
 import { createDoc, highestNumber } from "../../knowledge/documents/write.ts";
 import { worktreesDirOf } from "./config-keys.ts";
 import { noPort, portFor, type PortLookup } from "../hooks/ports.ts";
@@ -158,16 +158,6 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   // after_start never changes the result (BR-2056): the worktree and claim stand whatever it exits with.
   runHooksSync({ db: ws.db, actor: ws.actor, event: "after_start", change: changeId, cwd: path, env: { CANON_BRANCH: branch }, port: portLookup }, ws.config.hooks.after_start, say);
   return ok({ change: changeId, worktree: path, branch, created });
-}
-
-/** Why `plan` and its steps cannot be done by a new change on main's corpus, or undefined when they can (BR-2376). */
-function planProblem(corpus: Corpus, main: string, plan: { id: string; steps: readonly string[] }): string | undefined {
-  const doc = findDoc(corpus, plan.id);
-  if (!doc || doc.kind !== "change") return `${plan.id} is not a change on ${main}; --plan names the change that holds the plan`;
-  const read = readPlan(doc.body);
-  if (read.kind !== "plan") return `${plan.id} has no valid ${PLAN_SECTION} on ${main}${read.kind === "invalid" ? `: ${read.problem}` : ""}`;
-  const unknown = plan.steps.filter((s) => !read.steps.some((p) => p.name === s));
-  return unknown.length > 0 ? `${unknown.join(", ")} ${unknown.length > 1 ? "are" : "is"} not a step of the plan in ${plan.id} (steps: ${read.steps.map((p) => p.name).join(", ")})` : undefined;
 }
 
 /** Undoes a start whose worktree was created a moment ago and holds nothing but the checkout, so a retry starts clean (BR-2029). */

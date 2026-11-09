@@ -309,3 +309,38 @@ describe("plan marks next to the other marks", () => {
     expect(order).not.toContain("plan C-1");
   });
 });
+
+describe("canon plan link", () => {
+  const started = (root: string) => {
+    const out = canon(root, "work", "start", "--title", "Started without a plan").out;
+    return { id: out.match(/(C-\d+) →/)![1]!, wt: out.match(/cd (.+)/)![1]!.trim() };
+  };
+
+  test("BR-2389: a started change gets plan and steps written in its worktree, and the step shows as working", () => {
+    const root = repo([changeFile(1, "open", { plan: FOUR, title: "Build it" })]);
+    const s = started(root);
+    const r = canon(s.wt, "plan", "link", s.id, "--plan", "C-1", "--step", "2, 3");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`${s.id} → plan C-1 steps 2, 3`);
+    sh(s.wt, "commit", "-qam", "link");
+    const steps = (JSON.parse(canon(root, "plan", "status", "C-1", "--json").out) as { steps: { step: string; state: string; changes: string[] }[] }).steps;
+    expect(steps.filter((x) => x.changes.includes(s.id)).map((x) => x.step)).toEqual(["2", "3"]);
+    expect(steps.find((x) => x.step === "2")!.state).toBe("working");
+  });
+
+  test("BR-2389: an unknown step, a change without a plan, an existing plan, a closed change, and a change not in this checkout are refused with nothing written", () => {
+    const root = repo([changeFile(1, "open", { plan: FOUR }), changeFile(7, "open"), changeFile(8, "done")]);
+    const s = started(root);
+    const file = () => sh(s.wt, "status", "--porcelain");
+    expect(canon(s.wt, "plan", "link", s.id, "--plan", "C-1", "--step", "9").code).toBe(3);
+    expect(canon(s.wt, "plan", "link", s.id, "--plan", "C-7", "--step", "1").code).toBe(3);
+    expect(canon(s.wt, "plan", "link", s.id, "--plan", "C-1", "--step", "").code).toBe(2);
+    expect(file()).toBe("");
+    expect(canon(s.wt, "plan", "link", "C-8", "--plan", "C-1", "--step", "1").code).toBe(2);
+    const elsewhere = canon(root, "plan", "link", s.id, "--plan", "C-1", "--step", "1");
+    expect([elsewhere.code, elsewhere.err.includes("worktree")]).toEqual([3, true]);
+    expect(canon(s.wt, "plan", "link", s.id, "--plan", "C-1", "--step", "1").code).toBe(0);
+    const again = canon(s.wt, "plan", "link", s.id, "--plan", "C-1", "--step", "2");
+    expect([again.code, again.err.includes("by hand")]).toEqual([5, true]);
+  });
+});
