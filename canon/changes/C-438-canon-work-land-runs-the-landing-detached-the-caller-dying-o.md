@@ -2,7 +2,7 @@
 id: C-438
 title: canon work land runs the landing detached; the caller dying or pressing
   Ctrl-C only detaches (#161)
-status: open
+status: done
 rules:
   - BR-2390
   - BR-2391
@@ -12,6 +12,15 @@ rules:
   - BR-2307
   - BR-2309
   - BR-2022
+passes:
+  BR-2022: 3f251c8e0a9f0026 test
+  BR-2099: b204edc12815a7d8 test
+  BR-2307: caf7a6d10d413b3e test
+  BR-2309: 3f469f41b10cfc82 test
+  BR-2390: fb78cc0ca7a550c4 test
+  BR-2391: ec85b8b6a754c3ce test
+  BR-2392: 9cb039de5b7793ab test
+  BR-2393: 7604d9443175efd9 test
 ---
 
 ## 为什么
