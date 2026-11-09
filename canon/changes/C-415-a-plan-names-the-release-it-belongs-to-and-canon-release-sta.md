@@ -2,12 +2,17 @@
 id: C-415
 title: A plan names the release it belongs to, and canon release status shows
   its progress next to the rule counts
-status: open
+status: done
 rules:
   - BR-2328
   - BR-2333
   - BR-2386
   - BR-2335
+passes:
+  BR-2328: 62d0cd5ca11f1d50 test
+  BR-2333: 986612ba7375142f test
+  BR-2335: 35625db10c3901cb test
+  BR-2386: 51f83caa2bbcf991 test
 ---
 
 ## 为什么
