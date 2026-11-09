@@ -2,11 +2,15 @@
 id: C-433
 title: human answer records the human's own words when they pick none of a
   question's options
-status: open
+status: done
 rules:
   - BR-2021
   - BR-2276
   - BR-2075
+passes:
+  BR-2021: b38928e18591e161 test
+  BR-2075: 345c65bb25e9f34e test
+  BR-2276: 37d85499f63eac25 test wording
 ---
 
 ## 为什么
