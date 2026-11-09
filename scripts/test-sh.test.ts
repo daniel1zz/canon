@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { alive, processReaper, waitGone } from "../src/work/testkit.ts";
@@ -171,6 +171,30 @@ describe("scripts/reap-test-procs.sh", () => {
     expect(f.run().code).toBe(0);
     expect(alive(bystander)).toBe(true);
     expect(existsSync(victim)).toBe(true);
+  });
+
+  // reason: the race (found by its cwd, gone before it is named) cannot be timed in a test, so a stand-in lsof reports a
+  // pid that no longer exists next to a live one; with /proc the script reads cwds there and the stand-in is not used
+  test.skipIf(existsSync("/proc/self/cwd"))("a process that has exited before it is named is not counted; one still running is (#171)", async () => {
+    const dir = realpathSync(mkdtempSync(join(tmpdir(), "canon-reap-gone-")));
+    const live = sleeper(dir, false);
+    const bin = mkdtempSync(join(tmpdir(), "canon-reap-bin-"));
+    writeFileSync(join(bin, "lsof"), `#!/bin/sh\nprintf 'p999999999\\nn%s\\np%s\\nn%s\\n' '${dir}' '${live}' '${dir}'\n`);
+    chmodSync(join(bin, "lsof"), 0o755);
+    const run = (d: string) => {
+      const r = Bun.spawnSync(["sh", REAP, "--run", d], { stdout: "pipe", stderr: "pipe", env: { ...process.env, PATH: `${bin}:${process.env["PATH"]}` } });
+      return { code: r.exitCode, err: r.stderr.toString() };
+    };
+    const r = run(dir);
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("1 process(es) still running");
+    expect(r.err).toContain(`${live} sleep 61`);
+    expect(r.err).not.toContain("999999999");
+    await waitGone(live, "the live process is still killed");
+    const onlyGone = realpathSync(mkdtempSync(join(tmpdir(), "canon-reap-gone-")));
+    writeFileSync(join(bin, "lsof"), `#!/bin/sh\nprintf 'p999999999\\nn%s\\n' '${onlyGone}'\n`);
+    const quiet = run(onlyGone);
+    expect([quiet.code, quiet.err]).toEqual([0, ""]);
   });
 
   test("an unknown argument is a usage error", () => {

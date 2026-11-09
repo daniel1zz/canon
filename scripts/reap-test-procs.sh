@@ -61,7 +61,9 @@ describe() {
 
 # report <dir> <kill: yes|no> <what>: prints and optionally kills what is inside <dir>; returns 1 when anything was
 report() {
-  pids=$(inside "$1")
+  # reason: a process found by its cwd that has exited before it can be named was only slow to end, not left running:
+  # under load a test's child can still be exiting when bun test ends, and counting it failed passing runs (#171)
+  pids=$(for p in $(inside "$1"); do if [ -n "$(describe "$p")" ]; then echo "$p"; fi; done)
   [ -n "$pids" ] || return 0
   n=$(printf '%s\n' "$pids" | wc -l | tr -d ' ')
   echo "$3: $n process(es) still running with their working directory in $1$([ "$2" = yes ] && echo ', killed'):" >&2
