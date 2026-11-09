@@ -2,11 +2,15 @@
 id: C-435
 title: Re-landing unchanged content after a content refusal is refused at once,
   without waiting a queue turn (#154)
-status: open
+status: done
 rules:
   - BR-2068
   - BR-2388
   - BR-2067
+passes:
+  BR-2067: 48034a4fe4dac636 test
+  BR-2068: 4bc583b75afc60a7 test
+  BR-2388: 324fa95a5e9a59b0 test
 ---
 
 ## 为什么
