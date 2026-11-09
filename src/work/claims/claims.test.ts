@@ -9,7 +9,7 @@ import { enqueue, finishEntry, tryTurn } from "../land/queue/queue.ts";
 import { land } from "../land/land.ts";
 import { stop } from "../session/session.ts";
 import { computeStats } from "../stats/stats.ts";
-import { HANG_SECONDS, hang, FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { HANG_SECONDS, hang, FAST, project, quiet, sh, startNew, ws, landingProcess } from "../testkit.ts";
 import { writeFileSync } from "node:fs";
 
 /** A real process that is gone by the time this returns: a pid and start time the probe will find missing. */
@@ -289,7 +289,7 @@ describe("the claim names the session again when a landing ends", () => {
         async (root, s, session) => {
           const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: "agent:a" };
           delete env["CLAUDECODE"];
-          const lander = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env });
+          const lander = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env: { ...env, ...landingProcess() } });
           for (let i = 0; i < 300 && pidOf(root, s.change) !== lander.pid; i++) await Bun.sleep(50);
           expect(pidOf(root, s.change)).toBe(lander.pid);
           lander.kill(signal);
