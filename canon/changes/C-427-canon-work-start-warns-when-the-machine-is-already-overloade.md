@@ -3,7 +3,8 @@ id: C-427
 title: canon work start warns when the machine is already overloaded by the work
   in progress (#155)
 status: open
-rules: []
+rules:
+  - BR-2400
 ---
 
 ## 为什么
@@ -15,3 +16,17 @@ rules: []
 - `canon work start` 开一个新变更时（不含 `--fix-main`，不含接回自己认领的变更），机器 5 分钟平均负载达到 CPU 数（`availableParallelism`）的 2 倍时，照常开工，但在输出里提示一行：负载多少、几个 CPU、现在有几个认领、最近 floor 的中位时长和负载低时的中位时长（canon 已经记了 floor 的运行），并建议等负载降下来或先合入已有的变更。退出码不变。
 - 新规则（`work/session`），例子写负载刚好在线上和线下、`--fix-main` 不提示、读不到负载（平台不支持）时不提示也不报错。
 - 不做：拒绝开工或排队等待（会挡住修复和负责人要的活，要做先写决策并问负责人）；按项目配置改阈值（先看提示有没有用，`canon stats` 能数提示次数之后再说）。
+
+## 结果
+
+BR-2400。原说明以为 canon 已经记了 floor 的时长和当时的负载，其实没有：事件里只有 `land.turn` 和 `land.ok` 的时间。所以改成让 `land.turn` 记下当时的负载和 CPU 数，提示里比较的是合入轮次（`land.turn` 到 `land.ok`）在高负载和低负载时的中位时长；这项数据从这次合入之后才开始积累，两组都有 3 次以上才显示。
+
+## 教训
+
+无
+
+## 任务
+
+- [x] 规则 BR-2400
+- [x] `land.turn` 记负载，`canon work start` 提示
+- [x] 测试（`src/work/session/load.test.ts`）

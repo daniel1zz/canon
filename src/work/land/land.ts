@@ -23,6 +23,7 @@ import { afterLand, closeLeftNote, closeSubject, finishLanding, moveMain, reopen
 import { batchDir, landBatch, landedInBatch } from "./batch/batch.ts";
 import { pushMain } from "../remote/remote.ts";
 import { settleInterrupted } from "./queue/interrupted.ts";
+import { loadDetail } from "../session/load.ts";
 
 /** What a landing that took its kept place back says it stopped for (BR-2177, BR-2368). */
 const KEPT_AFTER = { conflict: "its conflict", timeout: "its timeout", killed: "it was stopped by a signal", abandoned: "another lander marked it abandoned" } as const;
@@ -239,7 +240,8 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
     }
     if (turn.mine) {
       // How long this lander waited in the queue, separate from how long its floor takes (BR-2122).
-      ws.db.event(ws.actor, "land.turn", subject, { entry, waited_ms: Date.now() - queued });
+      // reason: the machine load at the turn lets canon work start say how long turns take when it is this busy (BR-2400)
+      ws.db.event(ws.actor, "land.turn", subject, { entry, waited_ms: Date.now() - queued, ...loadDetail() });
       break;
     }
     if (turn.ahead !== lastAhead) say(`waiting: ${turn.ahead} landing(s) ahead`);

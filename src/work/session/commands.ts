@@ -1,3 +1,4 @@
+import { machineNow, startHint } from "./load.ts";
 import { defineCommand } from "citty";
 import { writeSchemaFile } from "../../invocation/reference/reference.ts";
 import { AS_ARG, corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
@@ -51,6 +52,7 @@ const startCmd = defineCommand({
     if (planned && (String(args.plan).trim() === "" || steps.length === 0)) fail({ code: "invalid", message: "--plan needs a change id and --step at least one step name" });
     const target = typeof args.change === "string" && args.change ? { change: args.change } : { title: String(args.title), rules: list(args.rules), ...(planned ? { plan: { id: String(args.plan).trim().toUpperCase(), steps } } : {}) };
     const s = must(fixMain ? startFixMain(ws, say) : start(ws, target, say));
+    for (const line of startHint(ws.db, machineNow(), { fixMain, created: s.created })) say(line);
     // A step another unfinished change is doing is said, never refused: a step may take several changes (BR-2385, D-77).
     if ("plan" in target && target.plan) for (const line of stepsTaken(ws, target.plan, s.change)) say(line);
     noticeUpdates(ws, say);
