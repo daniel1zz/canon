@@ -6,7 +6,7 @@ import { enqueue, finishEntry, heartbeat, tryTurn } from "./queue/queue.ts";
 import { start } from "../session/session.ts";
 import { land } from "./land.ts";
 import { predictedConflicts } from "./queue/wait.ts";
-import { FAST, boundedLoop, project, quiet, sh, startNew, waitFor, ws } from "../testkit.ts";
+import { FAST, boundedLoop, project, quiet, sh, startNew, waitFor, ws, landingProcess } from "../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
 // under load that alone came within 0.4 s of the 5 s default (C-111), so they get room, not the rest of the file.
@@ -222,7 +222,9 @@ describe("boundaries record and clean up", () => {
     expect(tryTurn(other.db, ahead).mine).toBe(true);
     const beats = setInterval(() => heartbeat(other.db, ahead), 100);
     try {
-      const landing = land(ws(s.worktree), FAST, quiet);
+      // reason: the lander runs in its own process, as real landers do; in this process its synchronous steps before the first
+      // await would block the timer beating for the entry ahead longer than the stale time under load (#158, C-439)
+      const landing = Bun.spawn(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
       const beat = () => other.db.db.query<{ heartbeat: string }, [string]>("SELECT heartbeat FROM queue WHERE worktree = ?").get(s.worktree)?.heartbeat;
       await waitFor("the landing to wait in the queue", () => beat() !== undefined);
       writeFileSync(join(root, "theirs.txt"), "t\n");
@@ -235,7 +237,7 @@ describe("boundaries record and clean up", () => {
       }
       expect(other.db.db.query<{ state: string }, [string]>("SELECT state FROM queue WHERE worktree = ?").get(s.worktree)?.state).toBe("waiting"); // the moved main did not send it away or let it jump the queue
       finishEntry(other.db, ahead, "landed", "x");
-      expect((await landing).kind).toBe("landed");
+      expect(await landing.exited).toBe(0);
     } finally {
       clearInterval(beats);
     }

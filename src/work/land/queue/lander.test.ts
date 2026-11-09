@@ -237,7 +237,10 @@ describe("a waiting lander's heartbeat", () => {
     expect(tryTurn(other.db, ahead, staleMs).mine).toBe(true);
     const beat = setInterval(() => heartbeat(other.db, ahead), 100);
     try {
-      const landing = land(ws(s.worktree), FAST, quiet);
+      // reason: the lander runs in its own process, as real landers do: in this process its synchronous steps before the
+      // first await (claim, git checks, enqueue, the first tryTurn) block the timer that beats for the entry ahead; under
+      // load they took over the 0.6 s stale time, so the lander abandoned that entry and took the turn (#158, C-439)
+      const landing = Bun.spawn(["bun", join(import.meta.dir, "../../../invocation/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
       await waitFor("the landing to wait in the queue", () => other.db.db.query("SELECT 1 FROM queue WHERE worktree = ? AND state = 'waiting'").get(s.worktree) !== null);
       const behind = enqueue(other.db, "/elsewhere-too", "C-98", "agent:c", me);
       // reason: the entry behind tries for its turn often, so a waiting lander silent for more than 0.6 s would be marked abandoned
@@ -253,7 +256,7 @@ describe("a waiting lander's heartbeat", () => {
       finishEntry(other.db, behind, "failed", "test");
       clearInterval(beat);
       finishEntry(other.db, ahead, "landed", "x");
-      expect((await landing).kind).toBe("landed");
+      expect(await landing.exited).toBe(0);
       // the other side: at the default 10 minutes the wait poll stays at 2 s
       expect([waitPollMs(staleMs), waitPollMs(10 * 60_000)]).toEqual([200, 2000]);
     } finally {
