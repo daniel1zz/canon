@@ -94,9 +94,11 @@ describe("human questions", () => {
     expect(code(4, ",", ",")).toBe("refused"); // no non-empty part: an option answer naming no option
     expect(refusals(root)).toEqual(["option-mismatch", "option-mismatch", "option-mismatch"]);
     expect(code(4, "yes", "yes")).toBe("ok");
+    const wide = ask(d, "agent:x", null, "Wide?", ["yes", "no"]);
+    expect(code(wide, "yes，no", "yes，no")).toBe("ok"); // a full-width comma does not split: the human's own words
     const pending = canon(root, "agent:x", false, "human", "pending", "--all").out;
     expect(pending).toContain("→ 先等 C-428 合入再发 (agent:x relaying the human: \"先等 C-428 合入再发\") [not one of the options]");
-    expect(pending.split("\n").filter((l) => l.includes("[not one of the options]"))).toHaveLength(1);
+    expect(pending.split("\n").filter((l) => l.includes("[not one of the options]"))).toHaveLength(2); // the two free answers, not the option answer yes
   });
 
   test("BR-2021: a --multi question takes a relayed answer naming one or more of its options, each once and the same set in the words, or words naming something else recorded exactly; anything else is refused with exit 1 and nothing recorded", () => {
