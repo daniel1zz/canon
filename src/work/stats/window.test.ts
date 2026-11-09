@@ -72,6 +72,14 @@ describe("window summary", () => {
     expect(text).toContain("conflicts: 1 (1 predicted before the turn); 0 landed again at their kept place, median resolve -");
   });
 
+  test("BR-2155 BR-2388: a refusal repeated before queueing is counted in the window's refusals like any other", () => {
+    const d = db();
+    d.event("agent:a", "land.refuse", "C-1", { reason: "check" });
+    d.event("agent:a", "land.refuse", "C-1", { reason: "check", repeat_of: 1 });
+    d.event("agent:a", "land.refuse", "C-1", { reason: "check", repeat_of: 1 });
+    expect(windowSummary(d, 0).landings.refused).toEqual({ check: 3 });
+  });
+
   test("BR-2155 BR-2177: landings that came back at their kept place are counted, with the median time to resolve", () => {
     const d = db();
     d.event("agent:a", "queue.enter", "C-1", { worktree: "/wt/a" }); // a new entry at the tail: not counted

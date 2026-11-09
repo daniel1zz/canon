@@ -1,14 +1,24 @@
 import { git } from "../../kernel/git.ts";
 import type { CoordDb } from "../db.ts";
+import type { Workspace } from "../workspace.ts";
 import { closeSubject } from "./finish/finish.ts";
+import { changeIdsOnBranches } from "../session/inflight.ts";
+import { readConfig } from "../../invocation/config.ts";
+import { check, type Finding } from "../../knowledge/check/check.ts";
+import { reportsFor } from "../verify/changes.ts";
+import { backlogAt } from "../../knowledge/documents/backlog.ts";
+import { testFilesFor } from "../../knowledge/check/tests.ts";
+import { readCorpus } from "../../knowledge/documents/read.ts";
 
 /**
- * A landing that would be refused again for the same reason, known before it queues (BR-2388, #154): its last landing
- * was refused for a reason only its own content and main decide, and neither has changed since.
+ * A landing refused by canon check whose content and main have not changed since: canon check runs again before it
+ * queues, so a refusal that still holds is said at once instead of after a turn in the queue (BR-2388, #154).
  */
 
-/** Refusals decided by the change's content on a given main alone: running them again on the same trees refuses again. */
-export const CONTENT_REASONS: readonly string[] = ["check", "source", "release", "review"];
+// reason: only canon check is rerun: it is local and cheap, and what it reads beyond the tree (test reports, other
+// branches) is read again now. A source check fetches pages, a review asks a model and a release check reads the
+// owner's answers: any of them may come out differently on the same tree, so they queue as usual (BR-2388)
+export const CONTENT_REASONS: readonly string[] = ["check"];
 
 /** What a refusal records to be compared later: the tree of the change's own content and the main it was rebased onto. */
 export interface RefusedAt {
@@ -22,6 +32,28 @@ export function contentTree(wt: string, subject: string | null): string | undefi
   const closing = top.ok && subject !== null && top.value === closeSubject(subject);
   const tree = git(wt, "rev-parse", closing ? "HEAD~1^{tree}" : "HEAD^{tree}");
   return tree.ok ? tree.value : undefined;
+}
+
+/**
+ * canon check on the worktree as it is, with what the landing gives it before the rebase-only steps: the test reports,
+ * the changes on branches and main's backlog (BR-2388; the landing's own run is in checks/steps.ts). The findings, or
+ * the error that kept it from running.
+ */
+export function checkNow(ws: Workspace, wt: string, main: string): { ok: true; findings: readonly Finding[] } | { ok: false; message: string } {
+  const read = readCorpus(wt, ws.config.types, ws.config);
+  const tests = testFilesFor(wt, ws.config);
+  if (!tests.ok) return { ok: false, message: tests.error.message };
+  const landing = readConfig(wt);
+  if (!landing.ok) return { ok: false, message: landing.error.message };
+  const onBranches = changeIdsOnBranches(ws);
+  if (!onBranches.ok) return { ok: false, message: onBranches.error.message };
+  const listed = backlogAt(wt, main, ws.config.types);
+  if (!listed.ok) return { ok: false, message: listed.error.message };
+  const reports = reportsFor(ws.db, wt, landing.value, read.corpus, tests.value);
+  if (!reports.ok) return { ok: false, message: reports.error.message };
+  const tip = git(wt, "rev-parse", main);
+  if (!tip.ok) return { ok: false, message: tip.error.message };
+  return { ok: true, findings: check({ root: wt, ...read, testFiles: tests.value, reports: reports.value, branchChanges: onBranches.value, backlogBase: new Set(listed.value.map((e) => e.id)), architecture: { refs: [tip.value], since: tip.value } }) };
 }
 
 export interface Repeat {

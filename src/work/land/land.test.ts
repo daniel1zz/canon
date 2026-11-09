@@ -6,6 +6,7 @@ import { enqueue, finishEntry, tryTurn } from "./queue/queue.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { clean, stop } from "../session/session.ts";
 import { land } from "./land.ts";
+import { CONTENT_REASONS } from "./repeat.ts";
 import { LAND_MARKER } from "./finish/finish.ts";
 import { ensureGuard } from "../../install/githook.ts";
 import { FAST, project, quiet, sh, startNew, waitFor, ws } from "../testkit.ts";
@@ -190,6 +191,25 @@ describe("work land", () => {
     sh(s.worktree, "commit", "-qm", "more");
     const changed = await land(ws(s.worktree), FAST, quiet);
     expect(changed.kind === "refused" && changed.message).not.toContain("nothing changed since");
+  });
+
+  test("BR-2388: canon check runs again before queueing: a finding gone without a new commit lets the landing queue", async () => {
+    const root = project();
+    const s = startNew(root, "Orders work");
+    writeFileSync(join(s.worktree, "canon/backlog.md"), "# 待办\n\n1. C-2 later work\n"); // C-2: the next change started
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "backlog names C-2");
+    const first = await land(ws(s.worktree), FAST, quiet);
+    expect(first.kind === "refused" && first.findings?.map((f) => f.rule)).toEqual(["ref-dangling"]);
+    const again = await land(ws(s.worktree), FAST, quiet);
+    expect(again.kind === "refused" && again.message).toContain("nothing changed since");
+    expect(startNew(root, "Later work").change).toBe("C-2"); // C-2 now exists on its branch: canon check no longer reports it
+    const queued = await land(ws(s.worktree), FAST, quiet);
+    expect(queued.kind === "refused" && queued.message.includes("nothing changed since")).toBe(false);
+  });
+
+  test("BR-2388: a review refusal is not repeated without queueing", () => {
+    expect(CONTENT_REASONS).toEqual(["check"]);
   });
 
   test("BR-2388: a floor refusal is not repeated without queueing", async () => {

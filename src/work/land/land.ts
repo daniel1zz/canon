@@ -14,7 +14,7 @@ import { ensureWatcher, pathCanonReads, timingOf } from "../watch/watch.ts";
 import { missingMessage, passesMeta, planClose } from "../execution/landing.ts";
 import type { LandOptions, LandOutcome, Running } from "./outcome.ts";
 import { changesIn, ownDiffId, rebaseInProgress } from "./worktree-state.ts";
-import { CONTENT_REASONS, contentTree, repeatedRefusal } from "./repeat.ts";
+import { checkNow, CONTENT_REASONS, contentTree, repeatedRefusal } from "./repeat.ts";
 import { keptNote, lostTurn, predictedConflicts, priorityNow, waitPollMs } from "./queue/wait.ts";
 import { removeReviewTree } from "./checks/review-tree.ts";
 import { findingDetail, verifyChange } from "./checks/steps.ts";
@@ -69,8 +69,14 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   const tree = contentTree(wt, subject);
   const repeat = tip.ok && tree !== undefined ? repeatedRefusal(ws.db, subject, { tree, main: tip.value }) : undefined;
   if (repeat) {
-    ws.db.event(ws.actor, "land.refuse", subject, { reason: repeat.reason, message: repeat.message.slice(0, 2000), diff: ownDiffId(wt, main), tree, main: tip.ok ? tip.value : null, repeat_of: repeat.event });
-    return { kind: "refused", reason: repeat.reason as Extract<LandOutcome, { kind: "refused" }>["reason"], message: `nothing changed since the landing refused at ${repeat.at} (event ${repeat.event}): the same content on the same ${main} is refused again without queueing; change the content, or wait for ${main} to move, then land again\n${repeat.message}` };
+    // reason: canon check runs again now; what it found then may be gone (a test report written since), and then the landing queues;
+    // a check that cannot run here queues too, and the landing's own check in its turn reports why (BR-2388)
+    const now = checkNow(ws, wt, main);
+    if (now.ok && now.findings.length > 0) {
+      const message = `canon check: ${now.findings.length} finding(s)`;
+      ws.db.event(ws.actor, "land.refuse", subject, { reason: "check", message, diff: ownDiffId(wt, main), tree, main: tip.ok ? tip.value : null, repeat_of: repeat.event, ...findingDetail(now.findings) });
+      return { kind: "refused", reason: "check", message: `nothing changed since the landing refused at ${repeat.at} (event ${repeat.event}), and canon check still finds what it found: refused before queueing; fix the findings, then land again\n${message}`, findings: now.findings };
+    }
   }
 
   let close: CloseCommit | undefined;
