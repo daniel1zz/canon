@@ -2,7 +2,7 @@
 id: C-439
 title: The BR-2044 heartbeat test reaches the queue within its deadline under
   heavy machine load (#158)
-status: open
+status: done
 rules: []
 ---
 
