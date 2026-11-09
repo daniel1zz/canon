@@ -14,6 +14,7 @@ import { ensureWatcher, pathCanonReads, timingOf } from "../watch/watch.ts";
 import { missingMessage, passesMeta, planClose } from "../execution/landing.ts";
 import type { LandOptions, LandOutcome, Running } from "./outcome.ts";
 import { changesIn, ownDiffId, rebaseInProgress } from "./worktree-state.ts";
+import { CONTENT_REASONS, contentTree, repeatedRefusal } from "./repeat.ts";
 import { keptNote, lostTurn, predictedConflicts, priorityNow, waitPollMs } from "./queue/wait.ts";
 import { removeReviewTree } from "./checks/review-tree.ts";
 import { findingDetail, verifyChange } from "./checks/steps.ts";
@@ -62,6 +63,15 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   if (!ws.config.floor) return early("no-floor", "canon/config.yaml has no `floor` command; nothing proves the tree is sound");
   const clean = isClean(wt);
   if (!clean.ok || !clean.value) return early("dirty", "the worktree has uncommitted changes; commit them first");
+  // reason: a refusal its content and main alone decide comes again on the same content and main; said now, without
+  // waiting a turn in the queue (BR-2388, #154). Before the close commit, so there is nothing to take back.
+  const tip = git(wt, "rev-parse", main);
+  const tree = contentTree(wt, subject);
+  const repeat = tip.ok && tree !== undefined ? repeatedRefusal(ws.db, subject, { tree, main: tip.value }) : undefined;
+  if (repeat) {
+    ws.db.event(ws.actor, "land.refuse", subject, { reason: repeat.reason, message: repeat.message.slice(0, 2000), diff: ownDiffId(wt, main), tree, main: tip.ok ? tip.value : null, repeat_of: repeat.event });
+    return { kind: "refused", reason: repeat.reason as Extract<LandOutcome, { kind: "refused" }>["reason"], message: `nothing changed since the landing refused at ${repeat.at} (event ${repeat.event}): the same content on the same ${main} is refused again without queueing; change the content, or wait for ${main} to move, then land again\n${repeat.message}` };
+  }
 
   let close: CloseCommit | undefined;
   let entry: number | undefined;
@@ -266,12 +276,15 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const { entry, subject } = t;
   let floorSkipped = false;
   let floorDeferred = false;
+  let rebasedOnto: string | undefined;
   const refuse = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], found: string, findings?: readonly Finding[]): LandOutcome => {
     // A conflict keeps this entry's place for its own next landing; every other refusal sends that one to the tail (BR-2177).
     const until = reason === "conflict" ? failKeepingPlace(ws.db, entry, `${reason}: ${found.slice(0, 500)}`, ws.config.landKeepPlaceMs) : null;
     if (reason !== "conflict") finishEntry(ws.db, entry, "failed", `${reason}: ${found.slice(0, 500)}`);
     const message = found + keptNote(until);
-    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main), ...(findings ? findingDetail(findings) : {}), ...(floorSkipped ? { floor_skipped: true } : {}), ...(floorDeferred ? { floor_deferred: true } : {}), ...(until ? { keeps_place_until: until } : {}) });
+    // reason: the content tree and main are what a later landing compares to repeat a content refusal at once (BR-2388)
+    const at = CONTENT_REASONS.includes(reason) ? { tree: contentTree(wt, subject), main: rebasedOnto } : {};
+    ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main), ...at, ...(findings ? findingDetail(findings) : {}), ...(floorSkipped ? { floor_skipped: true } : {}), ...(floorDeferred ? { floor_deferred: true } : {}), ...(until ? { keeps_place_until: until } : {}) });
     return { kind: "refused", reason, message, ...(findings ? { findings } : {}) };
   };
 
@@ -286,6 +299,7 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const before = git(wt, "rev-parse", "HEAD");
   if (!before.ok) return refuse("environment", before.error.message);
   say(`rebase onto ${main} ${base.value.slice(0, 9)}`);
+  rebasedOnto = base.value;
   const reb = git(wt, "rebase", "-q", base.value);
   if (!reb.ok) {
     // reason: a signal that killed the rebase is handled on the next tick (BR-2099); let it run before calling this a conflict.

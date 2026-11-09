@@ -59,7 +59,8 @@ export function computeStats(db: CoordDb, reviews: Readonly<Record<string, strin
     .all(since, until)
     .map((r) => ({ ...r, detail: JSON.parse(r.detail) as Record<string, unknown> }));
   const count = (pred: (r: Row) => boolean) => rows.filter(pred).length;
-  const refusalsOf = (check: string) => rows.filter((r) => r.kind === "land.refuse" && r.detail["reason"] === check);
+  // reason: a refusal repeated before queueing is the same verdict on the same content, not another one (BR-2388, BR-2068)
+  const refusalsOf = (check: string) => rows.filter((r) => r.kind === "land.refuse" && r.detail["reason"] === check && r.detail["repeat_of"] === undefined);
 
   const outcomeOf = (r: Row): Outcome => {
     // reason: without its own fingerprint a refusal cannot be compared with anything after it (BR-2068, issue #68)

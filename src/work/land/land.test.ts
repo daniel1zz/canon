@@ -159,6 +159,54 @@ describe("work land", () => {
     expect(out.kind === "refused" && out.findings?.map((f) => f.rule)).toEqual(["ref-dangling"]);
   });
 
+  test("BR-2388: a content refusal is repeated at once on the same content and main; a new commit, main moving, or a floor refusal queue as usual", async () => {
+    const root = project();
+    const s = startNew(root, "Bad ref");
+    writeFileSync(join(s.worktree, "canon/changes/C-1-bad-ref.md"), "---\nid: C-1\ntitle: Bad ref\n---\n## 为什么\n\nSee D-99.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n");
+    sh(s.worktree, "commit", "-qam", "dangling");
+    const first = await land(ws(s.worktree), FAST, quiet);
+    expect(first.kind === "refused" && first.reason).toBe("check");
+    const refusals = () => ws(root).db.db.query<{ id: number; detail: string }, []>("SELECT id, detail FROM events WHERE kind = 'land.refuse' ORDER BY id").all().map((e) => ({ id: e.id, ...(JSON.parse(e.detail) as { reason: string; repeat_of?: number }) }));
+    const turns = () => ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM queue").get()!.n;
+    const queued = turns();
+    const again = await land(ws(s.worktree), FAST, quiet);
+    expect(again.kind === "refused" && again.reason).toBe("check");
+    expect(again.kind === "refused" && again.message).toContain("nothing changed since");
+    expect(turns()).toBe(queued); // it never entered the queue
+    const original = refusals()[0]!.id;
+    expect(refusals().at(-1)).toMatchObject({ reason: "check", repeat_of: original });
+    expect(((await land(ws(s.worktree), FAST, quiet)) as { message: string }).message).toContain("nothing changed since");
+    expect(refusals().at(-1)).toMatchObject({ repeat_of: original });
+    // main moves: the same content queues and is checked again
+    writeFileSync(join(root, "other.txt"), "x\n");
+    sh(root, "add", "other.txt");
+    sh(root, "commit", "-qm", "main moves");
+    const moved = await land(ws(s.worktree), FAST, quiet);
+    expect(moved.kind === "refused" && moved.message).not.toContain("nothing changed since");
+    expect(turns()).toBe(queued + 1);
+    // a new commit on the branch: queued again
+    writeFileSync(join(s.worktree, "note.txt"), "y\n");
+    sh(s.worktree, "add", "note.txt");
+    sh(s.worktree, "commit", "-qm", "more");
+    const changed = await land(ws(s.worktree), FAST, quiet);
+    expect(changed.kind === "refused" && changed.message).not.toContain("nothing changed since");
+  });
+
+  test("BR-2388: a floor refusal is not repeated without queueing", async () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), readFileSync(join(root, "canon/config.yaml"), "utf8").replace(/^floor:.*$/m, 'floor: "false"'));
+    sh(root, "commit", "-qam", "failing floor");
+    const s = startNew(root, "Floor fails");
+    writeFileSync(join(s.worktree, "a.txt"), "a\n");
+    sh(s.worktree, "add", "a.txt");
+    sh(s.worktree, "commit", "-qm", "a");
+    const first = await land(ws(s.worktree), FAST, quiet);
+    expect(first.kind === "refused" && first.reason).toBe("floor");
+    const again = await land(ws(s.worktree), FAST, quiet);
+    expect(again.kind === "refused" && again.reason).toBe("floor");
+    expect(again.kind === "refused" && again.message).not.toContain("nothing changed since");
+  });
+
   describe("BR-2111: a new decision needs a source; each source new to main is verified against its file or page", () => {
     const decision = (options: string) =>
       `---\nid: D-1\ntitle: Pick\nstatus: accepted\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n${options}\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
