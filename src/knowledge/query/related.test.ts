@@ -84,6 +84,24 @@ describe("related documents in other domains", () => {
   });
 });
 
+describe("the boundaries", () => {
+  test("BR-2387: a name in exactly 10 other live documents still counts; a 2-character name does not, a 3-character one does", () => {
+    const ten: Record<string, string> = {};
+    for (let n = 20; n < 30; n++) ten[`canon/rules/shipping/${BR(n)}.md`] = rule(n, "输出 `--json`。");
+    const l = relatedOf({ ...base(), ...ten, [`canon/rules/billing/${BR(1)}.md`]: rule(1, "输出 `--json`。") }, BR(1));
+    expect(l.related).toHaveLength(10);
+    expect(l.more).toBe(0);
+    expect(relatedLines(l.related[0]!.doc, l).some((x) => x.includes("… and"))).toBe(false);
+    const short = { ...base(), [`canon/rules/billing/${BR(1)}.md`]: rule(1, "写 `ab` 和 `abc`。"), [`canon/rules/shipping/${BR(7)}.md`]: rule(7, "写 `ab`。"), [`canon/rules/shipping/${BR(8)}.md`]: rule(8, "写 `abc`。") };
+    expect(ids(relatedOf(short, BR(1)))).toEqual([BR(8)]);
+  });
+
+  test("BR-2387: for a decision no domain is left out: rules of any domain sharing its names are listed", () => {
+    const l = relatedOf({ ...base(), [`canon/decisions/${D(3)}.md`]: decision(3, "写 `refund.issued`。") }, D(3));
+    expect(ids(l)).toEqual([BR(1), BR(2), BR(7)]);
+  });
+});
+
 describe("canon context shows them", () => {
   test("BR-2387: canon context of a rule ends with the related section; of a path it has none", () => {
     const root = project();
