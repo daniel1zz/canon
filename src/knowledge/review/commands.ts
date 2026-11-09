@@ -29,6 +29,7 @@ const review = defineCommand({
         return;
       case "off":
         say("review: none: canon/config.yaml on main is set not to review; nothing was run");
+        for (const line of out.related) say(line);
         behind(out.behind, out.main);
         return;
       case "ok":
@@ -38,6 +39,7 @@ const review = defineCommand({
         for (const f of out.findings) say(`${out.kind === "block" ? "review finding" : "review note"} (${f.review}): ${f.text}`);
         say(out.kind === "block" ? "review: block; the landing would refuse these changes" : "review: ok");
         say("this was a preview: the landing reviews again and its result is the one that counts");
+        for (const line of out.related) say(line);
         behind(out.behind, out.main);
         if (out.kind === "block") process.exit(EXIT.refused);
     }

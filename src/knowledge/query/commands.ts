@@ -1,6 +1,7 @@
 import { defineCommand } from "citty";
 import { corpusOf, entry, fail, json, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { openNotes, renderNote } from "../review/notes.ts";
+import { relatedElsewhere, relatedLines } from "./related.ts";
 import { amendedBy, contextFor, findDoc, isIdQuery, plannedMark, rawText, releaseMark, renderContext, renderSearch, search } from "./query.ts";
 
 /** `canon show`, `search`, `context`: reading the corpus. */
@@ -48,6 +49,11 @@ const context = defineCommand({
     if (isIdQuery(corpus, args.target) && !findDoc(corpus, args.target.trim())) fail({ code: "not_found", message: `${args.target} does not exist` });
     const ctx = contextFor(corpus, args.target);
     say(renderContext(ws.root, ctx, { full: Boolean(args.full), target: args.target }));
+    // Other domains' rules and decisions sharing names with the rule or decision asked for (BR-2387).
+    if (ctx.target && (ctx.target.kind === "rule" || ctx.target.kind === "decision")) {
+      const lines = relatedLines(ctx.target, relatedElsewhere(corpus, ctx.target));
+      if (lines.length) say(`${lines.join("\n")}\n`);
+    }
     // Open review notes on what this context covers, shown to whoever is about to change it (BR-2146, D-21).
     const ids = [...(ctx.target && ctx.target.kind !== "change" ? [ctx.target.id] : []), ...ctx.rules.map((r) => r.id), ...ctx.decisions.map((d) => d.id)];
     const notes = openNotes(ws.db, ids);

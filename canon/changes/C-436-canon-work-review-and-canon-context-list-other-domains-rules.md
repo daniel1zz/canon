@@ -3,7 +3,9 @@ id: C-436
 title: canon work review and canon context list other domains' rules and
   decisions that share the edited document's identifiers (#165)
 status: open
-rules: []
+rules:
+  - BR-2358
+  - BR-2387
 ---
 
 ## 为什么
@@ -24,6 +26,6 @@ rules: []
 
 ## 任务
 
-- [ ] 新规则 + BR-2358
-- [ ] 按标识符找其他领域的规则和决策
-- [ ] 测试按规则命名
+- [x] 新规则 BR-2387 + BR-2358
+- [x] 按标识符找其他领域的规则和决策（反引号里的名字和引用的编号；超过 10 份文档用到的名字太常见，不算；同一个顶层领域不列）
+- [x] 测试按规则命名

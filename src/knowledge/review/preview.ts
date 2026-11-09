@@ -1,3 +1,4 @@
+import { relatedElsewhere, relatedLines } from "../query/related.ts";
 import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -17,8 +18,9 @@ import { reviewPrompts, type ReviewExtras, runReview, runReviews, type ReviewVer
 
 /** What `canon work review` found, as the command turns it into text and an exit code (BR-2358). */
 export type PreviewOutcome =
-  | { readonly kind: "ok" | "block"; readonly findings: readonly { readonly review: "rule" | "duplicate"; readonly text: string }[]; readonly reviewed: readonly string[]; readonly behind: number; readonly main: string; readonly reusedFrom?: number }
-  | { readonly kind: "nothing" | "off"; readonly behind: number; readonly main: string }
+  | { readonly kind: "ok" | "block"; readonly findings: readonly { readonly review: "rule" | "duplicate"; readonly text: string }[]; readonly reviewed: readonly string[]; readonly behind: number; readonly main: string; readonly reusedFrom?: number; readonly related: readonly string[] }
+  | { readonly kind: "off"; readonly behind: number; readonly main: string; readonly related: readonly string[] }
+  | { readonly kind: "nothing"; readonly behind: number; readonly main: string }
   | { readonly kind: "unconfigured"; readonly needs: readonly string[]; readonly main: string }
   | { readonly kind: "usage" | "failed"; readonly message: string };
 
@@ -97,7 +99,9 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
   const needs = [...scope.reviewed, ...standing];
   if (needs.length === 0) return { kind: "nothing", behind, main: main.value };
   if (!onMain.review) return { kind: "unconfigured", needs, main: main.value };
-  if (onMain.review === REVIEW_NONE) return { kind: "off", behind, main: main.value };
+  // Other domains' rules and decisions sharing names with the changed ones: a hint, never part of the verdict (BR-2387).
+  const related = scope.changedDocs.filter((d) => d.kind === "rule" || d.kind === "decision").flatMap((d) => relatedLines(d, relatedElsewhere(read.corpus, d)));
+  if (onMain.review === REVIEW_NONE) return { kind: "off", behind, main: main.value, related };
 
   const running: Running = {};
   const tree = reviewTree(ws, running, main.value);
@@ -157,5 +161,5 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
   }
   const verdict = blocked ? "block" : "ok";
   ws.db.event(ws.actor, "review.preview", subject, { verdict, findings: findings.length, docs: scope.reviewed, standing, tree: head.value, main: main.value, ...(rule ? { hash: rule.hash, rule: rule.verdict, ruleFindings: rule.findings } : {}) });
-  return { kind: verdict, findings, reviewed: needs, behind, main: main.value, ...(reusedFrom !== undefined ? { reusedFrom } : {}) };
+  return { kind: verdict, findings, reviewed: needs, behind, main: main.value, related, ...(reusedFrom !== undefined ? { reusedFrom } : {}) };
 }
