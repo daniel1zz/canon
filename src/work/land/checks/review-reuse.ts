@@ -37,3 +37,46 @@ export function passedReview(db: CoordDb, kind: ReviewKind, hash: string): Passe
   const wording = d.wording !== null && typeof d.wording === "object" && !Array.isArray(d.wording) ? (d.wording as Record<string, string>) : undefined;
   return { event: row.id, findings: Array.isArray(found) ? found.map(String) : [], wording };
 }
+
+/** What the changed documents of a landing are, for the documents key (BR-2396): every text the review judges, by path. */
+export interface ReviewedTexts {
+  /** Changed or added documents and changed domain READMEs: path and full text. */
+  readonly live: readonly { readonly path: string; readonly text: string }[];
+  /** Deleted documents and READMEs: path and the text they had on main. */
+  readonly deleted: readonly { readonly path: string; readonly text: string }[];
+  /** The diff this landing makes to the architecture overview, empty when none. */
+  readonly architectureDiff: string;
+}
+
+/**
+ * The key of the changed documents (BR-2396, D-81): SHA-256 over the review command and every reviewed text with its
+ * path, sorted by path. Unlike the prompt key it does not change when other documents land on main.
+ */
+export function docsKey(command: string, t: ReviewedTexts): string {
+  const h = createHash("sha256");
+  const parts = [command, ...[...t.live].sort((a, b) => a.path.localeCompare(b.path)).flatMap((d) => ["live", d.path, d.text]), ...[...t.deleted].sort((a, b) => a.path.localeCompare(b.path)).flatMap((d) => ["deleted", d.path, d.text]), "architecture", t.architectureDiff];
+  // reason: length-prefixed parts, like the prompt key (BR-2361)
+  for (const part of parts) h.update(`${Buffer.byteLength(part)}:`).update(part).update("\n");
+  return h.digest("hex");
+}
+
+/** A passed landing review of the same changed documents, with the main it was made against (BR-2396). */
+export interface PassedDocs extends PassedReview {
+  readonly base: string;
+}
+
+/**
+ * The newest landing rule review of `subject` whose documents key is `key`, when it passed and recorded its main: the
+ * newest of `review.ok` and `review.block`, so a later block wins (BR-2396, like BR-2361).
+ */
+export function passedDocs(db: CoordDb, subject: string | null, key: string): PassedDocs | undefined {
+  if (subject === null) return undefined;
+  const row = db.db
+    .query<{ id: number; kind: string; detail: string }, [string, string]>("SELECT id, kind, detail FROM events WHERE kind IN ('review.ok', 'review.block') AND subject = ? AND json_extract(detail, '$.docs_hash') = ? ORDER BY id DESC LIMIT 1")
+    .get(subject, key);
+  if (!row || row.kind !== "review.ok") return undefined;
+  const d = JSON.parse(row.detail) as { findings?: unknown; wording?: unknown; base?: unknown };
+  if (typeof d.base !== "string" || d.base === "") return undefined;
+  const wording = d.wording !== null && typeof d.wording === "object" && !Array.isArray(d.wording) ? (d.wording as Record<string, string>) : undefined;
+  return { event: row.id, findings: Array.isArray(d.findings) ? d.findings.map(String) : [], wording, base: d.base };
+}

@@ -48,6 +48,11 @@ export interface ReviewExtras {
   readonly wording?: readonly WordingQuestion[];
   /** The architecture overview, when the project has one with content: its text, and the diff this landing makes to it (empty when it does not touch it) (BR-2009, D-65). */
   readonly architecture?: { readonly text: string; readonly diff: string };
+  /**
+   * An incremental review (BR-2396, D-81): the changed documents passed the full review `from`, and `added` are the active
+   * rules and accepted decisions that landed on main since; the prompt says so and shows them whole.
+   */
+  readonly incremental?: { readonly from: number; readonly added: readonly Doc[] };
 }
 
 /** The key of each blocking criterion in the prompts, and `note` for a remark that never blocks (BR-2367, D-74). */
@@ -61,6 +66,13 @@ const NO_VERDICT = "Do not give a verdict: canon derives it from the keys.";
 export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras = {}): string {
   const contexts = contextTops(corpus, changed, extras).map((top) => contextSection(root, corpus, top));
   return [...promptHead(corpus, changed, extras), ...contexts, ...promptTail(corpus)].join("\n");
+}
+
+/** One document as the prompt shows it: id, title, kind and status, a decision's links, its body. */
+function docSection(d: Doc): string {
+  // reason: the body has no front matter, so the reviewer could not see what a decision supersedes or amends (BR-2141)
+  const links = d.kind === "decision" ? [...(d.supersedes.length ? [`supersedes: ${d.supersedes.join(", ")}`] : []), ...(d.amends.length ? [`amends: ${d.amends.join(", ")}`] : [])] : [];
+  return `## ${d.id} ${d.title} (${d.kind}${"status" in d ? `, ${d.status}` : ""})\n\n${links.map((l) => `${l}\n`).join("")}${links.length ? "\n" : ""}${d.body.trim()}\n`;
 }
 
 /** Everything in the prompt before the affected domains' text; `note` is a line for the reviewer after the answer format. */
@@ -114,10 +126,18 @@ ${q.examples.trim()}
 `);
   }
   parts.push("# Changed documents (new text)");
-  for (const d of changed) {
-    // reason: the body has no front matter, so the reviewer could not see what a decision supersedes or amends (BR-2141)
-    const links = d.kind === "decision" ? [...(d.supersedes.length ? [`supersedes: ${d.supersedes.join(", ")}`] : []), ...(d.amends.length ? [`amends: ${d.amends.join(", ")}`] : [])] : [];
-    parts.push(`## ${d.id} ${d.title} (${d.kind}${"status" in d ? `, ${d.status}` : ""})\n\n${links.map((l) => `${l}\n`).join("")}${links.length ? "\n" : ""}${d.body.trim()}\n`);
+  for (const d of changed) parts.push(docSection(d));
+  if (extras.incremental) {
+    // reason: the changed text already passed a full review against its whole domains; only what landed since is new to it (BR-2396, D-81)
+    parts.push(
+      "# Incremental review",
+      "",
+      `The changed documents above, with exactly this text, passed a full review (event ${extras.incremental.from}) that saw the whole of their domains and the indexes. Since then the documents below landed on main. Judge only the changed documents against these documents: a criterion that holds between them blocks as usual. The domain text and the indexes further below hold only the changed and the newly landed documents, not whole domains: say nothing about what is missing from them.`,
+      "",
+      "## Documents landed on main since the passing review",
+      "",
+    );
+    for (const d of extras.incremental.added) parts.push(docSection(d));
   }
   if (extras.architecture) {
     const { text, diff } = extras.architecture;

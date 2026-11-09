@@ -20,7 +20,10 @@ import { landingExecution, unconfirmedWording, wordingMessage } from "../../exec
 import { landingAllocations } from "./allocated.ts";
 import { noticeProposedDecisions } from "./proposed.ts";
 import { reviewTree } from "./review-tree.ts";
-import { passedReview, reviewKey } from "./review-reuse.ts";
+import { docsKey, passedDocs, passedReview, reviewKey } from "./review-reuse.ts";
+import { landedSince } from "./landed-since.ts";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { architectureOf, couldNotRun, duplicateReviewPrompt, reviewScope, reviewSettingsOn, standingTouched } from "./review-scope.ts";
 import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
 import { checksAddedAndReviewed, checksAddedAndReviewedMessage, keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
@@ -158,18 +161,44 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       const hash = reviewKey("land", reviewer, onMain.reviewMaxPromptBytes, prompts.value);
       const earlier = passedReview(ws.db, "land", hash);
       const reused = earlier && unconfirmedWording(execution.wording, earlier.wording).length === 0 ? earlier : undefined;
+      // The changed documents' own key: the same text that passed a full review needs only what landed on main since (BR-2396, D-81).
+      const readmePaths = new Set(scope.readmes.map((name) => read.corpus.domains.find((d) => d.name === name)?.path).filter((p): p is string => p !== undefined));
+      const docs_hash = docsKey(reviewer, {
+        live: [...changedDocs.map((d) => d.path), ...readmePaths].map((path) => ({ path, text: readFileSync(join(wt, path), "utf8") })),
+        deleted: [...deleted, ...deletedReadmes].map((d) => ({ path: d.path, text: d.text })),
+        architectureDiff: architecture?.diff ?? "",
+      });
+      const prior = reused ? undefined : passedDocs(ws.db, subject, docs_hash);
+      const usable = prior && unconfirmedWording(execution.wording, prior.wording).length === 0 ? prior : undefined;
+      const added = usable ? landedSince(wt, usable.base, base.value, read.corpus, new Set(changedDocs.map((d) => d.path))) : undefined;
       let verdict: ReviewVerdict;
       if (reused) {
         say(`review: reused the passing review of the same prompts (event ${reused.event}, hash ${hash.slice(0, 12)}); the review command was not run`);
         ws.db.event(ws.actor, "review.reused", subject, { review: "land", docs: reviewed, hash, from: reused.event, commit: head.value });
         verdict = { verdict: "ok", findings: reused.findings, ...(reused.wording ? { wording: reused.wording } : {}) };
+      } else if (usable && added && added.length === 0) {
+        say(`review: the changed documents are the ones that passed review event ${usable.event}, and no rule or decision landed on main since; the review command was not run`);
+        ws.db.event(ws.actor, "review.reused", subject, { review: "land", by: "docs", docs: reviewed, docs_hash, from: usable.event, commit: head.value });
+        verdict = { verdict: "ok", findings: usable.findings, ...(usable.wording ? { wording: usable.wording } : {}) };
+      } else if (usable && added) {
+        say(`review: the changed documents are the ones that passed review event ${usable.event}; reviewing them only against what landed on main since: ${added.map((d) => d.id).join(", ")}`);
+        const keep = new Set([...changedDocs, ...added]);
+        const small = reviewPrompts(wt, { ...read.corpus, docs: read.corpus.docs.filter((d) => keep.has(d)) }, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, incremental: { from: usable.event, added } }, onMain.reviewMaxPromptBytes);
+        if (!small.ok) return refuse("review", small.error.message);
+        const at = tree.get();
+        if (!at.ok) return refuse("environment", at.error.message);
+        const run = await runReviews(reviewer, at.value, small.value, limits);
+        if (!run.ok) return refuse("review", couldNotRun("rule", run.error.message, at.value, mainAt));
+        // reason: the earlier pass's notes are kept with the new ones, so the landing records them all (BR-2145); its wording answers stand (BR-2239)
+        verdict = { verdict: run.value.verdict, findings: run.value.verdict === "ok" ? [...usable.findings, ...run.value.findings] : run.value.findings, ...(usable.wording ? { wording: usable.wording } : {}) };
+        ws.db.event(ws.actor, `review.${run.value.verdict}`, subject, { docs: reviewed, findings: verdict.findings, commit: head.value, docs_hash, base: base.value, incremental: { from: usable.event, added: added.map((d) => d.id) }, ...(usable.wording ? { wording: usable.wording } : {}) });
       } else {
         const at = tree.get();
         if (!at.ok) return refuse("environment", at.error.message);
         const run = await runReviews(reviewer, at.value, prompts.value, limits);
         if (!run.ok) return refuse("review", couldNotRun("rule", run.error.message, at.value, mainAt));
         verdict = run.value;
-        ws.db.event(ws.actor, `review.${verdict.verdict}`, subject, { docs: reviewed, findings: verdict.findings, commit: head.value, hash, ...(execution.wording.length > 0 ? { wording: verdict.wording ?? {} } : {}) });
+        ws.db.event(ws.actor, `review.${verdict.verdict}`, subject, { docs: reviewed, findings: verdict.findings, commit: head.value, hash, docs_hash, base: base.value, ...(execution.wording.length > 0 ? { wording: verdict.wording ?? {} } : {}) });
       }
       if (verdict.verdict === "block") return refuse("review", `rule review blocked:\n${verdict.findings.map((f) => `  - ${f}`).join("\n")}`);
       const unconfirmed = unconfirmedWording(execution.wording, verdict.wording);
