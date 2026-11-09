@@ -6,6 +6,8 @@ export interface LandOptions {
   readonly finish: boolean;
   /** Give up waiting for the queue after this long. */
   readonly timeoutMs: number;
+  /** The run directory of the background landing this process is (D-80); recorded in `land.start` so the landing can be followed again. */
+  readonly run?: string;
   /** How decision sources given as URLs are fetched (BR-2111); the network unless a test supplies one. */
   readonly fetcher?: Fetcher;
   /** The workflow guide `canon brief` prints, one of the standing texts the duplicate review compares (BR-2143). */

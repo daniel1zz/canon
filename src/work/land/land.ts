@@ -50,7 +50,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   if (recovered) return finishLanding(ws, opts, say, { entry: 0, subject, sha: recovered.sha });
   // Before anything slow, so a landing killed from here on is found by its process (BR-2307, D-58).
   const lander = selfProcess();
-  ws.db.event(ws.actor, "land.start", subject, { pid: lander?.pid ?? null, pid_start: lander?.start ?? null });
+  ws.db.event(ws.actor, "land.start", subject, { pid: lander?.pid ?? null, pid_start: lander?.start ?? null, ...(opts.run !== undefined ? { run: opts.run } : {}) });
   // Every refusal, early or late, is recorded with its reason so a check's precision can be measured (P6, BR-2026).
   const early = (reason: Extract<LandOutcome, { kind: "refused" }>["reason"], message: string): LandOutcome => {
     ws.db.event(ws.actor, "land.refuse", subject, { reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main) });

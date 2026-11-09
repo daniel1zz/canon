@@ -8,7 +8,7 @@ import { land } from "../land.ts";
 import { reopenForGoneLander } from "./batch.ts";
 import { processOf } from "../../claims/liveness.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
-import { FAST, boundedLoop, project, quiet, sh, startNew, waitFor, ws } from "../../testkit.ts";
+import { FAST, boundedLoop, project, quiet, sh, startNew, waitFor, ws, landingProcess } from "../../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
 // under load that alone came within 0.4 s of the 5 s default (C-111), so they get room, not the rest of the file.
@@ -314,7 +314,7 @@ describe("batched landings", () => {
     const other = ws(root, "agent:b");
     const leader = enqueue(other.db, "/leader", "C-98", "agent:b", processOf(process.pid)!); // alive and beating
     other.db.db.query("UPDATE queue SET state = 'landing' WHERE id = ?").run(leader);
-    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: b.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: b.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     const out = collect(p.stdout);
     const entry = () => other.db.db.query<{ id: number; state: string; result: string | null }, [string]>("SELECT id, state, result FROM queue WHERE worktree = ? ORDER BY id DESC LIMIT 1").get(b.worktree);
     await until(() => entry()?.state === "waiting");
@@ -338,7 +338,7 @@ describe("batched landings", () => {
     const other = ws(root, "agent:b");
     const leader = enqueue(other.db, "/leader", "C-98", "agent:b", processOf(process.pid)!);
     other.db.db.query("UPDATE queue SET state = 'landing' WHERE id = ?").run(leader);
-    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: b.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: b.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     const out = collect(p.stdout);
     const entry = () => other.db.db.query<{ id: number; state: string; result: string | null }, [string]>("SELECT id, state, result FROM queue WHERE worktree = ? ORDER BY id DESC LIMIT 1").get(b.worktree);
     await until(() => entry()?.state === "waiting");
@@ -359,7 +359,7 @@ describe("batched landings", () => {
     const other = ws(root, "agent:b");
     const leader = enqueue(other.db, "/leader", "C-98", "agent:b", processOf(process.pid)!);
     other.db.db.query("UPDATE queue SET state = 'landing' WHERE id = ?").run(leader);
-    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: b.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: b.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     const entry = () => other.db.db.query<{ id: number; state: string }, [string]>("SELECT id, state FROM queue WHERE worktree = ? ORDER BY id DESC LIMIT 1").get(b.worktree);
     await until(() => entry()?.state === "waiting");
     expect(sh(b.worktree, "log", "-1", "--format=%s")).toBe(`canon: close ${b.change}`);

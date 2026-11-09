@@ -10,6 +10,12 @@ import { start } from "./session/session.ts";
 export const quiet = () => {};
 export const FAST = { finish: false, timeoutMs: 20_000 };
 
+/**
+ * The environment that makes a `canon work land` this process spawns the background landing process itself (D-80): its exit code,
+ * its signal handling and its process are the landing's own, as a test that signals or kills the lander needs.
+ */
+export const landingProcess = (): { CANON_LAND_RUN: string } => ({ CANON_LAND_RUN: `${process.pid}:${mkdtempSync(join(tmpdir(), "canon-run-"))}` });
+
 export function sh(cwd: string, ...args: string[]) {
   const r = git(cwd, ...args);
   if (!r.ok) throw new Error(r.error.message);

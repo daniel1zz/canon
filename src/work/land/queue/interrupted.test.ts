@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, readFileSync, writeFileSync, mkdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
-import { FAST, HANG_SECONDS, boundedLoop, project, quiet, sh, startNew, ws } from "../../testkit.ts";
+import { FAST, HANG_SECONDS, boundedLoop, project, quiet, sh, startNew, ws, landingProcess } from "../../testkit.ts";
 import { land } from "../land.ts";
 
 // reason: these tests start the real CLI and kill it with SIGKILL, so they wait out real processes (C-111 gave TIMED to such tests).
@@ -10,7 +10,7 @@ const CLI = join(import.meta.dir, "../../../invocation/main.ts");
 
 type Proc = ReturnType<typeof Bun.spawn>;
 const spawnCanon = (cwd: string, args: string[], env: Record<string, string> = {}): Proc =>
-  Bun.spawn(["bun", CLI, ...args], { cwd, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...env } });
+  Bun.spawn(["bun", CLI, ...args], { cwd, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...(args.includes("land") ? landingProcess() : {}), ...env } });
 
 async function run(cwd: string, args: string[], env: Record<string, string> = {}) {
   const p = spawnCanon(cwd, args, env);

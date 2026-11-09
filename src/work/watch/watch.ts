@@ -391,7 +391,7 @@ function markGreen(ws: Workspace, sha: string, say: Say): void {
 }
 
 /** The command that runs this canon: the compiled binary itself, bun with the CLI's source file, or bun with the bundled script. */
-function canonCommand(): string[] {
+export function canonCommand(): string[] {
   // reason: a compiled canon embeds its sources under /$bunfs and is started as itself (BR-2219).
   if (import.meta.dir.startsWith("/$bunfs")) return [process.execPath];
   const source = join(import.meta.dir, "..", "..", "invocation", "main.ts");

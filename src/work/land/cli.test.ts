@@ -6,7 +6,7 @@ import { check } from "../../knowledge/check/check.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { enqueue, finishEntry, tryTurn } from "./queue/queue.ts";
 import { land } from "./land.ts";
-import { FAST, project, quiet, sh, startNew, waitFor, ws } from "../testkit.ts";
+import { FAST, project, quiet, sh, startNew, waitFor, ws, landingProcess } from "../testkit.ts";
 
 // reason: these tests drive a spawned `canon work land` and wait out queue polls on purpose (C-111).
 const TIMED = 30_000;
@@ -121,7 +121,7 @@ describe("refusals and waits after queuing", () => {
     const other = ws(root, "agent:b");
     const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
     expect(tryTurn(other.db, ahead).mine).toBe(true);
-    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     await waitFor("the landing to queue", () => other.db.db.query("SELECT 1 FROM queue WHERE worktree = ?").get(s.worktree) !== null);
     p.kill("SIGTERM");
     expect(await p.exited).toBe(143);

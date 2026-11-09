@@ -3,6 +3,6 @@ import type { GuideLine } from "../../invocation/guide.ts";
 /** This domain's lines of the workflow guide `canon brief` prints (BR-2090); src/invocation/guide.ts puts them in rank order. */
 export const landGuide: readonly GuideLine[] = [
   { rank: 80, text: `Finish with canon work land --finish. Landing is the only gate: when refused, fix what it names and land again. Stopping before that: canon work stop --next "<next step>".` },
-  { rank: 90, text: `Landing can take minutes while it waits behind other landings: run it with a long timeout or in the background, and read its exit code directly, not through a pipe.` },
+  { rank: 90, text: `Landing can take minutes while it waits behind other landings: it runs in its own background process, so a command cut off by a tool timeout or Ctrl-C only stops following it; run canon work land again to follow it (canon work land --stop stops it), and read its exit code directly, not through a pipe.` },
   { rank: 95, text: `Only the owner puts a change ahead in the landing queue: canon backlog urgent <C-n> --relayed "<the owner's own words>", and only when the owner asked for it in the conversation (--clear removes it again). Never to hurry your own change.` },
 ];

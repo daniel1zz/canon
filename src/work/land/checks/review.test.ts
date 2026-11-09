@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../land.ts";
-import { HANG_SECONDS, FAST, waitFor, project, quiet, sh, startNew, ws } from "../../testkit.ts";
+import { HANG_SECONDS, FAST, waitFor, project, quiet, sh, startNew, ws, landingProcess } from "../../testkit.ts";
 
 const CLI = join(import.meta.dir, "../../../invocation/main.ts");
 
@@ -206,7 +206,7 @@ describe("rule review at land", () => {
     const before = sh(root, "rev-parse", "main");
     const s = startNew(root, "New rule");
     addRule(s.worktree);
-    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
     expect(code).toBe(1);
     const said = `${out}${err}`;
@@ -566,7 +566,7 @@ tests: []
     configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n`);
     const s = startNew(root, "New rule");
     addRule(s.worktree);
-    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     await waitFor("the reviewer to start", () => existsSync(pidFile));
     const dir = readFileSync(`${pidFile}.cwd`, "utf8").trim();
     expect(existsSync(dir)).toBe(true); // while the review runs it is there
@@ -624,7 +624,7 @@ tests: []
     configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n`);
     const s = startNew(root, "New rule");
     addRule(s.worktree);
-    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     await waitFor("the reviewer to start", () => existsSync(pidFile));
     const pid = Number(readFileSync(pidFile, "utf8").trim());
     p.kill("SIGTERM");

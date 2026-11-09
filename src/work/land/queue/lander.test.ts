@@ -7,7 +7,7 @@ import { readCorpus } from "../../../knowledge/documents/read.ts";
 import { land } from "../land.ts";
 import { waitPollMs } from "./wait.ts";
 import { processOf, selfProcess, type Proc } from "../../claims/liveness.ts";
-import { HANG_SECONDS, boundedLoop, hang, FAST, project, quiet, sh, startNew, waitFor, ws } from "../../testkit.ts";
+import { HANG_SECONDS, boundedLoop, hang, FAST, project, quiet, sh, startNew, waitFor, ws, landingProcess } from "../../testkit.ts";
 
 // reason: these tests wait out real time on purpose (sleeps, leases, stale times) or drive a spawned `canon work land`;
 // under load that alone came within 0.4 s of the 5 s default (C-111), so they get room, not the rest of the file.
@@ -91,7 +91,7 @@ describe("the claim names the lander while it lands", () => {
       expect(tryTurn(other.db, ahead).mine).toBe(true);
       const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: "agent:a" };
       delete env["CLAUDECODE"];
-      const lander = Bun.spawn(["bun", join(import.meta.dir, "../../../invocation/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env });
+      const lander = Bun.spawn(["bun", join(import.meta.dir, "../../../invocation/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env: { ...env, ...landingProcess() } });
       for (let i = 0; i < 200 && pidOf(root, s.change) !== lander.pid; i++) await Bun.sleep(50);
       expect(pidOf(root, s.change)).toBe(lander.pid);
       expect(takeClaim(other.db, s.change, s.worktree, "agent:b").ok).toBe(false);
@@ -115,7 +115,7 @@ describe("the claim names the lander while it lands", () => {
       expect(tryTurn(other.db, ahead).mine).toBe(true);
       const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: "agent:a" };
       delete env["CLAUDECODE"];
-      const lander = Bun.spawn(["bun", join(import.meta.dir, "../../../invocation/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env });
+      const lander = Bun.spawn(["bun", join(import.meta.dir, "../../../invocation/main.ts"), "work", "land"], { cwd: s.worktree, stdout: "ignore", stderr: "ignore", env: { ...env, ...landingProcess() } });
       for (let i = 0; i < 200 && pidOf(root, s.change) !== lander.pid; i++) await Bun.sleep(50);
       expect(pidOf(root, s.change)).toBe(lander.pid);
       lander.kill("SIGKILL");
@@ -150,7 +150,7 @@ describe("a lander killed by a signal", () => {
     writeFileSync(join(root, "canon/config.yaml"), `floor: "exec sleep ${HANG_SECONDS}"\ntests: []\n`);
     sh(root, "commit", "-qam", "slow floor");
     const s = startNew(root, "Killed");
-    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     const logs = join(sh(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "canon/logs");
     await until(() => entryOf(root)?.state === "landing" && existsSync(join(logs, `land-${entryOf(root)!.id}.log`))); // the floor runs
     p.kill("SIGTERM");
@@ -169,7 +169,7 @@ describe("a lander killed by a signal", () => {
     sh(root, "commit", "-qam", "slow floor");
     const s = startNew(root, "Killed finish");
     const head = sh(s.worktree, "rev-parse", "HEAD");
-    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     const logs = join(sh(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "canon/logs");
     await until(() => entryOf(root)?.state === "landing" && existsSync(join(logs, `land-${entryOf(root)!.id}.log`)));
     p.kill("SIGTERM");
@@ -188,7 +188,7 @@ describe("a lander killed by a signal", () => {
     const marker = join(root, "..", `${root.split("/").pop()}-closing`);
     const release = `${marker}.release`;
     writeFileSync(join(hooks, "post-commit"), `#!/bin/sh\ntouch ${marker}\n${boundedLoop(`[ ! -e ${release} ]`)}\n`, { mode: 0o755 });
-    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["bun", CLI, "work", "land", "--finish"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     await until(() => existsSync(marker)); // the close commit is being made
     p.kill("SIGTERM"); // canon only: git finishes the commit
     writeFileSync(release, ""); // the hook ends after the signal, so canon handles it once the commit is done
@@ -213,7 +213,7 @@ describe("a lander killed by a signal", () => {
     const marker = join(root, "..", `${root.split("/").pop()}-in-rebase`);
     writeFileSync(join(hooks, "post-checkout"), `#!/bin/sh\ntouch ${marker}\nexec sleep ${HANG_SECONDS}\n`, { mode: 0o755 });
     // reason: a new process group, so the signal reaches git and the hook too, as a tool timeout's would.
-    const p = Bun.spawn(["perl", "-e", "setpgrp(0,0); exec @ARGV", "bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["perl", "-e", "setpgrp(0,0); exec @ARGV", "bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     await until(() => existsSync(marker));
     process.kill(-p.pid, "SIGTERM");
     expect(await p.exited).toBe(143);

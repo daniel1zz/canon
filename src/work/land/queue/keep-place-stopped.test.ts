@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { CoordDb } from "../../db.ts";
 import { enqueue, enter, failIfActive, failKeepingPlace, finishEntry, keptPlaces, tryTurn } from "./queue.ts";
 import { land } from "../land.ts";
-import { FAST, HANG_SECONDS, project, quiet, sh, startNew, waitFor, ws } from "../../testkit.ts";
+import { FAST, HANG_SECONDS, project, quiet, sh, startNew, waitFor, ws, landingProcess } from "../../testkit.ts";
 
 /** A landing that gave up waiting (timeout) or was stopped by a signal keeps its place like a conflict does (BR-2368, D-75). */
 
@@ -115,14 +115,14 @@ describe("a landing that gave up waiting, through real landings", () => {
 
   test("BR-2368 BR-2048: canon work land --timeout exits 75 and says until when the place is kept", async () => {
     const { s } = waiting();
-    const p = Bun.spawn(["bun", CLI, "work", "land", "--timeout", "0.005"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["bun", CLI, "work", "land", "--timeout", "0.005"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     expect(await p.exited).toBe(75);
     expect(await new Response(p.stderr).text()).toContain("this landing keeps its place in the queue until");
   }, TIMED);
 
   test("BR-2368: a landing killed by SIGTERM while waiting keeps its place; landing again takes it back, and the event says so", async () => {
     const { s, d, blocker } = waiting();
-    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     await waitFor("the landing to wait in the queue", () => entryIds(d, s.worktree).length === 1 && stateOf(d, entryIds(d, s.worktree)[0]!) === "waiting");
     const first = entryIds(d, s.worktree)[0]!;
     p.kill("SIGTERM");
@@ -146,7 +146,7 @@ describe("a landing that gave up waiting, through real landings", () => {
     sh(root, "commit", "-qam", "slow floor");
     const s = startNew(root, "Killed at its turn");
     const d = ws(root).db;
-    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     await waitFor("the floor to run", () => entryIds(d, s.worktree).length === 1 && stateOf(d, entryIds(d, s.worktree)[0]!) === "landing");
     const first = entryIds(d, s.worktree)[0]!;
     await waitFor("the floor to start", () => existsSync(join(sh(root, "rev-parse", "--path-format=absolute", "--git-common-dir"), "canon/logs", `land-${first}.log`)));
@@ -162,7 +162,7 @@ describe("a landing that gave up waiting, through real landings", () => {
     const out = await land(ws(s.worktree), { finish: false, timeoutMs: 300 }, quiet);
     expect(out.kind === "timeout" && out.keepsPlaceUntil).toBeUndefined();
     expect(eventsOf(d, "land.refuse").at(-1)).not.toHaveProperty("keeps_place_until");
-    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const p = Bun.spawn(["bun", CLI, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
     await waitFor("the landing to wait", () => entryIds(d, s.worktree).length === 2 && stateOf(d, entryIds(d, s.worktree)[1]!) === "waiting");
     p.kill("SIGTERM");
     expect(await p.exited).toBe(143);

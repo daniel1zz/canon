@@ -3,7 +3,7 @@ import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "n
 import { dirname, join } from "node:path";
 import { enqueue, finishEntry } from "../queue/queue.ts";
 import { land } from "../land.ts";
-import { FAST, boundedLoop, gapCommit, project, sh, startNew, waitFor, ws } from "../../testkit.ts";
+import { FAST, boundedLoop, gapCommit, project, sh, startNew, waitFor, ws, landingProcess } from "../../testkit.ts";
 
 // reason: end-to-end batches run real landings through 2 s queue polls and spawned landers on purpose (C-111).
 const TIMED = 60_000;
@@ -49,7 +49,7 @@ function collect(p: ReturnType<typeof spawnLand>) {
   }
   return heard;
 }
-const spawnLand = (wt: string) => Bun.spawn(["bun", CLI, "work", "land"], { cwd: wt, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+const spawnLand = (wt: string) => Bun.spawn(["bun", CLI, "work", "land"], { cwd: wt, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", ...landingProcess() } });
 
 /**
  * Queues each lander behind a silent entry, lets `before` change the queue, then frees it, so the first leads.

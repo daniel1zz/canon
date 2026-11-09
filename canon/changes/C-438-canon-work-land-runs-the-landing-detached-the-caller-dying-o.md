@@ -3,7 +3,15 @@ id: C-438
 title: canon work land runs the landing detached; the caller dying or pressing
   Ctrl-C only detaches (#161)
 status: open
-rules: []
+rules:
+  - BR-2390
+  - BR-2391
+  - BR-2392
+  - BR-2393
+  - BR-2099
+  - BR-2307
+  - BR-2309
+  - BR-2022
 ---
 
 ## 为什么
@@ -19,17 +27,17 @@ rules: []
 - 在同一个 worktree 再运行 `canon work land`：后台合入还在进行就接上它，不新开一个；已经结束就报那次的结果。
 - 新增一个明确停止后台合入的方式（例如 `canon work land --stop`），停下后按 BR-2099 让出轮次。
 - 后台合入进程本身被杀，仍按 BR-2099、BR-2309、D-58 处理；`--timeout` 管后台合入。
-- 新决策写明“默认后台运行、Ctrl-C 只脱离”和被否决的方案；改 BR-2099、BR-2307、BR-2309，新增“脱离”“接上”“停止”的规则和两侧例子。
+- 新决策 D-80（修订 D-58）写明“默认后台运行、Ctrl-C 只脱离”和被否决的方案；改 BR-2099、BR-2307、BR-2309、BR-2022，新增 BR-2390（后台运行和跟随）、BR-2391（脱离）、BR-2392（接上）、BR-2393（停止）。
 
 不做：不改排队位置的规则（D-75）。
 
 ## 教训
 
-无
+- Bun 不带 `env` 启动子进程时用的是进程启动时的环境，之后改 `process.env`（包括删掉一个变量）对这些子进程不起作用；所以后台合入按父进程判断，而不是把 `CANON_LAND_RUN` 从环境里去掉。写进了 D-80 的决定和 `src/work/land/detach.ts` 的 reason 注释；要不要做成检查（例如不许在 `src` 里写 `delete process.env`）：待负责人确认是否固化。
 
 ## 任务
 
-- [ ] 决策
-- [ ] 规则
-- [ ] 后台运行、接上、停止
-- [ ] 测试：杀掉前台进程后合入照样完成；再运行能接上；停止后让出轮次
+- [x] 决策（D-80）
+- [x] 规则
+- [x] 后台运行、接上、停止
+- [x] 测试：杀掉前台进程后合入照样完成；再运行能接上；停止后让出轮次（`src/work/land/detach.test.ts`）
