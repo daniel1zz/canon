@@ -158,6 +158,37 @@ describe("following a landing again (D-80)", () => {
   }, TIMED);
 });
 
+describe("two canon work land at once (#172)", () => {
+  test("BR-2392: two canon work land started together from one worktree start one landing; both follow it and exit with its code", async () => {
+    const h = heldProject();
+    const a = follower(h.s.worktree);
+    const b = follower(h.s.worktree);
+    await waitFor("the floor to start", () => existsSync(h.pidfile));
+    writeFileSync(h.release, "");
+    const [ra, rb] = await Promise.all([result(a), result(b)]);
+    expect([ra.code, rb.code]).toEqual([0, 0]);
+    expect(starts(h.root).length).toBe(1);
+    expect(ws(h.root).db.db.query("SELECT 1 FROM events WHERE kind = 'land.spawn'").all().length).toBe(1);
+    expect(`${ra.err}${rb.err}`).toContain("following it instead of starting another");
+  }, TIMED);
+
+  test("BR-2392: landing again right after detaching, before the first landing recorded land.start, follows it", async () => {
+    const h = heldProject();
+    const first = follower(h.s.worktree);
+    const spawned = () => ws(h.root).db.db.query<{ run: string }, []>("SELECT json_extract(detail, '$.run') AS run FROM events WHERE kind = 'land.spawn'").get()?.run;
+    // the landing process is up (its pid file is written) and has not recorded land.start yet
+    await waitFor("the landing process to start", () => spawned() !== undefined && existsSync(join(spawned()!, "pid")));
+    first.kill("SIGTERM");
+    expect((await result(first)).code).toBe(75);
+    const again = follower(h.s.worktree);
+    await waitFor("the floor to start", () => existsSync(h.pidfile));
+    writeFileSync(h.release, "");
+    const r = await result(again);
+    expect(r.code).toBe(0);
+    expect(starts(h.root).length).toBe(1);
+  }, TIMED);
+});
+
 describe("canon work land --stop (D-80)", () => {
   test("BR-2393: --stop ends the running landing, which gives its turn up as killed; exit 0", async () => {
     const h = heldProject();

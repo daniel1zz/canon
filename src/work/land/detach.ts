@@ -4,7 +4,7 @@ import type { Subprocess } from "bun";
 import type { Workspace } from "../workspace.ts";
 import { logFile } from "../hooks/hooks.ts";
 import { canonCommand } from "../watch/watch.ts";
-import { isGone, type Proc } from "../claims/liveness.ts";
+import { isGone, processOf, type Proc } from "../claims/liveness.ts";
 import { attemptIn } from "./queue/interrupted.ts";
 import { EXIT } from "../../invocation/command.ts";
 
@@ -51,20 +51,27 @@ export function landArgs(a: { finish?: boolean; timeout?: string; as?: string })
 }
 
 /** Starts the background landing: its own process group, no standard input, its output in a new run directory (D-80). */
-export function startBackground(ws: Workspace, args: readonly string[]): { dir: string; proc: Subprocess } {
-  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const dir = logFile(ws.db, `land-run-${stamp}-${process.pid}`);
+export function startBackground(ws: Workspace, args: readonly string[], dir: string = newRunDir(ws)): { dir: string; proc: Subprocess } {
   mkdirSync(dir, { recursive: true });
   const out = openSync(join(dir, "out"), "a");
   const err = openSync(join(dir, "err"), "a");
   try {
     // reason: its own process group, so the caller's tool timeout, hang-up or Ctrl-C does not reach the landing (D-80)
     const proc = Bun.spawn([...canonCommand(), "work", "land", ...args], { cwd: process.cwd(), stdout: out, stderr: err, stdin: "ignore", detached: true, env: { ...(process.env as Record<string, string>), [RUN_ENV]: `${process.pid}:${dir}` } });
+    // reason: until the landing records land.start, this file is how another `canon work land` tells it is alive (BR-2392, #172)
+    const me = processOf(proc.pid);
+    if (me) writeFileSync(join(dir, "pid"), `${me.pid}\n${me.start}\n`);
     return { dir, proc };
   } finally {
     closeSync(out);
     closeSync(err);
   }
+}
+
+/** A new run directory under the coordination database's logs (BR-2390). */
+export function newRunDir(ws: Workspace): string {
+  const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+  return logFile(ws.db, `land-run-${stamp}-${process.pid}`);
 }
 
 /** The latest landing from this worktree that ran in the background, with its run directory (BR-2392). */
@@ -73,6 +80,34 @@ export function lastRun(ws: Workspace): { id: number; ts: string; dir: string } 
   if (!r) return undefined;
   const run = (JSON.parse(r.detail) as { run?: unknown }).run;
   return typeof run === "string" && existsSync(run) ? { id: r.id, ts: r.ts, dir: run } : undefined;
+}
+
+/** The process a run directory's `pid` file names, once the follower that started it has written it. */
+function runProcess(dir: string): Proc | undefined {
+  const p = join(dir, "pid");
+  if (!existsSync(p)) return undefined;
+  const [pid, start] = readFileSync(p, "utf8").split("\n");
+  return pid && start ? { pid: Number(pid), start } : undefined;
+}
+
+/**
+ * A landing another `canon work land` started from this worktree that has not recorded `land.start` yet (BR-2392, #172):
+ * the latest `land.spawn` of this worktree with no `land.start` of the same run after it, whose run has no exit code and
+ * whose landing process is alive, or, before that process is written down, whose starting `canon work land` is alive.
+ */
+function startingRun(ws: Workspace): { ts: string; dir: string } | undefined {
+  const r = ws.db.db.query<{ id: number; ts: string; detail: string }, [string]>("SELECT id, ts, detail FROM events WHERE kind = 'land.spawn' AND worktree = ? ORDER BY id DESC LIMIT 1").get(ws.root);
+  if (!r) return undefined;
+  const run = (JSON.parse(r.detail) as { run?: unknown }).run;
+  if (typeof run !== "string") return undefined;
+  const started = ws.db.db.query<{ one: number }, [number, string, string]>("SELECT 1 AS one FROM events WHERE id > ? AND kind = 'land.start' AND worktree = ? AND json_extract(detail, '$.run') = ? LIMIT 1").get(r.id, ws.root, run);
+  if (started || exitOf(run) !== undefined) return undefined;
+  const proc = runProcess(run);
+  if (proc) return isGone(proc) === false ? { ts: r.ts, dir: run } : undefined;
+  // reason: a starter killed before it started the landing leaves no landing; it is not waited for (BR-2392)
+  const d = JSON.parse(r.detail) as { pid?: unknown; pid_start?: unknown };
+  const starter = typeof d.pid === "number" && typeof d.pid_start === "string" ? { pid: d.pid, start: d.pid_start } : undefined;
+  return starter && isGone(starter) === false ? { ts: r.ts, dir: run } : undefined;
 }
 
 /** Copies what a stream file gained since `at` to the file descriptor `fd`; returns the new offset. */
@@ -157,19 +192,46 @@ export async function follow(ws: Workspace, dir: string, lander: Lander, pid: nu
  * and follows it. Returns the exit code.
  */
 export async function landInBackground(ws: Workspace, args: readonly string[]): Promise<number> {
-  const last = lastRun(ws);
-  if (last) {
-    const a = attemptIn(ws.db, ws.config.main, ws.root);
-    if (a && a.id === last.id && a.state === "running" && a.pid !== null && a.pidStart !== null) {
-      writeSync(2, `canon: the landing started ${last.ts} from this worktree is still running (process ${a.pid}); following it instead of starting another\n`);
-      return follow(ws, last.dir, { recorded: { pid: a.pid, start: a.pidStart } }, a.pid);
+  type Decision =
+    | { readonly starting: { ts: string; dir: string } }
+    | { readonly running: { ts: string; dir: string }; readonly proc: Proc }
+    | { readonly unseen: { ts: string; dir: string } }
+    | { readonly spawn: string };
+  // reason: deciding that no landing runs and recording the one about to start happen in one write transaction, so two
+  // `canon work land` started together cannot both start a landing for this worktree (BR-2392, #172)
+  const decided = ws.db.db.transaction((): Decision => {
+    const starting = startingRun(ws);
+    if (starting) return { starting };
+    const last = lastRun(ws);
+    if (last) {
+      const a = attemptIn(ws.db, ws.config.main, ws.root);
+      if (a && a.id === last.id && a.state === "running" && a.pid !== null && a.pidStart !== null) return { running: last, proc: { pid: a.pid, start: a.pidStart } };
+      if (exitOf(last.dir) !== undefined && !existsSync(join(last.dir, "seen"))) return { unseen: last };
     }
-    if (exitOf(last.dir) !== undefined && !existsSync(join(last.dir, "seen"))) {
-      writeSync(2, `canon: the landing started ${last.ts} from this worktree ended while nothing followed it; its output follows. Run canon work land again to land anew\n`);
-      return follow(ws, last.dir, { over: true }, null);
+    const dir = newRunDir(ws);
+    mkdirSync(dir, { recursive: true });
+    const me = processOf(process.pid);
+    ws.db.event(ws.actor, "land.spawn", null, { run: dir, pid: me?.pid ?? null, pid_start: me?.start ?? null });
+    return { spawn: dir };
+  }).immediate();
+  if ("starting" in decided) {
+    writeSync(2, `canon: the landing started ${decided.starting.ts} from this worktree is still starting; following it instead of starting another\n`);
+    let proc = runProcess(decided.starting.dir);
+    for (let i = 0; !proc && i < 50; i++) {
+      await Bun.sleep(POLL_MS);
+      proc = runProcess(decided.starting.dir);
     }
+    return follow(ws, decided.starting.dir, proc ? { recorded: proc } : { over: true }, proc?.pid ?? null);
   }
-  const { dir, proc } = startBackground(ws, args);
+  if ("running" in decided) {
+    writeSync(2, `canon: the landing started ${decided.running.ts} from this worktree is still running (process ${decided.proc.pid}); following it instead of starting another\n`);
+    return follow(ws, decided.running.dir, { recorded: decided.proc }, decided.proc.pid);
+  }
+  if ("unseen" in decided) {
+    writeSync(2, `canon: the landing started ${decided.unseen.ts} from this worktree ended while nothing followed it; its output follows. Run canon work land again to land anew\n`);
+    return follow(ws, decided.unseen.dir, { over: true }, null);
+  }
+  const { dir, proc } = startBackground(ws, args, decided.spawn);
   return follow(ws, dir, { proc }, proc.pid);
 }
 
