@@ -96,6 +96,19 @@ describe("the boundaries", () => {
     expect(ids(relatedOf(short, BR(1)))).toEqual([BR(8)]);
   });
 
+  test("BR-2387: shared names are listed rarest first, then in dictionary order, and only the first 3 are written", () => {
+    const files = {
+      ...base(),
+      [`canon/rules/billing/${BR(1)}.md`]: rule(1, "写 `zz.1`、`aa.1`、`mm.2`、`kk.3`。"),
+      [`canon/rules/shipping/${BR(7)}.md`]: rule(7, "写 `zz.1`、`aa.1`、`mm.2`、`kk.3`。"),
+      [`canon/rules/shipping/${BR(8)}.md`]: rule(8, "写 `mm.2`。"),
+    };
+    const l = relatedOf(files, BR(1));
+    const seven = l.related.find((r) => r.doc.id === BR(7))!;
+    expect(seven.shared).toEqual(["aa.1", "kk.3", "zz.1", "mm.2"]);
+    expect(relatedLines(l.related[0]!.doc, l)).toContain(`  ${BR(7)} 规则7  (\`aa.1\`, \`kk.3\`, \`zz.1\`, …)`);
+  });
+
   test("BR-2387: for a decision no domain is left out: rules of any domain sharing its names are listed", () => {
     const l = relatedOf({ ...base(), [`canon/decisions/${D(3)}.md`]: decision(3, "写 `refund.issued`。") }, D(3));
     expect(ids(l)).toEqual([BR(1), BR(2), BR(7)]);
