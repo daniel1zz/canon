@@ -63,6 +63,7 @@ describe("exit codes", () => {
     const template = readFileSync(join(root, change), "utf8");
     expect(template.indexOf("## 教训")).toBeGreaterThan(template.indexOf("## 陷阱和假设")); // BR-2037: lessons before the tasks
     expect(template.indexOf("## 教训")).toBeLessThan(template.indexOf("## 任务"));
+    expect(template).toContain("本变更为自己的功能或修复写的规则和测试不是教训"); // BR-2037, D-78
   });
 
   test("BR-2037 BR-2110: a new decision's template has a 来源 line under each option; filled in it passes canon check, left as is it is refused", () => {
@@ -421,7 +422,7 @@ describe("session continuity", () => {
     const one = canon(root, "work", "start", "--title", "One").out.match(/cd (.+)/)![1]!.trim();
     const stopped = canon(one, "work", "stop", "--next", "write the test");
     expect(stopped.code).toBe(0);
-    expect(last(stopped.out)).toMatch(/^lessons: .*## 教训.*ask the owner/);
+    expect(last(stopped.out)).toMatch(/^lessons: .*## 教训.*ask the owner.*not lessons/);
     fill(one, ["C", 1].join("-"));
     const plain = canon(one, "work", "land");
     expect(plain.code).toBe(0);

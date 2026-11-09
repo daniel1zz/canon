@@ -290,6 +290,7 @@ describe("lessons in the rule review", () => {
     expect(prompt).toContain("add a note (never block for it)");
     expect(prompt).toContain("text-only (只靠文字) without a reason");
     expect(prompt).toContain("does not say the owner confirmed it");
+    expect(prompt).toContain("A rule, test or check the change writes for its own feature or fix is not a lesson");
   });
 
   test("BR-2162: a change without a lessons section, or no change at all, adds no lessons part", () => {

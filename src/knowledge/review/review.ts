@@ -81,8 +81,9 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
     "Do not block for wording, style or formatting.",
     "One rule is one trigger (one command, event or kind of input) and one outcome (D-5). The error cases, exit codes and boundaries of the same trigger belong in that rule as examples, and a definition table (such as a list of exit codes) is one rule: do not suggest splitting those. Suggest a split only when a rule covers two different triggers, or two outcomes that could change independently; never block for it.",
     "Write the findings in the language the documents are written in.",
-    // reason: turning a lesson into a mechanism needs the owner's confirmation; the review only reminds, never blocks (BR-2162, D-24)
-    "When the change's lessons section is shown below, add a note (never block for it) naming the change id: for a lesson marked text-only (只靠文字) without a reason although a rule, check or command could enforce it; and for a lesson whose mechanism is a rule, check or command this landing adds (in the changed documents) when the lesson does not say the owner confirmed it.",
+    // reason: turning a lesson into a mechanism needs the owner's confirmation; the review only reminds, never blocks (BR-2162, D-24);
+    // a change's own rules and tests for its own feature or fix are not lessons and need no confirmation (D-78)
+    "When the change's lessons section is shown below, add a note (never block for it) naming the change id: for a lesson marked text-only (只靠文字) without a reason although a rule, check or command could enforce it; and for a lesson about the process or tools whose mechanism is a rule, check or command this landing adds (in the changed documents) when the lesson does not say the owner confirmed it. A rule, test or check the change writes for its own feature or fix is not a lesson: give no note asking for the owner's confirmation of it.",
     extras.wording?.length
       ? `Answer with JSON only: ${ANSWER_FORMAT_RULE}, "wording":{"<rule id>":"wording"|"behaviour"}}, with one wording entry per rule under # Wording judgements`
       : `Answer with JSON only: ${ANSWER_FORMAT_RULE}}`,

@@ -3,7 +3,10 @@ id: C-434
 title: A change's own rules and regression tests are not lessons and need no
   owner confirmation (#167)
 status: open
-rules: []
+rules:
+  - BR-2037
+  - BR-2162
+  - BR-2163
 ---
 
 ## 为什么
@@ -26,7 +29,7 @@ rules: []
 
 ## 任务
 
-- [ ] 新决策修订 D-24
-- [ ] 改 BR-2162、BR-2163、BR-2037 和例子
-- [ ] 模板、评审提示、合入后提醒的文字
-- [ ] 测试按规则命名（it("BR-2162: ...") 等）
+- [x] 新决策 D-78 修订 D-24
+- [x] 改 BR-2162、BR-2163、BR-2037 和例子
+- [x] 模板、评审提示、合入后提醒的文字
+- [x] 测试按规则命名（it("BR-2162: ...") 等）
