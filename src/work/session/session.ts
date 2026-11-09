@@ -244,7 +244,7 @@ function createDocProbe(ws: Workspace, corpus: Corpus, _title: string): { id: st
  * 教训 section, and becomes a mechanism only once the owner confirms it (D-24).
  */
 export const LESSON_REMINDER =
-  "lessons: if this work taught something about the process or tools that could become a mechanism (a rule, check or command) beyond this change, record it under ## 教训 in the change file and ask the owner before making it one; the rules and tests this change wrote for its own feature or fix are not lessons";
+  "lessons: if this work taught something about the process or tools that could become a mechanism (a rule, check or command) beyond this change, record it under ## 教训 in the change file and ask the owner before making it one; the rules, tests and checks this change wrote for its own feature or fix are not lessons";
 
 export function stop(ws: Workspace, next: string, note: string | undefined, release: boolean, say: Say = () => {}): Result<string> {
   // Release too goes through the holder check: only the holder lets its claim go (BR-2104).
