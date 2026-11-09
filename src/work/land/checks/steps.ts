@@ -163,7 +163,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       const reused = earlier && unconfirmedWording(execution.wording, earlier.wording).length === 0 ? earlier : undefined;
       // The changed documents' own key: the same text that passed a full review needs only what landed on main since (BR-2396, D-81).
       const readmePaths = new Set(scope.readmes.map((name) => read.corpus.domains.find((d) => d.name === name)?.path).filter((p): p is string => p !== undefined));
-      const docs_hash = docsKey(reviewer, {
+      const docs_hash = docsKey(reviewer, onMain.reviewMaxPromptBytes, {
         live: [...changedDocs.map((d) => d.path), ...readmePaths].map((path) => ({ path, text: readFileSync(join(wt, path), "utf8") })),
         deleted: [...deleted, ...deletedReadmes].map((d) => ({ path: d.path, text: d.text })),
         architectureDiff: architecture?.diff ?? "",

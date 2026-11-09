@@ -117,7 +117,7 @@ describe("reusing a passed rule review (BR-2361)", () => {
   const configWith = (t: ReturnType<typeof reusing>, review: string, extra: string) =>
     `floor: "true"\ntests: []\nreview: ${JSON.stringify(review)}\n${extra}hooks:\n  before_land: 'test -f ${t.marker} || { touch ${t.marker}; exit 1; }'\n`;
 
-  test("BR-2361: a changed review command or a changed budget, through the landing, runs the review command again", async () => {
+  test("BR-2361 BR-2396: a changed review command or a changed budget, through the landing, runs the review command again", async () => {
     for (const change of ["command", "budget"]) {
       const t = reusing();
       const s = startNew(t.root, "New rule");

@@ -49,12 +49,12 @@ export interface ReviewedTexts {
 }
 
 /**
- * The key of the changed documents (BR-2396, D-81): SHA-256 over the review command and every reviewed text with its
+ * The key of the changed documents (BR-2396, D-81): SHA-256 over the review command, the prompt budget and every reviewed text with its
  * path, sorted by path. Unlike the prompt key it does not change when other documents land on main.
  */
-export function docsKey(command: string, t: ReviewedTexts): string {
+export function docsKey(command: string, budgetBytes: number, t: ReviewedTexts): string {
   const h = createHash("sha256");
-  const parts = [command, ...[...t.live].sort((a, b) => a.path.localeCompare(b.path)).flatMap((d) => ["live", d.path, d.text]), ...[...t.deleted].sort((a, b) => a.path.localeCompare(b.path)).flatMap((d) => ["deleted", d.path, d.text]), "architecture", t.architectureDiff];
+  const parts = [command, String(budgetBytes), ...[...t.live].sort((a, b) => a.path.localeCompare(b.path)).flatMap((d) => ["live", d.path, d.text]), ...[...t.deleted].sort((a, b) => a.path.localeCompare(b.path)).flatMap((d) => ["deleted", d.path, d.text]), "architecture", t.architectureDiff];
   // reason: length-prefixed parts, like the prompt key (BR-2361)
   for (const part of parts) h.update(`${Buffer.byteLength(part)}:`).update(part).update("\n");
   return h.digest("hex");

@@ -46,8 +46,10 @@ function relanding(verdicts: string[] = ["ok"]) {
 }
 
 describe("reviewing a re-landing whose changed documents already passed (D-81)", () => {
-  test("BR-2396: a rule that landed on main since the pass is reviewed with the unchanged rule in a small review, which records incremental", async () => {
+  test("BR-2396 BR-2009 BR-2036: a rule that landed on main since the pass is reviewed with the unchanged rule in a small review, which records incremental", async () => {
     const t = relanding();
+    const old = ["BR", 3].join("-");
+    t.onMain(`canon/rules/billing/${old}.md`, ruleText(old, "Old refunds stay."));
     const s = t.start();
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("refused");
     const full = t.events("review.ok")[0]!;
@@ -59,6 +61,8 @@ describe("reviewing a re-landing whose changed documents already passed (D-81)",
     expect(t.prompt(2)).toContain("# Incremental review");
     expect(t.prompt(2)).toContain("Refunds are logged.");
     expect(t.prompt(1)).not.toContain("# Incremental review");
+    expect(t.prompt(1)).toContain(`Refunds ${old}`); // the full review sees the whole domain and the index
+    expect(t.prompt(2)).not.toContain(`Refunds ${old}`); // the small one only the changed and the newly landed documents
     expect(said.join("\n")).toContain(`reviewing them only against what landed on main since: ${two}`);
     expect(said.join("\n")).toContain(`${one} note 1`); // the full review's note is still handed on
     const small = t.events("review.ok")[1]!;
