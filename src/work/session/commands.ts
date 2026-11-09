@@ -24,6 +24,7 @@ import { redMainNotice, startFixMain } from "../watch/redmain.ts";
 import { ensureWatcher, untestedNotice } from "../watch/watch.ts";
 import { startTrailingReview, unreviewedNotice } from "../../knowledge/review/code-review-batch.ts";
 import { unpushedNotice } from "../remote/remote.ts";
+import { briefLine, othersDoing, planStatuses } from "../../knowledge/plans/status.ts";
 
 /** `canon brief` and `canon work start`, `stop`, `status`, `clean`: a session and its change's worktree. */
 
@@ -50,6 +51,8 @@ const startCmd = defineCommand({
     if (planned && (String(args.plan).trim() === "" || steps.length === 0)) fail({ code: "invalid", message: "--plan needs a change id and --step at least one step name" });
     const target = typeof args.change === "string" && args.change ? { change: args.change } : { title: String(args.title), rules: list(args.rules), ...(planned ? { plan: { id: String(args.plan).trim().toUpperCase(), steps } } : {}) };
     const s = must(fixMain ? startFixMain(ws, say) : start(ws, target, say));
+    // A step another unfinished change is doing is said, never refused: a step may take several changes (BR-2385, D-77).
+    if ("plan" in target && target.plan) for (const line of stepsTaken(ws, target.plan, s.change)) say(line);
     noticeUpdates(ws, say);
     say(`cd ${s.worktree}`);
   },
@@ -95,6 +98,17 @@ const status = defineCommand({
     say(`Questions waiting for a human: ${data.questions.length}`);
   },
 });
+
+/** The lines saying which of a new change's steps other unfinished changes already do (BR-2385). */
+function stepsTaken(ws: Workspace, plan: { id: string; steps: readonly string[] }, self: string): string[] {
+  // reason: the change is already started; a failure to read the others is said, not raised: it is only a hint (BR-2385)
+  const onMain = mainCorpus(ws);
+  if (!onMain.ok) return [`could not check which changes already do ${plan.steps.join(", ")}: ${onMain.error.message}`];
+  const all = listedChanges(ws, onMain.value, [], () => true);
+  if (!all.ok) return [`could not check which changes already do ${plan.steps.join(", ")}: ${all.error.message}`];
+  const doers = all.value.listed.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 }));
+  return othersDoing(doers, plan.id, plan.steps, self).map((o) => `step ${o.step} is already being done by ${o.changes.join(", ")}`);
+}
 
 /** How `canon work status` marks a claim that no longer binds (BR-2192). */
 const STALE: Record<ClaimState, string> = { live: "", expired: "  (expired: lease ended)", "holder-gone": "  (expired: session process exited)" };
@@ -177,12 +191,20 @@ function briefState(ws: Workspace): Result<void> {
     const backlog = backlogAt(ws.primary, ws.config.main, ws.config.types);
     if (!backlog.ok) return backlog;
     // reason: (claimed) only where `canon work start` would refuse; an expired or abandoned claim it takes over (BR-2149, BR-2100)
-    const open = listedChanges(ws, onMain.value, backlog.value, (c) => c.status === "open");
-    if (!open.ok) return open;
+    // reason: every change is read once; the plans need the done and dropped ones too, the order only the open ones
+    // and those done only on their branch, as listedChanges keeps them (BR-2383, BR-2294)
+    const every = listedChanges(ws, onMain.value, backlog.value, () => true);
+    if (!every.ok) return every;
     // reason: another session's half-done branch is said, never fatal: brief must still list everything else (BR-2292)
-    for (const u of open.value.unreadable) say(`Unreadable change file, not listed: ${u}`);
-    if (open.value.listed.length) {
-      const order = open.value.listed.map((l) => {
+    for (const u of every.value.unreadable) say(`Unreadable change file, not listed: ${u}`);
+    // Plans with steps ready to start, one line each, so a coordinator sees what to dispatch (BR-2383).
+    for (const p of planStatuses(onMain.value, every.value.listed.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 })))) {
+      const line = briefLine(p);
+      if (line) say(line);
+    }
+    const open = every.value.listed.filter((l) => l.change.status === "open" || (l.onBranch.length > 0 && l.change.status === "done"));
+    if (open.length) {
+      const order = open.map((l) => {
         const marks = marksOf(l, false);
         return marks.length ? `${l.change.id} (${marks.join(", ")})` : l.change.id;
       });

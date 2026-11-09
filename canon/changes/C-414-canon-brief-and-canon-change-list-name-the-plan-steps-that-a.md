@@ -3,7 +3,10 @@ id: C-414
 title: canon brief and canon change list name the plan steps that are ready, so
   a coordinator sees what to dispatch
 status: open
-rules: []
+rules:
+  - BR-2383
+  - BR-2384
+  - BR-2385
 ---
 
 ## 为什么
@@ -20,8 +23,12 @@ rules: []
 - `canon work start --plan C-n --step 名` 开工时，如果某一步已经有没完成的变更在做，照常开工（D-77：一步可以由几个变更做，开工不拒绝），但在输出里提示哪一步已由哪个变更在做，例如 `step 6 is already being done by C-300`，退出码仍是 0；这条写成一条规则（`work/session`），例子写已有变更在做、只有已放弃或已合入的变更、没有变更三种。这是 D-77 的独立评审提出的。
 - 不做：自动给可开始的步骤开变更或派活；开工时拒绝重复的步骤；改 `canon plan status` 的输出（BR-2373、BR-2374）；计划属于版本（第 3 片）。
 
+## 教训
+
+无
+
 ## 任务
 
-- [ ] 规则、测试（`it("BR-n: ...")`）、实现
-- [ ] `canon work start --step` 遇到已有变更在做的步骤时提示（规则、测试、实现）
-- [ ] `canon brief` 的输出长度检查：一个有 50 步的计划只多几行
+- [x] 规则、测试（`it("BR-n: ...")`）、实现：BR-2383（brief）、BR-2384（change list）
+- [x] `canon work start --step` 遇到已有变更在做的步骤时提示（规则、测试、实现）：BR-2385
+- [x] `canon brief` 的输出长度检查：一个计划只占一行，最多列 5 个可开始的步骤（BR-2383 的 50 步例子）

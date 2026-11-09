@@ -80,3 +80,44 @@ describe("work start with a plan step", () => {
     expect(readFileSync(join(next.value.worktree, "canon/changes/C-1.md"), "utf8")).toContain("## 计划");
   });
 });
+
+describe("work start on a step another change is doing", () => {
+  const doer = (root: string, n: number, status: string, steps: string) => {
+    writeFileSync(join(root, `canon/changes/C-${n}.md`), `---\nid: C-${n}\ntitle: Doer ${n}\nstatus: ${status}\nrules: []\nplan: C-1\nsteps: [${steps.split(",").map((x) => JSON.stringify(x)).join(", ")}]\n---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n## 任务\n\n- [x] x\n`);
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", `doer ${n}`);
+  };
+  const taken = (out: string) => out.split("\n").filter((l) => l.startsWith("step "));
+
+  test("BR-2385: a step an open change is doing is said and the start goes on with exit 0; only the steps taken are named", () => {
+    const root = planRepo();
+    doer(root, 300, "open", "3.1");
+    const r = cli(root, "work", "start", "--title", "Also step two", "--plan", "C-1", "--step", "2,3.1");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("cd ");
+    expect(taken(r.out)).toEqual(["step 3.1 is already being done by C-300"]);
+  });
+
+  test("BR-2385: a step whose changes were all dropped or landed done, or that nobody does, is not said", () => {
+    const root = planRepo();
+    doer(root, 301, "dropped", "2");
+    doer(root, 302, "done", "2");
+    const r = cli(root, "work", "start", "--title", "Step two again", "--plan", "C-1", "--step", "2");
+    expect(r.code).toBe(0);
+    expect(taken(r.out)).toEqual([]);
+    expect(taken(cli(root, "work", "start", "--title", "Step one", "--plan", "C-1", "--step", "1").out)).toEqual([]);
+  });
+
+  test("BR-2385: a change done only on its own branch still does the step", () => {
+    const root = planRepo();
+    const first = start(ws(root), { title: "First on two", plan: { id: "C-1", steps: ["2"] } }, quiet);
+    if (!first.ok) throw new Error(first.error.message);
+    const wt = first.value.worktree;
+    const file = sh(wt, "ls-files", "canon/changes").split("\n").find((f) => f.includes(first.value.change))!;
+    writeFileSync(join(wt, file), readFileSync(join(wt, file), "utf8").replace("status: open", "status: done"));
+    sh(wt, "commit", "-qam", "done on the branch");
+    const r = cli(root, "work", "start", "--title", "Second on two", "--plan", "C-1", "--step", "2");
+    expect(r.code).toBe(0);
+    expect(taken(r.out)).toEqual([`step 2 is already being done by ${first.value.change}`]);
+  });
+});

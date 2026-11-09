@@ -8,6 +8,7 @@ import type { readCorpus } from "./read.ts";
 import { technicalLayerWord, technicalNameAdvice } from "./domain-names.ts";
 import { createDoc, createDomain, setMeta } from "./write.ts";
 import { findDoc } from "../query/query.ts";
+import { planStatuses, progressMark, stepsMark } from "../plans/status.ts";
 
 /** `canon rule`, `decision`, `change`, `note`, `doc`: creating, listing and setting the status of documents. */
 
@@ -63,17 +64,23 @@ function listCommand(kind: Kind, describe: string) {
       if (kind === "change") {
         // Changes come in the owner's order (canon/backlog.md), started ones next, and include those that so far exist
         // only on their change branch, so the list the guide points to holds released work too (BR-2148, BR-2291, D-50).
-        const { listed, unreadable } = must(listedChanges(ws, corpus, readBacklog(ws.root, ws.config.types), (c) => live(c)));
+        // reason: read once with every change: progress counts the done ones too, which the list itself leaves out;
+        // the list keeps what listedChanges would keep with `live`, a change done only on its branch included (BR-2384, BR-2294)
+        const { listed: every, unreadable } = must(listedChanges(ws, corpus, readBacklog(ws.root, ws.config.types), () => true));
+        const listed = every.filter((l) => live(l.change) || (l.onBranch.length > 0 && l.change.status === "done"));
+        const progress = new Map(planStatuses(corpus, every.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 }))).map((p) => [p.change.id, p]));
         if (args.json) {
           json(listed.map(({ change: { body: _b, ...r }, onBranch, handoff, claimed }) => ({
             ...r,
+            ...(progress.has(r.id) ? { plan_progress: { total: progress.get(r.id)!.steps.length, done: progress.get(r.id)!.counts.done, percent: progress.get(r.id)!.percent } } : {}),
             on_branch: onBranch,
             handoff: handoff ? { next: handoff.next, actor: handoff.actor, updated_at: handoff.updated_at } : null,
             claimed,
           })));
         } else {
           for (const l of listed) {
-            const marks = marksOf(l, true);
+            const plan = progress.get(l.change.id);
+            const marks = [...marksOf(l, true), ...[stepsMark(l.change), plan && progressMark(plan)].filter((m): m is string => Boolean(m))];
             say(`${l.change.id.padEnd(8)} ${l.change.status.padEnd(10)} ${l.change.title}${marks.length ? `  (${marks.join("; ")})` : ""}`);
           }
           if (listed.length === 0 && unreadable.length === 0) say("(no changes)");

@@ -89,3 +89,41 @@ export function statusJson(p: PlanStatus, withSteps: boolean): Record<string, un
     ...(withSteps ? { steps: p.steps.map((s) => ({ step: s.step.name, content: s.step.content, depends_on: s.step.dependsOn, state: s.state, changes: s.changes, waiting_for: s.waitingFor })) } : {}),
   };
 }
+
+/** At most this many ready steps are named on a plan's brief line, so a plan of any size takes one line (BR-2383). */
+const BRIEF_READY = 5;
+
+/** The brief's line for a plan with ready steps, undefined when it has none (BR-2383). */
+export function briefLine(p: PlanStatus): string | undefined {
+  const ready = p.steps.filter((s) => s.state === "ready");
+  if (ready.length === 0) return undefined;
+  const shown = ready.slice(0, BRIEF_READY).map((s) => `${s.step.name} ${s.step.content}`).join("; ");
+  const more = ready.length > BRIEF_READY ? `; 另有 ${ready.length - BRIEF_READY} 步可开始 (canon plan status ${p.change.id})` : "";
+  return `Plan ${p.change.id} ${p.change.title}: ${STATE_LABEL.done} ${p.counts.done}/${p.steps.length} (${p.percent}%); ${STATE_LABEL.ready}: ${shown}${more}`;
+}
+
+/** `canon change list`'s mark for a plan's progress (BR-2384). */
+export function progressMark(p: PlanStatus): string {
+  return `plan ${STATE_LABEL.done} ${p.counts.done}/${p.steps.length} (${p.percent}%)`;
+}
+
+/** `canon change list`'s mark for the steps a change does, or undefined when it does none (BR-2384). */
+export function stepsMark(change: Change): string | undefined {
+  const steps = change.steps ?? [];
+  if (!change.plan || steps.length === 0) return undefined;
+  return `plan ${change.plan} ${steps.length > 1 ? "steps" : "step"} ${steps.join(", ")}`;
+}
+
+/**
+ * For each of `steps` of plan `planId`, the other changes still doing it: not dropped and not landed done on main
+ * (BR-2385). Steps nobody else does are left out.
+ */
+export function othersDoing(doers: readonly Doer[], planId: string, steps: readonly string[], self: string): { step: string; changes: string[] }[] {
+  return steps.flatMap((step) => {
+    const changes = doers
+      .filter((d) => d.change.id !== self && d.change.plan === planId && d.change.steps?.includes(step))
+      .filter((d) => d.change.status !== "dropped" && !(d.onMain && d.change.status === "done"))
+      .map((d) => d.change.id);
+    return changes.length > 0 ? [{ step, changes }] : [];
+  });
+}

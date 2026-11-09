@@ -245,3 +245,51 @@ describe("canon plan status", () => {
     expect(canon(root, "plan", "status", "C-1").err).toContain("has no plan");
   });
 });
+
+const planLines = (out: string) => out.split("\n").filter((l) => l.startsWith("Plan "));
+
+describe("plans in canon brief", () => {
+  test("BR-2383: where no change is claimed, a plan with ready steps gets one line with its progress and the ready steps", () => {
+    const root = withDoers([["2", "done", "1"]]);
+    expect(planLines(canon(root, "brief").out)).toEqual(["Plan C-1 Build it: 已完成 1/4 (25%); 可开始: 2 接口; 3 界面"]);
+  });
+
+  test("BR-2383: a plan whose steps are all working, blocked or done has no line, and with no plan nothing changes", () => {
+    expect(planLines(canon(withDoers([["2", "done", "1"], ["3", "open", "2"], ["4", "open", "3"]]), "brief").out)).toEqual([]);
+    expect(planLines(canon(withDoers([["2", "done", "1,2,3,4"]]), "brief").out)).toEqual([]);
+    expect(planLines(canon(repo([changeFile(1, "open")]), "brief").out)).toEqual([]);
+  });
+
+  test("BR-2383: a plan of 50 steps with 8 ready takes one line naming 5 and counting the rest; a claimed worktree shows no plan", () => {
+    const rows = Array.from({ length: 50 }, (_, i) => `| ${i + 1} | s${i + 1} | ${i < 8 ? "-" : "1"} |`);
+    const root = repo([changeFile(1, "open", { plan: table(...rows), title: "Big" })]);
+    expect(planLines(canon(root, "brief").out)).toEqual(["Plan C-1 Big: 已完成 0/50 (0%); 可开始: 1 s1; 2 s2; 3 s3; 4 s4; 5 s5; 另有 3 步可开始 (canon plan status C-1)"]);
+    const s = start(ws(root), { title: "Other work" }, quiet);
+    if (!s.ok) throw new Error(s.error.message);
+    expect(planLines(canon(s.value.worktree, "brief").out)).toEqual([]);
+  });
+});
+
+describe("plans in canon change list", () => {
+  test("BR-2384: a change doing steps is marked with its plan and steps, the plan change with its progress", () => {
+    const root = withDoers([["2", "done", "1"], ["3", "open", "2"], ["5", "open", "2,3"]]);
+    const lines = canon(root, "change", "list").out.trim().split("\n");
+    const line = (id: string) => lines.find((l) => l.startsWith(`${id} `)) ?? "";
+    expect(line("C-1")).toContain("plan 已完成 1/4 (25%)");
+    expect(line("C-3")).toContain("plan C-1 step 2");
+    expect(line("C-5")).toContain("plan C-1 steps 2, 3");
+    expect(line("C-1")).not.toContain("plan C-1 step");
+  });
+
+  test("BR-2384: a broken plan gets no progress; --json has plan_progress only on a plan change; no plans, no marks", () => {
+    const broken = repo([changeFile(1, "open", { plan: table("| 1 | a | 9 |") })]);
+    expect(canon(broken, "change", "list").out).not.toContain("已完成");
+    const root = withDoers([["2", "done", "1"], ["3", "open", "2"]]);
+    const all = JSON.parse(canon(root, "change", "list", "--json").out) as { id: string; plan_progress?: unknown; plan?: string; steps?: string[] }[];
+    expect(all.find((c) => c.id === "C-1")?.plan_progress).toEqual({ total: 4, done: 1, percent: 25 });
+    expect(all.find((c) => c.id === "C-3")).toMatchObject({ plan: "C-1", steps: ["2"] });
+    expect(all.find((c) => c.id === "C-3")).not.toHaveProperty("plan_progress");
+    const plain = canon(repo([changeFile(1, "open"), changeFile(2, "open")]), "change", "list").out;
+    expect(plain).not.toContain("plan");
+  });
+});
