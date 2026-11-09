@@ -160,7 +160,7 @@ describe("following a landing again (D-80)", () => {
 });
 
 describe("two canon work land at once (#172)", () => {
-  test("BR-2392: two canon work land started together from one worktree start one landing; both follow it and exit with its code", async () => {
+  test("BR-2390 BR-2392: two canon work land started together from one worktree start one landing; both follow it and exit with its code; land.spawn names its run and the run directory its process", async () => {
     const h = heldProject();
     const a = follower(h.s.worktree);
     const b = follower(h.s.worktree);
@@ -169,7 +169,11 @@ describe("two canon work land at once (#172)", () => {
     const [ra, rb] = await Promise.all([result(a), result(b)]);
     expect([ra.code, rb.code]).toEqual([0, 0]);
     expect(starts(h.root).length).toBe(1);
-    expect(ws(h.root).db.db.query("SELECT 1 FROM events WHERE kind = 'land.spawn'").all().length).toBe(1);
+    const spawns = ws(h.root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'land.spawn'").all().map((r) => JSON.parse(r.detail) as { run: string; pid: number; pid_start: string });
+    expect(spawns).toHaveLength(1);
+    expect(spawns[0]!.run).toBe(starts(h.root)[0]!.run!);
+    expect([a.pid, b.pid]).toContain(spawns[0]!.pid);
+    expect(readFileSync(join(spawns[0]!.run, "pid"), "utf8").split("\n")[0]).toBe(String(starts(h.root)[0]!.pid));
     expect(`${ra.err}${rb.err}`).toContain("following it instead of starting another");
   }, TIMED);
 
