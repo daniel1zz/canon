@@ -2,7 +2,7 @@
 id: C-426
 title: A tooling-only landing runs a floor scoped to what it changed instead of
   the full floor, and does not wait behind full-floor landings (#151)
-status: open
+status: done
 rules:
   - BR-2398
   - BR-2399
@@ -11,6 +11,14 @@ rules:
   - BR-2020
   - BR-2172
   - BR-2177
+passes:
+  BR-2014: 947e2ea38c7e68c3 test
+  BR-2020: ee741e01fe5468e9 test
+  BR-2172: 70b81a686d8a5bf2 test
+  BR-2177: bd85d70d8a9a2993 test
+  BR-2232: dd501e57a30ea89b test
+  BR-2398: 3bbc947ccbea0d3a test
+  BR-2399: 4d7a20f59b5443cd test
 ---
 
 ## 为什么
