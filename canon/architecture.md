@@ -54,7 +54,7 @@ title: 架构总览
 - 职责：Claude Code hook（会话开始跑 `canon brief`；每次 Bash 前快照、检查 `canon work` 命令带不带 `--as`（`canon work check-as`，只拒绝、不改写）；提问工具之后记录回答；Write 或 Edit 之后提示改动的规则或决策在新行里复述了别的规则，`canon restatements --hook`，D-84）、`.claude/skills/canon-*`、git 的 `reference-transaction` hook（main 只能由 `canon work land` 移动）。
 - 数据：项目的 `.claude/settings.json`、`.claude/skills/`、git hook 目录里的守卫文件；skill 的来源是 canon 自己仓库的 `.claude/skills`。`canon init` 和 `canon update` 还写只有标题的 `canon/architecture.md`（已有的不覆盖）。
 - 代码：`src/install`（`init`、`install`、`update`、`uninstall`、`githook.ts`）。
-- 决策：D-9、D-10、D-16、D-36、D-46、D-53、D-62、D-65。
+- 决策：D-9、D-10、D-16、D-36、D-46、D-53、D-62、D-65、D-84。
 
 **后台 floor watch（`floor_timing: after` 时）**
 - 职责：合入后在 git 公共目录下的临时 worktree 里，对 main 的最新提交按批跑 floor；通过就移动 `refs/canon/green` 并运行 `after_green`；没通过就记下，由下一个会话 `canon work start --fix-main` 向前修。
@@ -63,10 +63,10 @@ title: 架构总览
 - 决策：D-31、D-55、D-59。
 
 **合入后的命令和评审**
-- 职责：合入后在主 checkout 里后台运行配置的 `after_land` 命令，记下日志和退出码；运行和记录配置的生命周期 hook、每个变更的端口 `CANON_PORT`；两种评审的提示词和结果：合入时对规则、决策、常驻说明的规则评审（调用配置的 `review` 命令；拆成几次调用时同时运行，D-83；同样的提示通过过就沿用，改动文档和上次通过时一样就只对之后合入 main 的文档做小评审，D-70、D-81），和合入后的代码评审（怎么跑由项目配）。
+- 职责：合入后在主 checkout 里后台运行配置的 `after_land` 命令，记下日志和退出码；运行和记录配置的生命周期 hook、每个变更的端口 `CANON_PORT`；两种评审的提示词和结果：合入时对规则、决策、常驻说明的规则评审（调用配置的 `review` 命令；拆成几次调用时同时运行，D-83；同样的提示通过过就沿用，改动文档和上次通过时一样就只对之后合入 main 的文档做小评审，D-70、D-81），和合入后的代码评审（怎么跑由项目配）。规则评审还拦截新写的行里复述别的规则的行为，提示里附上这次新增或改动的行和文字判定找到的候选（BR-2405、D-84）。
 - 数据：`refs/canon/code-reviewed`，后台命令的日志和退出码（事件表）。
 - 代码：`src/work/hooks`、`src/knowledge/review`。
-- 决策：D-2、D-19、D-21、D-51、D-59。
+- 决策：D-2、D-19、D-21、D-51、D-59、D-84。
 
 ## 容器：本项目配的
 

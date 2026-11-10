@@ -34,8 +34,10 @@ export interface Restatement {
 export interface RestatementIndex {
   /** Each active or planned rule's runs of its 规则 section. */
   readonly rules: ReadonlyMap<string, ReadonlySet<string>>;
-  /** Runs in more rules than a phrase of the project's own vocabulary would be: never counted. */
-  readonly common: ReadonlySet<string>;
+  /** In how many rules' 规则 sections each run is. */
+  readonly seen: ReadonlyMap<string, number>;
+  /** A run in more rules than this, besides the rule cited and the rule the sentence is in, is the project's vocabulary: never counted. */
+  readonly limit: number;
 }
 
 const ID = /\b[A-Z][A-Z0-9]*-\d+\b/g;
@@ -57,10 +59,8 @@ export function restatementIndex(corpus: Corpus): RestatementIndex {
   for (const r of corpus.docs.filter(live)) rules.set(r.id, grams(section(r.body, RULE_SECTION) ?? ""));
   const seen = new Map<string, number>();
   for (const g of rules.values()) for (const x of g) seen.set(x, (seen.get(x) ?? 0) + 1);
-  // reason: a run in more than 2% of the rules (at least 3) is the project's vocabulary, not a copied statement (BR-2401)
-  const limit = Math.max(3, Math.ceil(rules.size * 0.02));
-  const common = new Set([...seen].filter(([, n]) => n > limit).map(([x]) => x));
-  return { rules, common };
+  // reason: a run in more than 2% of the other rules (at least 3) is the project's vocabulary, not a copied statement (BR-2401)
+  return { rules, seen, limit: Math.max(3, Math.ceil(rules.size * 0.02)) };
 }
 
 /** The lines of a rule's 规则 section, or of a decision's body, with their 1-based numbers in the file. */
@@ -130,11 +130,13 @@ export function restatementsIn(index: RestatementIndex, doc: Doc, file: string, 
     cited.delete(doc.id);
     if (cited.size === 0) continue;
     const mine = grams(s.text);
+    const own = index.rules.get(doc.id);
     for (const id of cited) {
       const theirs = index.rules.get(id);
       if (!theirs) continue;
       let shared = 0;
-      for (const g of mine) if (theirs.has(g) && !index.common.has(g)) shared++;
+      // reason: the cited rule and the restating rule are not counted, or a sentence copied into more rules would hide itself (BR-2401)
+      for (const g of mine) if (theirs.has(g) && (index.seen.get(g) ?? 0) - 1 - (own?.has(g) ? 1 : 0) <= index.limit) shared++;
       if (shared >= MIN_SHARED) out.push({ path: doc.path, line: s.lines[0]!, id: doc.id, cited: id, shared, sentence: s.text });
     }
   }

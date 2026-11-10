@@ -74,6 +74,16 @@ describe("canon restatements", () => {
     expect(JSON.parse(canon(examples, ["restatements", "--json"]).out)).toEqual([]);
   });
 
+  test("BR-2401: with 40 rules a run in 4 rules besides the cited and the restating one is common and not counted; in 3 it counts", () => {
+    const many = (k: number) => {
+      const files: Record<string, string> = {};
+      for (let n = 3; n <= 40; n++) files[`canon/rules/billing/${id("BR", n)}.md`] = rule(n, n - 2 <= k ? `规则 ${n} 也写：${STATEMENT}。` : `规则 ${n}。`);
+      return billing(`退款按 ${B1} 在七个工作日内原路退回到付款账户。`, files);
+    };
+    expect(list(many(4)).out).toBe("no restatements\n");
+    expect(list(many(3)).out).toContain(`${B2} restates ${B1} (13 runs shared`);
+  });
+
   test("BR-2401: a decision's body is checked, and wrapped lines of one paragraph are one sentence", () => {
     const root = billing("x。", { "canon/decisions/D-1.md": decision(1, `我们按 ${B1} 在七个工作日\n内原路退回到付款账户。`) });
     expect(list(root).out).toContain(`canon/decisions/D-1.md:9: D-1 restates ${B1} (13 runs shared`);
