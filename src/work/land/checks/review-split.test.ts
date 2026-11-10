@@ -23,7 +23,7 @@ function splitProject(maxKb: number, mode: "ok" | "block2" | "fail1") {
 if [ "$mode" = block2 ] && [ "$n" = 2 ]; then echo '{"verdict":"block","findings":["second blocks","same note"]}'; else echo '{"verdict":"ok","findings":["same note"]}'; fi
 `,
   );
-  writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview_max_prompt_kb: ${maxKb}\nreview: 'sh ${script} ${dir} ${mode}'\n`);
+  writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview_max_prompt_kb: ${maxKb}\n# the script numbers the calls as they arrive, so they run one after another\nreview_parallel: 1\nreview: 'sh ${script} ${dir} ${mode}'\n`);
   for (const [path, text] of Object.entries({
     "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n",
     "canon/rules/billing/x/README.md": "# billing/x\n\n## 术语\n\n- **子域 X**：x\n",
