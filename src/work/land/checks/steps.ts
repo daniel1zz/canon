@@ -13,7 +13,7 @@ import { changePort } from "../../hooks/ports.ts";
 import { type Doc } from "../../../knowledge/documents/model.ts";
 import { findDoc } from "../../../knowledge/query/query.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
-import { reviewCalls, runReview, runReviews, splitNote, type ReviewVerdict } from "../../../knowledge/review/review.ts";
+import { reviewPrompts, runReview, runReviews, splitNote, type ReviewVerdict } from "../../../knowledge/review/review.ts";
 import { REVIEW_NONE, REVIEW_WAYS_OUT } from "../../../knowledge/review/config-keys.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
 import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
@@ -153,13 +153,12 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       const overview = architectureOf(wt, base.value, head.value);
       if (!overview.ok) return refuse("environment", overview.error.message);
       const architecture = overview.value;
-      const calls = reviewCalls(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording, ...(architecture ? { architecture } : {}) }, onMain.reviewMaxPromptBytes);
-      if (!calls.ok) return refuse("review", calls.error.message);
-      const prompts = calls.value.prompts;
-      const split = splitNote(prompts, calls.value.perDocument);
+      const prompts = reviewPrompts(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording, ...(architecture ? { architecture } : {}) }, onMain.reviewMaxPromptBytes);
+      if (!prompts.ok) return refuse("review", prompts.error.message);
+      const split = splitNote(prompts.value);
       if (split) say(`review: ${split}`);
       // reason: the same prompts, command and budget that already passed get the same answer without another model call; a pass whose wording answers did not confirm a wording-only edit is not reused, or the same refusal would repeat (BR-2361, BR-2239, D-70)
-      const hash = reviewKey("land", reviewer, onMain.reviewMaxPromptBytes, prompts);
+      const hash = reviewKey("land", reviewer, onMain.reviewMaxPromptBytes, prompts.value);
       const earlier = passedReview(ws.db, "land", hash);
       const reused = earlier && unconfirmedWording(execution.wording, earlier.wording).length === 0 ? earlier : undefined;
       // The changed documents' own key: the same text that passed a full review needs only what landed on main since (BR-2396, D-81).
@@ -184,11 +183,11 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       } else if (usable && added) {
         say(`review: the changed documents are the ones that passed review event ${usable.event}; reviewing them only against what landed on main since: ${added.map((d) => d.id).join(", ")}`);
         const keep = new Set([...changedDocs, ...added]);
-        const small = reviewCalls(wt, { ...read.corpus, docs: read.corpus.docs.filter((d) => keep.has(d)) }, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, incremental: { from: usable.event, added } }, onMain.reviewMaxPromptBytes);
+        const small = reviewPrompts(wt, { ...read.corpus, docs: read.corpus.docs.filter((d) => keep.has(d)) }, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, incremental: { from: usable.event, added } }, onMain.reviewMaxPromptBytes);
         if (!small.ok) return refuse("review", small.error.message);
         const at = tree.get();
         if (!at.ok) return refuse("environment", at.error.message);
-        const run = await runReviews(reviewer, at.value, small.value.prompts, limits, small.value.scopes, onMain.reviewParallel);
+        const run = await runReviews(reviewer, at.value, small.value, limits, onMain.reviewParallel);
         if (!run.ok) return refuse("review", couldNotRun("rule", run.error.message, at.value, mainAt));
         // reason: the earlier pass's notes are kept with the new ones, so the landing records them all (BR-2145); its wording answers stand (BR-2239)
         verdict = { verdict: run.value.verdict, findings: run.value.verdict === "ok" ? [...usable.findings, ...run.value.findings] : run.value.findings, ...(usable.wording ? { wording: usable.wording } : {}) };
@@ -196,7 +195,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       } else {
         const at = tree.get();
         if (!at.ok) return refuse("environment", at.error.message);
-        const run = await runReviews(reviewer, at.value, prompts, limits, calls.value.scopes, onMain.reviewParallel);
+        const run = await runReviews(reviewer, at.value, prompts.value, limits, onMain.reviewParallel);
         if (!run.ok) return refuse("review", couldNotRun("rule", run.error.message, at.value, mainAt));
         verdict = run.value;
         ws.db.event(ws.actor, `review.${verdict.verdict}`, subject, { docs: reviewed, findings: verdict.findings, commit: head.value, hash, docs_hash, base: base.value, ...(execution.wording.length > 0 ? { wording: verdict.wording ?? {} } : {}) });

@@ -55,12 +55,7 @@ describe("review size hint", () => {
     const hint = reviewSizeHints(root, corpus, 60 * KB)[0]!;
     for (const part of [/review instructions \+ rule index \+ accepted decision titles \d+ KB, domain text \d+ KB/, /cannot be made smaller than \d+ KB/]) expect(refusal.error.message).toMatch(part);
     expect(hint.match(/titles (\d+) KB, domain text (\d+) KB/)!.slice(1)).toEqual(refusal.error.message.match(/titles (\d+) KB, domain text (\d+) KB/)!.slice(1));
-    // the hint leaves the changed documents out (BR-2375), so its total is the refusal's less at most their rounded size
-    const hinted = Number(hint.match(/at least (\d+) KB/)![1]);
-    const need = Number(refusal.error.message.match(/than (\d+) KB/)![1]);
-    const docs = Number(refusal.error.message.match(/changed documents (\d+) KB/)![1]);
-    expect(hinted).toBeLessThanOrEqual(need);
-    expect(need - hinted).toBeLessThanOrEqual(docs);
+    expect(hint).toContain(`at least ${refusal.error.message.match(/than (\d+) KB/)![1]} KB`);
   });
 
   test("BR-2375: rule-sized pieces near the budget give a hint that suggests raising the budget or splitting into subdomains; far from it, no hint", () => {

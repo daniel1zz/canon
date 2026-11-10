@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readCorpus } from "../documents/read.ts";
-import { parseAnswer, reviewCalls, reviewPrompt, reviewPrompts, runReviews, splitNote } from "./review.ts";
+import { reviewPrompt, reviewPrompts, runReviews } from "./review.ts";
 
 const id = (p: string, n: number) => [p, n].join("-");
 const KB = 1024;
@@ -203,81 +203,6 @@ describe("rule review prompt budget", () => {
     expect(msg).not.toContain("several smaller changes");
   });
 
-  describe("two or more changed documents: a call of its own for each, then domain calls (D-83)", () => {
-    const five = id("BR", 5);
-    const six = id("BR", 6);
-    function twoChanged(kb = 1, budget = 250 * KB, extras = {}) {
-      const { root, corpus } = bigDomain(kb);
-      const changed = [five, six].map((x) => corpus.docs.find((d) => d.id === x)!);
-      const r = reviewCalls(root, corpus, changed, extras, budget);
-      if (!r.ok) throw new Error(r.error.message);
-      return { root, corpus, changed, ...r.value };
-    }
-
-    test("BR-2359: each changed rule has a call of its own without domain text, the domain text comes after in domain calls, and the output line counts both", () => {
-      const { prompts: calls, perDocument } = twoChanged();
-      expect(perDocument).toBe(2);
-      expect(calls.length).toBe(3); // everything fits: one domain call
-      expect(calls[0]).toContain(`this is call 1 of 3, and it judges only ${five}`);
-      expect(calls[1]).toContain(`this is call 2 of 3, and it judges only ${six}`);
-      for (const p of calls.slice(0, 2)) {
-        expect(p).not.toContain("# Current context for");
-        expect(p).toContain("SMALL-6"); // every changed document is in every call
-        expect(p).toContain(`- ${id("D", 1)} Accepted choice`);
-      }
-      expect(calls[2]).toContain("# Current context for big");
-      expect(calls[2]).toContain("# Current context for small");
-      expect(calls[2]).toContain("report only defects between a changed document and a document in the domain text shown here");
-      expect(splitNote(calls, perDocument)).toStartWith("split into 3 calls: 2 for one changed document each, 1 with domain text (review_max_prompt_kb): 1: ");
-    });
-
-    test("BR-2359: a call of its own blocks only on findings naming its document; a domain call only on findings naming a document of its domain text; the old format is not rewritten", () => {
-      const { scopes } = twoChanged();
-      const ownFive = parseAnswer({ findings: [{ criterion: "untestable", text: `${five} has no boundary` }] }, scopes[0]);
-      expect(ownFive).toEqual({ ok: true, value: { verdict: "block", findings: [`[untestable] ${five} has no boundary`] } });
-      expect(parseAnswer({ findings: [{ criterion: "untestable", text: `${six} has no boundary` }] }, scopes[0])).toEqual({
-        ok: true,
-        value: { verdict: "ok", findings: [`(call 1 of 3: does not name ${five}, the one changed document this call judges, so it does not block) [untestable] ${six} has no boundary`] },
-      });
-      const against = parseAnswer({ findings: [{ criterion: "contradiction", text: `${six} contradicts ${id("BR", 1)}` }] }, scopes[2]);
-      expect(against).toEqual({ ok: true, value: { verdict: "block", findings: [`[contradiction] ${six} contradicts ${id("BR", 1)}`] } });
-      expect(parseAnswer({ findings: [{ criterion: "untestable", text: `${six} has no boundary` }] }, scopes[2])).toEqual({
-        ok: true,
-        value: { verdict: "ok", findings: [`(call 3 of 3: names no document of its domain text; each changed document on its own is judged in a call of its own, so it does not block) [untestable] ${six} has no boundary`] },
-      });
-      expect(parseAnswer({ verdict: "block", findings: [`${six} has no boundary`] }, scopes[2])).toEqual({ ok: true, value: { verdict: "block", findings: [`${six} has no boundary`] } });
-    });
-
-    test("BR-2359: the wording judgements are asked in the first call of its own only", () => {
-      const wording = [{ id: six, title: "A six", before: "old", after: "new", examples: "- a → b" }];
-      const { prompts: calls } = twoChanged(1, 250 * KB, { wording });
-      expect(calls[0]).toContain("# Wording judgements");
-      for (const p of calls.slice(1)) expect(p).not.toContain("# Wording judgements");
-    });
-
-    test("BR-2359: one changed rule with its domain README, or an incremental review of two rules, has no calls of its own", () => {
-      const { root, corpus } = bigDomain(1);
-      const one = reviewCalls(root, corpus, changedRule(corpus, 6), { readmes: ["big"] }, 250 * KB);
-      if (!one.ok) throw new Error(one.error.message);
-      expect(one.value.prompts).toEqual([reviewPrompt(root, corpus, changedRule(corpus, 6), { readmes: ["big"] })]);
-      expect(one.value.perDocument).toBe(0);
-      const two = corpus.docs.filter((d) => d.id === five || d.id === six);
-      const small = reviewCalls(root, corpus, two, { incremental: { from: 1, added: [] } }, 250 * KB);
-      if (!small.ok) throw new Error(small.error.message);
-      expect(small.value.perDocument).toBe(0);
-      expect(small.value.prompts).toHaveLength(1);
-    });
-
-    test("BR-2359: with calls of their own and a split domain text, no call is over the budget and every rule of the domain is in exactly one domain call", () => {
-      const budget = 80 * KB;
-      const { prompts: calls, perDocument } = twoChanged(30, budget);
-      expect(perDocument).toBe(2);
-      expect(calls.length).toBeGreaterThan(3);
-      for (const p of calls) expect(size(p)).toBeLessThanOrEqual(budget);
-      for (const n of [1, 2, 3, 4]) expect(calls.filter((p) => p.includes(`\n## ${id("BR", n)} ${TITLES[n]}\n`))).toHaveLength(1);
-    });
-  });
-
   describe("the calls run at once, at most review_parallel of them (D-83)", () => {
     const limits = { timeoutMs: 60_000, kind: "land" as const };
     const ok = `cat > /dev/null; sleep 1; echo '{"findings":[]}'`;
@@ -285,10 +210,10 @@ describe("rule review prompt budget", () => {
     test("BR-2359: four calls of one second each take about one second with review_parallel 4 and about four with 1", async () => {
       const four = ["a", "b", "c", "d"];
       let t = Date.now();
-      expect((await runReviews(ok, tmpdir(), four, limits, [], 4)).ok).toBe(true);
+      expect((await runReviews(ok, tmpdir(), four, limits, 4)).ok).toBe(true);
       expect(Date.now() - t).toBeLessThan(3000);
       t = Date.now();
-      expect((await runReviews(ok, tmpdir(), four, limits, [], 1)).ok).toBe(true);
+      expect((await runReviews(ok, tmpdir(), four, limits, 1)).ok).toBe(true);
       expect(Date.now() - t).toBeGreaterThanOrEqual(4000);
     }, 60_000);
 
@@ -297,7 +222,7 @@ describe("rule review prompt budget", () => {
       const pid = join(dir, "pid");
       const cmd = `p=$(cat); case "$p" in *FAIL*) sleep 1; echo broken >&2; exit 1;; *) sleep 30 & echo $! > ${pid}; wait;; esac`;
       const t = Date.now();
-      const r = await runReviews(cmd, dir, ["FAIL", "slow"], limits, [], 2);
+      const r = await runReviews(cmd, dir, ["FAIL", "slow"], limits, 2);
       expect(Date.now() - t).toBeLessThan(10_000);
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.error.message).toContain("broken");
@@ -313,7 +238,7 @@ describe("rule review prompt budget", () => {
 
     test("BR-2359: the findings are merged in call order whichever call ends first", async () => {
       const cmd = `p=$(cat); case "$p" in *first*) sleep 1; echo '{"findings":[{"criterion":"note","text":"one"}]}';; *) echo '{"findings":[{"criterion":"note","text":"two"}]}';; esac`;
-      const r = await runReviews(cmd, tmpdir(), ["first", "second"], limits, [], 2);
+      const r = await runReviews(cmd, tmpdir(), ["first", "second"], limits, 2);
       expect(r).toEqual({ ok: true, value: { verdict: "ok", findings: ["one", "two"] } });
     }, 60_000);
   });

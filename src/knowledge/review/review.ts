@@ -90,7 +90,7 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
     // reason: the overview is a reader's entry, so only a text this landing wrote into it can be blocked, never the overview as it stood (BR-2009, D-65)
     "`overview`: when an architecture overview is shown below, it is where readers start, not the judge: where it disagrees with the active rules and accepted decisions, they win. Use this key only when the part of the overview this landing changed (its diff is shown) contradicts an active rule or an accepted decision. When a rule or decision changed in this landing makes a statement in the overview wrong, add a `note` naming the overview section.",
     NO_VERDICT,
-    // reason: a defect left out blocks a later landing of the same text, and each call reports what it happens to notice (BR-2009, D-83, #173)
+    // reason: a defect left out blocks a later landing of the same text, and each call reports what it happens to notice (BR-2009, #173)
     "List every blocking defect you find, not only the first: a defect you leave out blocks a later landing of the same text. A blocking finding must involve at least one changed or deleted document; a defect only between documents this landing does not change is a `note`.",
     "Do not block for wording, style or formatting.",
     "One rule is one trigger (one command, event or kind of input) and one outcome (D-5). The error cases, exit codes and boundaries of the same trigger belong in that rule as examples, and a definition table (such as a list of exit codes) is one rule: do not suggest splitting those. Suggest a split only when a rule covers two different triggers, or two outcomes that could change independently; never block for it.",
@@ -228,25 +228,6 @@ function deletedDomains(corpus: Corpus, deleted: readonly DeletedDoc[]): string[
   return [...out];
 }
 
-/**
- * What one call of a split review may block on (BR-2359, D-83): a finding with a criterion blocks only when its text names
- * a document the call is for; `names` says whether it does, `why` is the reason a finding that names none does not block.
- */
-export interface CallScope {
-  readonly call: number;
-  readonly of: number;
-  readonly names: (text: string) => boolean;
-  readonly why: string;
-}
-
-/** The calls of one rule review: their prompts, what each may block on, and how many of them judge one changed document each. */
-export interface ReviewCalls {
-  readonly prompts: readonly string[];
-  readonly scopes: readonly (CallScope | undefined)[];
-  /** The calls that judge one changed document without domain text; they come first (BR-2359, D-83). */
-  readonly perDocument: number;
-}
-
 /** The two ways a review runs: for a landing (`land`) or for `canon work review` (`preview`). */
 export type ReviewKind = "land" | "preview";
 
@@ -269,7 +250,7 @@ function failureMessage(code: number, errText: string, out: string): string {
   return `review command exited ${code}: ${e ? e.slice(0, 500) : "no output"}`;
 }
 
-export async function runReview(command: string, cwd: string, prompt: string, limits: ReviewLimits, scope?: CallScope): Promise<Result<ReviewVerdict>> {
+export async function runReview(command: string, cwd: string, prompt: string, limits: ReviewLimits): Promise<Result<ReviewVerdict>> {
   // reason: its own process group, so a timeout or a signal stops the reviewer's children too (claude under sh), not only sh (BR-2296)
   const proc = Bun.spawn(["sh", "-c", command], { cwd, stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe", detached: true, env: { ...process.env, CANON_REVIEW_KIND: limits.kind } });
   const kill = () => {
@@ -302,11 +283,11 @@ export async function runReview(command: string, cwd: string, prompt: string, li
   } catch (e) {
     return err("invalid", `review JSON does not parse: ${(e as Error).message}`);
   }
-  return parseAnswer(v, scope);
+  return parseAnswer(v);
 }
 
 /** What one review answer means: the verdict canon derives, the findings as text, the wording answers (BR-2367, D-74). */
-export function parseAnswer(v: unknown, scope?: CallScope): Result<ReviewVerdict> {
+export function parseAnswer(v: unknown): Result<ReviewVerdict> {
   const a = v !== null && typeof v === "object" && !Array.isArray(v) ? (v as { verdict?: unknown; findings?: unknown; wording?: unknown }) : {};
   const w = a.wording;
   const wording = w !== null && typeof w === "object" && !Array.isArray(w) ? Object.fromEntries(Object.entries(w as Record<string, unknown>).map(([k, x]) => [k, String(x)])) : undefined;
@@ -329,12 +310,8 @@ export function parseAnswer(v: unknown, scope?: CallScope): Result<ReviewVerdict
     if (typeof text !== "string" || text.trim() === "") return bad("has no text");
     if (criterion === "note") findings.push(text);
     else if (typeof criterion === "string" && CRITERIA.includes(criterion)) {
-      // reason: each call blocks only on what it is for: its one changed document, or its domain text; the rest is judged in another call (BR-2359, D-83)
-      if (scope && !scope.names(text)) findings.push(`(call ${scope.call} of ${scope.of}: ${scope.why}, so it does not block) [${criterion}] ${text}`);
-      else {
-        blocking = true;
-        findings.push(`[${criterion}] ${text}`);
-      }
+      blocking = true;
+      findings.push(`[${criterion}] ${text}`);
     } else return bad(`has criterion ${JSON.stringify(criterion ?? null)}, not a criterion name or "note"`);
   }
   return ok({ verdict: blocking ? "block" : "ok", findings, ...extra });
@@ -403,33 +380,19 @@ interface Call {
   size: number;
 }
 
-/** The note each call of a review split only by size carries: which call it is and how many there are (BR-2359). */
+/** The note a call of a split review carries: which call it is and how many there are (BR-2359). */
 function callNote(i: number, n: number): string {
   return `This review is split into ${n} calls because of its size; this is call ${i} of ${n}. Every call shows all changed documents, the rule index and the accepted decisions' titles, and only part of the affected domains' text: judge what is shown, and never block because a rule or domain text is not shown in this call.`;
 }
-
-/** The note of a call that judges one changed document without domain text (BR-2359, D-83). */
-function documentNote(i: number, n: number, id: string): string {
-  return `This review is split into ${n} calls; this is call ${i} of ${n}, and it judges only ${id}: its own defects, and its defects against the other changed documents, the rule index and the accepted decisions' titles. The affected domains' text is not shown here; other calls judge it. Report a defect that does not involve ${id} only as a \`note\`.`;
-}
-
-/** The note of a call that carries domain text when every changed document also has a call of its own (BR-2359, D-83). */
-function domainNote(i: number, n: number): string {
-  return `This review is split into ${n} calls; this is call ${i} of ${n}. Each changed document is judged on its own, and against the other changed documents, the rule index and the accepted decisions' titles, in a call of its own. This call shows all or part of the affected domains' text: report only defects between a changed document and a document in the domain text shown here, and name that document; never block because a rule or domain text is not shown in this call.`;
-}
-
-/** Why a finding of a call that names none of the documents it is for does not block (BR-2359, D-83). */
-const DOMAIN_WHY = "names no document of its domain text; each changed document on its own is judged in a call of its own";
-const documentWhy = (id: string): string => `does not name ${id}, the one changed document this call judges`;
 
 /**
  * The bytes the note adds to a call when there are at most `maxCalls` calls, joining newline included. The count is known only
  * after packing, but its digits can only be fewer than those of `maxCalls`, so the note of call `maxCalls` of `maxCalls` is the
  * largest, and reserving its measured size up front makes the estimate exact or above, never below (BR-2359, #160).
  */
-function noteRoom(corpus: Corpus, maxCalls: number, note: (i: number, n: number) => string): number {
+function noteRoom(corpus: Corpus, maxCalls: number): number {
   const n = Math.max(2, maxCalls);
-  return bytes(promptHead(corpus, [], {}, note(n, n)).join("\n")) - bytes(promptHead(corpus, [], {}).join("\n"));
+  return bytes(promptHead(corpus, [], {}, callNote(n, n)).join("\n")) - bytes(promptHead(corpus, [], {}).join("\n"));
 }
 
 /** The most calls packing the top domains can make: each call holds at least one piece, a rule or a README without rules. */
@@ -524,8 +487,7 @@ export function reviewSizes(root: string, corpus: Corpus): { readonly fixed: num
     if (worst) pieces.push(worst);
   }
   const tops = corpus.domains.filter((d) => !d.parent).map((d) => d.name);
-  const most = maxCalls(root, corpus, tops);
-  return { fixed: fixedBytes(corpus, Math.max(noteRoom(corpus, most, callNote), noteRoom(corpus, most, domainNote))), pieces };
+  return { fixed: fixedBytes(corpus, noteRoom(corpus, maxCalls(root, corpus, tops))), pieces };
 }
 
 /**
@@ -534,26 +496,12 @@ export function reviewSizes(root: string, corpus: Corpus): { readonly fixed: num
  * titles, plus the affected domains' text packed by subdomain; a fixed part that alone is over budget is an error.
  */
 export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras, budgetBytes: number): Result<readonly string[]> {
-  const calls = reviewCalls(root, corpus, changed, extras, budgetBytes);
-  return calls.ok ? ok(calls.value.prompts) : calls;
-}
-
-/**
- * `reviewPrompts` with what each call may block on (BR-2359, D-83). A full review of two or more changed documents with ids
- * first gives each of them a call of its own without domain text, then packs the domain text into calls that block only on
- * defects naming a document of their own domain text; otherwise the calls are split by size only, each judging everything.
- */
-export function reviewCalls(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras, budgetBytes: number): Result<ReviewCalls> {
-  // reason: a call per changed document gives each its own chance to be judged; the reviewer reports about one blocking defect per call (D-83, #173)
-  const perDocument = !extras.incremental && changed.length >= 2;
   const whole = reviewPrompt(root, corpus, changed, extras);
-  if (!perDocument && bytes(whole) <= budgetBytes) return ok({ prompts: [whole], scopes: [undefined], perDocument: 0 });
+  if (bytes(whole) <= budgetBytes) return ok([whole]);
 
   const tail = promptTail(corpus);
   const noWording: ReviewExtras = { ...extras, wording: [] };
-  const note = perDocument ? domainNote : callNote;
-  const room = noteRoom(corpus, maxCalls(root, corpus, contextTops(corpus, changed, extras)) + (perDocument ? changed.length : 0), note);
-  // the wording judgements go in the first call: the first document's call when there are such calls, else the first domain call (BR-2239)
+  const room = noteRoom(corpus, maxCalls(root, corpus, contextTops(corpus, changed, extras)));
   const fixed = (first: boolean): number => bytes([...promptHead(corpus, changed, first ? extras : noWording), ...tail].join("\n")) + room;
   // the three parts of the smallest prompt, so a refusal can say which one is too large (BR-2359, D-67, #136)
   const docsBytes = changedBytes(corpus, changed, extras);
@@ -570,7 +518,7 @@ export function reviewCalls(root: string, corpus: Corpus, changed: readonly Doc[
   let cur: Call = { groups: new Map(), size: 0 };
   calls.push(cur);
   const fixedRest = fixed(false);
-  const roomOf = (c: Call): number => (c === calls[0] && !perDocument ? budgetBytes - fixed(true) : budgetBytes - fixedRest);
+  const roomOf = (c: Call): number => (c === calls[0] ? budgetBytes - fixed(true) : budgetBytes - fixedRest);
 
   for (const top of contextTops(corpus, changed, extras)) {
     const { ctx, readme, chain, price: priceIn } = packer(root, corpus, top);
@@ -612,45 +560,20 @@ export function reviewCalls(root: string, corpus: Corpus, changed: readonly Doc[
     }
   }
 
-  // reason: with calls of their own for the changed documents, a call without domain text would only repeat them
-  const domainCalls = perDocument ? calls.filter((c) => c.groups.size > 0) : calls;
-  const docCalls = perDocument ? changed.length : 0;
-  const n = docCalls + domainCalls.length;
-  const prompts: string[] = [];
-  const scopes: (CallScope | undefined)[] = [];
-  for (const [i, d] of (perDocument ? changed : []).entries()) {
-    prompts.push([...promptHead(corpus, changed, i === 0 ? extras : noWording, documentNote(i + 1, n, d.id)), ...tail].join("\n"));
-    scopes.push({ call: i + 1, of: n, names: (text) => idsIn(corpus.types, text).has(d.id), why: documentWhy(d.id) });
-  }
-  const changedIds = new Set([...changed.map((d) => d.id), ...(extras.deleted ?? []).map((d) => d.id)]);
-  for (const [j, call] of domainCalls.entries()) {
-    const i = docCalls + j;
+  const prompts = calls.map((call, i) => {
+    const note = calls.length > 1 ? callNote(i + 1, calls.length) : undefined;
     const groups = [...call.groups].map(([top, g]) => `${contextHeader(top)}${g.blocks.join("\n")}`);
-    const first = i === 0;
-    prompts.push([...promptHead(corpus, changed, first ? extras : noWording, n > 1 ? note(i + 1, n) : undefined), ...groups, ...tail].join("\n"));
-    if (!perDocument) {
-      scopes.push(undefined);
-      continue;
-    }
-    // reason: a document the call's domain text shows or names, the changed ones aside: a finding naming none of them is about the changed documents alone, which their own calls judge (BR-2359, D-83)
-    const shown = new Set([...idsIn(corpus.types, groups.join("\n"))].filter((x) => !changedIds.has(x)));
-    scopes.push({ call: i + 1, of: n, names: (text) => [...idsIn(corpus.types, text)].some((x) => shown.has(x)), why: DOMAIN_WHY });
-  }
+    return [...promptHead(corpus, changed, i === 0 ? extras : noWording, note), ...groups, ...tail].join("\n");
+  });
   const worst = Math.max(...prompts.map(bytes));
   // reason: every piece fits and the note room is its measured size, so this is a defect of the packer, not something raising the budget fixes (BR-2359, #160)
   if (worst > budgetBytes) throw new Error(`canon bug: a call of the split rule review is ${worst} bytes, above review_max_prompt_kb = ${kb(budgetBytes)} KB (${budgetBytes} bytes) although every piece fits; report it with the change that was reviewed (#160)`);
-  return ok({ prompts, scopes, perDocument: docCalls });
+  return ok(prompts);
 }
 
-/**
- * The sizes line for the landing output, e.g. `split into 2 calls by size (review_max_prompt_kb): 1: 241 KB, 2: 224 KB`, or with
- * calls of their own for the changed documents, how many of each kind there are; undefined for a single call (BR-2359, D-83).
- */
-export function splitNote(prompts: readonly string[], perDocument = 0): string | undefined {
-  if (prompts.length <= 1) return undefined;
-  const sizes = prompts.map((p, i) => `${i + 1}: ${kb(bytes(p))} KB`).join(", ");
-  if (perDocument === 0) return `split into ${prompts.length} calls by size (review_max_prompt_kb): ${sizes}`;
-  return `split into ${prompts.length} calls: ${perDocument} for one changed document each, ${prompts.length - perDocument} with domain text (review_max_prompt_kb): ${sizes}`;
+/** `Ncalls` sizes line for the landing output, e.g. `2 calls by size (review_max_prompt_kb): 1: 241 KB, 2: 224 KB`; undefined for a single call. */
+export function splitNote(prompts: readonly string[]): string | undefined {
+  return prompts.length > 1 ? `split into ${prompts.length} calls by size (review_max_prompt_kb): ${prompts.map((p, i) => `${i + 1}: ${kb(bytes(p))} KB`).join(", ")}` : undefined;
 }
 
 /**
@@ -658,7 +581,7 @@ export function splitNote(prompts: readonly string[], perDocument = 0): string |
  * call blocked, the findings of all calls in call order without repeats, the wording answers of the first call. A call that
  * fails ends the review at once: the calls still running are stopped and no other starts (BR-2216).
  */
-export async function runReviews(command: string, cwd: string, prompts: readonly string[], limits: ReviewLimits, scopes: readonly (CallScope | undefined)[] = [], parallel = 1): Promise<Result<ReviewVerdict>> {
+export async function runReviews(command: string, cwd: string, prompts: readonly string[], limits: ReviewLimits, parallel = 1): Promise<Result<ReviewVerdict>> {
   const results: (ReviewVerdict | undefined)[] = prompts.map(() => undefined);
   const running = new Set<{ kill(): void }>();
   let failed: Result<never> | undefined;
@@ -671,7 +594,11 @@ export async function runReviews(command: string, cwd: string, prompts: readonly
     while (failed === undefined && next < prompts.length) {
       const i = next++;
       let mine: { kill(): void } | undefined;
-      const one = await runReview(command, cwd, prompts[i]!, { ...limits, track: (r) => (r ? running.add((mine = r)) : mine && running.delete(mine)) }, scopes[i]);
+      const track = (r: { kill(): void } | undefined): void => {
+        if (r) running.add((mine = r));
+        else if (mine) running.delete(mine);
+      };
+      const one = await runReview(command, cwd, prompts[i]!, { ...limits, track });
       if (!one.ok) {
         // reason: the first failure is the one reported; the calls it stops fail too, only because they were stopped (BR-2216)
         if (failed === undefined) {
