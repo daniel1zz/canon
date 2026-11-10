@@ -103,6 +103,13 @@ describe("rule review prompt", () => {
     expect(prompt).toContain(`# Accepted decisions\n\n- ${id("D", 1)} Why a queue`);
     expect(prompt).not.toContain("Maybe later");
   });
+
+  test("BR-2009: the instructions ask for every blocking defect and make a defect only between unchanged documents a note", () => {
+    const { root, corpus } = corpusOf(files);
+    const prompt = reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 4)));
+    expect(prompt).toContain("List every blocking defect you find, not only the first");
+    expect(prompt).toContain("a defect only between documents this landing does not change is a `note`");
+  });
 });
 
 describe("review command", () => {

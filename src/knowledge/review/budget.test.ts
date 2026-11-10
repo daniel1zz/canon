@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readCorpus } from "../documents/read.ts";
-import { reviewPrompt, reviewPrompts } from "./review.ts";
+import { parseAnswer, reviewCalls, reviewPrompt, reviewPrompts, runReviews } from "./review.ts";
 
 const id = (p: string, n: number) => [p, n].join("-");
 const KB = 1024;
@@ -202,4 +202,49 @@ describe("rule review prompt budget", () => {
     expect(msg).not.toContain("canon rule domain");
     expect(msg).not.toContain("several smaller changes");
   });
+
+  describe("a later call of a split review blocks only on its own domain text (D-83)", () => {
+    function split() {
+      const { root, corpus } = bigDomain(30);
+      const r = reviewCalls(root, corpus, changedRule(corpus, 6), {}, 80 * KB);
+      if (!r.ok) throw new Error(r.error.message);
+      const { prompts: calls, scopes } = r.value;
+      // a later call and a rule of big that only it shows
+      const j = calls.findIndex((p, i) => i > 0 && [1, 2, 3, 4].some((n) => p.includes(`\n## ${id("BR", n)} ${TITLES[n]}\n`)));
+      const n = [1, 2, 3, 4].find((k) => calls[j]!.includes(`\n## ${id("BR", k)} ${TITLES[k]}\n`))!;
+      return { calls, scopes, j, n };
+    }
+
+    test("BR-2359: only the calls after the first say call 1 judges the changed documents themselves", () => {
+      const { calls, scopes } = split();
+      expect(calls.length).toBeGreaterThan(1);
+      expect(calls[0]).not.toContain("Call 1 judges the changed documents themselves");
+      expect(scopes[0]).toBeUndefined();
+      for (const [i, p] of calls.entries()) if (i > 0) expect(p).toContain("Call 1 judges the changed documents themselves");
+    });
+
+    test("BR-2359: in a later call a finding naming a document of its domain text blocks; one naming only the changed rule is a note saying why; the old format is not rewritten", () => {
+      const { calls, scopes, j, n } = split();
+      const scope = scopes[j];
+      const six = id("BR", 6);
+      const against = parseAnswer({ findings: [{ criterion: "contradiction", text: `${six} contradicts ${id("BR", n)}` }] }, scope);
+      expect(against).toEqual({ ok: true, value: { verdict: "block", findings: [`[contradiction] ${six} contradicts ${id("BR", n)}`] } });
+      const alone = { findings: [{ criterion: "untestable", text: `${six} has no boundary` }] };
+      expect(parseAnswer(alone, scope)).toEqual({ ok: true, value: { verdict: "ok", findings: [`(call ${j + 1} of ${calls.length}: names no document of its domain text, so it does not block; the changed documents themselves are judged in call 1) [untestable] ${six} has no boundary`] } });
+      expect(parseAnswer(alone, scopes[0])).toEqual({ ok: true, value: { verdict: "block", findings: [`[untestable] ${six} has no boundary`] } });
+      expect(parseAnswer({ verdict: "block", findings: [`${six} has no boundary`] }, scope)).toEqual({ ok: true, value: { verdict: "block", findings: [`${six} has no boundary`] } });
+    });
+
+    test("BR-2359: the same finding on the changed rule from every call blocks through call 1, and the later calls add it as a note", async () => {
+      const { calls, scopes } = split();
+      const six = id("BR", 6);
+      const cmd = `cat > /dev/null; echo '{"findings":[{"criterion":"untestable","text":"${six} has no boundary"}]}'`;
+      const r = await runReviews(cmd, tmpdir(), calls, { timeoutMs: 60_000, kind: "land" }, scopes);
+      if (!r.ok) throw new Error(r.error.message);
+      expect(r.value.verdict).toBe("block");
+      expect(r.value.findings[0]).toBe(`[untestable] ${six} has no boundary`);
+      expect(r.value.findings.slice(1).every((f) => f.includes("so it does not block"))).toBe(true);
+    }, 60_000);
+  });
 });
+
