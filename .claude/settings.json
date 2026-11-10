@@ -39,6 +39,15 @@
             "command": "canon human record || echo '{\"systemMessage\":\"canon human record failed or canon is not on PATH: this answer was not recorded for canon\"}'"
           }
         ]
+      },
+      {
+        "matcher": "Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "canon restatements --hook || echo '{\"systemMessage\":\"canon restatements --hook failed or canon is not on PATH: the edited rule or decision was not checked for restatements\"}'"
+          }
+        ]
       }
     ]
   },
