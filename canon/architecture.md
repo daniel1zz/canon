@@ -21,7 +21,7 @@ title: 架构总览
 ## 容器：canon 做的
 
 **CLI 二进制 `canon`**
-- 职责：全部命令；没有常驻进程（后台部件见下）；唯一一直运行的命令是前台的 `canon events --follow`，它是被调用方停止的长命令，不是后台部件（BR-2357）；跟随后台合入的 `canon work land` 也可能运行很久，它跟随的后台合入进程只活到这次合入结束（BR-2390）。多数命令读运行它的 checkout 里的 `canon/config.yaml`；合入评审的命令、时限、提示预算 `review_max_prompt_kb` 和常驻说明清单例外，取自 main 上已合入的配置（BR-2074；`canon check` 的评审大小提示在 worktree 里也读 main 上的预算，D-76），所以在一次合入里改它们只对之后的合入生效。
+- 职责：全部命令；没有常驻进程（后台部件见下）；唯一一直运行的命令是前台的 `canon events --follow`，它是被调用方停止的长命令，不是后台部件（BR-2357）；跟随后台合入的 `canon work land` 也可能运行很久，它跟随的后台合入进程只活到这次合入结束（BR-2390）。多数命令读运行它的 checkout 里的 `canon/config.yaml`；合入评审的命令、时限、提示预算 `review_max_prompt_kb`、同时运行的调用数 `review_parallel` 和常驻说明清单例外，取自 main 上已合入的配置（BR-2074；`canon check` 的评审大小提示在 worktree 里也读 main 上的预算，D-76），所以在一次合入里改它们只对之后的合入生效。
 - 数据：无。
 - 代码：`src/invocation`（命令声明、退出码、配置读取；`tree.ts` 汇总各领域的 `commands.ts`）、`src/invocation/reference`（配置项参考和 schema）；共享的 git、进程、结果类型在 `src/kernel`，不属于任何领域。
 - 决策：D-2、D-3、D-4、D-15、D-28、D-63。
@@ -63,7 +63,7 @@ title: 架构总览
 - 决策：D-31、D-55、D-59。
 
 **合入后的命令和评审**
-- 职责：合入后在主 checkout 里后台运行配置的 `after_land` 命令，记下日志和退出码；运行和记录配置的生命周期 hook、每个变更的端口 `CANON_PORT`；两种评审的提示词和结果：合入时对规则、决策、常驻说明的规则评审（调用配置的 `review` 命令；同样的提示通过过就沿用，改动文档和上次通过时一样就只对之后合入 main 的文档做小评审，D-70、D-81），和合入后的代码评审（怎么跑由项目配）。
+- 职责：合入后在主 checkout 里后台运行配置的 `after_land` 命令，记下日志和退出码；运行和记录配置的生命周期 hook、每个变更的端口 `CANON_PORT`；两种评审的提示词和结果：合入时对规则、决策、常驻说明的规则评审（调用配置的 `review` 命令；拆成几次调用时同时运行，改了两份以上文档时每份另有一次单独的调用，D-83；同样的提示通过过就沿用，改动文档和上次通过时一样就只对之后合入 main 的文档做小评审，D-70、D-81），和合入后的代码评审（怎么跑由项目配）。
 - 数据：`refs/canon/code-reviewed`，后台命令的日志和退出码（事件表）。
 - 代码：`src/work/hooks`、`src/knowledge/review`。
 - 决策：D-2、D-19、D-21、D-51、D-59。

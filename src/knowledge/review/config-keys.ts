@@ -49,12 +49,21 @@ export const reviewKeys = {
   }),
   reviewMaxPromptBytes: configKey<number>({
     key: "review_max_prompt_kb",
-    doc: "The most kilobytes (UTF-8) one run of the rule review's prompt may have; a larger review is split by subdomain into several runs of the `review` command, each with every changed document, and their findings are merged (BR-2359, D-67). The fixed part alone above it refuses the landing.",
+    doc: "The most kilobytes (UTF-8) one run of the rule review's prompt may have; a larger review is split by subdomain into several runs of the `review` command, each with every changed document, and their findings are merged (BR-2359, D-67, D-83). The fixed part alone above it refuses the landing.",
     default: 250 * 1024,
     schema: positiveNumber(250),
     read: positiveValue("review_max_prompt_kb", 1024),
     listed: 66,
     checked: 46,
+  }),
+  reviewParallel: configKey<number>({
+    key: "review_parallel",
+    doc: "How many runs of the `review` command one rule review starts at once when it is split into several calls (BR-2359, D-83); 1 runs them one after another.",
+    default: 4,
+    schema: { type: "integer", minimum: 1, default: 4 },
+    read: (v) => (typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`review_parallel` must be a whole number of at least 1")),
+    listed: 67,
+    checked: 47,
   }),
   instructions: configKey<readonly string[]>({
     key: "instructions",

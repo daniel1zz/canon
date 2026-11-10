@@ -140,7 +140,7 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
       } else {
         const at = tree.get();
         if (!at.ok) return { kind: "failed", message: at.error.message };
-        const run = await runReviews(onMain.review, at.value, prompts, limits, calls.value.scopes);
+        const run = await runReviews(onMain.review, at.value, prompts, limits, calls.value.scopes, onMain.reviewParallel);
         if (!run.ok) return { kind: "failed", message: couldNotRun("rule", run.error.message, at.value, main.value) };
         v = run.value;
       }
