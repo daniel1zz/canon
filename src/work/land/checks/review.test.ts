@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../land.ts";
+import { reviewSettingsOn } from "./review-scope.ts";
 import { HANG_SECONDS, FAST, waitFor, project, quiet, sh, startNew, ws, landingProcess } from "../../testkit.ts";
 
 const CLI = join(import.meta.dir, "../../../invocation/main.ts");
@@ -616,6 +617,18 @@ tests: []
     expect(out2.kind).toBe("landed");
     expect(existsSync(r2.promptFile)).toBe(true);
   }, 60_000);
+
+  test("BR-2074 BR-2359: review_parallel comes from main, not from the change's own config; 4 when main does not set it", () => {
+    const root = billingProject(`floor: "true"\ntests: []\n`);
+    const s = startNew(root, "Parallel");
+    writeFileSync(join(s.worktree, "canon/config.yaml"), `floor: "true"\ntests: []\nreview_parallel: 9\n`);
+    sh(s.worktree, "commit", "-qam", "own config");
+    const unset = reviewSettingsOn(s.worktree, "main");
+    expect(unset.ok && unset.value.reviewParallel).toBe(4);
+    configOnMain(root, `floor: "true"\ntests: []\nreview_parallel: 3\n`);
+    const set = reviewSettingsOn(s.worktree, "main");
+    expect(set.ok && set.value.reviewParallel).toBe(3);
+  });
 
   test("BR-2296 BR-2099: canon work land stopped by SIGTERM while the reviewer runs exits 143 and stops the reviewer", async () => {
     const root = billingProject(`floor: "true"\ntests: []\n`);
