@@ -7,6 +7,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
  * The hooks canon puts into a project: at session start Claude Code runs `canon brief` (BR-2087, D-10), so a new
  * session learns what it is working on and whether canon's project assets are out of date; before each Bash call it
  * runs `canon snapshot take` (BR-2185, D-30), so uncommitted work can always be recovered, and `canon work check-as` (BR-2343, D-62).
+ * After each Write or Edit it runs `canon restatements --hook` (BR-2404, D-84), which hints at a rule restated in the lines just written.
  * It is a *merged* asset: canon owns only its own entry in `.claude/settings.json` and never touches
  * anything else in that file. It reports and records; the one thing it refuses is a canon claim command whose `--as` names the wrong agent (BR-2340, D-62), never how an agent works (D-1). The entries
  * canon withdrew (C-91's PreToolUse hook and allow rule, D-18) are removed by the same write.
@@ -35,6 +36,14 @@ export const CHECK_AS_COMMAND =
  */
 export const RECORD_COMMAND =
   `canon human record || echo '{"systemMessage":"canon human record failed or canon is not on PATH: this answer was not recorded for canon"}'`;
+/**
+ * After each Write or Edit, a hint when the rule or decision just written restates another rule's behaviour in its new
+ * lines (BR-2402, BR-2404, D-84). It only tells the session: when canon fails or is not on PATH, the echo tells the user in a systemMessage.
+ */
+export const RESTATEMENT_COMMAND =
+  `canon restatements --hook || echo '{"systemMessage":"canon restatements --hook failed or canon is not on PATH: the edited rule or decision was not checked for restatements"}'`;
+/** The tools whose edits the restatement hook checks (BR-2404). */
+export const RESTATEMENT_MATCHER = "Write|Edit|MultiEdit";
 /** The form canon installed before BR-2087 required the fallback; found once and replaced in place. */
 const OLD_BRIEF_COMMAND = "canon brief";
 const SETTINGS = join(".claude", "settings.json");
@@ -84,6 +93,9 @@ const postToolUse = (settings: Settings | undefined): HookEntry[] => {
 const hasRecord = (settings: Settings | undefined) =>
   postToolUse(settings).some((e) => isObject(e) && e.matcher === "AskUserQuestion" && Array.isArray(e.hooks) && e.hooks.some((h) => h.command?.trim() === RECORD_COMMAND));
 
+/** Whether the PostToolUse entry for Write and Edit with canon's restatement hook is there (BR-2404). */
+const hasRestatement = (settings: Settings | undefined) =>
+  postToolUse(settings).some((e) => isObject(e) && e.matcher === RESTATEMENT_MATCHER && Array.isArray(e.hooks) && e.hooks.some((h) => h.command?.trim() === RESTATEMENT_COMMAND));
 /** Whether the Bash PreToolUse entry with canon's snapshot command is there (BR-2185). */
 const hasSnapshot = (settings: Settings | undefined) =>
   preToolUse(settings).some((e) => isObject(e) && e.matcher === "Bash" && Array.isArray(e.hooks) && e.hooks.some((h) => h.command?.trim() === SNAPSHOT_COMMAND));
@@ -174,6 +186,7 @@ export interface SettingsState {
   readonly baseRef: boolean;
   /** Whether the record hook after each answer to the question tool is installed (BR-2274). */
   readonly record: boolean;
+  readonly restatement: boolean;
 }
 
 /** Which of canon's entries the project's settings have: `canon brief` in the current form, an older one or none, and any withdrawn ones. Reads only. */
@@ -182,7 +195,7 @@ export function hookStatus(root: string): Result<SettingsState> {
   if (!s.ok) return s;
   const base = baseRefState(s.value);
   if (base === "invalid") return NOT_OBJECT;
-  return ok({ brief: briefState(s.value), snapshot: hasSnapshot(s.value), checkAs: hasCheckAs(s.value), retired: retiredIn(s.value), baseRef: base === "head", record: hasRecord(s.value) });
+  return ok({ brief: briefState(s.value), snapshot: hasSnapshot(s.value), checkAs: hasCheckAs(s.value), retired: retiredIn(s.value), baseRef: base === "head", record: hasRecord(s.value), restatement: hasRestatement(s.value) });
 }
 
 /**
@@ -200,7 +213,8 @@ export function planHook(root: string): Result<Settings | undefined> {
   const base = baseRefState(s.value);
   if (base === "invalid") return NOT_OBJECT;
   const record = hasRecord(s.value);
-  if (state === "present" && snapshot && checkAs && record && retired.length === 0 && base === "head") return ok(undefined);
+  const restatement = hasRestatement(s.value);
+  if (state === "present" && snapshot && checkAs && record && restatement && retired.length === 0 && base === "head") return ok(undefined);
   const settings = retired.length > 0 ? withoutRetired(s.value ?? {}) : { ...(s.value ?? {}) };
   if (state !== "present") {
     const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
@@ -226,6 +240,11 @@ export function planHook(root: string): Result<Settings | undefined> {
     hooks["PostToolUse"] = [...postToolUse(settings), { matcher: "AskUserQuestion", hooks: [{ type: "command", command: RECORD_COMMAND }] }];
     settings["hooks"] = hooks;
   }
+  if (!restatement) {
+    const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
+    hooks["PostToolUse"] = [...postToolUse(settings), { matcher: RESTATEMENT_MATCHER, hooks: [{ type: "command", command: RESTATEMENT_COMMAND }] }];
+    settings["hooks"] = hooks;
+  }
   if (base !== "head") settings["worktree"] = { ...((settings["worktree"] as Settings | undefined) ?? {}), baseRef: "head" };
   return ok(settings);
 }
@@ -234,7 +253,7 @@ export function planHook(root: string): Result<Settings | undefined> {
 const isCanonCommand = (c: unknown) => {
   if (typeof c !== "string") return false;
   const t = c.trim();
-  return t === BRIEF_COMMAND || t === OLD_BRIEF_COMMAND || t === SNAPSHOT_COMMAND || t === CHECK_AS_COMMAND || t === RECORD_COMMAND || t.startsWith(RETIRED_HOOK_PREFIX);
+  return t === BRIEF_COMMAND || t === OLD_BRIEF_COMMAND || t === SNAPSHOT_COMMAND || t === CHECK_AS_COMMAND || t === RECORD_COMMAND || t === RESTATEMENT_COMMAND || t.startsWith(RETIRED_HOOK_PREFIX);
 };
 
 /** `list` without canon's hooks; an entry left with no hooks goes. Undefined when nothing of canon's was in it. */

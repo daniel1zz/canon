@@ -68,7 +68,7 @@ export function thisWorkChanges(ws: Workspace, corpus: Corpus): Result<{ readonl
   if (!architecture.ok) return architecture;
   const subject = claimOfWorktree(ws.db, ws.root)?.subject ?? null;
   const change = subject === null ? undefined : findDoc(corpus, subject);
-  return ok({ changed: scope.changedDocs, extras: { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change, ...(architecture.value ? { architecture: architecture.value } : {}) } });
+  return ok({ changed: scope.changedDocs, extras: { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change, added: scope.added, restatements: scope.restatements, ...(architecture.value ? { architecture: architecture.value } : {}) } });
 }
 
 /**
@@ -126,7 +126,7 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
     if (scope.reviewed.length > 0 || wording.questions.length > 0) {
       const architecture = architectureOf(ws.root, base.value, head.value);
       if (!architecture.ok) return { kind: "failed", message: architecture.error.message };
-      const prompts = reviewPrompts(ws.root, read.corpus, scope.changedDocs, { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change: findDoc(read.corpus, subject), wording: wording.questions, ...(architecture.value ? { architecture: architecture.value } : {}) }, onMain.reviewMaxPromptBytes);
+      const prompts = reviewPrompts(ws.root, read.corpus, scope.changedDocs, { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change: findDoc(read.corpus, subject), wording: wording.questions, added: scope.added, restatements: scope.restatements, ...(architecture.value ? { architecture: architecture.value } : {}) }, onMain.reviewMaxPromptBytes);
       if (!prompts.ok) return { kind: "failed", message: prompts.error.message };
       // reason: a preview reuses only a passing preview of the same prompts, command and budget, never a landing's pass: the reviewer may be another model for a preview (BR-2361, D-70)
       const hash = reviewKey("preview", onMain.review, onMain.reviewMaxPromptBytes, prompts.value);

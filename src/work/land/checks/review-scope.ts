@@ -5,7 +5,9 @@ import { git } from "../../../kernel/git.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import type { Corpus, Doc } from "../../../knowledge/documents/model.ts";
 import { ARCHITECTURE_FILE, hasContent, overviewText } from "../../../knowledge/check/architecture.ts";
-import { duplicatePrompt, SKILL_FILE, standingText, type DeletedDoc } from "../../../knowledge/review/review.ts";
+import { duplicatePrompt, SKILL_FILE, standingText, type AddedLines, type DeletedDoc } from "../../../knowledge/review/review.ts";
+import { addedLines, restatementIndex, restatementsIn, type Restatement } from "../../../knowledge/check/restatement/restatement.ts";
+import { textAt } from "../../../knowledge/check/restatement/work.ts";
 import { reviewKeys } from "../../../knowledge/review/config-keys.ts";
 
 /**
@@ -24,6 +26,10 @@ export interface ReviewScope {
   readonly deletedReadmes: readonly { path: string; text: string }[];
   /** Names for the "review: ..." line. */
   readonly reviewed: readonly string[];
+  /** The lines each changed rule or decision that existed at `base` adds or changes; a new one is not listed (BR-2405). */
+  readonly added: readonly AddedLines[];
+  /** The restatements the text test finds in those lines, and in new rules and decisions, as hints for the review (BR-2405). */
+  readonly restatements: readonly Restatement[];
 }
 
 export function reviewScope(wt: string, base: string, head: string, corpus: Corpus): ReviewScope {
@@ -54,7 +60,21 @@ export function reviewScope(wt: string, base: string, head: string, corpus: Corp
     return { path: e.path, text: old.ok ? old.value : "" }; // the text on main, like a deleted rule's (BR-2009)
   });
   const reviewed = [...changedDocs.map((d) => d.id), ...deleted.map((d) => `${d.id} (deleted)`), ...readmes.map((n) => `${n} README`), ...deletedReadmes.map((r) => `${r.path} (deleted)`)];
-  return { entries, renamed, changedDocs, deleted, readmes, deletedReadmes, reviewed };
+  // reason: only a restatement in lines this landing adds or changes may block, so the review is told which lines those are (BR-2405, D-84)
+  const index = restatementIndex(corpus);
+  const added: AddedLines[] = [];
+  const restatements: Restatement[] = [];
+  for (const d of changedDocs.filter((x) => x.kind === "rule" || x.kind === "decision")) {
+    const now = readFileSync(join(wt, d.path), "utf8");
+    const before = textAt(wt, base, d.path);
+    const lines = addedLines(now, before);
+    if (before !== undefined) {
+      const text = now.split("\n");
+      added.push({ id: d.id, path: d.path, lines: [...lines].sort((a, b) => a - b).map((n) => ({ line: n, text: text[n - 1]! })).filter((l) => l.text.trim() !== "") });
+    }
+    restatements.push(...restatementsIn(index, d, now, lines));
+  }
+  return { entries, renamed, changedDocs, deleted, readmes, deletedReadmes, reviewed, added, restatements };
 }
 
 /** The standing instructions (by main's list) and skills the change adds or edits, for the duplicate review (BR-2143). */

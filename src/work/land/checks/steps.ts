@@ -153,7 +153,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       const overview = architectureOf(wt, base.value, head.value);
       if (!overview.ok) return refuse("environment", overview.error.message);
       const architecture = overview.value;
-      const prompts = reviewPrompts(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording, ...(architecture ? { architecture } : {}) }, onMain.reviewMaxPromptBytes);
+      const prompts = reviewPrompts(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording, added: scope.added, restatements: scope.restatements, ...(architecture ? { architecture } : {}) }, onMain.reviewMaxPromptBytes);
       if (!prompts.ok) return refuse("review", prompts.error.message);
       const split = splitNote(prompts.value);
       if (split) say(`review: ${split}`);

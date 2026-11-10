@@ -13,7 +13,7 @@ const REJECTED = "否决";
 /** 采用 not negated: 不采用, 未采用, 没采用, 没有采用 and 不再采用 say the option was rejected (BR-2109). */
 const TAKEN_MARK = /(?<!不|未|没|没有|不再)采用/;
 const NEGATED_TAKEN = /(?:不|未|没|没有|不再)采用/;
-const SOURCE_MARK = "来源：";
+export const SOURCE_MARK = "来源：";
 /** Shortest quote, after whitespace is collapsed: a few characters match almost any page. */
 export const MIN_QUOTE = 8;
 

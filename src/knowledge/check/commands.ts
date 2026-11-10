@@ -12,6 +12,8 @@ import { reviewSettingsOn } from "../../work/land/checks/review-scope.ts";
 import { thisWorkChanges } from "../review/preview.ts";
 import { reviewSizeHints } from "../review/size-hint.ts";
 import { testFilesFor } from "./tests.ts";
+import { restatementLine } from "./restatement/restatement.ts";
+import { workBase, workRestatements } from "./restatement/work.ts";
 
 /** `canon check`: corpus integrity. */
 
@@ -39,6 +41,9 @@ const checkCmd = defineCommand({
     // reason: files changed by others since their last report still count by their older report, said once (BR-2345)
     for (const n of staleReportNotes(input)) console.error(noteLine(n));
     for (const n of domainNameNotes(input)) console.error(noteLine(n));
+    const work = must(thisWorkChanges(ws, read.corpus));
+    // reason: a restatement this work wrote is said and never fails the check; the rule review is what blocks it (BR-2403, D-84)
+    if (work) for (const r of workRestatements(ws.root, must(workBase(ws.root, ws.config.main)), read.corpus, work.changed)) console.error(`note: ${restatementLine(r)}`);
     // reason: domains the overview never named are old gaps, said and never refused; only a landing that adds one is refused (D-65, D-37)
     for (const h of architectureHints(input)) console.error(h);
     if (args.json) json(findings);
@@ -52,7 +57,7 @@ const checkCmd = defineCommand({
     // reason: a domain close to review_max_prompt_kb is said before a change to it is refused, and never fails the check (BR-2375, D-76, #145)
     // reason: in a worktree the landing's settings are main's (BR-2074) and this work's changed documents are counted, found as the landing finds them (BR-2375)
     const review = reviewSizeSettings(ws);
-    if (review.review !== REVIEW_NONE) for (const h of reviewSizeHints(ws.root, read.corpus, review.budget, must(thisWorkChanges(ws, read.corpus)))) console.error(h);
+    if (review.review !== REVIEW_NONE) for (const h of reviewSizeHints(ws.root, read.corpus, review.budget, work)) console.error(h);
     process.exit(findings.length === 0 ? EXIT.ok : EXIT.refused);
   },
 });

@@ -2,7 +2,7 @@ import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
-import { CHECK_AS_COMMAND, planUnhook, RECORD_COMMAND, SNAPSHOT_COMMAND } from "./hook.ts";
+import { CHECK_AS_COMMAND, planUnhook, RECORD_COMMAND, RESTATEMENT_COMMAND, RESTATEMENT_MATCHER, SNAPSHOT_COMMAND } from "./hook.ts";
 import { boundedLoop, waitFor } from "../work/testkit.ts";
 
 // reason: every test drives the canon CLI through spawned processes, a landing included (C-111)
@@ -240,12 +240,12 @@ describe("canon uninstall", () => {
 describe("removing canon's settings entries", () => {
   const settings = (v: unknown) => dir({ ".claude/settings.json": JSON.stringify(v) });
 
-  test("BR-2278: canon's entries go, the project's own stay, emptied lists and objects go, worktree.baseRef stays", () => {
+  test("BR-2278 BR-2404: canon's entries go, the project's own stay, emptied lists and objects go, worktree.baseRef stays", () => {
     const root = settings({
       hooks: {
         SessionStart: [{ hooks: [{ type: "command", command: "canon brief" }] }],
         PreToolUse: [{ matcher: "Bash", hooks: [{ type: "command", command: SNAPSHOT_COMMAND }] }, { matcher: "Edit", hooks: [{ type: "command", command: "echo mine" }] }],
-        PostToolUse: [{ matcher: "AskUserQuestion", hooks: [{ type: "command", command: RECORD_COMMAND }, { type: "command", command: "echo also" }] }],
+        PostToolUse: [{ matcher: "AskUserQuestion", hooks: [{ type: "command", command: RECORD_COMMAND }, { type: "command", command: "echo also" }] }, { matcher: RESTATEMENT_MATCHER, hooks: [{ type: "command", command: RESTATEMENT_COMMAND }] }],
       },
       permissions: { allow: ["Bash(export CANON_ACTOR='agent:*')"] },
       worktree: { baseRef: "head" },

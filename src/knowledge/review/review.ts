@@ -1,3 +1,4 @@
+import { restatementLine, type Restatement } from "../check/restatement/restatement.ts";
 import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
@@ -36,6 +37,13 @@ export interface DeletedDoc {
   readonly text: string;
 }
 
+/** The lines a landing adds or changes in a rule or decision that was already on main (BR-2405). */
+export interface AddedLines {
+  readonly id: string;
+  readonly path: string;
+  readonly lines: readonly { readonly line: number; readonly text: string }[];
+}
+
 export interface ReviewExtras {
   readonly deleted?: readonly DeletedDoc[];
   /** Domains whose README the landing changes; the review sees each whole domain. */
@@ -53,10 +61,14 @@ export interface ReviewExtras {
    * rules and accepted decisions that landed on main since; the prompt says so and shows them whole.
    */
   readonly incremental?: { readonly from: number; readonly added: readonly Doc[] };
+  /** The lines this landing adds or changes in the changed rules and decisions that were already on main (BR-2405). */
+  readonly added?: readonly AddedLines[];
+  /** Restatements the text test finds in the added lines, given to the review as hints (BR-2405). */
+  readonly restatements?: readonly Restatement[];
 }
 
 /** The key of each blocking criterion in the prompts, and `note` for a remark that never blocks (BR-2367, D-74). */
-export const RULE_CRITERIA = ["contradiction", "untestable", "no-rejected-options", "release", "amends", "overview"] as const;
+export const RULE_CRITERIA = ["contradiction", "untestable", "no-rejected-options", "release", "amends", "overview", "restatement"] as const;
 export const DUPLICATE_CRITERIA = ["duplication"] as const;
 const CRITERIA: readonly string[] = [...RULE_CRITERIA, ...DUPLICATE_CRITERIA];
 const ANSWER_FORMAT_RULE = `{"findings":[{"criterion":"${RULE_CRITERIA.join('"|"')}"|"note","text":"<one sentence, naming the id>"}]`;
@@ -89,6 +101,8 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
     "`amends`: a changed decision that replaces only part of an accepted decision must list it in `amends:` (one that replaces a whole decision uses `supersedes:`); a decision that says it changes part of another decision without listing it in `amends:`.",
     // reason: the overview is a reader's entry, so only a text this landing wrote into it can be blocked, never the overview as it stood (BR-2009, D-65)
     "`overview`: when an architecture overview is shown below, it is where readers start, not the judge: where it disagrees with the active rules and accepted decisions, they win. Use this key only when the part of the overview this landing changed (its diff is shown) contradicts an active rule or an accepted decision. When a rule or decision changed in this landing makes a statement in the overview wrong, add a `note` naming the overview section.",
+    // reason: a copy of another rule's behaviour goes stale when that rule changes; only lines this landing writes can be blocked, so old copies do not block unrelated work (BR-2405, D-84, #177)
+    "`restatement`: a changed rule or decision that, in a line this landing adds or changes, states again a behaviour another rule already states (its conditions, outcomes, numbers or order), in the same or other words, instead of only naming that rule (按 BR-x, 见 BR-x). The copy goes stale when the other rule changes. Not a restatement: naming the other rule with the few words that say which of its behaviours is meant (按 BR-11 的侦测半径); what this document adds to the other rule or how it departs from it; a decision's source line (来源：) quoting its target. The lines this landing adds or changes are listed under # Lines added or changed in this landing; a changed rule or decision with no entry there is new, and all of its lines are. A restatement only in lines this landing did not add or change is a `note`. Name both ids and quote the restating words.",
     NO_VERDICT,
     // reason: a defect left out blocks a later landing of the same text, and each call reports what it happens to notice (BR-2009, #173)
     "List every blocking defect you find, not only the first: a defect you leave out blocks a later landing of the same text. A blocking finding must involve at least one changed or deleted document; a defect only between documents this landing does not change is a `note`.",
@@ -129,6 +143,13 @@ ${q.examples.trim()}
   }
   parts.push("# Changed documents (new text)");
   for (const d of changed) parts.push(docSection(d));
+  if (extras.added?.length) {
+    parts.push("# Lines added or changed in this landing", "", "For each changed rule or decision that was already on main, the lines this landing adds or changes (line number in the file, then the line). A changed rule or decision not listed here is new: all of its lines are.", "");
+    for (const a of extras.added) parts.push(`## ${a.id} (${a.path})\n\n${a.lines.length ? a.lines.map((l) => `${l.line}: ${l.text}`).join("\n") : "(only lines removed)"}\n`);
+  }
+  if (extras.restatements?.length) {
+    parts.push("# Possible restatements found by shared wording (hints: judge each yourself; a restatement in other words is not listed)", "", ...extras.restatements.map((r) => `- ${restatementLine(r)}`), "");
+  }
   if (extras.incremental) {
     // reason: the changed text already passed a full review against its whole domains; only what landed since is new to it (BR-2396, D-81)
     parts.push(

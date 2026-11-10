@@ -47,11 +47,11 @@ title: 架构总览
 **`canon/` 文档树**
 - 职责：项目的共享记忆，进版本库：`canon/product.md`、`canon/architecture.md`、`canon/config.yaml`、`canon/backlog.md`、`canon/rules/<领域>/`（规则和领域 README）、`canon/decisions/`、`canon/changes/`、`canon/notes/`，需要时有 `canon/releases/`。一个文档一个文件，只在合入时改。
 - 数据：Markdown 加 front matter。`canon check` 查格式、引用、路径、规则有没有被一个会运行的测试点名（读 `state.db` 里的测试报告记账，不运行测试，D-64）；`canon search`、`canon context` 读它。
-- 代码：`src/knowledge`（横跨整个领域）、`src/knowledge/documents`、`src/knowledge/check`、`src/knowledge/query`、`src/knowledge/releases`、`src/knowledge/plans`（变更文件里 `## 计划` 表的读取、检查和 `canon plan status`，步骤状态由做它的变更算出）、`src/work/execution`（规则的执行状态由变更里的通过记录算出）。
-- 决策：D-1、D-12、D-14、D-15、D-32、D-61、D-64、D-65、D-77。
+- 代码：`src/knowledge`（横跨整个领域）、`src/knowledge/documents`、`src/knowledge/check`、`src/knowledge/check/restatement`（复述别的规则的文字判定，hook、`canon check` 和规则评审共用，D-84）、`src/knowledge/query`、`src/knowledge/releases`、`src/knowledge/plans`（变更文件里 `## 计划` 表的读取、检查和 `canon plan status`，步骤状态由做它的变更算出）、`src/work/execution`（规则的执行状态由变更里的通过记录算出）。
+- 决策：D-1、D-12、D-14、D-15、D-32、D-61、D-64、D-65、D-77、D-84。
 
 **装进项目的 hook、skill 和 git 守卫**
-- 职责：Claude Code hook（会话开始跑 `canon brief`；每次 Bash 前快照、检查 `canon work` 命令带不带 `--as`（`canon work check-as`，只拒绝、不改写）；提问工具之后记录回答）、`.claude/skills/canon-*`、git 的 `reference-transaction` hook（main 只能由 `canon work land` 移动）。
+- 职责：Claude Code hook（会话开始跑 `canon brief`；每次 Bash 前快照、检查 `canon work` 命令带不带 `--as`（`canon work check-as`，只拒绝、不改写）；提问工具之后记录回答；Write 或 Edit 之后提示改动的规则或决策在新行里复述了别的规则，`canon restatements --hook`，D-84）、`.claude/skills/canon-*`、git 的 `reference-transaction` hook（main 只能由 `canon work land` 移动）。
 - 数据：项目的 `.claude/settings.json`、`.claude/skills/`、git hook 目录里的守卫文件；skill 的来源是 canon 自己仓库的 `.claude/skills`。`canon init` 和 `canon update` 还写只有标题的 `canon/architecture.md`（已有的不覆盖）。
 - 代码：`src/install`（`init`、`install`、`update`、`uninstall`、`githook.ts`）。
 - 决策：D-9、D-10、D-16、D-36、D-46、D-53、D-62、D-65。

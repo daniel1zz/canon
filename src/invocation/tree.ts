@@ -3,6 +3,7 @@ import { assemble } from "./command.ts";
 import { installCommands } from "../install/commands.ts";
 import { referenceCommands } from "./reference/commands.ts";
 import { checkCommands } from "../knowledge/check/commands.ts";
+import { restatementCommands } from "../knowledge/check/restatement/commands.ts";
 import { documentCommands } from "../knowledge/documents/commands.ts";
 import { queryCommands } from "../knowledge/query/commands.ts";
 import { reviewCommands } from "../knowledge/review/commands.ts";
@@ -36,6 +37,7 @@ export const main = defineCommand({
     hooksCommands,
     referenceCommands,
     checkCommands,
+    restatementCommands,
     documentCommands,
     queryCommands,
     releaseCommands,

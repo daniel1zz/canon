@@ -38,6 +38,7 @@ export type CheckRule =
   | "test-report-missing" // a test file this change touches has no report for its current content (BR-2344)
   | "test-report-stale" // test files changed since their last report: only ever a note (BR-2345)
   | "test-retired-rule" // a test still names a retired rule
+  | "restatement" // a sentence this work added restates another rule: only ever a note (BR-2403)
   | "rule-no-statement" // an active or planned rule has no non-empty "## 规则" section
   | "rule-no-example" // an active or planned rule without `untested:` has no example in "## 例子"
   | "example-before-change" // a current rule's "## 例子" states how the product behaved before the change (BR-2301)
