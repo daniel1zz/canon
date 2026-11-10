@@ -49,6 +49,7 @@ describe("rule review of restatements", () => {
   test("BR-2405: a new rule is not listed among the edited lines, but its restatements are hints", () => {
     const { prompt } = landing({ [`canon/rules/billing/${B3}.md`]: rule(3, COPY) });
     expect(prompt).not.toContain("# Lines added or changed in this landing\n");
+    expect(prompt).toContain("a changed rule or decision with no entry there is new, and all of its lines are");
     expect(prompt).toContain(`${B3} restates ${B1}`);
   });
 
