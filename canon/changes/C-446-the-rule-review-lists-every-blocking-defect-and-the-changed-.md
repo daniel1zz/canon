@@ -2,11 +2,15 @@
 id: C-446
 title: The calls of a split rule review run at once, and the review lists every
   blocking defect (#173)
-status: open
+status: done
 rules:
   - BR-2009
   - BR-2359
   - BR-2074
+passes:
+  BR-2009: dfc7adc397cc60ad test
+  BR-2074: acd6bad4f209faf0 test
+  BR-2359: ebb82f7f61ff085d test
 ---
 
 ## 为什么
