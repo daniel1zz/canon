@@ -3,7 +3,7 @@ id: C-473
 title: "Suspect references: a stamp decides alone, unstamped ones compare with
   the configured starting commit, landing stamps new references, retirement
   counts (fixes C-469)"
-status: open
+status: done
 rules:
   - BR-2423
   - BR-2424
@@ -11,6 +11,14 @@ rules:
   - BR-2427
   - BR-2428
   - BR-2429
+passes:
+  BR-2423: f03646ac60f4cc4b test
+  BR-2424: 11f628692f1f8c43 test
+  BR-2425: 4e085f8fee7f2b3f test
+  BR-2427: 9dc73f635fbc9138 test
+  BR-2428: 98b3337ec59de14a test
+  BR-2429: d98c70155365665f test
+  BR-2440: 8409860231c4b5eb test
 ---
 
 ## 为什么
