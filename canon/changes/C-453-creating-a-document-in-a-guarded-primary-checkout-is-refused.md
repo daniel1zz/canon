@@ -2,9 +2,11 @@
 id: C-453
 title: Creating a document in a guarded primary checkout is refused and points
   at canon work start (#179)
-status: open
+status: done
 rules:
   - BR-2409
+passes:
+  BR-2409: 9af4e42c37f171d6 test
 ---
 
 ## 为什么
