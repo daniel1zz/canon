@@ -2,7 +2,7 @@
 id: C-468
 title: Related documents are ranked by references both ways, bigram text and
   shared names, in canon context, the edit hook and search (C-464 E)
-status: open
+status: done
 rules:
   - BR-2387
   - BR-2421
@@ -14,6 +14,14 @@ rules:
 plan: C-464
 steps:
   - E
+passes:
+  BR-2073: 5bc85b9f0b4d6e18 test
+  BR-2214: 3453af60cee48747 test
+  BR-2215: 61bb8397c1d2984d test
+  BR-2387: cf6f536d66a27aa1 test
+  BR-2402: 10cd341a593340c5 test
+  BR-2421: e13a4caf5e9ec3b3 test
+  BR-2422: 5a62f126bf0bec96 test
 ---
 
 ## 为什么
