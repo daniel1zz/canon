@@ -259,6 +259,8 @@ describe("creating documents where main is checked out and guarded", () => {
     expect(r.code).toBe(1);
     expect(r.err).toContain("canon work start");
     expect(r.err).toContain("main-dirty");
+    // where main is guarded the location is checked before the name (BR-2115 would say exit 2)
+    expect(canon(root, "rule", "domain", "Billing", "--code", "src").code).toBe(1);
     expect(status(root)).toBe("");
     const started = canon(root, "work", "start", "--title", "y");
     const wt = /→ (\S+) \(branch/.exec(started.out)?.[1];
