@@ -2,7 +2,7 @@
 id: C-477
 title: canon-test and canon-diagnose state refusals and determinism once, so the
   release check passes on main (#189)
-status: open
+status: done
 rules: []
 ---
 
