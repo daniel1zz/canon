@@ -12,7 +12,7 @@ A test exists to find bugs. A suite that passes on broken code is worse than no 
 1. `canon context <path>` for the code under test: the domain's rules, accepted decisions and open changes. Find the rules this code implements (`canon search <term>` if unsure).
 2. **Before opening the implementation**, write the expected behaviours as test skeletons, from the rule's `## 规则` and `## 例子` only:
    - every example becomes a case, input and expected result taken from the example, not from the code;
-   - every refusal the rule implies becomes a case: which input, which error or exit code, and what must *not* happen (no file written, no row inserted, no commit made).
+   - every refusal the rule implies becomes a case, checked as section 4 says.
    Reading the implementation first produces tests that mirror it, bugs included.
 3. No rule covers the behaviour, or its examples do not reach the boundary: resolve the gap through canon-rules section 0. For conflicting rules use its section 1a before choosing expectations. Derive test expectations from the rules or public contract, never the function body.
 4. A test that fails because the code contradicts the rule has found a defect. Do not change the expected value to match the code. Fix the code. If the requirement itself needs to change, use canon-rules section 0 and record why in the change.
@@ -45,7 +45,7 @@ Testing code that already exists still needs the red: break the input or revert 
 
 ## 4. What every test must satisfy
 
-- **Named after its rule**: `it("BR-n: <behaviour>")`. A test that proves no rule usually means a rule is missing. An active rule nobody tests needs a test, or `untested: <reason>` in its front matter.
+- **Proves a rule**, named as the brief says. A test that proves no rule usually means a rule is missing. An active rule nobody tests needs a test, or `untested: <reason>` in its front matter.
 - **Public interface only.** It survives an internal rename; if a refactor breaks it while behaviour stays the same, it was testing implementation.
 - **At least two input sets producing different outputs** on the happy path. This defeats an implementation that returns a constant.
 - **Refusals are tested like successes**: exit code, error text, and absence of side effects.
@@ -58,8 +58,8 @@ False-green patterns to scan for before committing, with grep commands: [referen
 
 ## 5. Verification discipline (all eight, every time)
 
-1. **Enumerate mandated failures first.** Before running anything, list every case where the target must fail: invalid input → usage error, missing permission → denial, corrupt state → loud abort, check violation → refusal with a fix hint. Each gets exercised and compared with the rule (exit code, message, absent side effect). An unexercised mandated failure is an uncovered requirement.
-2. **Prove the oracle can fail before trusting its pass.** A test never seen red proves nothing. New test: watch it fail. Inherited suite: mutate one guarded behaviour and confirm the suite catches it. A suspiciously fast pass gets re-run before it is believed.
+1. **Enumerate mandated failures first.** Before running anything, list every case where the target must fail: invalid input → usage error, missing permission → denial, corrupt state → loud abort, check violation → refusal with a fix hint. Each gets exercised and compared with the rule (section 4). An unexercised mandated failure is an uncovered requirement.
+2. **Prove the oracle can fail before trusting its pass.** New tests: section 3. Inherited suite: mutate one guarded behaviour and confirm the suite catches it. A suspiciously fast pass gets re-run before it is believed.
 3. **Negative controls travel in pairs.** Every "X is now allowed / fixed" ships with "Y is still refused". Fixed a false denial? Prove the true denial still fires. Loosened a matcher? Prove the true positives still match.
 4. **Hunt silent fallbacks on purpose.** Feed unknown flags, out-of-range config values, undeclared fields, unparseable files. If the answer to "what happens on bad input?" is "nothing visible", that is a finding (one real case: a TTL of `0` silently became 120).
 5. **Boundaries are failure scenarios.** Zero, empty, duplicate, expired, concurrent, over limit, already deleted, already done. Exercise illegal state transitions, not only the happy walk.

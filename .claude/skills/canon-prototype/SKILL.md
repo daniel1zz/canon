@@ -23,7 +23,7 @@ Before writing code, run `canon context <path>` for the code the prototype serve
 3. **No persistence by default.** State lives in memory. If the question is about persistence, use a scratch database or file named `PROTOTYPE-wipe-me`.
 4. **Skip the polish.** No tests, no error handling beyond what makes it run, no abstractions. Prototype code needs no rules or tests because it never lands on main.
 5. **Surface the state.** After every action (logic) or variant switch (UI), show the full relevant state.
-6. **It lives on the change branch only.** Commit it in the change's worktree; the branch plus `canon work stop --next "..."` carries it to the next session. Before `canon work land`, remove it or absorb the validated part properly (with rules and tests). The one exception: a chosen variant that the decision keeps as the implementation reference, committed as a static file at the path the decision names, outside the build.
+6. **It lives on the change branch only.** Commit it in the change's worktree; the branch plus `canon work stop --next "..."` carries it to the next session. Before `canon work land`, remove it or fold it in as section 5 says. The one exception: a chosen variant that the decision keeps as the implementation reference, committed as a static file at the path the decision names, outside the build.
 
 ## 3. UI variants: how different may they be
 
