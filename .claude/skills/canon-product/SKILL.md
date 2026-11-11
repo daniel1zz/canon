@@ -20,7 +20,7 @@ In canon, humans set direction and AI sessions do the rest. So this skill **gath
 
 Usual order for a new bet: benchmark → opportunity → validate → decompose. Read only the file of the mode you run.
 
-- Do not jump from opportunity to rules with untested solutions: every carried behaviour is then marked `unvalidated` in the note and the human question.
+- Do not jump from opportunity to rules with untested solutions: every carried behaviour is then marked `unvalidated` (section 5).
 - Decompose is required when the change **adds a step** to the user's journey; it may be skipped for a change to a single existing step.
 
 ## 2. Before starting
@@ -55,7 +55,7 @@ Every claim about users or demand carries its tier.
 | Engineering spikes in a worktree | Anything that spends money or contacts customers |
 | Prototypes (`canon-prototype`) driven against stated tasks | Usability sessions with target users |
 
-What cannot be run is marked `unvalidated` with the reason. If the missing experiment is what the decision hinges on, put it in the human question as an option ("run X before deciding").
+What cannot be run is marked `unvalidated` with the reason. If the missing experiment is what the decision hinges on, running it is one of the question's options ("run X before deciding"; section 5 item 2).
 
 ## 5. Record the result
 

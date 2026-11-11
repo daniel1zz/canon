@@ -91,6 +91,4 @@ If a later issue makes the case again and it is now right, supersede the decisio
 
 ## Done when
 
-- [ ] Every open issue in scope has a reproduction result comment and exactly one outcome.
-- [ ] Each change file states current behaviour, desired behaviour, rules, and out of scope, with no file paths or line numbers.
-- [ ] Every rejection is a decision, and the closed issue links it.
+The opening paragraph and sections 2, 4 and 5 hold for every issue in scope.
