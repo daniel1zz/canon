@@ -24,6 +24,20 @@ export const MAX_AGE_DAYS = 14;
 /** A changed or untracked file larger than this is left out of a snapshot and named in it (BR-2182). */
 export const MAX_FILE_BYTES = 5 * 1024 * 1024;
 
+/**
+ * Whether a path names a secret file by its basename alone (BR-2406): a fixed list, no config key. Such a file is left
+ * out of a snapshot whatever its size, so a plaintext secret nobody gitignored never lands in refs/canon/snapshots.
+ */
+export function isSecretFile(path: string): boolean {
+  const name = basename(path);
+  if (name === ".env") return true;
+  // reason: these hold only which settings exist, never values, and stay in the snapshot (BR-2406, D-85)
+  if (name.startsWith(".env.")) return ![".env.schema", ".env.example", ".env.sample", ".env.template"].includes(name);
+  if (/\.(pem|key|p12|pfx)$/.test(name)) return true;
+  if (/^id_(rsa|ecdsa|ed25519)/.test(name)) return !name.endsWith(".pub");
+  return name === "keys.txt";
+}
+
 /** The name a worktree's snapshots are kept under: its directory name, which for a change worktree is the change id. */
 export const snapshotKey = (worktree: string) => basename(worktree).replace(/[^A-Za-z0-9._-]/g, "_") || "_";
 
@@ -54,7 +68,8 @@ export function takeSnapshot(cwd: string, now: Date = new Date()): Result<TakeOu
     const r = git(root, "-c", "core.quotePath=false", "ls-files", "-z", ...args);
     return r.ok ? r.value.split("\0").filter(Boolean) : [];
   };
-  const skipped = [...new Set([...listed(["--others", "--exclude-standard"]), ...listed(["--modified"])])].filter((p) => {
+  const changed = [...new Set([...listed(["--others", "--exclude-standard"]), ...listed(["--modified"])])];
+  const large = changed.filter((p) => {
     try {
       return statSync(join(root, p)).size > MAX_FILE_BYTES;
     } catch {
@@ -63,6 +78,13 @@ export function takeSnapshot(cwd: string, now: Date = new Date()): Result<TakeOu
   }).sort();
 
   const head = git(root, "rev-parse", "--verify", "-q", "HEAD^{commit}");
+  // reason: the scratch index starts as a copy of the worktree's own, so a staged secret file is in it even when
+  // neither --modified nor --others lists it; HEAD's paths are no new leak (BR-2406)
+  const staged = head.ok ? git(root, "-c", "core.quotePath=false", "diff", "--cached", "--name-only", "-z", head.value) : git(root, "-c", "core.quotePath=false", "ls-files", "-z", "--cached");
+  const secret = [...new Set([...changed, ...(staged.ok ? staged.value.split("\0").filter(Boolean) : [])])]
+    .filter((p) => isSecretFile(p) && existsSync(join(root, p)) && !large.includes(p))
+    .sort();
+  const skipped = [...large, ...secret].sort();
   const scratch = mkdtempSync(join(tmpdir(), "canon-snapshot-"));
   const env = { GIT_INDEX_FILE: join(scratch, "index") };
   try {
@@ -89,7 +111,8 @@ export function takeSnapshot(cwd: string, now: Date = new Date()): Result<TakeOu
     const headTree = head.ok ? git(root, "rev-parse", `${head.value}^{tree}`) : undefined;
     if ((last && last.tree === tree.value) || (headTree?.ok && headTree.value === tree.value)) return ok({ kind: "none", why: "same as the last snapshot" });
 
-    const message = [`canon: snapshot of ${key} before a Bash call`, ...(skipped.length ? ["", `left out, larger than ${MAX_FILE_BYTES} bytes: ${skipped.join(", ")}`] : [])].join("\n");
+    const leftLines = [...(large.length ? [`left out, larger than ${MAX_FILE_BYTES} bytes: ${large.join(", ")}`] : []), ...(secret.length ? [`left out, secret files: ${secret.join(", ")}`] : [])];
+    const message = [`canon: snapshot of ${key} before a Bash call`, ...(leftLines.length ? ["", ...leftLines] : [])].join("\n");
     const commit = gitEnv(root, { ...who, GIT_COMMITTER_DATE: now.toISOString(), GIT_AUTHOR_DATE: now.toISOString() }, "commit-tree", tree.value, ...(head.ok ? ["-p", head.value] : []), "-m", message);
     if (!commit.ok) return commit;
     const ref = `${SNAPSHOT_REFS}/${key}/${now.toISOString().replace(/[-:.]/g, "")}-${process.pid}`;
@@ -162,10 +185,11 @@ export function changedFiles(root: string, s: Snapshot): string[] {
   return r.ok ? r.value.split("\0").filter(Boolean) : [];
 }
 
-/** The message's "left out" line, if the snapshot left files out. */
+/** The message's "left out" lines (large files, secret files) joined into one, if the snapshot left files out (BR-2184). */
 export function leftOut(root: string, s: Snapshot): string | undefined {
   const r = git(root, "log", "-1", "--format=%b", s.commit);
-  return r.ok ? r.value.split("\n").find((l) => l.startsWith("left out")) : undefined;
+  const lines = r.ok ? r.value.split("\n").filter((l) => l.startsWith("left out")) : [];
+  return lines.length ? lines.join("; ") : undefined;
 }
 
 /**
