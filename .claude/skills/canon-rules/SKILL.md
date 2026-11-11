@@ -9,11 +9,11 @@ A rule is what the product must do now, written so that any later session reads 
 
 ## 0. The main session writes the baseline
 
-Only the top-level session responsible for the task writes baseline rule files: creating, editing (including titles, examples and front matter), retiring or moving them. It does the search below, decides which existing rules to reuse or change and which parts to cite, and writes the resulting text itself. Do not delegate the write, even with exact wording already supplied. This keeps the product contract with the session that holds the owner's requirements, rather than letting implementation redefine its own acceptance criteria.
+Only the top-level session responsible for the task writes baseline rule files: creating, editing (including titles, examples and front matter), retiring or moving them, including writing text already decided elsewhere. This keeps the product contract with the session that holds the owner's requirements, rather than letting implementation redefine its own acceptance criteria.
 
-Subagents read the rules, implement and test them, and report gaps or contradictions with the rule ids, the concrete scenario and a suggested correction in their report. They do not edit the baseline; test expectations follow canon-test. The main session resolves the requirement before dependent work continues; work independent of that choice can continue.
+Subagents read the rules, implement and test them, and report gaps or contradictions with the rule ids, the concrete scenario and a suggested correction in their report. Test expectations follow canon-test. The main session resolves the requirement before dependent work continues; work independent of that choice can continue.
 
-The main session is task-local, not one project-wide writer: concurrent top-level sessions stay within their assigned change and rule scope. Write only in the worktree the session holds. If a subagent holds the change that needs a rule edit, first have it stop and hand the change back through canon's existing claim workflow; never enter its held worktree to edit the rules.
+The main session is task-local, not one project-wide writer: concurrent top-level sessions stay within their assigned change and rule scope. For a rule edit discovered during delegated implementation, hand the change back through canon's existing claim workflow before the main session edits it.
 
 ## 1. Find what exists
 

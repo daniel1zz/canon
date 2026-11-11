@@ -49,7 +49,7 @@ Write the regression test **before** the fix, at a seam that exercises the real 
 1. Turn the minimised repro into a failing test. In canon, name it after the rule it proves (`it("BR-n: ...")`).
 2. Watch it fail. 3. Fix. 4. Watch it pass. 5. Re-run the original, un-minimised loop.
 
-If the fix restores behaviour the rule already requires, fix the implementation against that rule; otherwise use the rule-writing workflow before choosing a new product behaviour.
+For rule gaps and changes of expected behaviour, see canon-test section 1.
 
 ## Phase 6 — Clean up and record
 
