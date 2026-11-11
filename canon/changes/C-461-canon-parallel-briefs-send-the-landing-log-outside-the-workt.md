@@ -2,7 +2,7 @@
 id: C-461
 title: canon-parallel briefs send the landing log outside the worktree, so it
   cannot make the landing dirty
-status: open
+status: done
 rules: []
 ---
 
