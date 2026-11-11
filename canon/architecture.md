@@ -14,9 +14,10 @@ title: 架构总览
 - **Claude Code**：会话在它里面运行。canon 把 hook 和 skill 装进项目的 `.claude/`；读它的提问记录来佐证转述的回答；`canon usage` 只读它的会话记录。
 - **`claude -p`**：非交互的 Claude，用于合入时的规则评审，命令由 `canon/config.yaml` 的 `review` 配置；合入后的代码评审也是项目自己配的。
 - **GitHub**：`canon issues` 列出开着的 issue（`src/work/issues`，只读，关闭用 `gh`）；决策里引用的网址在合入时被抓取核对；`remote` 指向它时合入后把 main 推上去。
+- **varlock**（可选，开源的密钥工具）：项目根目录有 `.env.schema` 时（D-85），合入运行它找变更里提交的密钥明文，用被合入树的 `node_modules/.bin/varlock`，没有就用 PATH 上的；canon 不转述它的输出（`src/work/land/checks/secrets.ts`，D-86）。
 - **项目自己的命令**：floor、类型检查、测试、选测试的命令（`test_select_command`）、`setup`、生命周期 hook，由 `canon/config.yaml` 配置，canon 只运行它们、看退出码；测试命令把 JUnit XML 报告写到 `{report}`，canon 读报告里有哪些测试、跑没跑，不认语言（D-64）。
 
-决策：D-1、D-2、D-9、D-45、D-51、D-64。
+决策：D-1、D-2、D-9、D-45、D-51、D-64、D-86。
 
 ## 容器：canon 做的
 
@@ -39,7 +40,7 @@ title: 架构总览
 - 决策：D-11、D-13、D-18、D-30、D-62、D-71。
 
 **合入流水线（`canon work land`）**
-- 职责：把一个变更变成 main：排队（上次因 `canon check` 被拒、内容和 main 都没变时，入队前先重跑 `canon check`，还有发现就不排队，BR-2388）、在 rebase 后的树上跑检查和评审、移动 main、合入后推送和启动后台命令；配了 `land_batch_max` 时把排队的变更串成一批在临时 worktree 里测；配了 `floor_scopes` 时只改某个范围的合入跑那个范围的命令、排到全量合入前面（D-82）。`canon work land` 只是跟随者：合入运行在它启动的后台合入进程里（自己的进程组，输出和退出码写在 `logs/land-run-*/`，`src/work/land/detach.ts`），调用者被杀或按 Ctrl-C 只脱离，再运行就接上（还在启动、正在跑，或已结束而没人看到结果的都算；判断和记下 `land.spawn` 在一个写事务里，同一 worktree 只开一次合入，BR-2392），`--stop` 停止；状态放 `state.db`。合入前的验证 `canon work test` 也在这里：选出和这个变更有关的测试文件（改动的、`test_select_command` 选出的、点名了碰过的规则的），一个文件一次运行，把 `test_command` 里的 `{report}` 换成临时路径，读 JUnit 报告并按（测试文件路径，内容哈希）记账，最后跑类型检查和 `canon check`。步骤的先后见 `canon/rules/work/land/README.md` 和各子领域规则。
+- 职责：把一个变更变成 main：排队（上次因 `canon check` 被拒、内容和 main 都没变时，入队前先重跑 `canon check`，还有发现就不排队，BR-2388）、在 rebase 后的树上跑检查、密钥扫描（项目有 `.env.schema` 时，D-86）和评审、移动 main、合入后推送和启动后台命令；配了 `land_batch_max` 时把排队的变更串成一批在临时 worktree 里测；配了 `floor_scopes` 时只改某个范围的合入跑那个范围的命令、排到全量合入前面（D-82）。`canon work land` 只是跟随者：合入运行在它启动的后台合入进程里（自己的进程组，输出和退出码写在 `logs/land-run-*/`，`src/work/land/detach.ts`），调用者被杀或按 Ctrl-C 只脱离，再运行就接上（还在启动、正在跑，或已结束而没人看到结果的都算；判断和记下 `land.spawn` 在一个写事务里，同一 worktree 只开一次合入，BR-2392），`--stop` 停止；状态放 `state.db`。合入前的验证 `canon work test` 也在这里：选出和这个变更有关的测试文件（改动的、`test_select_command` 选出的、点名了碰过的规则的），一个文件一次运行，把 `test_command` 里的 `{report}` 换成临时路径，读 JUnit 报告并按（测试文件路径，内容哈希）记账，最后跑类型检查和 `canon check`。步骤的先后见 `canon/rules/work/land/README.md` 和各子领域规则。
 - 数据：`state.db` 里的队列条目和测试报告记账；批在 git 公共目录下的临时 worktree。
 - 代码：`src/work/land`（横跨整个流程）、`src/work/land/queue`、`src/work/land/batch`、`src/work/land/checks`、`src/work/land/finish`、`src/work/verify`、`src/work/remote`（合入后推 main，`canon sync` 只快进）。
 - 决策：D-5、D-16、D-22、D-26、D-29、D-32、D-34、D-38、D-42、D-58、D-64、D-73、D-75、D-80、D-82。

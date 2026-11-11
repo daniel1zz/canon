@@ -22,6 +22,7 @@ import { noticeProposedDecisions } from "./proposed.ts";
 import { reviewTree } from "./review-tree.ts";
 import { docsKey, passedDocs, passedReview, reviewKey } from "./review-reuse.ts";
 import { landedSince } from "./landed-since.ts";
+import { scanSecrets } from "./secrets.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { architectureOf, couldNotRun, duplicateReviewPrompt, reviewScope, reviewSettingsOn, standingTouched } from "./review-scope.ts";
@@ -46,8 +47,8 @@ export type Steps = { readonly ok: true; readonly reviewNotes: { reviewed: strin
 
 /**
  * One change's own landing steps before the floor (BR-2014), on the checkout `wt` at `head` (main or the batch chain at
- * `base` below it): canon check, decision sources, the rule and duplicate reviews, before_land (BR-2016,
- * BR-2009, BR-2111, BR-2143, BR-2057). A solo landing runs them in its worktree; a batch, per change (BR-2172).
+ * `base` below it): canon check, decision sources, the secret scan, the rule and duplicate reviews, before_land (BR-2016,
+ * BR-2009, BR-2111, BR-2407, BR-2143, BR-2057). A solo landing runs them in its worktree; a batch, per change (BR-2172).
  */
 type ChangeInput = { wt: string; base: string; main: string; head: string; before: string; subject: string | null; branch: string; running: Running; worktree: string };
 export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: ChangeInput): Promise<Steps> {
@@ -123,6 +124,10 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   // Sources new to main are checked once, here, on the tree that becomes main (BR-2111).
   const sourceFailures = await checkSources(wt, base.value, entries, read.corpus.docs, opts.fetcher ?? httpFetch);
   if (sourceFailures.length > 0) return refuse("source", `decision sources do not hold:\n${sourceFailures.map((f) => `  - ${f}`).join("\n")}`);
+  // reason: a plaintext secret is refused before the rule review sends the diff to a model and before main moves (BR-2407, BR-2408, D-86)
+  const secrets = await scanSecrets(wt, base.value, head.value);
+  if (!secrets.ok) return refuse(secrets.reason, secrets.message);
+  if (secrets.scanned > 0) say(`secret scan: ${secrets.scanned} changed file(s) scanned by varlock, no plaintext secret`);
   let reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined;
   // reason: how a landing is reviewed (the command, its limit, the standing instruction list) comes from main's already-landed
   // config, never from the change's own tree: a change that swaps the reviewer would otherwise review itself (BR-2074, #115)
