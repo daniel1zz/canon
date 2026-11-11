@@ -1,8 +1,15 @@
 ---
 id: C-452
 title: canon events --kind takes several kinds separated by commas (#176)
-status: open
-rules: [BR-2156, BR-2357, BR-2360]
+status: done
+rules:
+  - BR-2156
+  - BR-2357
+  - BR-2360
+passes:
+  BR-2156: 28e672c39c8ed648 test
+  BR-2357: 8b1250c4fe3bcf54 test
+  BR-2360: 9ab0f3eb6797e38d test
 ---
 
 ## 为什么
