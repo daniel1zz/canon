@@ -85,6 +85,29 @@ function isBrokenLink(p: string): boolean {
   }
 }
 
+/**
+ * The files under `<root>/.claude/skills` that canon wrote and nobody edited since: listed in the manifest with the hash of
+ * their current content, as paths relative to `root` (BR-2410). A missing or unreadable manifest lists none, so every file
+ * counts as the project's own and is reviewed as before.
+ */
+export function shippedUnedited(root: string): Set<string> {
+  const target = join(root, ".claude", "skills");
+  const shipped = new Set<string>();
+  let files: unknown;
+  try {
+    files = (JSON.parse(readFileSync(join(target, MANIFEST), "utf8")) as { files?: unknown } | null)?.files;
+  } catch {
+    return shipped;
+  }
+  if (files === null || typeof files !== "object") return shipped;
+  for (const [rel, hash] of Object.entries(files as Record<string, unknown>)) {
+    if (!safeKey(rel) || typeof hash !== "string") continue;
+    const full = join(target, rel);
+    if (existsSync(full) && !lstatSync(full).isSymbolicLink() && statSync(full).isFile() && sha(readFileSync(full)) === hash) shipped.add(`.claude/skills/${rel}`);
+  }
+  return shipped;
+}
+
 /** Every file of every `canon-*` skill in `source`, by path relative to `source`. */
 function sourceFiles(source: string): Map<string, Buffer> {
   const wanted = new Map<string, Buffer>();

@@ -9,6 +9,7 @@ import { duplicatePrompt, SKILL_FILE, standingText, type AddedLines, type Delete
 import { addedLines, restatementIndex, restatementsIn, type Restatement } from "../../../knowledge/check/restatement/restatement.ts";
 import { textAt } from "../../../knowledge/check/restatement/work.ts";
 import { reviewKeys } from "../../../knowledge/review/config-keys.ts";
+import { shippedUnedited } from "../../../install/install.ts";
 
 /**
  * What the rule review and the duplicate review read from a change: which rules, decisions, releases, domain READMEs and
@@ -77,10 +78,14 @@ export function reviewScope(wt: string, base: string, head: string, corpus: Corp
   return { entries, renamed, changedDocs, deleted, readmes, deletedReadmes, reviewed, added, restatements };
 }
 
-/** The standing instructions (by main's list) and skills the change adds or edits, for the duplicate review (BR-2143). */
+/**
+ * The standing instructions (by main's list) and skills the change adds or edits, for the duplicate review (BR-2143);
+ * not the skill files canon wrote and the project left as written (BR-2410).
+ */
 export function standingTouched(wt: string, base: string, head: string, instructions: readonly string[]): string[] {
   const touched = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=d", base, head);
-  return (touched.ok && touched.value !== "" ? touched.value.split("\n") : []).filter((p) => instructions.includes(p) || SKILL_FILE.test(p));
+  const shipped = shippedUnedited(wt);
+  return (touched.ok && touched.value !== "" ? touched.value.split("\n") : []).filter((p) => (instructions.includes(p) || SKILL_FILE.test(p)) && !shipped.has(p));
 }
 
 /** The architecture overview and the diff the change makes to it, when the project has an overview with content (BR-2009, D-65). */

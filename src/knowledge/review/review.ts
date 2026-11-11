@@ -7,6 +7,7 @@ import { idsIn } from "../documents/types.ts";
 import { contextFor, referencedIds, renderContext, ruleSection, type Context } from "../query/query.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { LESSONS_SECTION, section } from "../documents/templates.ts";
+import { shippedUnedited } from "../../install/install.ts";
 
 /**
  * AI review of rule and decision text, the one place the data showed AI judgment pays (spec/ADR rejects
@@ -342,16 +343,17 @@ export function parseAnswer(v: unknown): Result<ReviewVerdict> {
 export interface StandingText {
   /** The configured instruction files that exist, path and whole text. */
   readonly files: readonly { readonly path: string; readonly text: string }[];
-  /** Each project skill's front-matter description, the only part of a skill loaded into every session. */
-  readonly skills: readonly { readonly path: string; readonly description: string }[];
+  /** Each project skill's front-matter description, the only part of a skill loaded into every session; `shipped` when canon wrote it and the project left it as written (BR-2410). */
+  readonly skills: readonly { readonly path: string; readonly description: string; readonly shipped?: boolean }[];
 }
 
 export const SKILL_FILE = /^\.claude\/skills\/[^/]+\/SKILL\.md$/;
 
 export function standingText(root: string, instructions: readonly string[]): StandingText {
+  const shipped = shippedUnedited(root);
   const files = instructions.filter((p) => existsSync(join(root, p))).map((path) => ({ path, text: readFileSync(join(root, path), "utf8") }));
   const dir = join(root, ".claude", "skills");
-  const skills: { path: string; description: string }[] = [];
+  const skills: { path: string; description: string; shipped?: boolean }[] = [];
   for (const name of existsSync(dir) ? readdirSync(dir).sort() : []) {
     const path = `.claude/skills/${name}/SKILL.md`;
     if (!existsSync(join(root, path))) continue;
@@ -363,10 +365,12 @@ export function standingText(root: string, instructions: readonly string[]): Sta
     } catch (e) {
       description = `(front matter does not parse: ${(e as Error).message.split("\n")[0]})`;
     }
-    skills.push({ path, description });
+    skills.push({ path, description, ...(shipped.has(path) ? { shipped: true } : {}) });
   }
   return { files, skills };
 }
+
+const SHIPPED_NOTE = "A description marked `(shipped by canon)` is written by canon and cannot be changed in this project: when both places of a duplication are such texts, neither block nor note it; when the project's own text duplicates one in a line this landing added or changed, block as usual and say to keep the canon text and change the project's.";
 
 export function duplicatePrompt(changed: readonly string[], standing: StandingText, guide: string | undefined, changedSkills: readonly { path: string; text: string }[] = [], diffs: readonly { path: string; diff: string }[] = []): string {
   const parts: string[] = [
@@ -384,7 +388,9 @@ export function duplicatePrompt(changed: readonly string[], standing: StandingTe
   ];
   if (guide !== undefined) parts.push(`# canon brief workflow guide (printed at the start of every session)\n\n${guide.trim()}\n`);
   for (const f of standing.files) parts.push(`# ${f.path} (instruction file, loaded whole)\n\n${f.text.trim()}\n`);
-  if (standing.skills.length) parts.push(`# Skill descriptions (each loaded into every session)\n\n${standing.skills.map((s) => `- ${s.path}: ${s.description}`).join("\n")}`);
+  if (standing.skills.length) parts.push(`# Skill descriptions (each loaded into every session)\n\n${standing.skills.map((s) => `- ${s.path}: ${s.description}${s.shipped ? " (shipped by canon)" : ""}`).join("\n")}`);
+  // reason: the project cannot change what canon ships, so duplication among those texts must not refuse its landing (BR-2410, #182)
+  if (standing.skills.some((s) => s.shipped)) parts.push(SHIPPED_NOTE);
   // reason: the reviewer runs in main's tree (BR-2216), so a changed skill's body must travel in the prompt, or it reads main's old text (#122)
   for (const f of changedSkills) parts.push(`# ${f.path} (changed in this landing, full new text)\n\n${f.text.trim()}\n`);
   // reason: without the diff the reviewer cannot tell duplication this landing added from old duplication in the same file (BR-2143, #121)

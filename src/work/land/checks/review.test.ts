@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { createHash } from "node:crypto";
 import { chmodSync, existsSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../land.ts";
@@ -876,6 +877,81 @@ describe("duplicate review of standing instructions at land", () => {
         expect(skipped).toBe(1);
       }
     }
+  });
+
+  describe("skill files canon shipped (BR-2410)", () => {
+    const SHIPPED = ".claude/skills/canon-design/SKILL.md";
+    const skill = (description: string) => `---\nname: canon-design\ndescription: ${description}\n---\nbody\n`;
+    const manifestOf = (text: string) => `${JSON.stringify({ note: "Written by canon install", version: "v", files: { "canon-design/SKILL.md": createHash("sha256").update(text).digest("hex") } })}\n`;
+    /** A project whose canon-design skill and manifest are as `canon update` wrote them, with a reviewer answering `verdict`. */
+    function shippedProject(verdict: "ok" | "block") {
+      const { root, promptFile } = standingProject(verdict);
+      mkdirSync(join(root, ".claude/skills/canon-design"), { recursive: true });
+      const text = skill("Use when designing.");
+      writeFileSync(join(root, SHIPPED), text);
+      writeFileSync(join(root, ".claude/skills/.canon-skills.json"), manifestOf(text));
+      sh(root, "add", "-A");
+      sh(root, "commit", "-qm", "canon install");
+      return { root, promptFile };
+    }
+    /** Writes what `canon update` writes: a new shipped text and the manifest recording it. */
+    function update(wt: string, description: string) {
+      const text = skill(description);
+      writeFileSync(join(wt, SHIPPED), text);
+      writeFileSync(join(wt, ".claude/skills/.canon-skills.json"), manifestOf(text));
+    }
+
+    test("BR-2410: an update change that only rewrites canon's own skill as the manifest records it lands with no duplicate review, even when the reviewer would block", async () => {
+      const { root, promptFile } = shippedProject("block");
+      const s = startNew(root, "Update canon");
+      update(s.worktree, "Use when designing; repeats Use when writing tests.");
+      sh(s.worktree, "commit", "-qam", "canon update");
+      expect((await land(ws(s.worktree), { ...FAST, guide: GUIDE }, quiet)).kind).toBe("landed");
+      expect(existsSync(promptFile)).toBe(false);
+    });
+
+    test("BR-2410: with CLAUDE.md also changed only CLAUDE.md is the changed text; the shipped skill is marked and its full text and diff stay out; a block on the project's own line refuses", async () => {
+      const { root, promptFile } = shippedProject("block");
+      const before = sh(root, "rev-parse", "main");
+      const s = startNew(root, "Update canon and CLAUDE.md");
+      update(s.worktree, "Use when designing a module.");
+      writeFileSync(join(s.worktree, "CLAUDE.md"), "# Project\n\n- Use canon-design when designing.\n");
+      sh(s.worktree, "commit", "-qam", "update and claude");
+      const out = await land(ws(s.worktree), { ...FAST, guide: GUIDE }, quiet);
+      expect(out.kind === "refused" && out.reason).toBe("review");
+      const prompt = readFileSync(promptFile, "utf8");
+      expect(prompt).toContain("# Changed in this landing: CLAUDE.md\n");
+      expect(prompt).toContain(`- ${SHIPPED}: Use when designing a module. (shipped by canon)`);
+      expect(prompt).toContain("- .claude/skills/x/SKILL.md: Use when writing tests\n");
+      expect(prompt).toContain("cannot be changed in this project");
+      expect(prompt).not.toContain(`# ${SHIPPED} (changed in this landing`);
+      expect(prompt).not.toContain(`# ${SHIPPED} (diff of this landing`);
+      expect(sh(root, "rev-parse", "main")).toBe(before);
+    });
+
+    test("BR-2410: a shipped skill the project edited, so its hash no longer matches the manifest, is reviewed as the project's own text", async () => {
+      const { root, promptFile } = shippedProject("ok");
+      const s = startNew(root, "Edit canon-design here");
+      writeFileSync(join(s.worktree, SHIPPED), skill("Use when designing, edited here."));
+      sh(s.worktree, "commit", "-qam", "local edit");
+      expect((await land(ws(s.worktree), { ...FAST, guide: GUIDE }, quiet)).kind).toBe("landed");
+      const prompt = readFileSync(promptFile, "utf8");
+      expect(prompt).toContain(`# Changed in this landing: ${SHIPPED}`);
+      expect(prompt).toContain(`# ${SHIPPED} (changed in this landing, full new text)`);
+      expect(prompt).toContain(`- ${SHIPPED}: Use when designing, edited here.\n`);
+      expect(prompt).not.toContain("(shipped by canon)");
+    });
+
+    test("BR-2410: with a manifest that is not valid JSON, a changed canon skill is reviewed as before", async () => {
+      const { root, promptFile } = shippedProject("ok");
+      writeFileSync(join(root, ".claude/skills/.canon-skills.json"), "{ not json");
+      sh(root, "commit", "-qam", "broken manifest");
+      const s = startNew(root, "Change canon-design");
+      writeFileSync(join(s.worktree, SHIPPED), skill("Use when designing again."));
+      sh(s.worktree, "commit", "-qam", "change");
+      expect((await land(ws(s.worktree), { ...FAST, guide: GUIDE }, quiet)).kind).toBe("landed");
+      expect(readFileSync(promptFile, "utf8")).toContain(`# Changed in this landing: ${SHIPPED}`);
+    });
   });
 
   test("BR-2143: a duplicate reviewer that fails to run refuses the landing", async () => {
