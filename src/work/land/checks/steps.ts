@@ -43,7 +43,8 @@ export interface StepFailure {
   readonly message: string;
   readonly findings?: readonly Finding[];
 }
-export type Steps = { readonly ok: true; readonly reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined } | StepFailure;
+/** `retired`: the rules and decisions retired or superseded on the tree that lands, whose open findings the landing closes (BR-2435). */
+export type Steps = { readonly ok: true; readonly reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined; readonly retired: readonly string[] } | StepFailure;
 
 /**
  * One change's own landing steps before the floor (BR-2014), on the checkout `wt` at `head` (main or the batch chain at
@@ -242,7 +243,8 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   // reason: a notice, never a refusal: subagents land decisions proposed by design (BR-2355)
   const proposed = noticeProposedDecisions(ws, say, { wt, base: base.value, head: head.value, subject, corpus: read.corpus });
   if (!proposed.ok) return refuse("environment", proposed.error.message);
-  return { ok: true, reviewNotes };
+  const retired = read.corpus.docs.filter((d) => (d.kind === "rule" && d.status === "retired") || (d.kind === "decision" && d.status === "superseded")).map((d) => d.id);
+  return { ok: true, reviewNotes, retired };
 }
 
 /** Why a landing that needs a review is refused while main sets no `review`, even when this landing sets one (BR-2074, BR-2143, #115). */

@@ -1,5 +1,6 @@
 import type { CoordDb } from "../db.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
+import { closeSpurious, findingOf } from "../../knowledge/review/findings/findings.ts";
 
 /**
  * Verdicts on rule-review findings (D-49, superseding D-35). A review block carries several findings, so each
@@ -111,7 +112,9 @@ export function recordVerdict(db: CoordDb, actor: string, blockId: string, findi
     if (actor.startsWith("agent:")) return err("refused", `${actor} is an agent: agent verdicts are not recorded by hand (BR-2254)`);
     const dup = verdictsUpTo(db, Number.MAX_SAFE_INTEGER).find((v) => v.detail["block"] === block && v.detail["finding"] === n && v.detail["judge"] === "human");
     if (dup) return err("conflict", `finding ${n} of block ${block} already has a human verdict (event ${dup.id}, ${dup.detail["verdict"]})`);
-    db.event(actor, "review.verdict", b.subject, { block, refusal: j?.refusal ?? null, finding: n, verdict, judge: "human", reason: why, before: typeof b.detail["commit"] === "string" ? b.detail["commit"] : null });
+    const event = db.event(actor, "review.verdict", b.subject, { block, refusal: j?.refusal ?? null, finding: n, verdict, judge: "human", reason: why, before: typeof b.detail["commit"] === "string" ? b.detail["commit"] : null });
+    // reason: a verdict names the finding by block and number; its identity links it to the open finding it closes (BR-2438, D-89)
+    if (verdict === "spurious") closeSpurious(db, findingOf(findingsOf(b)[n - 1]!), event);
     return ok({ subject: b.subject });
   });
   return tx.immediate();

@@ -2,6 +2,7 @@ import { defineCommand } from "citty";
 import { corpusOf, entry, fail, json, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import type { CanonError } from "../../kernel/result.ts";
 import { openNotes, renderNote } from "../review/notes.ts";
+import { FINDINGS_HINT, openFindings, renderFinding } from "../review/findings/findings.ts";
 import { RELATED_LIMIT, relatedLines, relatedTo } from "./related.ts";
 import { linksOf } from "../links/history.ts";
 import { referenceSection } from "../links/links.ts";
@@ -71,6 +72,9 @@ const context = defineCommand({
     const ids = [...(ctx.target && ctx.target.kind !== "change" ? [ctx.target.id] : []), ...ctx.rules.map((r) => r.id), ...ctx.decisions.map((d) => d.id)];
     const notes = openNotes(ws.db, ids);
     if (notes.length) say(`# Open review notes\n\nNot blocking and not changes of their own: handle them when you change the document they name.\n${notes.map((n) => `- ${renderNote(n)}`).join("\n")}\n`);
+    // Open review findings attached to what this context covers, each once (BR-2436, D-89).
+    const findings = openFindings(ws.db, ids);
+    if (findings.length) say(`# Open review findings\n\n${FINDINGS_HINT}\n${findings.map((f) => `- ${renderFinding(f)}`).join("\n")}\n`);
     if (linksFailed) fail(linksFailed);
   },
 });

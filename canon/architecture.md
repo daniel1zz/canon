@@ -28,7 +28,7 @@ title: 架构总览
 - 决策：D-2、D-3、D-4、D-15、D-28、D-63。
 
 **协调数据库 `state.db`**
-- 职责：多个会话同时工作时的共享状态：认领、合入队列、负责人标的优先合入（`canon backlog urgent`）、交接记录、留给人的问题、编号、端口、事件表（每次写入和拒绝）、后台部件的登记。
+- 职责：多个会话同时工作时的共享状态：认领、合入队列、负责人标的优先合入（`canon backlog urgent`）、交接记录、留给人的问题、编号、端口、事件表（每次写入和拒绝）、后台部件的登记、未处理的评审意见（`review_findings`，见合入后的命令和评审）。
 - 数据：`<git 公共目录>/canon/state.db`（SQLite），本机所有 worktree 共用，不提交、不跨机器。知识（规则、决策）不放这里。
 - 代码：`src/work`（`db.ts`、`workspace.ts`），各子领域读写自己的表；`src/work/humans`（留给人的问题）、`src/work/stats`（从事件表算统计，`canon stats`、`canon events`、`canon usage`）。
 - 决策：D-6、D-11、D-18、D-33、D-41、D-45、D-47、D-73。
@@ -65,9 +65,9 @@ title: 架构总览
 
 **合入后的命令和评审**
 - 职责：合入后在主 checkout 里后台运行配置的 `after_land` 命令，记下日志和退出码；运行和记录配置的生命周期 hook、每个变更的端口 `CANON_PORT`；两种评审的提示词和结果：合入时对规则、决策、常驻说明的规则评审（调用配置的 `review` 命令；拆成几次调用时同时运行，D-83；同样的提示通过过就沿用，改动文档和上次通过时一样就只对之后合入 main 的文档做小评审，D-70、D-81），和合入后的代码评审（怎么跑由项目配）。重复评审不评审 canon 装进项目、项目没改过的 skill 文件，所以 `canon update` 的合入不做重复评审（BR-2410）。规则评审还拦截新写的行里复述别的规则的行为，提示里附上这次新增或改动的行和文字判定找到的候选；小评审只附新增或改动的行（BR-2405、D-84）。
-- 数据：`refs/canon/code-reviewed`，后台命令的日志和退出码（事件表）。
-- 代码：`src/work/hooks`、`src/knowledge/review`。
-- 决策：D-2、D-19、D-21、D-51、D-59、D-84。
+- 数据：`refs/canon/code-reviewed`，后台命令的日志和退出码（事件表）；未处理的评审意见在 `state.db` 的 `review_findings` 表里，一个身份同时最多一行，挂在点名的每份文档上，关闭时记下方式和关闭它的事件（合入、判定或复问）；不拦截的建议不在这张表里，仍从 `land.ok` 事件读（D-21、D-97）。
+- 代码：`src/work/hooks`、`src/knowledge/review`；未处理的评审意见在 `src/knowledge/review/findings`，`canon context`、`canon brief` 显示它们，合入和 `canon verdict record` 关闭它们。
+- 决策：D-2、D-19、D-21、D-51、D-59、D-84、D-97。
 
 ## 容器：本项目配的
 

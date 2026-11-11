@@ -11,6 +11,7 @@ import { err, ok, type Result } from "../../kernel/result.ts";
 import { backlogAt } from "../../knowledge/documents/backlog.ts";
 import { findDoc, referencedIds } from "../../knowledge/query/query.ts";
 import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
+import { findingsCount, openFindings, renderFinding } from "../../knowledge/review/findings/findings.ts";
 import { suspectNotice } from "../../knowledge/links/brief.ts";
 import { claimOfWorktree, claimsWithState, type ClaimState } from "../claims/claims.ts";
 import { questions } from "../humans/questions.ts";
@@ -180,6 +181,8 @@ function briefState(ws: Workspace): Result<void> {
     const corpus = corpusOf(ws).corpus;
     const own = findDoc(corpus, mine.subject);
     if (own) for (const n of openNotes(ws.db, [...referencedIds(own, ws.config.types)].filter((id) => id !== own.id))) say(`Open review note on ${renderNote(n)}`);
+    // Open review findings on the same documents, each once; they stay until closed explicitly (BR-2437, D-89).
+    if (own) for (const f of openFindings(ws.db, [...referencedIds(own, ws.config.types)].filter((id) => id !== own.id))) say(`Open review finding ${renderFinding(f)}`);
     // Suspect references on the rules and decisions this change names (BR-2429).
     if (own) for (const line of suspectNotice(ws.root, corpus, referencedIds(own, ws.config.types))) say(line);
   } else {
@@ -190,6 +193,9 @@ function briefState(ws: Workspace): Result<void> {
     if (hs.length) say(`Unfinished changes with handoffs: ${hs.map((h) => h.subject).join(", ")} (canon work status)`);
     const pending = questions(ws.db, "pending").length;
     if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
+    // Open review findings project-wide, counted (BR-2437).
+    const findings = findingsCount(ws.db);
+    if (findings) say(findings);
     // Suspect references project-wide, counted (BR-2429).
     for (const line of suspectNotice(ws.root, corpusOf(ws).corpus)) say(line);
     // The owner's order of open changes on main and on change branches main lacks yet, the same list and marks as

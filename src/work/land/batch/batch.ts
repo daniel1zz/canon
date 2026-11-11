@@ -10,6 +10,7 @@ import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
 import { batchCandidates, finishEntry, holdsTurn, inBatch, joinBatch, landBatched, leaveBatch, lockBatch, refuseInBatch, unlockBatch } from "../queue/queue.ts";
 import { lostTurn, priorityNow } from "../queue/wait.ts";
 import { ownDiffId, rebaseInProgress } from "../worktree-state.ts";
+import { closeRetired } from "../../../knowledge/review/findings/findings.ts";
 
 /** The temporary worktree a batch led by queue entry `entry` is tested in. */
 export const batchDir = (ws: Workspace, entry: number) => join(dirname(ws.db.db.filename), "batch", String(entry));
@@ -280,7 +281,9 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
     for (const l of landing) {
       const s = notes.get(l.entry);
       const reviewNotes = s?.ok ? s.reviewNotes : undefined;
-      ws.db.event(ws.actor, "land.ok", l.subject, { sha: l.head, base: l.base, branch: l.branch, diff: fingerprints.get(l.entry) ?? null, ...(reviewNotes ?? {}), ...(skipped ? { floor_skipped: true } : {}), ...(l.entry !== t.entry ? { batched_by: t.entry } : { batch: landing.slice(1).map((x) => x.entry), floors: run }) });
+      const landed = ws.db.event(ws.actor, "land.ok", l.subject, { sha: l.head, base: l.base, branch: l.branch, diff: fingerprints.get(l.entry) ?? null, ...(reviewNotes ?? {}), ...(skipped ? { floor_skipped: true } : {}), ...(l.entry !== t.entry ? { batched_by: t.entry } : { batch: landing.slice(1).map((x) => x.entry), floors: run }) });
+      // Open review findings naming a document retired or superseded on this member's tree are closed by its landing (BR-2435).
+      if (s?.ok) closeRetired(ws.db, new Set(s.retired), landed);
       say(`landed ${l.head.slice(0, 9)} (${name(l)}) on ${main}`);
     }
     if (rest.length > 0) say(`batch: ${names(rest)} were not landed with it`);

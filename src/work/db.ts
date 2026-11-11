@@ -117,6 +117,24 @@ CREATE TABLE IF NOT EXISTS test_reports (
   recorded_at TEXT NOT NULL,
   UNIQUE (path, blob)
 );
+-- Open review findings (BR-2434, D-97): one row per finding identity while it is open, attached to every document it names;
+-- closed only explicitly (BR-2435, BR-2438, BR-2439). A closed row stays as the record of how and by which event it closed.
+CREATE TABLE IF NOT EXISTS review_findings (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  identity     TEXT NOT NULL,           -- criterion, sorted named ids and quote hash (BR-2433)
+  criterion    TEXT NOT NULL,
+  ids          TEXT NOT NULL,           -- JSON list of the document ids the text names, sorted
+  docs         TEXT NOT NULL,           -- JSON list of the documents it is attached to
+  text         TEXT NOT NULL,
+  change       TEXT,                    -- the change whose review gave it, when there was one
+  event        INTEGER NOT NULL,        -- the event that recorded the review it came from
+  sha          TEXT,                    -- the commit that review saw
+  opened_at    TEXT NOT NULL,
+  closed_at    TEXT,
+  closed_how   TEXT CHECK (closed_how IN ('retired', 'spurious', 'no-longer-holds')),
+  closed_event INTEGER                  -- the event that closed it: the landing, the verdict or the re-asking
+);
+CREATE UNIQUE INDEX IF NOT EXISTS review_findings_open ON review_findings(identity) WHERE closed_at IS NULL;
 `;
 
 /** Columns added after the first schema, as `table`, `column definition`. */
@@ -223,10 +241,13 @@ export class CoordDb {
     return tx.immediate();
   }
 
-  event(actor: string, kind: string, subject: string | null, detail: Record<string, unknown>): void {
-    this.db
-      .query("INSERT INTO events(ts, actor, kind, subject, detail, worktree) VALUES (?, ?, ?, ?, ?, ?)")
-      .run(new Date().toISOString(), actor, kind, subject, JSON.stringify(detail), this.worktree);
+  /** Writes one event; returns its id. */
+  event(actor: string, kind: string, subject: string | null, detail: Record<string, unknown>): number {
+    return Number(
+      this.db
+        .query("INSERT INTO events(ts, actor, kind, subject, detail, worktree) VALUES (?, ?, ?, ?, ?, ?)")
+        .run(new Date().toISOString(), actor, kind, subject, JSON.stringify(detail), this.worktree).lastInsertRowid,
+    );
   }
 
   /** Writes the event unless an identical one is already recorded under a unique index on events; true when it wrote (BR-2360). */
