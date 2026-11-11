@@ -9,7 +9,7 @@ import { computeLinks, fingerprint, isLinkable, proseIds, type Baseline, type Ba
 /**
  * BR-2424: the history baseline of every reference, read from the first-parent chain of HEAD with one `git log` and one
  * `git cat-file --batch`, then the working tree as the newest step. Nothing is stored: the same commit and working tree
- * always give the same answer (D-95; about 0.1 s on canon's own history).
+ * always give the same answer (D-95; about 0.15 s on canon's own history, 0.3 s on a 1000-commit one).
  */
 
 interface Version {
