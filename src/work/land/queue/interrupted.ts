@@ -3,7 +3,7 @@ import type { Say, Workspace } from "../../workspace.ts";
 import type { CoordDb } from "../../db.ts";
 import { git } from "../../../kernel/git.ts";
 import { isGone } from "../../claims/liveness.ts";
-import { closeSubject, reopen } from "../finish/finish.ts";
+import { closeSubject, reopen, type CloseCommit } from "../finish/finish.ts";
 import { abandonGone, finishEntry } from "./queue.ts";
 import { rebaseInProgress } from "../worktree-state.ts";
 
@@ -97,12 +97,17 @@ function reachedMain(db: CoordDb, main: string, wt: string, pid: number, start: 
   return head.value;
 }
 
-function closeCommitOf(wt: string, subject: string | null): { subject: string; path: string } | undefined {
+function closeCommitOf(wt: string, subject: string | null): CloseCommit | undefined {
   if (!subject) return undefined;
   const top = git(wt, "log", "-1", "--format=%s");
   const files = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "HEAD~1", "HEAD");
-  if (!top.ok || top.value !== closeSubject(subject) || !files.ok || files.value === "" || files.value.includes("\n")) return undefined;
-  return { subject, path: files.value };
+  if (!top.ok || top.value !== closeSubject(subject) || !files.ok || files.value === "") return undefined;
+  // reason: besides the change file the close commit may hold the reference records the landing added after the rebase (BR-2440)
+  const paths = files.value.split("\n");
+  const own = paths.filter((p) => { const name = p.slice(p.lastIndexOf("/") + 1); return name === `${subject}.md` || name.startsWith(`${subject}-`); });
+  const stamped = paths.filter((p) => p !== own[0]);
+  if (own.length !== 1 || stamped.some((p) => !p.startsWith("canon/") || !p.endsWith(".md"))) return undefined;
+  return { subject, path: own[0]!, stamped };
 }
 
 // reason: a member its leader locked in is about to be on main; it is not this attempt's to give up (BR-2172).

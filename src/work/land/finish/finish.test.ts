@@ -104,7 +104,7 @@ describe("the claim during a landing", () => {
     sh(s.worktree, "commit", "-qm", "fix");
     const fix = sh(s.worktree, "rev-parse", "HEAD");
     const lines: string[] = [];
-    expect(reopen(s.worktree, { subject: s.change, path }, (l) => lines.push(l), checked)).toBe(false);
+    expect(reopen(s.worktree, { subject: s.change, path, stamped: [] }, (l) => lines.push(l), checked)).toBe(false);
     expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(fix);
     expect(readFileSync(join(s.worktree, "fix.txt"), "utf8")).toBe("fix\n");
     expect(lines.join("\n")).toContain("was not reopened");
@@ -113,7 +113,7 @@ describe("the claim during a landing", () => {
     sh(s.worktree, "reset", "-q", "--hard", checked.value);
     writeFileSync(join(s.worktree, path), readFileSync(join(s.worktree, path), "utf8") + "\nlocal note\n");
     const dirty: string[] = [];
-    expect(reopen(s.worktree, { subject: s.change, path }, (l) => dirty.push(l))).toBe(false);
+    expect(reopen(s.worktree, { subject: s.change, path, stamped: [] }, (l) => dirty.push(l))).toBe(false);
     expect(dirty.join("\n")).toContain("was not reopened");
     expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(checked.value);
     expect(readFileSync(join(s.worktree, path), "utf8")).toContain("local note");
@@ -129,7 +129,7 @@ describe("the claim during a landing", () => {
     writeFileSync(join(s.worktree, "app.txt"), "fix\n"); // the session's fix, not committed yet
     const tried = gapCommit(root, s.worktree, parent);
     const lines: string[] = [];
-    const reopened = reopen(s.worktree, { subject: s.change, path }, (l) => lines.push(l));
+    const reopened = reopen(s.worktree, { subject: s.change, path, stamped: [] }, (l) => lines.push(l));
     expect(existsSync(tried)).toBe(true); // the commit was tried in the gap
     expect(reopened).toBe(true);
     expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(parent);
@@ -148,7 +148,7 @@ describe("the claim during a landing", () => {
     const lock = sh(s.worktree, "rev-parse", "--path-format=absolute", "--git-path", "index.lock");
     writeFileSync(lock, ""); // a git command that is still running
     const lines: string[] = [];
-    expect(reopen(s.worktree, { subject: s.change, path }, (l) => lines.push(l))).toBe(false);
+    expect(reopen(s.worktree, { subject: s.change, path, stamped: [] }, (l) => lines.push(l))).toBe(false);
     expect(existsSync(lock)).toBe(true); // not ours to remove
     rmSync(lock);
     expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(top);

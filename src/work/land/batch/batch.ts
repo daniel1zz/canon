@@ -307,7 +307,7 @@ export function reopenForGoneLander(ws: Workspace, l: { entry: number; subject: 
   const top = git(l.worktree, "log", "-1", "--format=%s");
   const files = git(l.worktree, "-c", "core.quotePath=false", "diff", "--name-only", "HEAD~1", "HEAD");
   if (!top.ok || top.value !== closeSubject(l.subject) || !files.ok || files.value.includes("\n")) return false;
-  return reopen(l.worktree, { subject: l.subject, path: files.value }, say);
+  return reopen(l.worktree, { subject: l.subject, path: files.value, stamped: [] }, say);
 }
 
 /** What a landed member says when its branch could not follow its commit on main (BR-2191). */

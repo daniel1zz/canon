@@ -6,7 +6,7 @@ import { idsIn, type DocType } from "../documents/types.ts";
 
 /**
  * References between rules and decisions, read only from their prose, and which of them are suspect: the named
- * document's fingerprint changed after the referring one was last checked against it (BR-2423, D-90, D-95).
+ * document's fingerprint differs from its record, from the starting commit's, or it was never confirmed (BR-2423, D-90, D-95).
  */
 
 export const DECISION_SECTION = "## 决定";
@@ -14,12 +14,26 @@ export const DECISION_SECTION = "## 决定";
 /** The kinds a reference can name and come from. */
 export type LinkKind = "rule" | "decision";
 
-/** BR-2423: a rule's fingerprint is its behaviour hash (BR-2236); a decision's is the hash of its `## 决定` section. */
-export function fingerprint(kind: LinkKind, body: string): string {
-  if (kind === "rule") return behaviourHash(body);
+/** The statuses that take a document out of the tracked ones: a retired rule, a superseded decision (BR-2423). */
+const UNTRACKED: Readonly<Record<LinkKind, string>> = { rule: "retired", decision: "superseded" };
+
+/**
+ * BR-2423: a rule's fingerprint is its behaviour hash (BR-2236); a decision's is the hash of its `## 决定` section. A
+ * retired rule or a superseded decision has its status in the fingerprint too, so retiring it is a change.
+ */
+export function fingerprint(kind: LinkKind, body: string, status?: string): string {
+  const behaviour = kind === "rule" ? behaviourHash(body) : sectionHash(body);
+  if (status !== UNTRACKED[kind]) return behaviour;
+  return createHash("sha256").update(`${behaviour}\nstatus: ${status}`).digest("hex").slice(0, 16);
+}
+
+function sectionHash(body: string): string {
   const text = (section(body, DECISION_SECTION) ?? "").replace(/\s+/g, " ").trim();
   return createHash("sha256").update(`决定\n${text}`).digest("hex").slice(0, 16);
 }
+
+/** A document's fingerprint as it is in the corpus (BR-2423). */
+export const fingerprintOf = (d: Rule | Decision): string => fingerprint(d.kind, d.body, d.status);
 
 export const isLinkable = (d: Doc): d is Rule | Decision => d.kind === "rule" || d.kind === "decision";
 
@@ -56,31 +70,42 @@ export function sortIds(ids: readonly string[]): string[] {
   });
 }
 
-/** Where the history says a referring document was last checked against the one it names (BR-2424). */
-export interface Baseline {
-  /** The named document's fingerprint then. */
+/** One rule or decision as it is in a commit's tree: its fingerprint and every id its prose names (BR-2424). */
+export interface DocAt {
   readonly fingerprint: string;
-  /** The full commit id, or undefined when it is the working tree. */
-  readonly commit: string | undefined;
+  readonly refs: ReadonlySet<string>;
 }
 
-/** Answers BR-2424 for a reference; undefined when the history does not know the pair (never for a reference in the corpus it was read with). */
-export type BaselineOf = (from: string, to: string) => Baseline | undefined;
+/** The starting commit `links_since` names, with the rules and decisions of its tree (BR-2424). */
+export interface Start {
+  readonly commit: string;
+  readonly docs: ReadonlyMap<string, DocAt>;
+}
+
+/**
+ * What a reference is compared with: its record in `links` (BR-2425); else, when the referring document named it at
+ * the starting commit, the named one there (BR-2424); else nothing, so it is suspect until confirmed.
+ */
+export type Basis = "confirmed" | "start" | "new";
 
 export interface Link {
   readonly from: string;
   readonly to: string;
   readonly suspect: boolean;
-  /** The history baseline's commit (BR-2424); undefined when it is the working tree. */
+  readonly basis: Basis;
+  /** The starting commit; undefined only in a repository without a commit. */
   readonly since: string | undefined;
 }
 
-/** Every reference of the corpus (BR-2423), with whether it is suspect (BR-2424, BR-2425), sorted by referring then named id. */
-export function computeLinks(corpus: Corpus, baselineOf: BaselineOf): Link[] {
+/**
+ * Every reference of the corpus (BR-2423), with whether it is suspect (BR-2424, BR-2425), sorted by referring then
+ * named id. `start` is undefined only in a repository without a commit, where an unconfirmed reference is not suspect.
+ */
+export function computeLinks(corpus: Corpus, start: Start | undefined): Link[] {
   const byId = indexOf(corpus);
   const prints = new Map<string, string>();
   const printOf = (d: Rule | Decision): string => {
-    if (!prints.has(d.id)) prints.set(d.id, fingerprint(d.kind, d.body));
+    if (!prints.has(d.id)) prints.set(d.id, fingerprintOf(d));
     return prints.get(d.id)!;
   };
   const out: Link[] = [];
@@ -88,12 +113,19 @@ export function computeLinks(corpus: Corpus, baselineOf: BaselineOf): Link[] {
     const from = byId.get(id) as Rule | Decision;
     for (const to of namedBy(corpus, from, byId)) {
       const now = printOf(byId.get(to) as Rule | Decision);
-      const base = baselineOf(from.id, to);
-      // reason: the history is read together with this corpus, so a reference it does not know is a bug, not "not suspect" (fail loud)
-      if (base === undefined) throw new Error(`no history baseline for ${from.id} -> ${to}`);
-      // reason: either the confirmation or the history may vouch for the current version (BR-2425)
-      const suspect = now !== base.fingerprint && now !== from.links?.[to];
-      out.push({ from: from.id, to, suspect, since: base.commit });
+      const stamp = from.links?.[to];
+      const since = start?.commit;
+      // reason: a record decides alone; editing the referring document is no review of what it names (BR-2425, D-95)
+      if (stamp !== undefined) {
+        out.push({ from: from.id, to, suspect: now !== stamp, basis: "confirmed", since });
+        continue;
+      }
+      const then = start?.docs.get(to);
+      if (start === undefined || (start.docs.get(from.id)?.refs.has(to) && then !== undefined)) {
+        out.push({ from: from.id, to, suspect: then !== undefined && now !== then.fingerprint, basis: "start", since });
+        continue;
+      }
+      out.push({ from: from.id, to, suspect: true, basis: "new", since });
     }
   }
   return out;
@@ -111,10 +143,17 @@ export function staleLinks(corpus: Corpus): { doc: Rule | Decision; id: string }
   return out;
 }
 
-export const short = (commit: string | undefined): string => (commit === undefined ? "the working tree" : commit.slice(0, 7));
+export const short = (commit: string | undefined): string => (commit === undefined ? "the first commit" : commit.slice(0, 7));
+
+/** Why a suspect reference is suspect, the same words wherever it is shown (BR-2427, BR-2428, BR-2429). */
+export function suspectWhy(l: Link): string {
+  if (l.basis === "confirmed") return `${l.to} changed since it was confirmed`;
+  if (l.basis === "start") return `${l.to} changed since ${short(l.since)}`;
+  return `${l.to} named after ${short(l.since)} and never confirmed`;
+}
 
 /** The advice that follows a suspect reference wherever it is shown (BR-2428, BR-2429). */
-export const confirmHint = (l: Link): string => `${l.to} changed since ${short(l.since)}; canon links confirm ${l.from} ${l.to}`;
+export const confirmHint = (l: Link): string => `${suspectWhy(l)}; canon links confirm ${l.from} ${l.to}`;
 
 /**
  * BR-2428: the `# References` section of `canon context` for a rule or decision: what it names and what names it, the

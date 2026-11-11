@@ -6,6 +6,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { checkKeys } from "../knowledge/check/config-keys.ts";
 import { documentKeys, readTemplates } from "../knowledge/documents/config-keys.ts";
 import { reviewKeys } from "../knowledge/review/config-keys.ts";
+import { linksKeys } from "../knowledge/links/config-keys.ts";
 import { claimKeys } from "../work/claims/config-keys.ts";
 import { landKeys } from "../work/land/config-keys.ts";
 import { sessionKeys } from "../work/session/config-keys.ts";
@@ -24,7 +25,7 @@ import type { ConfigKey, FieldsOf, KeySet } from "./key.ts";
  * Every key is declared (name, type, default, validation, doc) by the domain that uses it, in `config-keys.ts` in that
  * domain's directory; this file only composes them, so it changes when a domain is added, not when a key is (C-135).
  */
-const DOMAINS = [hookKeys, checkKeys, documentKeys, reviewKeys, claimKeys, landKeys, sessionKeys, statsKeys, verifyKeys, watchKeys, remoteKeys] as const;
+const DOMAINS = [hookKeys, checkKeys, documentKeys, reviewKeys, claimKeys, landKeys, sessionKeys, statsKeys, verifyKeys, watchKeys, remoteKeys, linksKeys] as const;
 
 type Sections = typeof DOMAINS[number];
 type UnionToIntersection<U> = (U extends unknown ? (x: U) => void : never) extends (x: infer I) => void ? I : never;

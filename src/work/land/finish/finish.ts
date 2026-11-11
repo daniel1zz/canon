@@ -5,11 +5,17 @@ import { git, gitEnv, isClean, listWorktreesLocked, moveBranch } from "../../../
 import { releaseOwnClaim } from "../../claims/claims.ts";
 import { dropHandoff } from "../../session/handoffs.ts";
 import type { LandOptions, LandOutcome } from "../outcome.ts";
+import { readCorpus } from "../../../knowledge/documents/read.ts";
+import { setMeta } from "../../../knowledge/documents/write.ts";
+import { addedReferenceStamps } from "../../../knowledge/links/stamp.ts";
+import { err, ok, type Result } from "../../../kernel/result.ts";
 
 /** The `canon: close C-n` commit `--finish` made before queuing, so a landing that fails can take it back. */
 export interface CloseCommit {
   readonly subject: string;
   readonly path: string;
+  /** Referring documents the landing added records to in this commit after the rebase (BR-2440); taken back with it. */
+  readonly stamped: string[];
 }
 
 export const closeSubject = (change: string) => `canon: close ${change}`;
@@ -34,7 +40,8 @@ export function reopen(wt: string, close: CloseCommit, say: Say, top = git(wt, "
   const parent = git(wt, "rev-parse", `${sha}~1`);
   const subject = git(wt, "log", "-1", "--format=%s", sha);
   const files = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", `${sha}~1`, sha);
-  if (!parent.ok || !subject.ok || subject.value !== closeSubject(close.subject) || !files.ok || files.value !== close.path) {
+  const expected = [close.path, ...close.stamped].sort().join("\n");
+  if (!parent.ok || !subject.ok || subject.value !== closeSubject(close.subject) || !files.ok || files.value.split("\n").sort().join("\n") !== expected) {
     return notReopened("its close commit is no longer the top commit");
   }
   // reason: compare-and-swap, so a commit made after the check above stays on the branch (issue #34); under git's
@@ -43,6 +50,41 @@ export function reopen(wt: string, close: CloseCommit, say: Say, top = git(wt, "
   if (moved) return notReopened(moved.kind === "moved" ? "HEAD moved after the check" : moved.message);
   say(`${close.subject} reopened: the landing did not reach main, so its close commit was taken back`);
   return true;
+}
+
+/**
+ * BR-2440: after the rebase, while HEAD is still the close commit, adds to it the records of the references the change
+ * added, each the named document's fingerprint on the branch before the rebase (`before`). After the rebase, so the
+ * records never make the rebase conflict; in the close commit, so a landing that does not reach main takes them back
+ * with it (BR-2018). Says how many it wrote; an error is an environment failure.
+ */
+export function stampAddedReferences(ws: Workspace, wt: string, close: CloseCommit, onto: string, before: string, say: Say): Result<void> {
+  const top = git(wt, "log", "-1", "--format=%s");
+  // reason: a commit made on top of the close commit (before_land is later; a session while waiting) leaves no close commit to amend; the references stay suspect until confirmed
+  if (!top.ok || top.value !== closeSubject(close.subject)) return ok(undefined);
+  const fork = git(wt, "merge-base", before, onto);
+  if (!fork.ok) return fork;
+  const corpus = readCorpus(wt, ws.config.types, ws.config).corpus;
+  const stamps = addedReferenceStamps(wt, corpus, fork.value, before);
+  if (!stamps.ok) return stamps;
+  if (stamps.value.length === 0) return ok(undefined);
+  for (const s of stamps.value) {
+    const w = setMeta(wt, s.doc, { links: s.links });
+    if (!w.ok) return w;
+  }
+  const paths = stamps.value.map((s) => s.doc.path);
+  const add = git(wt, "add", "--", ...paths);
+  if (!add.ok) return add;
+  const amend = git(wt, "commit", "-q", "--amend", "--no-edit");
+  if (!amend.ok) {
+    git(wt, "reset", "-q", "--", ...paths);
+    git(wt, "checkout", "-q", "--", ...paths);
+    return err("io", `the close commit could not take the reference records: ${amend.error.message}`);
+  }
+  close.stamped.push(...paths);
+  const count = stamps.value.reduce((n, s) => n + s.added.length, 0);
+  say(`confirmed ${count} reference(s) this change added, in ${close.subject}'s close commit: ${stamps.value.map((s) => `${s.doc.id} -> ${s.added.join(", ")}`).join("; ")}`);
+  return ok(undefined);
 }
 
 /** Starts after_land in the background for one landed change, with its own base and head (BR-2030). */

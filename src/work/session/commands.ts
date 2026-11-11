@@ -184,7 +184,7 @@ function briefState(ws: Workspace): Result<void> {
     // Open review findings on the same documents, each once; they stay until closed explicitly (BR-2437, D-89).
     if (own) for (const f of openFindings(ws.db, [...referencedIds(own, ws.config.types)].filter((id) => id !== own.id))) say(`Open review finding ${renderFinding(f)}`);
     // Suspect references on the rules and decisions this change names (BR-2429).
-    if (own) for (const line of suspectNotice(ws.root, corpus, referencedIds(own, ws.config.types))) say(line);
+    if (own) for (const line of suspectNotice(ws.root, corpus, ws.config.linksSince, referencedIds(own, ws.config.types))) say(line);
   } else {
     // reason: other sessions' handoffs and the question queue are shown only where no change is claimed; injected
     // into a change's session they draw it into work that is not its own (BR-2024)
@@ -197,7 +197,7 @@ function briefState(ws: Workspace): Result<void> {
     const findings = findingsCount(ws.db);
     if (findings) say(findings);
     // Suspect references project-wide, counted (BR-2429).
-    for (const line of suspectNotice(ws.root, corpusOf(ws).corpus)) say(line);
+    for (const line of suspectNotice(ws.root, corpusOf(ws).corpus, ws.config.linksSince)) say(line);
     // The owner's order of open changes on main and on change branches main lacks yet, the same list and marks as
     // canon change list, so an agent without a task takes the first unclaimed one (BR-2149, BR-2291, D-20, D-50).
     const onMain = mainCorpus(ws);

@@ -19,7 +19,7 @@ import { keptNote, lostTurn, predictedConflicts, priorityNow, waitPollMs } from 
 import { removeReviewTree } from "./checks/review-tree.ts";
 import { findingDetail, verifyChange } from "./checks/steps.ts";
 import { floorScope, floorSkip, runFloor } from "./checks/floor.ts";
-import { afterLand, closeLeftNote, closeSubject, finishLanding, moveMain, reopen, type CloseCommit } from "./finish/finish.ts";
+import { afterLand, closeLeftNote, closeSubject, finishLanding, moveMain, reopen, stampAddedReferences, type CloseCommit } from "./finish/finish.ts";
 import { batchDir, landBatch, landedInBatch } from "./batch/batch.ts";
 import { pushMain } from "../remote/remote.ts";
 import { settleInterrupted } from "./queue/interrupted.ts";
@@ -149,7 +149,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
           // an edit saved after its check; the file keeps status: done uncommitted and the message says what to do (BR-2229, issue #82).
           return early("environment", `the close commit could not be made: ${c.error.message}\n${closeLeftNote(doc.path)}`);
         }
-        close = { subject, path: doc.path };
+        close = { subject, path: doc.path, stamped: [] };
       }
     }
 
@@ -163,7 +163,7 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
     if (entered.kept) say(`back in the landing queue at the place it kept after ${KEPT_AFTER[entered.kept.after]} (queue entry ${entry}, ${Math.round(entered.kept.resolveMs / 1000)}s after it stopped)`);
     // The claim names this lander until the landing ends, so the session exiting meanwhile frees it to no one (BR-2142, issue #17).
     bound = lander ? bindToLander(ws.db, wt, ws.actor, lander) : undefined;
-    out = await queueAndLand(ws, opts, say, { entry, subject, branch: branch.value, running });
+    out = await queueAndLand(ws, opts, say, { entry, subject, branch: branch.value, running, close });
     // After the turn has ended, so a slow remote holds up no other landing; a failed push leaves this landing landed (BR-2259, BR-2260).
     if (out.kind === "landed") pushMain(ws, say);
     return out;
@@ -193,7 +193,7 @@ function waitWhileLocked(ws: Workspace, entry: number, say: Say): true {
   return true;
 }
 
-async function queueAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running }): Promise<LandOutcome> {
+async function queueAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running; close: CloseCommit | undefined }): Promise<LandOutcome> {
   const wt = ws.root;
   // The claim stays renewed for as long as this landing waits and runs, so it cannot expire under it (BR-2108).
   const keep = setInterval(() => keepClaim(ws.db, wt, ws.actor, ws.config.claimLeaseMs), Math.min(60_000, Math.max(50, ws.config.claimLeaseMs / 3)));
@@ -204,7 +204,7 @@ async function queueAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { ent
   }
 }
 
-async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running }): Promise<LandOutcome> {
+async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running; close: CloseCommit | undefined }): Promise<LandOutcome> {
   const wt = ws.root;
   const main = ws.config.main;
   const { entry, subject } = t;
@@ -282,7 +282,7 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
   }
 }
 
-async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running }): Promise<LandOutcome> {
+async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running; close: CloseCommit | undefined }): Promise<LandOutcome> {
   const wt = ws.root;
   const main = ws.config.main;
   const { entry, subject } = t;
@@ -321,6 +321,11 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
     // reason: a rebase that fails with no conflicted file did not conflict (a lock, a hook); it keeps no place (BR-2193, BR-2177).
     if (!files.ok || files.value === "") return refuse("environment", `rebase onto ${main} failed without a conflict: ${reb.error.message}`);
     return refuse("conflict", `rebase onto ${main} conflicts in: ${files.ok ? files.value.split("\n").join(", ") : "?"}\nResolve with \`git rebase ${main}\` in ${wt}, then land again.`);
+  }
+  // The records of the references this change added go into its close commit now, after the rebase (BR-2440).
+  if (t.close) {
+    const stamped = stampAddedReferences(ws, wt, t.close, base.value, before.value, say);
+    if (!stamped.ok) return refuse("environment", `the records of the references this change added could not be written: ${stamped.error.message}`);
   }
   // The commit the floor, canon check, the review and before_land prove; only this commit may become main (BR-2106).
   const tested = git(wt, "rev-parse", "HEAD");
