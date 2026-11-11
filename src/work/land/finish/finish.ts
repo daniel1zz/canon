@@ -68,19 +68,21 @@ export function stampAddedReferences(ws: Workspace, wt: string, close: CloseComm
   const stamps = addedReferenceStamps(wt, corpus, fork.value, before);
   if (!stamps.ok) return stamps;
   if (stamps.value.length === 0) return ok(undefined);
-  for (const s of stamps.value) {
-    const w = setMeta(wt, s.doc, { links: s.links });
-    if (!w.ok) return w;
-  }
   const paths = stamps.value.map((s) => s.doc.path);
-  const add = git(wt, "add", "--", ...paths);
-  if (!add.ok) return add;
-  const amend = git(wt, "commit", "-q", "--amend", "--no-edit");
-  if (!amend.ok) {
+  // reason: the files were committed as they are at HEAD a moment ago, so putting them back loses no one's edit
+  const undo = (why: string): Result<void> => {
     git(wt, "reset", "-q", "--", ...paths);
     git(wt, "checkout", "-q", "--", ...paths);
-    return err("io", `the close commit could not take the reference records: ${amend.error.message}`);
+    return err("io", `the close commit could not take the reference records: ${why}`);
+  };
+  for (const s of stamps.value) {
+    const w = setMeta(wt, s.doc, { links: s.links });
+    if (!w.ok) return undo(w.error.message);
   }
+  const add = git(wt, "add", "--", ...paths);
+  if (!add.ok) return undo(add.error.message);
+  const amend = git(wt, "commit", "-q", "--amend", "--no-edit");
+  if (!amend.ok) return undo(amend.error.message);
   close.stamped.push(...paths);
   const count = stamps.value.reduce((n, s) => n + s.added.length, 0);
   say(`confirmed ${count} reference(s) this change added, in ${close.subject}'s close commit: ${stamps.value.map((s) => `${s.doc.id} -> ${s.added.join(", ")}`).join("; ")}`);
