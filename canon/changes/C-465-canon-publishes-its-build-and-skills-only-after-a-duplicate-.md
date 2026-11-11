@@ -1,8 +1,19 @@
 ---
 id: C-465
-title: canon publishes its build and skills only after a duplicate review of every shipped skill together
-status: open
-rules: [BR-2411, BR-2412, BR-2082, BR-2366]
+title: canon publishes its build and skills only after a duplicate review of
+  every shipped skill together
+status: done
+rules:
+  - BR-2411
+  - BR-2412
+  - BR-2082
+  - BR-2366
+passes:
+  BR-2080: f0d01e3263a065fe test
+  BR-2082: 3f53aa740f1a149d test
+  BR-2366: 35d30ae30f0c2416 test
+  BR-2411: d8b7b1ef68a7a553 test
+  BR-2412: 2df32b756252996d test
 ---
 
 ## 为什么
