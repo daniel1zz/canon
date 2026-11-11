@@ -46,7 +46,7 @@ function relanding(verdicts: string[] = ["ok"]) {
 }
 
 describe("reviewing a re-landing whose changed documents already passed (D-81)", () => {
-  test("BR-2396 BR-2009 BR-2036: a rule that landed on main since the pass is reviewed with the unchanged rule in a small review, which records incremental", async () => {
+  test("BR-2396 BR-2009 BR-2036 BR-2359: a rule that landed on main since the pass is reviewed with the unchanged rule in a small review, whose index holds only those two, and which records incremental", async () => {
     const t = relanding();
     const old = ["BR", 3].join("-");
     t.onMain(`canon/rules/billing/${old}.md`, ruleText(old, "Old refunds stay."));
