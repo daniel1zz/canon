@@ -32,7 +32,7 @@ If you genuinely cannot build a loop: stop, say so, list what you tried, and ask
 
 ## Phase 2 — Reproduce
 
-Run the loop and watch the bug appear. Confirm it is the failure the user described (not a nearby different one), that it reproduces across runs, and capture the exact symptom so you can verify the fix against it later. Ask whether normal operations lead to this failure (for canon, several sessions working and landing at the same time is normal use). How a test reproduces it, with a barrier, a pre-seeded state or a fake binary, does not decide: a race between two normal landings forced with a barrier is real. A failure that needs an abnormal setup or action (a user's wrapper around a system command, a non-default backend nobody uses, killing one specific process mid-step, hostile input that crosses no security boundary) is not this bug: unless it loses data, is a security problem, or breaks one of the project's promises (for canon, P1 to P7 in canon/product.md), write it down as a known limit instead of fixing it.
+Run the loop and watch the bug appear. Confirm it is the failure the user described (not a nearby different one), that it reproduces across runs, and capture the exact symptom so you can verify the fix against it later. Then judge it by canon-triage's criterion for a real finding (its section 2: do normal operations lead to it?). A failure that criterion calls a known limit is not this bug: write it down as a known limit instead of fixing it.
 
 ## Phase 3 — Hypothesise
 
