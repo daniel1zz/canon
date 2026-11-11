@@ -97,6 +97,19 @@ describe("canon events --follow", () => {
     expect(r.code).toBe(0);
   });
 
+  test("BR-2357 BR-2156: --kind with two kinds separated by a comma prints new events of either kind", async () => {
+    const root = withSharedAndSearch();
+    const r = await follow(
+      root,
+      ["--json", "--kind", "land.ok,land.refuse"],
+      () => { write(root, "land.turn", "C-1"); write(root, "land.refuse", "C-1"); write(root, "land.ok", "C-2"); },
+      (o) => o.includes("land.ok") && o.includes("land.refuse"),
+    );
+    const kinds = r.out.trim().split("\n").map((l) => JSON.parse(l).kind);
+    expect(new Set(kinds)).toEqual(new Set(["land.refuse", "land.ok"]));
+    expect(r.code).toBe(0);
+  });
+
   test("BR-2357: --since prints the existing events after it first", async () => {
     const root = withSharedAndSearch();
     const r = await follow(root, ["--since", "0", "--kind", "search"], () => {}, (o) => o.includes(" search "));
@@ -134,5 +147,40 @@ describe("canon events --follow", () => {
     expect(lines.length).toBe(1);
     expect(JSON.parse(lines[0]!)).toMatchObject({ kind: "claim.holder-gone", subject: "C-1", detail: { holder: "agent:a", worktree: "/wt/C-1", version: 1 } });
     expect(r.code).toBe(0);
+  });
+});
+
+describe("canon events --kind", () => {
+  /** Events 2, 3, 4 after the search: C-1 land.turn, C-2 land.ok, C-1 land.ok. */
+  function withLandings(): string {
+    const root = withSharedAndSearch();
+    const db = CoordDb.open(join(root, ".git/canon/state.db"));
+    if (!db.ok) throw new Error(db.error.message);
+    db.value.event("agent:test", "land.turn", "C-1", {});
+    db.value.event("agent:test", "land.ok", "C-2", {});
+    db.value.event("agent:test", "land.ok", "C-1", {});
+    db.value.close();
+    return root;
+  }
+  const listed = (r: { code: number | null; out: string }) => ({ code: r.code, events: (JSON.parse(r.out) as { kind: string; subject: string }[]).map((e) => `${e.kind} ${e.subject}`) });
+
+  test("BR-2156: kinds separated by commas list events of any of them, spaces around the commas do not count", () => {
+    const root = withLandings();
+    expect(listed(canon(root, "events", "--json", "--kind", "land.ok,land.turn", "--subject", "C-1"))).toEqual({ code: 0, events: ["land.turn C-1", "land.ok C-1"] });
+    expect(listed(canon(root, "events", "--json", "--kind", "land.ok, land.turn"))).toEqual({ code: 0, events: ["land.turn C-1", "land.ok C-2", "land.ok C-1"] });
+  });
+
+  test("BR-2156: --kind given twice, or with no kind between the commas, exits 2", () => {
+    const root = withLandings();
+    const twice = canon(root, "events", "--json", "--kind", "land.ok", "--kind", "land.turn");
+    expect([twice.code, twice.err.includes("--kind is given more than once")]).toEqual([2, true]);
+    const empty = canon(root, "events", "--json", "--kind", ",");
+    expect([empty.code, empty.out, empty.err.includes("--kind needs at least one event kind")]).toEqual([2, "", true]);
+  });
+
+  test("BR-2156: the help describes the comma form", () => {
+    const r = canon(withSharedAndSearch(), "events", "--help");
+    expect(r.out + r.err).toContain("separated by commas");
+    expect(r.out + r.err).not.toContain("repeat for several");
   });
 });

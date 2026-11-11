@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { entry, fail, json, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "./stats.ts";
 import { pendingBlocks, recordVerdict, renderPending, renderVerdictSummary, verdictSummary } from "./verdict.ts";
 import { dirname } from "node:path";
@@ -52,17 +52,19 @@ const stats = defineCommand({
   },
 });
 
-/** The `--kind` values, repeated or not. */
-function kindsOf(args: object): string[] {
-  const raw = (args as Record<string, unknown>)["kind"];
-  return raw === undefined ? [] : (Array.isArray(raw) ? raw : [raw]).map(String);
+/** The `--kind` values, separated by commas; a repeated option is refused before this (BR-2156). */
+function kindsOf(v: unknown): string[] {
+  if (v === undefined) return [];
+  const kinds = list(v);
+  if (kinds.length === 0) fail({ code: "invalid", message: `--kind needs at least one event kind, got ${JSON.stringify(v)}` });
+  return kinds;
 }
 
 const events = defineCommand({
   meta: { description: "List raw coordination events (id, time, actor, worktree, kind, subject, detail), newest last" },
   args: {
     since: { type: "string", description: "Only events after this event id (default 0: all)" },
-    kind: { type: "string", description: "Only this event kind, e.g. land.ok; repeat for several" },
+    kind: { type: "string", description: "Only these event kinds, separated by commas, e.g. land.ok,land.refuse" },
     subject: { type: "string", description: "Only events about this subject, e.g. C-12" },
     json: { type: "boolean" },
     follow: { type: "boolean", description: "Keep running and print each new matching event (one JSON object per line with --json); starts after the latest event unless --since is given; stops on SIGTERM or SIGINT" },
@@ -70,7 +72,7 @@ const events = defineCommand({
   async run({ args }) {
     const ws = workspace();
     if (args.follow) {
-      const filter = { kinds: kindsOf(args), ...(typeof args.subject === "string" ? { subject: args.subject } : {}) };
+      const filter = { kinds: kindsOf(args.kind), ...(typeof args.subject === "string" ? { subject: args.subject } : {}) };
       const from = args.since === undefined ? undefined : sinceArg(args.since);
       let stop = false;
       const onSignal = () => { stop = true; };
@@ -80,7 +82,7 @@ const events = defineCommand({
       return;
     }
     const since = args.since === undefined ? 0 : sinceArg(args.since);
-    const kinds = kindsOf(args);
+    const kinds = kindsOf(args.kind);
     const rows = eventsSince(ws.db, { since, kinds, ...(typeof args.subject === "string" ? { subject: args.subject } : {}) });
     if (args.json) return json(rows);
     say(renderEvents(rows));
