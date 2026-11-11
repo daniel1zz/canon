@@ -35,10 +35,11 @@ main 的后台测试通过后，`bun scripts/release.ts`（BR-2411、BR-2412、D
 - 子 agent 交回选择只留在 canon-parallel 第 3 节；清理工作树只留在 canon-parallel 一条；以事件表为准只留在第 5 节；退出码 75 的处理只留在 brief。
 - 继承旧笔记和决策只留在 canon-design 第 2 节；canon-triage 查已有决策只留在第 1 节。
 - canon-triage 第 4 节、canon-design 第 4 节第 5 步不再复述 brief。
+- 第 8 到 14 轮：canon-triage 已知限制的条件只留在第 2 节、“完成”清单改成指回原节、读取凭据的要求指向 canon-secrets；canon-parallel“互不依赖”只留一处、规则准备只留在第 3 节、决策质询指向 canon-design 第 3 节；canon-rules 1a 不再复述“引用共享行为”、第 6 节第 7 步不再复述 `canon check`、第 4 节“一条规则一个行为”指向 brief；canon-product 中 `unvalidated` 进入提问只留在第 5 节第 2 步、委托的选择指向 canon-design 第 4 节；canon-design 第 2 节只补“同时更新受影响的决策”；canon-test 第 5 节第 4 条按第 2 节判断静默回退；canon-uat H2 不再复述 UNVERIFIED 不能算通过；canon-diagnose 第 5 阶段先见红指向 canon-test 第 3 节。
 
 ## 教训
 
-- 发布前的重复评审每次只报出一部分重复：按 #189 的 9 条改完后又跑了 6 轮，每轮报出新的 3 到 6 条，第 7 轮才通过 → 待负责人确认是否固化（例如让评审一次列出全部重复，或在 `canon work review` 里对改了 skill 的变更先跑同一个检查）。
+- 发布前的重复评审每次只报出一部分重复：按 #189 的 9 条改完后又跑了 13 轮，每轮报出新的 1 到 6 条（同一处有时判为提示、有时判为拦截），第 14 轮才通过 → 待负责人确认是否固化（例如让评审一次列出全部重复，或在 `canon work review` 里对改了 skill 的变更先跑同一个检查）。
 - 评审建议的修法可能引用 brief 里并不存在的话（“canon/ 文档用中文只留在 brief”）→ 只靠文字：评审是模型判断，照做之前要自己核对原文。
 
 ## 任务
