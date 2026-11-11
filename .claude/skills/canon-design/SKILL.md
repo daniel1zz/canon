@@ -21,7 +21,7 @@ Read only the files of the mode you need. Cross-cutting references (`references/
 
 ## 2. Before designing
 
-1. `canon context <path|domain|C-n>`: the whole current domain, its rules, the accepted decisions and open changes. The design must not contradict an active rule or an accepted decision; if it has to, say so and change them in the same change.
+1. `canon context <path|domain|C-n>`: the whole current domain, its rules, the accepted decisions and open changes. For conflicting rules use canon-rules section 1a. A design that intentionally changes an effective requirement must make that change explicit and update the affected rules and decisions in the same change.
 2. `canon search <topic>`: earlier decisions and notes on the same question. Extend or supersede (`--supersedes D-n`), never silently redo.
 3. Look at how 1–3 mature products or libraries solve the same problem before inventing one.
 4. Read the existing code you are changing (symbols, callers) before proposing structure.
@@ -61,7 +61,7 @@ Read only the files of the mode you need. Cross-cutting references (`references/
 ## 4. Record the design
 
 1. **Decision** for each real choice: `canon decision new --title "..."` → fill 背景 (facts, data), 方案 (every option marked 采用 or 否决 with why, at least one of each), 决定, 后果. Write it in Chinese (canon/ documents are Chinese). Under the options cite where the facts come from, one line each: `- 来源：<URL or repository path> “<exact quote, 8+ characters>”` — research the outside practice first, then quote it; a new decision needs at least one source, and the landing fetches each new one and refuses it unless the quote is really there. Do not add self-assessed scores or confidence levels: nobody can check them.
-2. **Rules** for every behaviour the design commits the product to: `canon rule new --domain <d> --title "..."`. One rule = one trigger and one outcome; fill 规则 and 例子 with concrete inputs on both sides of the boundary. A behaviour this change does not build (its code comes in a later step of the plan) gets `status: planned` in the rule's front matter: it needs 规则 and 例子 but no test, and the change that builds it lists it under `rules:` and makes it active. In a planned rule's 例子 pin only the boundaries the design settles; the edge cases the implementation finds are added by the step that builds it.
+2. **Rules** for every behaviour the design commits the product to: use canon-rules (authorship and unresolved gaps: section 0). A behaviour this change does not build (its code comes in a later step of the plan) gets `status: planned`: it needs 规则 and 例子 but no test. The implementing change lists it under `rules:` and makes it active. In a planned rule's 例子 pin only the boundaries the design settles; handle the edge cases found during implementation through the same skill.
 3. **Change file** (`canon/changes/C-n.md`): 为什么 / 要改什么 referencing the decision and the rules.
 4. If the design changes a container (a runtime part, where its data lives) or a main flow, update `canon/architecture.md` in the same change: it describes the system as it is now, each part ending with its decision numbers. Check its decision numbers against what you just decided: a superseded or amended one means a line to rewrite.
 5. Land as usual (`canon work land`). The rule review reads the decision and rules against the whole domain, and the overview; fix what it blocks.

@@ -58,7 +58,7 @@ Every code change goes through a change, small ones included: `canon work start 
 The change file is the agent brief: the contract a later session works from, possibly weeks later after the code has moved. It describes the behaviour contract, not file paths or line numbers, which go stale.
 
 - `## 为什么`: the issue number, the current behaviour (for a bug, the broken behaviour and the reproduced scenario) and why it matters.
-- `## 要改什么`: the desired behaviour, including edge and error cases; which rules change or are added (write them per `canon-rules`: condition → outcome, examples on both sides of the boundary); what is explicitly out of scope, so the implementer does not gold-plate or guess at adjacent features.
+- `## 要改什么`: the desired behaviour, including edge and error cases; which rules change or are added (use `canon-rules`, including its section 0 authorship boundary); what is explicitly out of scope, so the implementer does not gold-plate or guess at adjacent features.
 - `## 任务`: checkable tasks; the regression test named after the rule it proves (`it("BR-n: ...")`) is one of them.
 
 A change you write now but leave for another session to implement: hand it off with `canon work stop --release --next "<first step>"`. Plain `canon work stop` keeps your claim, so no other session can start it while yours is alive.

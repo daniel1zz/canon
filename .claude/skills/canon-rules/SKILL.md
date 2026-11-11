@@ -7,11 +7,25 @@ description: "Use when writing, editing, splitting or reviewing a canon rule (ca
 
 A rule is what the product must do now, written so that any later session reads it one way, and so that a test can say pass or fail. It is the contract the implementer is held to: a vague rule is permission for the narrowest reading.
 
+## 0. The main session writes the baseline
+
+Only the top-level session responsible for the task writes baseline rule files: creating, editing (including titles, examples and front matter), retiring or moving them. It does the search below, decides which existing rules to reuse or change and which parts to cite, and writes the resulting text itself. Do not delegate the write, even with exact wording already supplied. This keeps the product contract with the session that holds the owner's requirements, rather than letting implementation redefine its own acceptance criteria.
+
+Subagents read the rules, implement and test them, and report gaps or contradictions with the rule ids, the concrete scenario and a suggested correction in their report. They do not edit the baseline; test expectations follow canon-test. The main session resolves the requirement before dependent work continues; work independent of that choice can continue.
+
+The main session is task-local, not one project-wide writer: concurrent top-level sessions stay within their assigned change and rule scope. Write only in the worktree the session holds. If a subagent holds the change that needs a rule edit, first have it stop and hand the change back through canon's existing claim workflow; never enter its held worktree to edit the rules.
+
 ## 1. Find what exists
 
 - `canon context <domain|path>` and `canon search <word>` first. Most requirements change an existing rule; edit it in place, keep its id. A rule that is no longer true is retired (`canon rule retire`), never left beside its replacement.
 - Choosing or creating the domain for a rule, or a domain that has grown mixed: use canon-domains.
 - The same threshold stated in two rules will drift apart. Keep it in one and let the other rule name it.
+
+## 1a. Resolve genuine conflicts by the latest effective requirement
+
+First read both rules' scope, conditions and exceptions: different cases are not a conflict. If the same case requires incompatible outcomes, follow the latest effective requirement change. Establish that order from the recorded decisions, completed changes and the semantic diff in git history, not the largest rule id, file timestamps or the most recent edit to a file. A wording correction, title change, move or rebase does not make an older requirement newer; an unaccepted proposal or an unlanded draft does not override an effective requirement. If the effective order cannot be established, report the conflicting text and the missing evidence instead of guessing; resolve the open choice through section 5.
+
+Record the winning requirement and its source in the change. Apply section 0 to correct the obsolete statements, use references for shared behaviour, retire a rule only when none of its requirements remain, and check the affected references and tests. This precedence resolves what to implement; it does not leave contradictory rules in place or bypass the project's checks.
 
 ## 2. Interrogate the requirement before writing
 
@@ -49,7 +63,7 @@ Banned verbs (no observer, no observation): works, runs, handles, supports, inte
 Never write a guess as if it were settled.
 
 - The owner's: direction; product feel, meaning anything they would notice using the product (controls, look, wording, where the art or data comes from); and a decision explicitly reserved for humans (spending money, irreversible on shared scope, needing a person's credentials). `canon human ask "<question>"`, and keep working on what does not depend on the answer.
-- The agent's: anything else with real alternatives, such as internal structure or a library the owner would not notice. Decide it yourself and record why with `canon decision new --title "..."` (背景, 方案 with every rejected option, 决定, 后果), then write the rule.
+- The agent's: anything else with real alternatives, such as internal structure or a library the owner would not notice. The main session settles choices that affect the baseline and records why with `canon decision new --title "..."` (背景, 方案 with every rejected option, 决定, 后果), then writes the rule. A subagent hands such choices back; small implementation choices within its brief remain its own.
 
 ## 5a. Before landing rules: list the open choices
 
@@ -61,7 +75,7 @@ The open choices otherwise surface mid-implementation, when the owner may not be
 
 ## 6. The flow
 
-1. `canon rule new --domain <d> --title "<one-sentence outcome>"` (allocates the id; the domain README says which code it governs).
+1. After the search and reuse decision in section 1, the main session runs `canon rule new --domain <d> --title "<one-sentence outcome>"` only for behaviour that needs a new rule (allocates the id; the domain README says which code it governs).
 2. Fill `## 规则`: the condition, then the required outcome. Chinese, like every document under `canon/`.
 3. Fill `## 例子`: concrete inputs on **both sides** of each boundary, one line each, `input → observed result`. The happy path alone is not an example set.
 

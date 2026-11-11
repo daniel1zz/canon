@@ -14,8 +14,8 @@ A test exists to find bugs. A suite that passes on broken code is worse than no 
    - every example becomes a case, input and expected result taken from the example, not from the code;
    - every refusal the rule implies becomes a case: which input, which error or exit code, and what must *not* happen (no file written, no row inserted, no commit made).
    Reading the implementation first produces tests that mirror it, bugs included.
-3. No rule covers the behaviour, or its examples do not reach the boundary: that is a gap. Add or sharpen the rule in the same change (`canon rule new --domain <d> --title "..."`), with examples on both sides of the boundary. Until then, derive expectations from the public signature and its docs, never the function body.
-4. A test that fails because the code contradicts the rule has found a defect. Do not change the expected value to match the code. Fix the code, or, if the rule is what is wrong, change the rule in the same commit and say why.
+3. No rule covers the behaviour, or its examples do not reach the boundary: resolve the gap through canon-rules section 0. For conflicting rules use its section 1a before choosing expectations. Derive test expectations from the rules or public contract, never the function body.
+4. A test that fails because the code contradicts the rule has found a defect. Do not change the expected value to match the code. Fix the code. If the requirement itself needs to change, use canon-rules section 0 and record why in the change.
 
 ## 2. Read the implementation adversarially
 

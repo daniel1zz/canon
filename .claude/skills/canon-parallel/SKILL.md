@@ -14,7 +14,7 @@ Landings are serial: one at a time, each one spends most of its turn running the
 Split when the tasks are:
 
 - **independent**: no task needs another one's result to start, and they change different files;
-- **medium-sized**: each is a whole change with its own rules and tests, minutes to tens of minutes of work. A tiny task costs a full landing turn of its own, and a subagent first spends tens of thousands of tokens reading context;
+- **medium-sized**: each implements a whole change against the task's rules, with its own tests, minutes to tens of minutes of work. A tiny task costs a full landing turn of its own, and a subagent first spends tens of thousands of tokens reading context;
 - **3 to 5 at once.** In a measured run, 5 subagents finished in about 44 minutes what took them about 122 minutes added up (about 2.8 times faster), and kept the landing queue busy the whole time. More than that only adds waiting.
 
 Do not split, or put the tasks in one agent's hands, when:
@@ -28,7 +28,8 @@ Do not split, or put the tasks in one agent's hands, when:
 1. Note where the run starts in the event table: `canon events | tail -1` and take that event's id (call it `<start>`). Everything the subagents do is recorded after it.
    While they run, follow the events with a background monitor instead of polling: `canon events --follow --kind land.ok,land.refuse,handoff.write,human.asked` prints one line per new event, starting after the latest one.
 2. Give each task one change, and let the subagent claim it itself (section 3; the hook prints the id to use if it forgets). Do not claim for it: the claim would be held by the main session, and the subagent's later `land` and `stop` are refused. A change the main session already claimed has to be released first, the way `canon-triage` hands a change to another session; then the subagent starts `C-n` as its brief says and gets the same worktree. Never give two subagents the same change: the second start is refused as claimed (exit 5).
-3. List the files each task will likely touch: run `canon context <path>` for the area, and read what the change file plans to change where the change already exists. Two tasks that will edit the same file do not run at the same time: give them to one agent in sequence, or put them in different rounds. Watch for files every feature appends to, such as a central registry of commands or config keys, a guide listing every workflow, or one large shared test file; most conflicts land there.
+3. Complete the rule preparation through canon-rules before dispatching (authorship: section 0). Include the rule ids and settled expectations in the brief. Keep any rule edits in the implementing change (canon-rules section 6, step 5), then hand it over as in step 2 rather than landing rule-only edits to prepare a worker.
+   List the files each task will likely touch: run `canon context <path>` for the area, and read what the change file plans to change where the change already exists. Two tasks that will edit the same file do not run at the same time: give them to one agent in sequence, or put them in different rounds. Watch for files every feature appends to, such as a central registry of commands or config keys, a guide listing every workflow, or one large shared test file; most conflicts land there.
 4. If two tasks must still touch the same file, say so in both briefs, and name which one lands first.
 5. Estimate the cost before you dispatch, from measured numbers, and tell the user: a subagent that reads an area and lands one change typically uses on the order of 70k to 280k tokens, so ten of them is roughly a million or more. Ask before a run that large; do not guess low.
 6. Read-only audits that run at the same time (several agents checking different areas) report what they find and do not file issues themselves: two of them can find the same root cause, and each one's "search for an existing issue first" races the other's. The main agent dedupes, checks the key claims, then files one issue per root cause.
@@ -37,7 +38,7 @@ Do not split, or put the tasks in one agent's hands, when:
 
 Copy this list into each brief and fill in the task. A subagent starts with none of your context.
 
-- **The task and why**: what to build, the evidence for the need, what counts as done, and which domain or files it covers.
+- **The task and why**: what to build, the evidence for the need, what counts as done, which domain or files it covers, and the rules and examples it must implement. For baseline authorship and gaps, follow canon-rules section 0.
 - **Its own change**: run `canon work start --title "<title>"` (or `canon work start C-n`) from the primary checkout, with the `--as` that `canon brief` names for a subagent,, then `cd` into the worktree it prints and do every edit there. The rest of the workflow is in `canon brief`: tell the subagent to run it.
 - **Hands off the others**: never enter, edit or clean another agent's worktree, and never edit the primary checkout.
 - **Test before landing**: as canon-test section 6 says; where `canon work test` does not exist, run each related test file in its own test-runner invocation (several files in one run have hung under load).

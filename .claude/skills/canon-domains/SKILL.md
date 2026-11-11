@@ -14,7 +14,7 @@ With `code_root`, code directories mirror the domain tree one to one, so a wrong
 - A new behaviour fits no domain, or you hesitate between two.
 - A domain is named after a layer or a command.
 
-If the behaviour clearly belongs to an existing domain, skip this skill and write the rule.
+If the behaviour clearly belongs to an existing domain, skip this skill and use canon-rules. Any writing or moving of baseline rule files follows its section 0 authorship boundary.
 
 ## 2. Subdomain and context: one thing in canon
 
