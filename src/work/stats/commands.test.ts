@@ -164,13 +164,14 @@ describe("canon events --kind", () => {
   }
   const listed = (r: { code: number | null; out: string }) => ({ code: r.code, events: (JSON.parse(r.out) as { kind: string; subject: string }[]).map((e) => `${e.kind} ${e.subject}`) });
 
-  test("BR-2156: kinds separated by commas list events of any of them, spaces around the commas do not count", () => {
+  test("BR-2156: kinds separated by commas list events of any of them; spaces around the commas and empty items do not count", () => {
     const root = withLandings();
     expect(listed(canon(root, "events", "--json", "--kind", "land.ok,land.turn", "--subject", "C-1"))).toEqual({ code: 0, events: ["land.turn C-1", "land.ok C-1"] });
     expect(listed(canon(root, "events", "--json", "--kind", "land.ok, land.turn"))).toEqual({ code: 0, events: ["land.turn C-1", "land.ok C-2", "land.ok C-1"] });
+    expect(listed(canon(root, "events", "--json", "--kind", "land.ok,,"))).toEqual({ code: 0, events: ["land.ok C-2", "land.ok C-1"] });
   });
 
-  test("BR-2156: --kind given twice, or with no kind between the commas, exits 2", () => {
+  test("BR-2156 BR-2382: --kind given twice, or with no kind between the commas, exits 2", () => {
     const root = withLandings();
     const twice = canon(root, "events", "--json", "--kind", "land.ok", "--kind", "land.turn");
     expect([twice.code, twice.err.includes("--kind is given more than once")]).toEqual([2, true]);
