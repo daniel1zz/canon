@@ -253,6 +253,20 @@ describe("creating documents where main is checked out and guarded", () => {
     expect(status(root)).toBe("");
   });
 
+  test("BR-2409: canon rule domain refuses with exit 1 in the guarded primary checkout and writes no README; in a change's worktree it creates the domain", () => {
+    const root = guardedProject();
+    const r = canon(root, "rule", "domain", "shipping", "--code", "src/shipping");
+    expect(r.code).toBe(1);
+    expect(r.err).toContain("canon work start");
+    expect(r.err).toContain("main-dirty");
+    expect(status(root)).toBe("");
+    const started = canon(root, "work", "start", "--title", "y");
+    const wt = /→ (\S+) \(branch/.exec(started.out)?.[1];
+    expect(wt).toBeDefined();
+    expect(canon(wt!, "rule", "domain", "shipping", "--code", "src/shipping").code).toBe(0);
+    expect(existsSync(join(wt!, "canon", "rules", "shipping", "README.md"))).toBe(true);
+  });
+
   test("BR-2409 BR-2187: a blank title in the guarded primary checkout is still a usage error, exit 2", () => {
     const root = guardedProject();
     expect(canon(root, "note", "new", "--title", "   ").code).toBe(2);

@@ -141,6 +141,7 @@ const rule = defineCommand({
       run({ args }) {
         const ws = workspace();
         if (args.code !== undefined && list(args.code).length === 0) fail({ code: "invalid", message: "--code needs at least one directory" });
+        refuseOnGuardedMain(ws, "domain README", String(args.name));
         say(must(createDomain(ws.root, String(args.name), list(args.code), typeof args.description === "string" ? args.description : "", ws.config.codeRoot)));
         // reason: a hint, not a refusal: the name may be right for this business, the exit code stays 0 (BR-2317)
         const word = technicalLayerWord(String(args.name));
