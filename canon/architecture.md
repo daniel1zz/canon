@@ -49,7 +49,7 @@ title: 架构总览
 - 职责：项目的共享记忆，进版本库：`canon/product.md`、`canon/architecture.md`、`canon/config.yaml`、`canon/backlog.md`、`canon/rules/<领域>/`（规则和领域 README）、`canon/decisions/`、`canon/changes/`、`canon/notes/`，需要时有 `canon/releases/`。一个文档一个文件，只在合入时改。
 - 数据：Markdown 加 front matter。`canon check` 查格式、引用、路径、规则有没有被一个会运行的测试点名（读 `state.db` 里的测试报告记账，不运行测试，D-64）；`canon search`、`canon context` 读它。规则和决策之间的引用只从正文读；复核过的引用记在引用方 front matter 的 `links` 里（`canon links confirm` 写），没记的由 `canon links`、`canon context`、`canon brief` 每次从 git 历史（当前提交的第一父提交链）算出是不是可疑，不另存（D-95）。
 - 代码：`src/knowledge`（横跨整个领域）、`src/knowledge/documents`、`src/knowledge/check`、`src/knowledge/check/restatement`（复述别的规则的文字判定，hook、`canon check` 和规则评审共用，D-84）、`src/knowledge/query`、`src/knowledge/releases`、`src/knowledge/plans`（变更文件里 `## 计划` 表的读取、检查和 `canon plan status`，步骤状态由做它的变更算出）、`src/knowledge/links`（引用和可疑引用、`canon links`）、`src/work/execution`（规则的执行状态由变更里的通过记录算出）。
-- 决策：D-1、D-12、D-14、D-15、D-32、D-61、D-64、D-65、D-77、D-84。
+- 决策：D-1、D-12、D-14、D-15、D-32、D-61、D-64、D-65、D-77、D-84、D-95。
 
 **装进项目的 hook、skill 和 git 守卫**
 - 职责：Claude Code hook（会话开始跑 `canon brief`；每次 Bash 前快照、检查 `canon work` 命令带不带 `--as`（`canon work check-as`，只拒绝、不改写）；提问工具之后记录回答；Write、Edit 或 MultiEdit 之后提示改动的规则或决策在新行里复述了别的规则，`canon restatements --hook`，D-84）、`.claude/skills/canon-*`、git 的 `reference-transaction` hook（main 只能由 `canon work land` 移动；新建文档的命令也问 `githook.ts` 当前签出是不是受守卫的 main，是就拒绝，BR-2409）。
