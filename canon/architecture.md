@@ -15,20 +15,20 @@ title: 架构总览
 - **`claude -p`**：非交互的 Claude，用于合入时的规则评审，命令由 `canon/config.yaml` 的 `review` 配置；合入后的代码评审也是项目自己配的；canon 仓库发布前的发布评审用同一个 `review` 命令（BR-2411）。
 - **GitHub**：`canon issues` 列出开着的 issue（`src/work/issues`，只读，关闭用 `gh`）；canon 仓库的发布评审拦截时新建或评论一个 `canon-review` issue（BR-2411）；决策里引用的网址在合入时被抓取核对；`remote` 指向它时合入后把 main 推上去。
 - **varlock**（可选，开源的密钥工具）：项目根目录有 `.env.schema` 时（D-85），合入运行它找变更里提交的密钥明文，用被合入树的 `node_modules/.bin/varlock`，没有就用 PATH 上的；canon 不转述 `varlock scan` 的输出（`src/work/land/checks/secrets.ts`，D-86）。
-- **项目自己的命令**：floor、类型检查、测试、选测试的命令（`test_select_command`）、`setup`、生命周期 hook，由 `canon/config.yaml` 配置，canon 只运行它们、看退出码；测试命令把 JUnit XML 报告写到 `{report}`，canon 读报告里有哪些测试、跑没跑，不认语言（D-64）。
+- **项目自己的命令**：floor、类型检查、测试、选测试的命令（`test_select_command`）、挑选相关文档的命令（`related_pick_command`，可选，通常是一个便宜模型；只有 `canon context <编号>` 和 `canon work review` 运行它，编辑 hook、`canon check` 和合入不运行，BR-2443）、`setup`、生命周期 hook，由 `canon/config.yaml` 配置，canon 只运行它们、看退出码；测试命令把 JUnit XML 报告写到 `{report}`，canon 读报告里有哪些测试、跑没跑，不认语言（D-64）。
 
 决策：D-1、D-2、D-9、D-45、D-51、D-64、D-86。
 
 ## 容器：canon 做的
 
 **CLI 二进制 `canon`**
-- 职责：全部命令；没有常驻进程（后台部件见下）；唯一一直运行的命令是前台的 `canon events --follow`，它是被调用方停止的长命令，不是后台部件（BR-2357）；跟随后台合入的 `canon work land` 也可能运行很久，它跟随的后台合入进程只活到这次合入结束（BR-2390）。多数命令读运行它的 checkout 里的 `canon/config.yaml`；合入评审的命令、时限、提示预算 `review_max_prompt_kb`、同时运行的调用数 `review_parallel` 和常驻说明清单例外，取自 main 上已合入的配置（BR-2074；`canon check` 的评审大小提示在 worktree 里也读 main 上的预算，D-76），所以在一次合入里改它们只对之后的合入生效；canon 仓库的发布评审（`scripts/release.ts`）读被发布提交自己的配置。
+- 职责：全部命令；没有常驻进程（后台部件见下）；唯一一直运行的命令是前台的 `canon events --follow`，它是被调用方停止的长命令，不是后台部件（BR-2357）；跟随后台合入的 `canon work land` 也可能运行很久，它跟随的后台合入进程只活到这次合入结束（BR-2390）。多数命令读运行它的 checkout 里的 `canon/config.yaml`；合入评审的命令、时限、提示预算 `review_max_prompt_kb`、同时运行的调用数 `review_parallel` 和常驻说明清单例外，取自 main 上已合入的配置（BR-2074；挑选命令 `related_pick_command` 和它的时限也取自 main，BR-2443；`canon check` 的评审大小提示在 worktree 里也读 main 上的预算，D-76），所以在一次合入里改它们只对之后的合入生效；canon 仓库的发布评审（`scripts/release.ts`）读被发布提交自己的配置。
 - 数据：无。
 - 代码：`src/invocation`（命令声明、退出码、配置读取；`tree.ts` 汇总各领域的 `commands.ts`）、`src/invocation/reference`（配置项参考和 schema）；共享的 git、进程、结果类型在 `src/kernel`，不属于任何领域。
 - 决策：D-2、D-3、D-4、D-15、D-28、D-63。
 
 **协调数据库 `state.db`**
-- 职责：多个会话同时工作时的共享状态：认领、合入队列、负责人标的优先合入（`canon backlog urgent`）、交接记录、留给人的问题、编号、端口、事件表（每次写入和拒绝）、后台部件的登记、未处理的评审意见（`review_findings`，见合入后的命令和评审）。
+- 职责：多个会话同时工作时的共享状态：认领、合入队列、负责人标的优先合入（`canon backlog urgent`）、交接记录、留给人的问题、编号、端口、事件表（每次写入和拒绝）、后台部件的登记、未处理的评审意见（`review_findings`，见合入后的命令和评审）、挑选命令回答的缓存（`related_picks`，BR-2444）。
 - 数据：`<git 公共目录>/canon/state.db`（SQLite），本机所有 worktree 共用，不提交、不跨机器。知识（规则、决策）不放这里。
 - 代码：`src/work`（`db.ts`、`workspace.ts`），各子领域读写自己的表；`src/work/humans`（留给人的问题）、`src/work/stats`（从事件表算统计，`canon stats`、`canon events`、`canon usage`）。
 - 决策：D-6、D-11、D-18、D-33、D-41、D-45、D-47、D-73。
@@ -47,7 +47,7 @@ title: 架构总览
 
 **`canon/` 文档树**
 - 职责：项目的共享记忆，进版本库：`canon/product.md`、`canon/architecture.md`、`canon/config.yaml`、`canon/backlog.md`、`canon/rules/<领域>/`（规则和领域 README）、`canon/decisions/`、`canon/changes/`、`canon/notes/`，需要时有 `canon/releases/`。一个文档一个文件，只在合入时改。
-- 数据：Markdown 加 front matter。`canon check` 查格式、引用、路径、规则有没有被一个会运行的测试点名（读 `state.db` 里的测试报告记账，不运行测试，D-64）；`canon search`、`canon context` 读它，每次运行时现算，不存索引：`canon search` 逐字匹配加汉字二元组匹配，`canon context`、`canon work review` 和编辑 hook 给出规则或决策的相关文档（正文引用的双向关系图、二元组 BM25 全文、共用名字三种排名的倒数排名融合，D-90）。规则和决策之间的引用只从正文读；复核过的引用记在引用方 front matter 的 `links` 里（`canon links confirm` 写，`canon check` 查它和正文对得上），有记录的只看记录；没记的由 `canon links`、`canon context`、`canon brief` 每次和 `canon/config.yaml` 的 `links_since` 起点提交那棵树比较，不另存；合入带 `--finish` 时在 rebase 之后把变更新加的引用的记录改进关闭提交（D-95）。
+- 数据：Markdown 加 front matter。`canon check` 查格式、引用、路径、规则有没有被一个会运行的测试点名（读 `state.db` 里的测试报告记账，不运行测试，D-64）；`canon search`、`canon context` 读它，每次运行时现算，不存索引：`canon search` 逐字匹配加汉字二元组匹配，`canon context`、`canon work review` 和编辑 hook 给出规则或决策的相关文档（正文引用的双向关系图、二元组 BM25 全文、共用名字三种排名的倒数排名融合，D-90）；main 上配了 `related_pick_command` 时，`canon context` 和 `canon work review` 再让它从融合前 50 名里挑选，挑中的排在前面，回答按命令和提示的哈希缓存在 `state.db` 的 `related_picks` 表，失败时输出一行原因（`src/knowledge/query/pick.ts`，BR-2443 到 BR-2445）。规则和决策之间的引用只从正文读；复核过的引用记在引用方 front matter 的 `links` 里（`canon links confirm` 写，`canon check` 查它和正文对得上），有记录的只看记录；没记的由 `canon links`、`canon context`、`canon brief` 每次和 `canon/config.yaml` 的 `links_since` 起点提交那棵树比较，不另存；合入带 `--finish` 时在 rebase 之后把变更新加的引用的记录改进关闭提交（D-95）。
 - 代码：`src/knowledge`（横跨整个领域）、`src/knowledge/documents`、`src/knowledge/check`、`src/knowledge/check/restatement`（复述别的规则的文字判定，hook、`canon check` 和规则评审共用，D-84）、`src/knowledge/domains`（领域的业务清单：README 的 `## 业务` 段、规则的 `business`、`canon check` 的核对和 `canon rule new` 的业务列表，D-96）、`src/knowledge/query`（搜索、上下文和相关文档的融合排序）、`src/knowledge/releases`、`src/knowledge/plans`（变更文件里 `## 计划` 表的读取、检查和 `canon plan status`，步骤状态由做它的变更算出）、`src/knowledge/links`（引用和可疑引用、`canon links`）、`src/work/execution`（规则的执行状态由变更里的通过记录算出）。
 - 决策：D-1、D-12、D-14、D-15、D-32、D-61、D-64、D-65、D-77、D-84、D-90、D-95、D-96。
 

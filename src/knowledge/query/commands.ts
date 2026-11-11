@@ -1,9 +1,10 @@
 import { defineCommand } from "citty";
 import { corpusOf, entry, fail, json, say, workspace, type DomainCommands } from "../../invocation/command.ts";
-import type { CanonError } from "../../kernel/result.ts";
+import { err, type CanonError } from "../../kernel/result.ts";
 import { openNotes, renderNote } from "../review/notes.ts";
 import { FINDINGS_HINT, openFindings, renderFinding } from "../review/findings/findings.ts";
-import { RELATED_LIMIT, relatedLines, relatedTo } from "./related.ts";
+import { relatedSections } from "./pick.ts";
+import { git } from "../../kernel/git.ts";
 import { linksOf } from "../links/start.ts";
 import { referenceSection } from "../links/links.ts";
 import { amendedBy, contextFor, findDoc, isIdQuery, plannedMark, rawText, releaseMark, renderContext, renderSearch, search } from "./query.ts";
@@ -46,7 +47,7 @@ const context = defineCommand({
     target: { type: "positional", required: true, description: "Repo path, domain name, or id (C-12, BR-3, D-4)" },
     full: { type: "boolean", description: "Print every rule's full text instead of its title" },
   },
-  run({ args }) {
+  async run({ args }) {
     const ws = workspace();
     const corpus = corpusOf(ws).corpus;
     // reason: an id that names no document is a typo or a stale reference, unlike a path that may be a new directory (BR-2234)
@@ -54,8 +55,10 @@ const context = defineCommand({
     const ctx = contextFor(corpus, args.target);
     say(renderContext(ws.root, ctx, { full: Boolean(args.full), target: args.target }));
     // The live rules and decisions most related to the rule or decision asked for, any domain (BR-2387, D-90).
+    // With related_pick_command on main, its picks from the fused top 50 come first (BR-2443).
     if (ctx.target && (ctx.target.kind === "rule" || ctx.target.kind === "decision")) {
-      const lines = relatedLines(ctx.target, relatedTo(corpus, ctx.target, RELATED_LIMIT));
+      const main = git(ws.root, "rev-parse", "--verify", `${ws.config.main}^{commit}`);
+      const lines = await relatedSections({ root: ws.root, db: ws.db, actor: ws.actor, main: main.ok ? main.value : err("not_found", `${ws.config.main} does not resolve to a commit`), corpus }, [ctx.target]);
       if (lines.length) say(`${lines.join("\n")}\n`);
     }
     // References both ways, the suspect ones marked (BR-2428); a starting commit that cannot be read is said here and exits 4 at the end.
