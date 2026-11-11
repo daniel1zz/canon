@@ -2,7 +2,7 @@
 id: C-454
 title: Shipped skills state each criterion once, so canon update passes the
   duplicate review (#182)
-status: open
+status: done
 rules: []
 ---
 
