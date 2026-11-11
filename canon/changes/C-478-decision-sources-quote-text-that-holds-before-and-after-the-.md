@@ -2,7 +2,7 @@
 id: C-478
 title: Decision sources quote text that holds before and after the rule review
   moves after landing
-status: open
+status: done
 rules: []
 ---
 
