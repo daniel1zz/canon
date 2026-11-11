@@ -53,7 +53,7 @@ describe("canon work review", () => {
     expect(t.lastPrompt()).toContain("Refunds are paid in 45 days.");
   });
 
-  test("BR-2387 BR-2358: the preview lists other domains' rules sharing a name with the changed rule, after the verdict, without changing it", async () => {
+  test("BR-2387 BR-2358: the preview lists the rules most related to the changed rule, after the verdict, without changing it", async () => {
     const t = billing("on");
     const other = ["BR", 7].join("-");
     mkdirSync(join(t.root, "canon/rules/shipping"), { recursive: true });
@@ -65,7 +65,7 @@ describe("canon work review", () => {
     writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), ruleText("退款时写 `refund.issued`。"));
     const out = await previewReview(ws(s.worktree), guide);
     expect(out.kind).toBe("ok");
-    expect(out.kind === "ok" && out.related).toEqual([`Related to ${id} in other domains (shared names; check they do not contradict it):`, `  ${other} Ship after refund check  (\`refund.issued\`)`]);
+    expect(out.kind === "ok" && out.related).toEqual([`Related to ${id} (references both ways, shared text and names; check they do not contradict it):`, `  ${other} Ship after refund check  (\`refund.issued\`; words refund issued)`, "      看 `refund.issued`。"]);
     const none = billing("on");
     const s2 = startNew(none.root, "Alone");
     writeFileSync(join(s2.worktree, `canon/rules/billing/${id}.md`), ruleText("退款时写 `refund.issued`。"));

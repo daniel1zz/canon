@@ -132,6 +132,30 @@ describe("search ranking", () => {
   });
 });
 
+describe("character-pair matching", () => {
+  const note = (n: number, title: string, body: string) => [`canon/notes/${id("N", n)}.md`, `---\nid: ${id("N", n)}\ntitle: ${title}\n---\n${body}\n`] as const;
+  const ids = (corpus: ReturnType<typeof corpusOf>["corpus"], q: string) => search(corpus, q).map((h) => h.doc.id);
+
+  test("BR-2422: a Chinese word matches a document holding more than half of its character pairs, not one holding half or fewer", () => {
+    const { corpus } = corpusOf(Object.fromEntries([note(1, "a", "规则的评审会拦截。"), note(2, "b", "规则和拦截。")]));
+    const hits = search(corpus, "规则评审拦截");
+    expect(hits.map((h) => [h.doc.id, h.matched, h.terms])).toEqual([[id("N", 1), 1, 1]]);
+    expect(renderSearch(hits, false)).toEqual([`${id("N", 1).padEnd(8)} a\n         规则的评审会拦截。`]);
+  });
+
+  test("BR-2422: a document containing the word as written comes before one matching only by pairs, whatever the scores", () => {
+    const { corpus } = corpusOf(Object.fromEntries([note(1, "a", "规则评审拦截。"), note(2, "规则 评审 拦截", "规则评审会拦截，规则评审会拦截。")]));
+    expect(ids(corpus, "规则评审拦截")).toEqual([id("N", 1), id("N", 2)]);
+  });
+
+  test("BR-2422: a word of one pair or one Latin word matches only as written; a 3-character word needs both its pairs", () => {
+    const { corpus } = corpusOf(Object.fromEntries([note(1, "a", "面朝和朝着。"), note(2, "b", "one session"), note(3, "c", "评审由审员签字。"), note(4, "d", "评审。")]));
+    expect(ids(corpus, "朝向")).toEqual([]);
+    expect(ids(corpus, "sessions")).toEqual([]);
+    expect(ids(corpus, "评审员")).toEqual([id("N", 3)]);
+  });
+});
+
 describe("render", () => {
   test("BR-2073: a one-word search lists its hits without a words marker", () => {
     const { corpus } = corpusOf(files);

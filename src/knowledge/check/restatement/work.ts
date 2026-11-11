@@ -41,11 +41,15 @@ export function workRestatements(root: string, base: string, corpus: Corpus, doc
 
 const WATCHED = /^canon\/(?:rules|decisions)\/.+\.md$/;
 
-/**
- * The hook's finding for the file a Write or Edit just changed (BR-2402): undefined when the file is not a rule or
- * decision of a canon project, or it restates nothing in its new lines.
- */
-export function editedFileRestatements(file: string): Result<Restatement[] | undefined> {
+/** The rule or decision a Write or Edit just changed, read with the corpus around it; undefined when the file is none (BR-2402). */
+export interface EditedDoc {
+  readonly root: string;
+  readonly corpus: Corpus;
+  readonly doc: Doc;
+  readonly main: string;
+}
+
+export function editedDoc(file: string): Result<EditedDoc | undefined> {
   const dir = dirname(file);
   if (!existsSync(dir)) return ok(undefined);
   const top = toplevel(dir);
@@ -58,8 +62,12 @@ export function editedFileRestatements(file: string): Result<Restatement[] | und
   if (!config.ok) return config;
   const corpus = readCorpus(root, config.value.types, config.value).corpus;
   const doc = corpus.docs.find((d) => d.path === rel);
-  if (!doc) return ok(undefined);
-  const base = workBase(root, config.value.main);
+  return ok(doc ? { root, corpus, doc, main: config.value.main } : undefined);
+}
+
+/** The hook's finding for an edited rule or decision (BR-2402): the restatements in its new lines. */
+export function editedRestatements(edited: EditedDoc): Result<Restatement[]> {
+  const base = workBase(edited.root, edited.main);
   if (!base.ok) return base;
-  return ok(addedRestatements(root, base.value, doc, restatementIndex(corpus)));
+  return ok(addedRestatements(edited.root, base.value, edited.doc, restatementIndex(edited.corpus)));
 }

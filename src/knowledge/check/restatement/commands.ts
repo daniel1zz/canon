@@ -2,7 +2,8 @@ import { readFileSync } from "node:fs";
 import { defineCommand } from "citty";
 import { corpusOf, entry, EXIT, fail, json, say, workspace, type DomainCommands } from "../../../invocation/command.ts";
 import { corpusRestatements, restatementLine, type Restatement } from "./restatement.ts";
-import { editedFileRestatements } from "./work.ts";
+import { HOOK_LIMIT, relatedTo, reasons, type Related } from "../../query/related.ts";
+import { editedDoc, editedRestatements } from "./work.ts";
 
 /** `canon restatements`: every restatement in the current rules and decisions (BR-2401); `--hook` is the edit hook (BR-2402). */
 
@@ -12,6 +13,14 @@ export function hookContext(found: readonly Restatement[]): string {
     `canon: ${found.length} sentence(s) you just wrote restate another rule's behaviour instead of naming it. A copy goes stale when that rule changes, and the landing's rule review blocks a restatement in added lines (BR-2405).`,
     "Keep only what this document adds, and refer to the other rule for its behaviour (按 BR-x / 见 BR-x):",
     ...found.map((r) => `- ${restatementLine(r)}`),
+  ].join("\n");
+}
+
+/** What the hook tells the session about the documents most related to the one it just wrote (BR-2421). */
+export function relatedHookContext(id: string, related: readonly Related[]): string {
+  return [
+    `canon: the documents most related to ${id} (references both ways, shared text and names); check this edit does not contradict them:`,
+    ...related.map((r) => `- ${r.doc.id} ${r.doc.title} (${reasons(r, id)})`),
   ].join("\n");
 }
 
@@ -27,7 +36,7 @@ function editedFile(): string | undefined {
 }
 
 const restatements = defineCommand({
-  meta: { description: "List the sentences in rules and decisions that restate another rule's behaviour instead of naming it; --hook checks the file a Write or Edit just changed" },
+  meta: { description: "List the sentences in rules and decisions that restate another rule's behaviour instead of naming it; --hook checks the file a Write or Edit just changed and lists the documents most related to it" },
   args: {
     json: { type: "boolean" },
     hook: { type: "boolean", description: "Read Claude Code's PostToolUse input from stdin and check only the new lines of the edited rule or decision" },
@@ -36,10 +45,15 @@ const restatements = defineCommand({
     if (args.hook) {
       const file = editedFile();
       if (file === undefined) return;
-      const found = editedFileRestatements(file);
+      const edited = editedDoc(file);
+      if (!edited.ok) fail(edited.error);
+      if (edited.value === undefined || (edited.value.doc.kind !== "rule" && edited.value.doc.kind !== "decision")) return;
+      const found = editedRestatements(edited.value);
       if (!found.ok) fail(found.error);
-      if (found.value && found.value.length > 0) {
-        process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: hookContext(found.value) } })}\n`);
+      const related = relatedTo(edited.value.corpus, edited.value.doc, HOOK_LIMIT);
+      const parts = [...(found.value.length > 0 ? [hookContext(found.value)] : []), ...(related.length > 0 ? [relatedHookContext(edited.value.doc.id, related)] : [])];
+      if (parts.length > 0) {
+        process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: parts.join("\n\n") } })}\n`);
       }
       return;
     }

@@ -1,4 +1,4 @@
-import { relatedElsewhere, relatedLines } from "../query/related.ts";
+import { RELATED_LIMIT, relatedIndex, relatedLines, relatedTo } from "../query/related.ts";
 import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -103,8 +103,9 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
   const needs = [...new Set([...scope.reviewed, ...wording.questions.map((q) => q.id), ...standing])];
   if (needs.length === 0) return { kind: "nothing", behind, main: main.value };
   if (!onMain.review) return { kind: "unconfigured", needs, main: main.value };
-  // Other domains' rules and decisions sharing names with the changed ones: a hint, never part of the verdict (BR-2387).
-  const related = scope.changedDocs.filter((d) => d.kind === "rule" || d.kind === "decision").flatMap((d) => relatedLines(d, relatedElsewhere(read.corpus, d)));
+  // The live rules and decisions most related to the changed ones: a hint, never part of the verdict (BR-2387).
+  const index = relatedIndex(read.corpus);
+  const related = scope.changedDocs.filter((d) => d.kind === "rule" || d.kind === "decision").flatMap((d) => relatedLines(d, relatedTo(read.corpus, d, RELATED_LIMIT, index)));
   if (onMain.review === REVIEW_NONE) return { kind: "off", behind, main: main.value, related, wording: wording.questions.map((q) => q.id) };
 
   const running: Running = {};

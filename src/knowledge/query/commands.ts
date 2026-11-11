@@ -2,7 +2,7 @@ import { defineCommand } from "citty";
 import { corpusOf, entry, fail, json, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import type { CanonError } from "../../kernel/result.ts";
 import { openNotes, renderNote } from "../review/notes.ts";
-import { relatedElsewhere, relatedLines } from "./related.ts";
+import { RELATED_LIMIT, relatedLines, relatedTo } from "./related.ts";
 import { linksOf } from "../links/history.ts";
 import { referenceSection } from "../links/links.ts";
 import { amendedBy, contextFor, findDoc, isIdQuery, plannedMark, rawText, releaseMark, renderContext, renderSearch, search } from "./query.ts";
@@ -52,9 +52,9 @@ const context = defineCommand({
     if (isIdQuery(corpus, args.target) && !findDoc(corpus, args.target.trim())) fail({ code: "not_found", message: `${args.target} does not exist` });
     const ctx = contextFor(corpus, args.target);
     say(renderContext(ws.root, ctx, { full: Boolean(args.full), target: args.target }));
-    // Other domains' rules and decisions sharing names with the rule or decision asked for (BR-2387).
+    // The live rules and decisions most related to the rule or decision asked for, any domain (BR-2387, D-90).
     if (ctx.target && (ctx.target.kind === "rule" || ctx.target.kind === "decision")) {
-      const lines = relatedLines(ctx.target, relatedElsewhere(corpus, ctx.target));
+      const lines = relatedLines(ctx.target, relatedTo(corpus, ctx.target, RELATED_LIMIT));
       if (lines.length) say(`${lines.join("\n")}\n`);
     }
     // References both ways, the suspect ones marked (BR-2428); a history that cannot be read is said here and exits 4 at the end.

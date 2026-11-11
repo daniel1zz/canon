@@ -2,6 +2,7 @@ import { existsSync, readFileSync, statSync } from "node:fs";
 import { join, posix } from "node:path";
 import { stripCode, type Change, type Corpus, type Decision, type Doc, type Domain, type Extra, type Rule } from "../documents/model.ts";
 import { idsIn, type DocType } from "../documents/types.ts";
+import { tokens } from "./bigrams.ts";
 
 /** Plain scan over the files: the corpus is small enough that an index would only add a second source of truth. */
 export interface Hit {
@@ -11,7 +12,15 @@ export interface Hit {
   /** How many of the query's words the document contains; equals `terms` for an id search (BR-2073). */
   readonly matched: number;
   readonly terms: number;
+  /** How many of the query's words it contains as written, not only by most of their character pairs (BR-2422). */
+  readonly exact: number;
 }
+
+/** The distinct character pairs and Latin words of a search word, when it has at least two (BR-2422). */
+const pairsOf = (term: string): string[] => {
+  const t = [...new Set(tokens(term))];
+  return t.length >= 2 ? t : [];
+};
 
 export function search(corpus: Corpus, query: string, limit = 20): Hit[] {
   const q = query.trim();
@@ -27,20 +36,37 @@ export function search(corpus: Corpus, query: string, limit = 20): Hit[] {
       // An id matches whole ids only: BR-1 never matches BR-12 (BR-2008).
       if (doc.id === exactId) score += 100;
       if (referencedIds(doc, corpus.types).has(exactId) || new RegExp(`\\b${exactId}\\b`).test(doc.body)) score += 10;
-      if (score > 0) hits.push({ doc, score, line: bestLine(doc.body, [exactId.toLowerCase()]), matched: 1, terms: 1 });
+      if (score > 0) hits.push({ doc, score, line: bestLine(doc.body, [exactId.toLowerCase()]), matched: 1, terms: 1, exact: 1 });
       continue;
     }
     let matched = 0;
+    let exact = 0;
+    let docPairs: Set<string> | undefined;
+    const near: string[] = [];
     for (const t of terms) {
       if (doc.id.toLowerCase() === t) score += 100;
       if (title.includes(t)) score += 5;
       score += Math.min(count(body, t), 5);
-      if (doc.id.toLowerCase() === t || title.includes(t) || body.includes(t)) matched++;
+      if (doc.id.toLowerCase() === t || title.includes(t) || body.includes(t)) {
+        matched++;
+        exact++;
+        continue;
+      }
+      // reason: a Chinese phrase written with other words in between still matches by most of its character pairs (BR-2422, D-90)
+      const pairs = pairsOf(t);
+      if (pairs.length === 0) continue;
+      docPairs ??= new Set(tokens(`${doc.title}\n${doc.body}`));
+      const have = pairs.filter((p) => docPairs!.has(p));
+      if (have.length * 2 <= pairs.length) continue;
+      matched++;
+      score += have.length;
+      near.push(...have);
     }
-    if (matched > 0) hits.push({ doc, score, line: bestLine(doc.body, terms), matched, terms: terms.length });
+    if (matched > 0) hits.push({ doc, score, line: bestLine(doc.body, terms, near), matched, terms: terms.length, exact });
   }
   // reason: documents with every word come first, then partial ones by words matched (BR-2073)
-  return hits.sort((a, b) => b.matched - a.matched || b.score - a.score || a.doc.id.localeCompare(b.doc.id)).slice(0, limit);
+  // reason: among those, words found as written come before words found only by their character pairs (BR-2422)
+  return hits.sort((a, b) => b.matched - a.matched || b.exact - a.exact || b.score - a.score || a.doc.id.localeCompare(b.doc.id)).slice(0, limit);
 }
 
 /** True when a query is a single document id, which gets no hint (BR-2133). */
@@ -79,8 +105,21 @@ function count(text: string, term: string): number {
   return n;
 }
 
-function bestLine(body: string, terms: string[]): string {
-  const line = body.split("\n").find((l) => terms.some((t) => l.toLowerCase().includes(t)));
+/** The first non-heading line holding the most of `pairs`, when one holds any (BR-2422). */
+function mostPairs(lines: readonly string[], pairs: readonly string[]): string | undefined {
+  let best: string | undefined;
+  let most = 0;
+  for (const l of lines) {
+    if (/^\s*#/.test(l)) continue;
+    const n = new Set(tokens(l).filter((p) => pairs.includes(p))).size;
+    if (n > most) [best, most] = [l, n];
+  }
+  return best;
+}
+
+function bestLine(body: string, terms: string[], pairs: readonly string[] = []): string {
+  const lines = body.split("\n");
+  const line = lines.find((l) => terms.some((t) => l.toLowerCase().includes(t))) ?? mostPairs(lines, pairs);
   return (line ?? body.split("\n")[0] ?? "").trim().slice(0, 160);
 }
 

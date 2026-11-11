@@ -123,10 +123,11 @@ describe("canon restatements --hook", () => {
     expect(out.hookSpecificOutput.additionalContext).toContain("BR-2405");
   });
 
-  test("BR-2402: a restatement already on main, with only the examples edited, says nothing", () => {
+  test("BR-2402: a restatement already on main, with only the examples edited, says nothing about restatements", () => {
     const { wt, file } = inWorktree(COPY, (t) => t.replace("- a → b", "- a → c"));
     const r = canon(wt, ["restatements", "--hook"], hookInput(file));
-    expect([r.code, r.out]).toEqual([0, ""]);
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain("restates");
   });
 
   test("BR-2402: a new decision's every line is new", () => {
