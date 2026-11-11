@@ -11,8 +11,7 @@ A test exists to find bugs. A suite that passes on broken code is worse than no 
 
 1. `canon context <path>` for the code under test: the domain's rules, accepted decisions and open changes. Find the rules this code implements (`canon search <term>` if unsure).
 2. **Before opening the implementation**, write the expected behaviours as test skeletons, from the rule's `## 规则` and `## 例子` only:
-   - every example becomes a case, input and expected result taken from the example, not from the code;
-   - every refusal the rule implies becomes a case, checked as section 4 says.
+   - every example becomes a case, input and expected result taken from the example, not from the code, the refusals the rule implies included.
    Reading the implementation first produces tests that mirror it, bugs included.
 3. No rule covers the behaviour, or its examples do not reach the boundary: resolve the gap through canon-rules section 0. For conflicting rules use its section 1a before choosing expectations.
 4. A test that fails because the code contradicts the rule has found a defect. Do not change the expected value to match the code. Fix the code. If the requirement itself needs to change, use canon-rules section 0 and record why in the change.
@@ -58,7 +57,7 @@ False-green patterns to scan for before committing, with grep commands: [referen
 
 ## 5. Verification discipline (all eight, every time)
 
-1. **Enumerate mandated failures first.** Before running anything, list every case where the target must fail: invalid input → usage error, missing permission → denial, corrupt state → loud abort, check violation → refusal with a fix hint. Each gets exercised and compared with the rule (section 4). An unexercised mandated failure is an uncovered requirement.
+1. **List mandated failures before running anything**: invalid input → usage error, missing permission → denial, corrupt state → loud abort, check violation → refusal with a fix hint. One not exercised is an uncovered requirement.
 2. **Prove the oracle can fail before trusting its pass** (section 3). A suspiciously fast pass gets re-run before it is believed.
 3. **Negative controls travel in pairs.** Every "X is now allowed / fixed" ships with "Y is still refused". Fixed a false denial? Prove the true denial still fires. Loosened a matcher? Prove the true positives still match.
 4. **Feed bad input on purpose**: unknown flags, out-of-range config values, undeclared fields, unparseable files; judge the result by section 2's silent-fallback row (one real case: a TTL of `0` silently became 120).

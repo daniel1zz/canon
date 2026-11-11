@@ -26,7 +26,7 @@ Ways to build one, roughly in this order:
 9. A **differential loop**: same input through old and new version, diff the outputs.
 10. **Human in the loop**, last resort: copy `scripts/hitl-loop.template.sh`, so even a manual repro is structured and its answers come back to you.
 
-Then improve the loop itself: faster (narrow scope, skip unrelated setup), sharper (assert on the exact symptom, not "didn't crash"), deterministic (pin time, seed randomness, isolate the filesystem and network). For a non-deterministic bug, raise the reproduction rate (loop it, parallelise, add stress, narrow timing windows) until it is debuggable.
+Then improve the loop itself: faster (narrow scope, skip unrelated setup), sharper (assert on the exact symptom, not "didn't crash"), deterministic (as canon-test section 4 asks of a test). For a non-deterministic bug, raise the reproduction rate (loop it, parallelise, add stress, narrow timing windows) until it is debuggable.
 
 If you genuinely cannot build a loop: stop, say so, list what you tried, and ask for access to the environment, a captured artifact, or permission for temporary instrumentation. Do not hypothesise without a loop.
 
