@@ -59,12 +59,12 @@ What cannot be run is marked `unvalidated` with the reason. If the missing exper
 
 ## 5. Record the result
 
-1. **Research → a note.** `canon note new --title "<topic> 的<对标/机会树/验证/故事地图>"`, then edit the file. In Chinese (canon/ documents are Chinese). It holds the matrix, tree, ledger or map, every claim with its tier and source, failed experiments next to passing ones, and the rejected branches with the reason and what evidence would reopen each. It does not hold a version's slice of the map (item 5).
+1. **Research → a note.** `canon note new --title "<topic> 的<对标/机会树/验证/故事地图>"`, then edit the file. Language: canon-rules section 6 step 2. It holds the matrix, tree, ledger or map, every claim with its tier and source, failed experiments next to passing ones, and the rejected branches with the reason and what evidence would reopen each. It does not hold a version's slice of the map (item 5).
 2. **Direction → `canon human ask`.** Which outcome to pursue and which branch to bet on is the humans' call:
    ```
    canon human ask "<问题，一句话>" --option "<推荐>,<备选>,<不推荐>" --change C-n
    ```
-   The question cites the note id and states the recommendation, the strongest evidence for and against each option, and what stays `unvalidated`. Work that does not depend on the answer continues.
+   The question cites the note id and states the recommendation, the strongest evidence for and against each option, and what stays `unvalidated`.
 3. **Real choices the humans have delegated** (which of two validated solutions to build first, when the outcome is already set) → a decision: `canon decision new --title "..."`, with every rejected option and why.
 4. **Behaviour → rules**, through canon-rules and the normal change flow, once the direction is answered (authorship: canon-rules section 0): each above-the-line story-map row the product commits to becomes a rule. A rule resting on an `unvalidated` row says so in its body.
 5. **A version's slice → a release document.** When the map is cut into versions, `canon release new --title "<version>"` makes the document: the slice goes in its 故事地图切片 section, next to the version's goal, users, scope, what it leaves out and success criteria. The rules from that slice carry `release: R-n` in their front matter, so `canon release status` shows how far the version is.

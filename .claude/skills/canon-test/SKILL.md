@@ -5,7 +5,7 @@ description: "Use when writing, adding or reviewing automated tests, building a 
 
 # Test (canon)
 
-A test exists to find bugs. A suite that passes on broken code is worse than no suite, because people believe it. In canon a test proves a rule: its name starts with the rule's id (`it("BR-n: ...")`), and its cases come from the rule's `## 例子`.
+A test exists to find bugs. A suite that passes on broken code is worse than no suite, because people believe it. In canon a test proves a rule (section 4), and its cases come from the rule's `## 例子`.
 
 ## 1. Expectations before code
 
@@ -83,11 +83,6 @@ Many worktrees running full suites at once once drove load to 150 and produced 7
 
 ## 7. Before committing
 
-- [ ] every expectation came from a rule or its examples, written before reading the implementation
-- [ ] every new test was seen red for the right reason
-- [ ] every "fixed / allowed" test has its "still refused" sibling
-- [ ] the false-green scan is clean
-- [ ] each rule touched is named by a test or carries `untested: <reason>`; changed behaviour changed the rule in the same commit
-- [ ] the uncovered list is in the commit message
+Go through sections 1, 4 and 5 once more against the diff: each is a check, not advice. The false-green scan is clean, and the uncovered list (section 5 item 7) is in the commit message.
 
 A defect found but not fixed in this change becomes a GitHub issue (`gh issue create`), written as the brief says.

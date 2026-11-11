@@ -32,7 +32,7 @@ Do not split, or put the tasks in one agent's hands, when:
    List the files each task will likely touch: run `canon context <path>` for the area, and read what the change file plans to change where the change already exists. Two tasks that will edit the same file do not run at the same time: give them to one agent in sequence, or put them in different rounds. Watch for files every feature appends to, such as a central registry of commands or config keys, a guide listing every workflow, or one large shared test file; most conflicts land there.
 4. If two tasks must still touch the same file, say so in both briefs, and name which one lands first.
 5. Estimate the cost before you dispatch, from measured numbers, and tell the user: a subagent that reads an area and lands one change typically uses on the order of 70k to 280k tokens, so ten of them is roughly a million or more. Ask before a run that large; do not guess low.
-6. Read-only audits that run at the same time (several agents checking different areas) report what they find and do not file issues themselves: two of them can find the same root cause, and each one's "search for an existing issue first" races the other's. The main agent dedupes, checks the key claims, then files one issue per root cause.
+6. Read-only audits that run at the same time (several agents checking different areas) report what they find and do not file issues themselves: two of them can find the same root cause, and each one's "search for an existing issue first" races the other's. The main agent dedupes, checks the key claims, then files the issues.
 
 ## 3. What every brief must contain
 

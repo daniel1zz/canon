@@ -5,7 +5,7 @@ description: "Use when triaging open GitHub issues, especially the ones canon's 
 
 # Triage (canon)
 
-Every open issue leaves triage with exactly one outcome: closed with a reason, fixed, turned into a canon change, or rejected by a decision. An issue that is only read and left open has not been triaged. The agent decides; only direction or a decision reserved for humans goes to `canon human ask`, and work on the other issues continues meanwhile (P7).
+Every open issue leaves triage with exactly one outcome: closed with a reason, fixed, turned into a canon change, or rejected by a decision. An issue that is only read and left open has not been triaged. The agent decides; only direction or a decision reserved for humans goes to `canon human ask` (P7).
 
 ## 1. Collect
 
@@ -44,12 +44,12 @@ Record one of four results in an issue comment, with the commands and their outp
 |-----------|---------|
 | Known limit: needs an abnormal setup or action, no data loss, no security problem, no broken promise | `gh issue close <n> --reason "not planned" --comment "Needs an abnormal setup or action; reopen if it happens in normal use. <the situation>"`; no new mechanism |
 | Not reproducible, or already fixed on main | `gh issue close <n> --reason "not planned" --comment "<what was tried, at which commit>"` |
-| Same root cause as another issue | comment `Duplicate of #m: <why it is the same root cause>`, then close it the same way. One root cause, one issue. |
+| Same root cause as another issue | comment `Duplicate of #m: <why it is the same root cause>`, then close it the same way. |
 | Matches a decision that rejected it | comment linking the decision and its reason, close; add the issue number to that decision's 背景 in your next commit |
 | Reproduced and simple: at most 2 files, a test proves it, no rule's meaning changes | fix now (section 4, small) |
 | Reproduced, bigger | a canon change (section 4) |
 | A request that should not be done | a decision (section 5) |
-| Needs direction, or a decision reserved for humans (money, irreversible on shared scope, a person's credentials) | `canon human ask "<question with the options>"`; comment on the issue that it waits on that question; move on |
+| Needs direction, or a decision reserved for humans (money, irreversible on shared scope, a person's credentials) | `canon human ask "<question with the options>"`; comment on the issue that it waits on that question |
 
 ## 4. Turn it into a change
 
@@ -59,7 +59,7 @@ The change file is the agent brief: the contract a later session works from, pos
 
 - `## 为什么`: the issue number, the current behaviour (for a bug, the broken behaviour and the reproduced scenario) and why it matters.
 - `## 要改什么`: the desired behaviour, including edge and error cases; which rules change or are added (use `canon-rules`, including its section 0 authorship boundary); what is explicitly out of scope, so the implementer does not gold-plate or guess at adjacent features.
-- `## 任务`: checkable tasks; the regression test named after the rule it proves (`it("BR-n: ...")`) is one of them.
+- `## 任务`: checkable tasks; the regression test (named as canon-test section 4 says) is one of them.
 
 A change you write now but leave for another session to implement: hand it off with `canon work stop --release --next "<first step>"`. Plain `canon work stop` keeps your claim, so no other session can start it while yours is alive.
 
@@ -77,7 +77,7 @@ When an issue or plan is too big for one change, split it into **vertical slices
 
 When the slices depend on each other, write them as a plan, not as prose: the first change holds a `## 计划` section with a table of columns `步骤 | 内容 | 依赖` (a step name is letters and digits, `依赖` is `-` or step names separated by commas), and each slice's change is started with `canon work start --title "<what>" --plan C-n --step <name>`, which records `plan: C-n` and `steps: [<name>]` in its front matter. `canon plan status [C-n]` then shows per plan the steps done, working, ready (every dependency landed, so it can be dispatched) and blocked; `canon check` rejects a table that breaks the format. A step is linked to its changes only by that id, never by title.
 
-Mark each slice as one an agent can finish alone, or one that needs a human (a direction choice, a credential, a manual check only a person can do). Prefer the first kind; for the second, ask the specific question with `canon human ask` and keep the rest moving. Do not present the breakdown for approval and wait: decide it, write it down, start.
+Mark each slice as one an agent can finish alone, or one that needs a human (a direction choice, a credential, a manual check only a person can do). Prefer the first kind; for the second, ask the specific question with `canon human ask`. Do not present the breakdown for approval and wait: decide it, write it down, start.
 
 ## 5. Record a rejection as a decision
 

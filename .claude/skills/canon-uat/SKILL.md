@@ -95,5 +95,5 @@ Report in the reply (and in the change file's tasks when accepting a change): ve
 Each finding lands in canon, not in a report nobody reads again:
 
 - **Product contradicts a rule** → a defect. Fix it in this change with a regression test named after the rule (see canon-test), or open a GitHub issue (`gh issue create`) as the brief says.
-- **Rule gap** → edit the rule (`## 规则`, `## 例子` with the boundary just found) or add one with `canon rule new`, in a change. If what the rule should say is a product direction call, `canon human ask` and carry on; do not wait for the answer.
-- **Accepted P0 journeys** → freeze into automated tests named after their rules (`it("BR-n: ...")`), asserting the same oracle the judge probed, so the floor re-checks them at every land.
+- **Rule gap** → edit the rule (`## 规则`, `## 例子` with the boundary just found) or add one with `canon rule new`, in a change. If what the rule should say is a product direction call, `canon human ask`.
+- **Accepted P0 journeys** → freeze into automated tests named as canon-test section 4 says, asserting the same oracle the judge probed, so the floor re-checks them at every land.

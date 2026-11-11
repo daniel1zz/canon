@@ -46,7 +46,7 @@ Each probe tests one prediction; change one variable at a time. Prefer a debugge
 
 Write the regression test **before** the fix, at a seam that exercises the real bug pattern as it happens at the call site. A test at a too-shallow seam gives false confidence; if no correct seam exists, that is a finding (see Phase 6).
 
-1. Turn the minimised repro into a failing test. In canon, name it after the rule it proves (`it("BR-n: ...")`).
+1. Turn the minimised repro into a failing test. In canon, name it as canon-test section 4 says.
 2. Watch it fail. 3. Fix. 4. Watch it pass. 5. Re-run the original, un-minimised loop.
 
 For rule gaps and changes of expected behaviour, see canon-test section 1.
