@@ -188,7 +188,8 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       } else if (usable && added) {
         say(`review: the changed documents are the ones that passed review event ${usable.event}; reviewing them only against what landed on main since: ${added.map((d) => d.id).join(", ")}`);
         const keep = new Set([...changedDocs, ...added]);
-        const small = reviewPrompts(wt, { ...read.corpus, docs: read.corpus.docs.filter((d) => keep.has(d)) }, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, incremental: { from: usable.event, added } }, onMain.reviewMaxPromptBytes);
+        // reason: without its added lines a changed document already on main would read as new, so its old restatements could block (BR-2405, D-84)
+        const small = reviewPrompts(wt, { ...read.corpus, docs: read.corpus.docs.filter((d) => keep.has(d)) }, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, added: scope.added, incremental: { from: usable.event, added } }, onMain.reviewMaxPromptBytes);
         if (!small.ok) return refuse("review", small.error.message);
         const at = tree.get();
         if (!at.ok) return refuse("environment", at.error.message);

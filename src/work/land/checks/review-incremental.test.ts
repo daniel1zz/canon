@@ -83,6 +83,38 @@ describe("reviewing a re-landing whose changed documents already passed (D-81)",
     expect(t.events("review.reused")).toMatchObject([{ review: "land", by: "docs", from: t.events("review.ok")[0]!.id }]);
   }, 60_000);
 
+  test("BR-2405 BR-2396: the small review lists the lines an edited rule adds, without the shared-wording hints; a new rule has no such entry", async () => {
+    const t = relanding();
+    const old = ["BR", 3].join("-");
+    const copied = "A refund above the monthly limit is held for review by the finance team and released only after a second person approves it in writing.";
+    t.onMain(`canon/rules/billing/${old}.md`, ruleText(old, copied));
+    t.onMain(`canon/rules/billing/${one}.md`, ruleText(one, "Refunds are fine."));
+    const restating = `${copied.slice(0, -1)}, as ${old} says.`;
+    const s = startNew(t.root, "Edit rule");
+    writeFileSync(join(s.worktree, `canon/rules/billing/${one}.md`), ruleText(one, `Refunds are fine.\n\n${restating}`));
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "edit rule");
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("refused");
+    t.onMain(`canon/rules/billing/${two}.md`, ruleText(two, "Refunds are logged."));
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    expect(t.runs()).toBe(2);
+    expect(t.prompt(1)).toContain("# Possible restatements found by shared wording"); // the full review gets the hints
+    const small = t.prompt(2);
+    expect(small).toContain("# Incremental review");
+    const section = "\n# Lines added or changed in this landing\n"; // the section heading, not the criterion's mention of it
+    expect(small).toContain(section);
+    expect(small).toContain(`## ${one} (canon/rules/billing/${one}.md)\n\n10: ${restating}\n`); // only the added line
+    expect(small).not.toContain("# Possible restatements found by shared wording");
+    // the other side: a rule new in this landing has no entry, so all of its lines are new
+    const n = relanding();
+    const ns = n.start();
+    expect((await land(ws(ns.worktree), FAST, quiet)).kind).toBe("refused");
+    n.onMain(`canon/rules/billing/${two}.md`, ruleText(two, "Refunds are logged."));
+    expect((await land(ws(ns.worktree), FAST, quiet)).kind).toBe("landed");
+    expect(n.prompt(2)).toContain("# Incremental review");
+    expect(n.prompt(2)).not.toContain(section);
+  }, 90_000);
+
   test("BR-2396 BR-2361: a changed rule text, or a pass that was later blocked, is reviewed in full", async () => {
     const t = relanding(["ok", "block", "ok"]);
     const s = t.start();
