@@ -4,6 +4,7 @@ import { executionStates } from "../../work/execution/state.ts";
 import type { Release } from "../documents/model.ts";
 import { findDoc } from "../query/query.ts";
 import { createDoc } from "../documents/write.ts";
+import { refuseOnGuardedMain } from "../documents/guarded.ts";
 import { shipRelease } from "./ship.ts";
 import { detailLines, releaseStatuses, statusJson, summaryLine } from "./status.ts";
 
@@ -19,6 +20,7 @@ const release = defineCommand({
       args: { title: { type: "string", required: true, description: "Title, e.g. the version name" } },
       run({ args }) {
         const ws = workspace();
+        refuseOnGuardedMain(ws, "release", String(args.title));
         const { corpus } = corpusOf(ws);
         say(must(createDoc(ws.root, corpus, ws.db, ws.actor, { kind: "release", title: String(args.title) }, ws.config.templates)));
       },

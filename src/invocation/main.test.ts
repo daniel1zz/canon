@@ -56,11 +56,13 @@ describe("exit codes", () => {
     const w = canon(root, "work", "start", "--title", "中文变更");
     expect(w.code).toBe(0);
     expect(w.out).toContain("(branch change/C-1)");
-    expect(canon(root, "note", "new", "--title", "调研 API 方案").out.trim()).toBe("canon/notes/N-1.md");
-    expect(canon(root, "decision", "new", "--title", "Use files").out.trim()).toBe(`canon/decisions/${["D", 2].join("-")}-use-files.md`);
-    const change = canon(root, "change", "new", "--title", "Template check").out.trim(); // after the C-1 assertions above
-    expect(readFileSync(join(root, change), "utf8")).toContain("## 陷阱和假设");
-    const template = readFileSync(join(root, change), "utf8");
+    // reason: main is now committed and guarded, so documents are created in the change's worktree (BR-2409)
+    const wt = /→ (\S+) \(branch/.exec(w.out)![1]!;
+    expect(canon(wt, "note", "new", "--title", "调研 API 方案").out.trim()).toBe("canon/notes/N-1.md");
+    expect(canon(wt, "decision", "new", "--title", "Use files").out.trim()).toBe(`canon/decisions/${["D", 2].join("-")}-use-files.md`);
+    const change = canon(wt, "change", "new", "--title", "Template check").out.trim(); // after the C-1 assertions above
+    expect(readFileSync(join(wt, change), "utf8")).toContain("## 陷阱和假设");
+    const template = readFileSync(join(wt, change), "utf8");
     expect(template.indexOf("## 教训")).toBeGreaterThan(template.indexOf("## 陷阱和假设")); // BR-2037: lessons before the tasks
     expect(template.indexOf("## 教训")).toBeLessThan(template.indexOf("## 任务"));
     expect(template).toContain("本变更为自己的功能或修复写的规则、测试和检查不是教训"); // BR-2037, D-78

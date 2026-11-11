@@ -85,6 +85,22 @@ export function guardStatus(root: string, main: string): Result<{ state: GuardSt
   return ok({ state: text === guardScript(main) && executable ? "current" : "old", path });
 }
 
+/**
+ * Whether `root` has main checked out while canon's guard holds main: the guard (any version canon wrote) is installed and
+ * main already holds canon/config.yaml, the same two things the hook itself checks before refusing (BR-2123, BR-2126). A
+ * file written here can reach main only through a change, and while it stays every landing is refused as main-dirty
+ * (BR-2039), so commands that would write one refuse here instead (BR-2409).
+ */
+export function guardedMainCheckout(root: string, main: string): Result<boolean> {
+  const head = git(root, "symbolic-ref", "-q", "HEAD");
+  if (!head.ok || head.value !== `refs/heads/${main}`) return ok(false);
+  const g = guardStatus(root, main);
+  if (!g.ok) return g;
+  if (g.value.state !== "current" && g.value.state !== "old") return ok(false);
+  // reason: before canon is on main the hook lets commits through (canon init's own commit), so a file here can be committed
+  return ok(git(root, "cat-file", "-e", `refs/heads/${main}:canon/config.yaml`).ok);
+}
+
 function isLink(p: string): boolean {
   try {
     return lstatSync(p).isSymbolicLink();

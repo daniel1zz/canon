@@ -7,19 +7,21 @@ import { listedChanges, marksOf } from "../../work/session/inflight.ts";
 import type { readCorpus } from "./read.ts";
 import { technicalLayerWord, technicalNameAdvice } from "./domain-names.ts";
 import { createDoc, createDomain, setMeta } from "./write.ts";
+import { refuseOnGuardedMain } from "./guarded.ts";
 import { findDoc } from "../query/query.ts";
 import { planStatuses, progressMark, stepsMark } from "../plans/status.ts";
 
 /** `canon rule`, `decision`, `change`, `note`, `doc`: creating, listing and setting the status of documents. */
 
-function newDocCommand(kind: string, extra: Record<string, { type: "string"; description: string; required?: boolean }> = {}) {
+function newDocCommand(kind: string, extra: Record<string, { type: "string"; description: string; required?: boolean }> = {}, description = `Create a ${kind} (allocates its id; edit the file afterwards)`) {
   return defineCommand({
-    meta: { description: `Create a ${kind} (allocates its id; edit the file afterwards)` },
+    meta: { description },
     args: { title: { type: "string", required: true, description: "Title" }, body: { type: "string", description: "Body text (default: a template)" }, ...extra },
     run({ args }) {
       const ws = workspace();
       const { corpus } = corpusOf(ws);
       const a = args as Record<string, unknown>;
+      refuseOnGuardedMain(ws, kind === "" ? String(a["type"]) : kind, String(a["title"]));
       const path = must(
         createDoc(ws.root, corpus, ws.db, ws.actor, {
           kind: kind === "" ? String(a["type"]) : kind,
@@ -201,7 +203,11 @@ const decision = defineCommand({
 const change = defineCommand({
   meta: { description: "Changes: units of intended work (start one with `canon work start --title`)" },
   subCommands: {
-    new: newDocCommand("change", { rules: { type: "string", description: "Comma-separated rule ids it adds, edits or retires" } }),
+    new: newDocCommand(
+      "change",
+      { rules: { type: "string", description: "Comma-separated rule ids it adds, edits or retires" } },
+      "Create a change file only (allocates its id; edit the file afterwards). Refused where main is checked out and guarded, since the file could not be committed there: use `canon work start --title` instead (BR-2409)",
+    ),
     list: listCommand("change", "List open changes in the owner's order (canon/backlog.md, then the rest by id; --all for done and dropped)"),
     drop: defineCommand({
       meta: { description: "Mark a change dropped (work will not happen)" },

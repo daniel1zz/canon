@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { CoordDb } from "../../work/db.ts";
@@ -221,6 +221,75 @@ describe("status changes", () => {
     expect([again.code, again.out.trim()]).toEqual([0, `${id("BR", 1)} already retired`]);
     expect(readFileSync(path, "utf8")).toBe(text);
     expect(statusEvents(root)).toBe(before + 1);
+  });
+});
+
+/** `project()` with what `canon init` wrote committed to main, so canon's git guard now holds main (BR-2126). */
+function guardedProject(): string {
+  const root = project();
+  for (const args of [["add", "-A"], ["commit", "-qm", "canon init"]]) expect(Bun.spawnSync(["git", ...args], { cwd: root }).exitCode).toBe(0);
+  return root;
+}
+
+const status = (root: string) => Bun.spawnSync(["git", "status", "--short"], { cwd: root }).stdout.toString();
+
+describe("creating documents where main is checked out and guarded", () => {
+  test("BR-2409: every create command refuses with exit 1 in the guarded primary checkout, allocates no id, writes nothing, and points at canon work start", () => {
+    const root = guardedProject();
+    const change = canon(root, "change", "new", "--title", "x");
+    expect(change.code).toBe(1);
+    expect(change.err).toContain('canon work start --title "x"');
+    for (const args of [["note", "new", "--title", "x"], ["decision", "new", "--title", "x"], ["rule", "new", "--domain", "billing", "--title", "x"], ["release", "new", "--title", "x"]]) {
+      const r = canon(root, ...args);
+      expect([args[0], r.code]).toEqual([args[0], 1]);
+      expect(r.err).toContain("canon work start");
+      expect(r.err).toContain("main-dirty");
+    }
+    expect(status(root)).toBe("");
+    // no id was allocated by the refused command: the first change started afterwards is still number 1
+    const started = canon(root, "work", "start", "--title", "y");
+    expect(started.code).toBe(0);
+    expect(started.out).toContain(`${id("C", 1)} →`);
+    expect(status(root)).toBe("");
+  });
+
+  test("BR-2409 BR-2187: a blank title in the guarded primary checkout is still a usage error, exit 2", () => {
+    const root = guardedProject();
+    expect(canon(root, "note", "new", "--title", "   ").code).toBe(2);
+    expect(status(root)).toBe("");
+  });
+
+  test("BR-2409: inside a change's worktree the same commands write their file there, exit 0", () => {
+    const root = guardedProject();
+    const started = canon(root, "work", "start", "--title", "y");
+    const worktree = /→ (\S+) \(branch/.exec(started.out)?.[1];
+    expect(worktree).toBeDefined();
+    const made = canon(worktree!, "change", "new", "--title", "x");
+    expect(made.code).toBe(0);
+    expect(existsSync(join(worktree!, made.out.trim()))).toBe(true);
+    expect(canon(worktree!, "note", "new", "--title", "x").code).toBe(0);
+    expect(status(root)).toBe("");
+  });
+
+  test("BR-2409: without canon's guard, or before canon is on main, the primary checkout creates documents as before", () => {
+    const unguarded = guardedProject();
+    const hooks = Bun.spawnSync(["git", "rev-parse", "--path-format=absolute", "--git-path", "hooks"], { cwd: unguarded }).stdout.toString().trim();
+    rmSync(join(hooks, "reference-transaction"));
+    expect(canon(unguarded, "note", "new", "--title", "x").out.trim()).toBe(`canon/notes/${id("N", 1)}-x.md`);
+    const foreign = guardedProject();
+    writeFileSync(join(hooks.replace(unguarded, foreign), "reference-transaction"), "#!/bin/sh\nexit 0\n");
+    expect(canon(foreign, "note", "new", "--title", "x").code).toBe(0);
+    const uncommitted = project(); // canon init ran, nothing committed: main has no canon/config.yaml yet
+    expect(canon(uncommitted, "decision", "new", "--title", "x").code).toBe(0);
+    const detached = guardedProject();
+    expect(Bun.spawnSync(["git", "checkout", "-q", "--detach"], { cwd: detached }).exitCode).toBe(0);
+    expect(canon(detached, "note", "new", "--title", "x").code).toBe(0);
+  });
+
+  test("BR-2409: canon change new --help says it is refused where main is guarded and names canon work start --title", () => {
+    const help = canon(project(), "change", "new", "--help").out;
+    expect(help).toContain("guarded");
+    expect(help).toContain("canon work start --title");
   });
 });
 
