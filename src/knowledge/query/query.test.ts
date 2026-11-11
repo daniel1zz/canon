@@ -136,7 +136,7 @@ describe("character-pair matching", () => {
   const note = (n: number, title: string, body: string) => [`canon/notes/${id("N", n)}.md`, `---\nid: ${id("N", n)}\ntitle: ${title}\n---\n${body}\n`] as const;
   const ids = (corpus: ReturnType<typeof corpusOf>["corpus"], q: string) => search(corpus, q).map((h) => h.doc.id);
 
-  test("BR-2422: a Chinese word matches a document holding more than half of its character pairs, not one holding half or fewer", () => {
+  test("BR-2422 BR-2073 BR-2214: a Chinese word matched by more than half of its character pairs counts as a matched word and shows the line with the most pairs; half or fewer is no match", () => {
     const { corpus } = corpusOf(Object.fromEntries([note(1, "a", "规则的评审会拦截。"), note(2, "b", "规则和拦截。")]));
     const hits = search(corpus, "规则评审拦截");
     expect(hits.map((h) => [h.doc.id, h.matched, h.terms])).toEqual([[id("N", 1), 1, 1]]);
