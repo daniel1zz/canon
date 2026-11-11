@@ -10,6 +10,7 @@ rules:
   - BR-2402
   - BR-2073
   - BR-2215
+  - BR-2214
 plan: C-464
 steps:
   - E
