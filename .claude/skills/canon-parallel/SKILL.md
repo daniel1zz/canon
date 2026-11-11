@@ -13,7 +13,7 @@ Landings are serial: one at a time, each one spends most of its turn running the
 
 Split when the tasks are:
 
-- **independent**: no task needs another one's result to start, and they change different files;
+- **independent**: no task needs another one's result to start;
 - **medium-sized**: each implements a whole change against the task's rules, with its own tests, minutes to tens of minutes of work. A tiny task costs a full landing turn of its own, and a subagent first spends tens of thousands of tokens reading context;
 - **3 to 5 at once.** In a measured run, 5 subagents finished in about 44 minutes what took them about 122 minutes added up (about 2.8 times faster), and kept the landing queue busy the whole time. More than that only adds waiting.
 

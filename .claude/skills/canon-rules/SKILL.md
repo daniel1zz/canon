@@ -75,7 +75,7 @@ The open choices otherwise surface mid-implementation, when the owner may not be
 
 ## 6. The flow
 
-1. After the search and reuse decision in section 1, the main session runs `canon rule new --domain <d> --title "<one-sentence outcome>"` only for behaviour that needs a new rule (allocates the id; the domain README says which code it governs).
+1. After the search and reuse decision in section 1, run `canon rule new --domain <d> --title "<one-sentence outcome>"` only for behaviour that needs a new rule (allocates the id; the domain README says which code it governs).
 2. Fill `## 规则`: the condition, then the required outcome. Chinese, like every document under `canon/`.
 3. Fill `## 例子`: concrete inputs on **both sides** of each boundary, one line each, `input → observed result`. The happy path alone is not an example set.
 
