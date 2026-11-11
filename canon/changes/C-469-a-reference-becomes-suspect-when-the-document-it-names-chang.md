@@ -2,7 +2,7 @@
 id: C-469
 title: A reference becomes suspect when the document it names changes behaviour,
   until its author confirms it (C-464 D)
-status: open
+status: done
 rules:
   - BR-2423
   - BR-2424
@@ -14,6 +14,14 @@ rules:
 plan: C-464
 steps:
   - D
+passes:
+  BR-2423: 780cfc62fd9ee7f4 test
+  BR-2424: ccb3610faa389dfd test
+  BR-2425: 9e5f3a5141fe40f0 test
+  BR-2426: a6370e2489dd842c test
+  BR-2427: df9049efb0452fe8 test
+  BR-2428: a8cb7aff6fb9de3d test
+  BR-2429: aa3bcfff71ae3bec test
 ---
 
 ## 为什么
