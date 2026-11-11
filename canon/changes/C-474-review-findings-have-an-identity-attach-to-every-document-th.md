@@ -2,7 +2,7 @@
 id: C-474
 title: Review findings have an identity, attach to every document they name, and
   close only explicitly (C-464 A)
-status: open
+status: done
 rules:
   - BR-2433
   - BR-2434
@@ -14,6 +14,14 @@ rules:
 plan: C-464
 steps:
   - A
+passes:
+  BR-2433: 9cd96c0ae8ef2166 test
+  BR-2434: 2ae57f3e15118a79 test
+  BR-2435: 505a4951d1569b99 test
+  BR-2436: 38f2877f0c8563cd test
+  BR-2437: 1abf3588075ce052 test
+  BR-2438: 170e6c695113fce9 test
+  BR-2439: c9107230dd3dbcad test
 ---
 
 ## 为什么
