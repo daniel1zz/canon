@@ -130,6 +130,10 @@ describe("release check (BR-2411)", () => {
         expect([i, j, split.value.some((p) => p.includes(`skill ${i} `) && p.includes(`skill ${j} `))]).toEqual([i, j, true]);
       }
     }
+    // one skill over half of what is left after the fixed part fits in no chunk: refused, even though it and a small one fit together
+    const lopsided: ShippedText[] = [{ path: ".claude/skills/canon-big/SKILL.md", text: "big " + "y".repeat(7000) }, ...texts.slice(0, 2)];
+    const big = releasePrompts(lopsided, guide, budget);
+    expect(!big.ok && big.error.message).toContain("twice the largest skill");
     const refused = releasePrompts(texts, guide, 5 * 1024);
     expect(refused.ok).toBe(false);
     expect(!refused.ok && refused.error.message).toContain("raise review_max_prompt_kb to at least");

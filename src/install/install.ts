@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
+import { git } from "../kernel/git.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
 /**
@@ -62,6 +63,23 @@ function filesUnder(dir: string): string[] {
   };
   walk(dir);
   return out;
+}
+
+/**
+ * Whether `root` is canon's own repository, the one its skills come from (BR-2080): the target is the source itself, or the
+ * source's repository (two levels up: `<repo>/.claude/skills`, or `<repo>/dist/skills-<commit>` behind the published
+ * `dist/skills`, BR-2412) shares its git directory with `root`, as the primary checkout and its worktrees do.
+ */
+function isSourceRepository(root: string, target: string, source: string): boolean {
+  if (existsSync(target) && realpathSync(target) === realpathSync(source)) return true;
+  const home = dirname(dirname(realpathSync(source)));
+  const common = (dir: string): string | undefined => {
+    const r = git(dir, "rev-parse", "--path-format=absolute", "--git-common-dir");
+    return r.ok ? realpathSync(r.value) : undefined;
+  };
+  const mine = common(root);
+  // reason: a source outside any repository (CANON_SKILLS_SOURCE, an npm package) is never the project's own (BR-2080)
+  return mine !== undefined && existsSync(join(home, ".git")) && common(home) === mine;
 }
 
 /** A manifest key canon could have written: a relative path inside a `canon-*` skill, no `..`, no absolute path (BR-2083). */
@@ -144,7 +162,7 @@ export function skillsStatus(root: string, source: string): Result<SkillsStatus>
   const target = join(root, ".claude", "skills");
   const wanted = sourceFiles(source);
   const version = versionOf(Object.fromEntries([...wanted].map(([k, v]) => [k, sha(v)])));
-  if (existsSync(target) && realpathSync(target) === realpathSync(source)) return ok({ state: "source", version, outdated: [], edited: [] });
+  if (isSourceRepository(root, target, source)) return ok({ state: "source", version, outdated: [], edited: [] });
   let manifest: Record<string, string> = {};
   const manifestPath = join(target, MANIFEST);
   if (existsSync(manifestPath)) {
@@ -197,7 +215,7 @@ export interface SkillsPlan {
 export function planSkills(root: string, source: string, force: boolean): Result<SkillsPlan> {
   const target = join(root, ".claude", "skills");
   const manifestPath = join(target, MANIFEST);
-  if (existsSync(target) && realpathSync(target) === realpathSync(source)) {
+  if (isSourceRepository(root, target, source)) {
     return ok({ target, manifestPath, wanted: new Map(), write: [], unchanged: [], remove: [], kept: [], conflicts: [], source: true });
   }
 

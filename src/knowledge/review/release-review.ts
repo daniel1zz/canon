@@ -56,8 +56,9 @@ const textBlock = (t: ShippedText): string => `# ${t.path} (shipped by canon, fu
 
 /**
  * The prompts of the release check (BR-2411). All in one call when it fits `budgetBytes`; otherwise the skills are packed into
- * chunks and each call carries the header, the guide and two chunks, one call per pair of chunks, so every two skills meet in
- * at least one call. Refused, with the sizes, when one call cannot hold the fixed part and two of the largest skills.
+ * chunks of at most half the room left after the fixed part, and each call carries the header, the guide and two chunks, one
+ * call per pair of chunks, so every two skills meet in at least one call. Refused, with the sizes, when the largest skill is
+ * over that half.
  */
 export function releasePrompts(texts: readonly ShippedText[], guide: string, budgetBytes: number): Result<readonly string[]> {
   const guideBlock = `# canon brief workflow guide (shipped by canon, printed at the start of every session)\n\n${guide.trim()}\n`;
@@ -67,10 +68,11 @@ export function releasePrompts(texts: readonly ShippedText[], guide: string, bud
   const note = (i: number, n: number) => `This is call ${i} of ${n}: it holds the guide and some of the skills; the other calls hold the rest. Judge only duplication among the texts in this call.`;
   const fixed = bytes([...header(), note(9999, 9999), "", guideBlock].join("\n")) + 2;
   const blocks = texts.map(textBlock);
-  const largest = [...blocks].map(bytes).sort((a, b) => b - a);
-  const need = fixed + (largest[0] ?? 0) + (largest[1] ?? 0);
+  // reason: a chunk holds at most half of what is left after the fixed part, so a skill over that half fits in no chunk (BR-2411)
+  const largest = Math.max(...blocks.map((b) => bytes(b) + 1));
+  const need = fixed + 2 * largest;
   if (need > budgetBytes) {
-    return err("invalid", `the release check needs ${kb(need)} KB in one call (header and guide ${kb(fixed)} KB, the two largest skills ${kb((largest[0] ?? 0) + (largest[1] ?? 0))} KB) and review_max_prompt_kb is ${kb(budgetBytes)} KB: raise review_max_prompt_kb to at least ${kb(need)}, or shorten the largest skill`);
+    return err("invalid", `the release check needs ${kb(need)} KB in one call (header and guide ${kb(fixed)} KB, twice the largest skill ${kb(2 * largest)} KB) and review_max_prompt_kb is ${kb(budgetBytes)} KB: raise review_max_prompt_kb to at least ${kb(need)}, or shorten the largest skill`);
   }
   const room = Math.floor((budgetBytes - fixed) / 2);
   const chunks: string[][] = [];

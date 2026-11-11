@@ -36,6 +36,22 @@ function gitRepo(): string {
 const source = () => dir({ "canon-a/SKILL.md": "a v1\n", "canon-a/references/x.md": "x v1\n", "canon-b/SKILL.md": "b v1\n", "user-own/SKILL.md": "not canon's\n" });
 
 describe("project-level skills", () => {
+  test("BR-2080 BR-2412: a worktree of canon's own repository, with the published dist/skills as the source, gets no skill written", () => {
+    const repo = dir({ ".claude/skills/canon-a/SKILL.md": "a newer on main\n", "dist/skills-abc1234/canon-a/SKILL.md": "a as published\n" });
+    symlinkSync("skills-abc1234", join(repo, "dist/skills"));
+    for (const args of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"], ["add", ".claude"], ["commit", "-qm", "skills"], ["worktree", "add", "-q", "../" + repo.split("/").pop() + "-wt", "-b", "wt"]]) {
+      expect(Bun.spawnSync(["git", ...args], { cwd: repo }).exitCode).toBe(0);
+    }
+    const wt = `${repo}-wt`;
+    const r = installSkills(wt, join(repo, "dist/skills"), false);
+    expect(r.ok && r.value).toEqual({ written: [], unchanged: [], removed: [], kept: [] });
+    expect(readFileSync(join(wt, ".claude/skills/canon-a/SKILL.md"), "utf8")).toBe("a newer on main\n");
+    // another repository with the same published source is installed as usual
+    const other = gitRepo();
+    const o = installSkills(other, join(repo, "dist/skills"), false);
+    expect(o.ok && o.value.written).toEqual(["canon-a/SKILL.md"]);
+  });
+
   test("BR-2080: canon init installs canon's skills into the project's .claude/skills with a manifest; nothing goes to the user's home", () => {
     const src = source();
     const root = gitRepo();
