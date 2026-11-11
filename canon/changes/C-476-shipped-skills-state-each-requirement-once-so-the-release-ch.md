@@ -2,7 +2,7 @@
 id: C-476
 title: Shipped skills state each requirement once, so the release check
   publishes again (#189)
-status: open
+status: done
 rules: []
 ---
 
