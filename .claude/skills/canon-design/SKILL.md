@@ -64,6 +64,6 @@ Read only the files of the mode you need. Cross-cutting references (`references/
 2. **Rules** for every behaviour the design commits the product to: use canon-rules (authorship and unresolved gaps: section 0). A behaviour this change does not build (its code comes in a later step of the plan) gets `status: planned`: it needs 规则 and 例子 but no test. The implementing change lists it under `rules:` and makes it active. In a planned rule's 例子 pin only the boundaries the design settles; handle the edge cases found during implementation through the same skill.
 3. **Change file** (`canon/changes/C-n.md`): 为什么 / 要改什么 referencing the decision and the rules.
 4. If the design changes a container (a runtime part, where its data lives) or a main flow, update `canon/architecture.md` in the same change: it describes the system as it is now, each part ending with its decision numbers. Check its decision numbers against what you just decided: a superseded or amended one means a line to rewrite.
-5. Land as usual (`canon work land`). The rule review reads the decision and rules against the whole domain, and the overview; fix what it blocks.
+5. Land as usual (`canon work land`). The rule review reads the decision and rules against the whole domain, and the overview.
 
 No separate document per design: interfaces worth fixing before implementation (types, command signatures, schema) go into the change file or the code itself.

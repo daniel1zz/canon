@@ -45,7 +45,7 @@ Testing code that already exists still needs the red: break the input or revert 
 
 ## 4. What every test must satisfy
 
-- **Proves a rule**, named as the brief says. A test that proves no rule usually means a rule is missing. An active rule nobody tests needs a test, or `untested: <reason>` in its front matter.
+- **Proves a rule**, named as the brief says. A test that proves no rule usually means a rule is missing.
 - **Public interface only.** It survives an internal rename; if a refactor breaks it while behaviour stays the same, it was testing implementation.
 - **At least two input sets producing different outputs** on the happy path. This defeats an implementation that returns a constant.
 - **Refusals are tested like successes**: exit code, error text, and absence of side effects.

@@ -53,7 +53,7 @@ Record one of four results in an issue comment, with the commands and their outp
 
 ## 4. Turn it into a change
 
-Every code change goes through a change, small ones included: `canon work start --title "<what will be true afterwards>"`.
+Title the change by what will be true afterwards: `canon work start --title "<what will be true afterwards>"`.
 
 The change file is the agent brief: the contract a later session works from, possibly weeks later after the code has moved. It describes the behaviour contract, not file paths or line numbers, which go stale.
 

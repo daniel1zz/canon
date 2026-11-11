@@ -39,7 +39,7 @@ Before drawing anything, inventory the existing UI: `references/design-system-in
 The prototype's question states its judging criteria up front (task completion, density on a real data set, how the empty state reads). Then:
 
 - **The pick is a decision** (canon-design section 4), titled `<界面> 采用变体 <X>`: 背景 is the question and criteria; 方案 lists the variants, each with a screenshot path or the switcher URL; 决定 names the winner and anything borrowed from others ("B 的标题栏 + C 的列表密度"); 后果 lists what changes in the real code.
-- **A human picks** when the choice is direction: brand or visual identity, a structural variant, or a choice the humans reserved. Ask with `canon human ask`, citing the variants and your recommendation.
+- **A human picks** the winner when the choice is direction: brand or visual identity, which structure a new screen gets, or a choice the humans reserved. Ask with `canon human ask`, citing the variants and your recommendation.
 - **Logic prototypes**: the answer becomes rules (the behaviour the model must have, with the edge cases the session found as examples) and, if there were real alternatives, a decision. Surprises worth keeping but not yet decided go to a note (`canon note new`).
 
 ## 5. After the pick
