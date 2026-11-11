@@ -227,13 +227,19 @@ describe("rule review prompt budget", () => {
       expect(r.ok).toBe(false);
       if (!r.ok) expect(r.error.message).toContain("broken");
       const child = Number(readFileSync(pid, "utf8").trim());
-      let alive = true;
-      try {
-        process.kill(child, 0);
-      } catch {
-        alive = false;
-      }
-      expect(alive).toBe(false);
+      // reason: the kill is sent before runReviews returns, but a loaded machine may take a moment to end the process or
+      // reap it; a zombie still answers kill(pid, 0). Wait a bounded time for it to be gone or a zombie (#187).
+      const gone = () => {
+        try {
+          process.kill(child, 0);
+        } catch {
+          return true;
+        }
+        return Bun.spawnSync(["ps", "-o", "stat=", "-p", String(child)]).stdout.toString().trim().startsWith("Z");
+      };
+      const until = Date.now() + 5000;
+      while (!gone() && Date.now() < until) await Bun.sleep(50);
+      expect(gone()).toBe(true);
     }, 60_000);
 
     test("BR-2359: the findings are merged in call order whichever call ends first", async () => {
