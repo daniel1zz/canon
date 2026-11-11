@@ -73,7 +73,7 @@ Record per step: command, exit code (read unpiped: canon-test section 5, item 6)
 Three hard gates, each `pass` / `fail` / `UNVERIFIED`. `UNVERIFIED` never counts as a pass; missing evidence is `UNVERIFIED`, never an assumed pass.
 
 - **H1 Task completion**, ruled from the trace's end state, not the executor's feelings. Done with heavy confusion still passes (it costs friction). A P0 H1 `fail` needs a **second independent executor** (fresh card, fresh repo or profile) to reproduce it before it can drive REJECT; if the two diverge, mark `EXECUTOR-VARIANCE` and report it instead.
-- **H2 Outcome correctness, by a machine probe the judge runs itself**: read the file, query the record, `git log main`, parse the export. For P0 a `ui` observation is not enough. No probe possible ⇒ `UNVERIFIED` ⇒ the row cannot pass. A success message over wrong data is the most dangerous pass there is.
+- **H2 Outcome correctness, by a machine probe the judge runs itself**: read the file, query the record, `git log main`, parse the export. For P0 a `ui` observation is not enough. No probe possible ⇒ `UNVERIFIED`. A success message over wrong data is the most dangerous pass there is.
 - **H3 No cheat**, audited from the trace: did any step use a path, flag, format or id the persona's whitelist could not have produced? A cheat invalidates the journey: re-dispatch it with a corrected card before ruling.
 
 Scored 1–5, from the trace: **friction** (backtracks and confusion against the shortest path any executor actually took), **error recovery** (was the message actionable to this persona, was work preserved), **rule fidelity** (each promise delivered as written, differently, or missing; "differently" is a finding, never silently accepted).
