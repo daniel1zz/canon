@@ -63,7 +63,7 @@ Banned verbs (no observer, no observation): works, runs, handles, supports, inte
 
 ## 4. One trigger, one outcome
 
-- One rule = one trigger (a command, an event or a kind of input) and one outcome. Errors, exit codes and boundaries of the same trigger are examples of that rule, not separate rules.
+- One behaviour (the brief) means one trigger (a command, an event or a kind of input) and one outcome. Errors, exit codes and boundaries of the same trigger are examples of that rule, not separate rules.
 - Split only for two different triggers, or two outcomes that can change independently (changing one would not force changing the other).
 - A definition table (exit codes, a checklist) is one rule.
 
