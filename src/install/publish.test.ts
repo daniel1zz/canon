@@ -40,6 +40,18 @@ describe("publishing a release (BR-2412)", () => {
     expect(readdirSync(join(primary, "dist")).filter((n) => n.includes(".tmp-"))).toEqual([]);
   });
 
+  test("BR-2412: publishing the same commit again keeps its skills and replaces the binary", () => {
+    const { primary, commits, publish } = history();
+    expect(publish(2).ok).toBe(true);
+    const again = publish(2, (outfile) => {
+      writeFileSync(outfile, "canon v3 rebuilt\n");
+      return ok(undefined);
+    });
+    expect(again.ok && again.value.kind).toBe("published");
+    expect(readFileSync(join(primary, "dist/canon"), "utf8")).toBe("canon v3 rebuilt\n");
+    expect(readdirSync(join(primary, "dist")).filter((n) => n.startsWith("skills-"))).toEqual([`skills-${commits[2]}`]);
+  });
+
   test("BR-2412: an older commit than the one published replaces nothing", () => {
     const { primary, commits, publish } = history();
     expect(publish(2).ok).toBe(true);

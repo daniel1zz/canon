@@ -31,18 +31,22 @@ const sha = (text: Buffer | string) => createHash("sha256").update(text).digest(
  * runs from (source checkout under `bun`; for the compiled `dist/canon`, the `dist/skills` published with it, else the repository
  * holding it; the npm package holding the bundled `dist/canon.js`). Missing → environment error.
  */
-export function skillsSource(env: Record<string, string | undefined> = process.env): Result<string> {
+export function skillsSource(env: Record<string, string | undefined> = process.env, moduleDir: string = import.meta.dir, execPath: string = process.execPath): Result<string> {
   const explicit = env["CANON_SKILLS_SOURCE"];
+  const bin = dirname(realpathSync(execPath));
+  const published = join(bin, "skills");
   const candidates = explicit ? [explicit] : [
-    join(import.meta.dir, "..", "..", ".claude", "skills"),
+    join(moduleDir, "..", "..", ".claude", "skills"),
     // reason: the npm package bundles every source into dist/canon.js, so import.meta.dir is dist/ and the skills sit one level up (BR-2082).
-    join(import.meta.dir, "..", ".claude", "skills"),
+    join(moduleDir, "..", ".claude", "skills"),
     // reason: a compiled canon installs the skills published with it from a tested, release-checked commit, not main's newest (BR-2082, D-91)
-    join(dirname(realpathSync(process.execPath)), "skills"),
-    join(dirname(realpathSync(process.execPath)), "..", ".claude", "skills"),
+    published,
+    join(bin, "..", ".claude", "skills"),
   ].filter((c): c is string => typeof c === "string" && c !== "");
   for (const c of candidates) {
     if (existsSync(c) && readdirSync(c).some((n) => n.startsWith(PREFIX))) return ok(c);
+    // reason: a release that is there but broken must not fall back to the repository's unreviewed skills (BR-2082, BR-2412)
+    if (c === published && (existsSync(c) || isBrokenLink(c))) return err("io", `${c} holds no canon-* skill (a broken release?); publish again with scripts/release.ts, or remove it to use the repository's skills`);
   }
   return err("io", `cannot find canon's skills (looked in: ${candidates.join(", ")}); set CANON_SKILLS_SOURCE to canon's .claude/skills`);
 }

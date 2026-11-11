@@ -71,14 +71,26 @@ export function publishRelease(e: PublishEnv): Result<PublishOutcome> {
       rmSync(tmpDir, { recursive: true, force: true });
       return err("io", `no canon-* skill under ${src}; nothing published`);
     }
-    for (const s of skills) cpSync(join(src, s), join(tmpDir, s), { recursive: true });
-    renameSync(tmpDir, target);
+    try {
+      for (const s of skills) cpSync(join(src, s), join(tmpDir, s), { recursive: true });
+      renameSync(tmpDir, target);
+    } catch (e) {
+      rmSync(tmpBin, { force: true });
+      rmSync(tmpDir, { recursive: true, force: true });
+      return err("io", `copying the skills into ${tmpDir} failed: ${(e as Error).message}`);
+    }
   }
-  const tmpLink = join(dist, `${SKILLS_LINK}.tmp-${process.pid}`);
-  rmSync(tmpLink, { force: true });
-  symlinkSync(name, tmpLink);
-  renameSync(tmpLink, link);
-  renameSync(tmpBin, join(dist, "canon"));
+  // reason: a failed rename is an environment error the caller reports (exit 4), never an uncaught throw (BR-2412)
+  try {
+    const tmpLink = join(dist, `${SKILLS_LINK}.tmp-${process.pid}`);
+    rmSync(tmpLink, { force: true });
+    symlinkSync(name, tmpLink);
+    renameSync(tmpLink, link);
+    renameSync(tmpBin, join(dist, "canon"));
+  } catch (e) {
+    rmSync(tmpBin, { force: true });
+    return err("io", `publishing into ${dist} failed: ${(e as Error).message}`);
+  }
   // Older releases go, except the one published just before: a reader may still be walking it.
   const keep = new Set([name, before === undefined ? "" : `skills-${before}`]);
   for (const n of readdirSync(dist)) if (/^skills-[0-9a-f]+$/.test(n) && !keep.has(n)) rmSync(join(dist, n), { recursive: true, force: true });

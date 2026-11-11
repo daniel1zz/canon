@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { installSkills, MANIFEST, skillsSource, versionOf } from "./install.ts";
@@ -128,6 +128,16 @@ describe("where the skills come from and their version", () => {
     const again = Bun.spawnSync([join(repo, "dist/canon"), "install"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env });
     expect([again.exitCode, again.stderr.toString()]).toEqual([0, ""]);
     expect(readFileSync(join(root, ".claude/skills/canon-z/SKILL.md"), "utf8")).toBe("z as published\n");
+  });
+
+  test("BR-2082: a dist/skills that is there but holds no canon skill, such as a link to a removed release, fails as an environment error instead of falling back to the repository", () => {
+    const repo = dir({ ".claude/skills/canon-z/SKILL.md": "z unreviewed\n", "dist/canon": "binary\n" });
+    const nowhere = join(mkdtempSync(join(tmpdir(), "canon-module-")), "a", "b");
+    expect(skillsSource({}, nowhere, join(repo, "dist/canon"))).toEqual({ ok: true, value: join(realpathSync(repo), ".claude", "skills") });
+    symlinkSync("skills-gone", join(repo, "dist/skills"));
+    const broken = skillsSource({}, nowhere, join(repo, "dist/canon"));
+    expect(broken.ok).toBe(false);
+    expect(!broken.ok && broken.error.message).toContain("dist/skills holds no canon-* skill");
   });
 
   test("BR-2082: the npm package's bundled dist/canon.js installs from the .claude/skills inside the package", () => {

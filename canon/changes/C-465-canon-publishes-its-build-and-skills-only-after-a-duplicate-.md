@@ -27,7 +27,7 @@ canon 仓库合入时的重复评审只把改动过的 skill 全文放进提示�
 
 ## 教训
 
-- 改动前以为 `after_green` 构建的 canon 就是下游拿到的全部，实际 skill 来自主 checkout 的工作树 → 现在由 BR-2082、BR-2412 保证 skill 和二进制来自同一个发布
+无
 
 ## 任务
 
