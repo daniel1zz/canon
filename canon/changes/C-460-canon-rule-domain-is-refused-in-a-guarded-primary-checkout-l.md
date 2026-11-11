@@ -2,9 +2,11 @@
 id: C-460
 title: canon rule domain is refused in a guarded primary checkout like the other
   document commands (#184)
-status: open
+status: done
 rules:
   - BR-2409
+passes:
+  BR-2409: 861710ba76a5a547 test
 ---
 
 ## 为什么
