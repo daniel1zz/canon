@@ -158,11 +158,14 @@ describe("the starting commit of an unconfirmed reference", () => {
     expect([r.code, r.err]).toEqual([4, expect.stringContaining(`links_since ${first.slice(0, 9)} is not in the history of HEAD`)]);
   });
 
-  test("BR-2424: without links_since every links command fails with exit 4 and says how to set it", () => {
+  test("BR-2424: without links_since every links command fails with exit 4 and says how to set it; a value that is no full commit id fails reading the config with exit 2", () => {
     const { root } = repo({ [ruleFile(1)]: rule(1, A_NAMES_B), [ruleFile(2)]: rule(2, "二") });
     const r = canon(root, "links", "list");
     expect([r.code, r.err]).toEqual([4, expect.stringContaining("canon/config.yaml has no links_since")]);
     expect(canon(root, "links", "confirm", B1, B2).code).toBe(4);
+    writeFileSync(join(root, "canon/config.yaml"), `${readFileSync(join(root, "canon/config.yaml"), "utf8")}links_since: ABC123\n`);
+    const bad = canon(root, "links", "list");
+    expect([bad.code, bad.err]).toEqual([2, expect.stringContaining("links_since")]);
   });
 
   test("BR-2424: a repository without a commit has nothing suspect; outside a repository the starting commit cannot be read (exit 4)", () => {
