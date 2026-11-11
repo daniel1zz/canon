@@ -97,7 +97,7 @@ The open choices otherwise surface mid-implementation, when the owner may not be
 4. A test named after the rule (the brief) that asserts what the rule says is observed.
 5. The test goes in the same commit as the rule. A rule with no possible test (guaranteed by a vendor, say) is created with `--untested "<reason>"` instead.
 6. A rule that names items of a list kept in code (check names, default values) points at the code instead of copying the whole list, and declares what it uses in front matter: `lists: [{ file: <path>, name: <constant>, items: [<each item the text names>] }]`. `canon check` then confirms on every landing that the text, the front matter and the code agree. Do not write a test that reads the rule file for this: a landing that changes only paths under `floor_skip_paths` skips the test suite, and `canon check` refuses a test that reads them.
-7. `canon check` before landing; at land the rule review reads the rule against its whole domain and blocks contradictions.
+7. At land the rule review reads the rule against its whole domain and blocks contradictions.
 
 ## 7. Reachable from the real entry point
 
