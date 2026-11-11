@@ -1,6 +1,6 @@
 ---
 name: canon-secrets
-description: "Use when code or a command needs an API key, token, private key, password or other credential, when adding or rotating a secret, when setting up secret handling for a project, or when a secret may have leaked. Keeps secret values out of the agent's context with open-source tools (sops + age for storage, varlock for injection, redaction and leak scans). Triggers: 'API key', 'secret', 'token', 'credential', 'password', '.env', 'leaked key', 'rotate', '密钥', '私钥', '账号密码', '泄漏', '环境变量'. NOT for designing an auth system (use canon-design)."
+description: "Use when work needs an API key, token or password, or one may have leaked. Triggers: 'API key', 'secret', '.env', '密钥', '泄漏'."
 ---
 
 # Secrets (canon)
