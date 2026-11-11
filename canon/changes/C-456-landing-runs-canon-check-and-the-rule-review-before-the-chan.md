@@ -2,7 +2,7 @@
 id: C-456
 title: Landing runs canon check and the rule review before the change enters the
   queue (#149)
-status: open
+status: done
 rules: []
 ---
 
