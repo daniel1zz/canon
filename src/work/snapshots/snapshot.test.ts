@@ -120,7 +120,7 @@ describe("taking a snapshot", () => {
     expect(readFileSync(join(root, ".env.local"), "utf8")).toBe("TOKEN=secret\n");
   });
 
-  test("BR-2406: the secret list matches on the basename, both sides of each boundary", () => {
+  test("BR-2406: the secret list matches on the case-sensitive basename, both sides of each boundary", () => {
     const root = project();
     const out = [".env", "config/.env", ".env.local", "certs/server.pem", "tls.key", "cert.p12", "cert.pfx", "id_ed25519", "id_rsa", "id_ecdsa", "id_rsa.old", "keys.txt"];
     const kept = [".env.schema", ".env.example", ".env.sample", ".env.template", "env.txt", "my.env", "id_ed25519.pub", "id_rsa.old.pub", "keys.md", "monkey.txt"];
@@ -133,6 +133,12 @@ describe("taking a snapshot", () => {
     for (const f of out) expect(show(root, `${s.ref}:${f}`).ok).toBe(false);
     for (const f of kept) expect(show(root, `${s.ref}:${f}`)).toEqual({ ok: true, value: f });
     for (const f of [...out, ...kept]) expect(isSecretFile(f)).toBe(out.includes(f));
+    // A separate repository, since on a case-insensitive file system `.ENV` and `.env` are one file
+    const upper = project();
+    for (const f of [".ENV", "SERVER.PEM", "ID_RSA"]) writeFileSync(join(upper, f), `${f}\n`);
+    const u = taken(upper);
+    expect(u.skipped).toEqual([]);
+    for (const f of [".ENV", "SERVER.PEM", "ID_RSA"]) expect(show(upper, `${u.ref}:${f}`)).toEqual({ ok: true, value: f });
   });
 
   test("BR-2406: a changed tracked secret file keeps HEAD's version in the snapshot; the worktree keeps the change", () => {
