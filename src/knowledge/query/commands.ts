@@ -64,7 +64,8 @@ const context = defineCommand({
       const links = linksOf(ws.root, corpus, ws.config.linksSince);
       if (links.ok) say(referenceSection(corpus, links.value, ctx.target));
       else {
-        linksFailed = links.error;
+        // reason: a project that has not set links_since yet gets the line, not a failing context; a start that cannot be read exits 4 (BR-2428)
+        if (ws.config.linksSince !== undefined) linksFailed = links.error;
         say(`# References\n\ncanon links: ${links.error.message}\n`);
       }
     }

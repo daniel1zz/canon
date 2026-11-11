@@ -343,13 +343,13 @@ describe("canon context and references", () => {
     expect(canon(root, "context", "src/billing").out).not.toContain("# References");
   });
 
-  test("BR-2428: a starting commit that cannot be read, or none set, is said in the section, the rest is printed, and the exit code is 4", () => {
+  test("BR-2428: a starting commit that cannot be read is said in the section, the rest is printed, and the exit code is 4; none set is said with exit 0", () => {
     const r = canon(brokenStart(), "context", B1);
     expect(r.code).toBe(4);
     expect(r.out).toContain(`# ${B1} Rule 1`);
     expect(r.out).toContain("# References\n\ncanon links: git cat-file --batch");
     const unset = canon(repo({ [ruleFile(1)]: rule(1, A_NAMES_B), [ruleFile(2)]: rule(2, "二") }).root, "context", B1);
-    expect([unset.code, unset.out]).toEqual([4, expect.stringContaining("# References\n\ncanon links: canon/config.yaml has no links_since")]);
+    expect([unset.code, unset.out]).toEqual([0, expect.stringContaining("# References\n\ncanon links: canon/config.yaml has no links_since")]);
   });
 });
 
