@@ -65,7 +65,7 @@ What cannot be run is marked `unvalidated` with the reason. If the missing exper
    canon human ask "<问题，一句话>" --option "<推荐>,<备选>,<不推荐>" --change C-n
    ```
    The question cites the note id and states the recommendation, the strongest evidence for and against each option, and what stays `unvalidated`.
-3. **Real choices the humans have delegated** (which of two validated solutions to build first, when the outcome is already set) → a decision: `canon decision new --title "..."`, with every rejected option and why.
+3. **Real choices the humans have delegated** (which of two validated solutions to build first, when the outcome is already set) → a decision (canon-design section 4).
 4. **Behaviour → rules**, through canon-rules and the normal change flow, once the direction is answered (authorship: canon-rules section 0): each above-the-line story-map row the product commits to becomes a rule. A rule resting on an `unvalidated` row says so in its body.
 5. **A version's slice → a release document.** When the map is cut into versions, `canon release new --title "<version>"` makes the document: the slice goes in its 故事地图切片 section, next to the version's goal, users, scope, what it leaves out and success criteria. The rules from that slice carry `release: R-n` in their front matter, so `canon release status` shows how far the version is.
 

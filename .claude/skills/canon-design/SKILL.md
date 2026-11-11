@@ -21,7 +21,7 @@ Read only the files of the mode you need. Cross-cutting references (`references/
 
 ## 2. Before designing
 
-1. `canon context <path|domain|C-n>`: the whole current domain, its rules, the accepted decisions and open changes. For conflicting rules use canon-rules section 1a. A design that intentionally changes an effective requirement must make that change explicit and update the affected rules and decisions in the same change.
+1. `canon context <path|domain|C-n>`: the whole current domain, its rules, the accepted decisions and open changes. For conflicting rules use canon-rules section 1a. A design that intentionally changes an effective requirement must make that change explicit and update the decisions it affects as well.
 2. `canon search <topic>`: earlier decisions and notes on the same question. Extend or supersede (`--supersedes D-n`), never silently redo.
 3. Look at how 1–3 mature products or libraries solve the same problem before inventing one.
 4. Read the existing code you are changing (symbols, callers) before proposing structure.
