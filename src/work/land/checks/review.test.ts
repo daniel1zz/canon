@@ -910,7 +910,7 @@ describe("duplicate review of standing instructions at land", () => {
       expect(existsSync(promptFile)).toBe(false);
     });
 
-    test("BR-2410: with CLAUDE.md also changed only CLAUDE.md is the changed text; the shipped skill is marked and its full text and diff stay out; a block on the project's own line refuses", async () => {
+    test("BR-2410 BR-2143: with CLAUDE.md also changed only CLAUDE.md is the changed text; the shipped skill is marked and its full text and diff stay out; a block on the project's own line refuses", async () => {
       const { root, promptFile } = shippedProject("block");
       const before = sh(root, "rev-parse", "main");
       const s = startNew(root, "Update canon and CLAUDE.md");

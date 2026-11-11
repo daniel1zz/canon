@@ -2,7 +2,7 @@
 id: C-462
 title: The downstream duplicate review never blocks on the skill files canon ships
 status: open
-rules: [BR-2410, BR-2143]
+rules: [BR-2410, BR-2143, BR-2086]
 ---
 
 ## 为什么
@@ -13,6 +13,7 @@ rules: [BR-2410, BR-2143]
 
 - 新规则 BR-2410：清单（`.claude/skills/.canon-skills.json`）列出、内容哈希和清单一致的 skill 文件不算改动过的常驻说明；只改了这些时不做重复评审；它们的 description 仍作为对照列在提示里，标 `(shipped by canon)`，项目自己的文字和它们重复时照常拦截。项目改过的、清单没列的照常评审；清单坏了全部照常评审。
 - BR-2143 加一句指向 BR-2410。
+- BR-2086：`canon update` 不再因为没有配置 `review` 拒绝改 `SKILL.md` 的更新，这些文件合入时不再评审。
 - 代码：`src/install/install.ts` 的 `shippedUnedited`；`standingTouched` 去掉这些文件；`standingText`、`duplicatePrompt` 标出它们。
 - 不在范围内：canon 发布前的全量评审，另开变更。
 

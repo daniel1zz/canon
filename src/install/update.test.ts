@@ -171,23 +171,15 @@ describe("finding and applying updates", () => {
     expect(canon(root, env, "update").out).toContain("up to date");
   });
 
-  test("BR-2086: an update that would change a SKILL.md where canon/config.yaml sets no review exits 1 before opening a change; review: none lands it", () => {
+  test("BR-2086 BR-2410: an update that changes a SKILL.md lands where canon/config.yaml sets no review: canon's own files need no duplicate review", () => {
     const { src, root, env } = project();
     writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ntests: []\n');
     git(root, "add", "-A");
     commitOnMain(root, "no reviewer");
     writeFileSync(join(src, "canon-a/SKILL.md"), "a v2\n");
     const r = canon(root, env, "update");
-    expect(r.code).toBe(1);
-    expect(r.err).toContain("canon-a/SKILL.md");
-    expect(r.err.indexOf("claude -p --model sonnet --output-format text")).toBeGreaterThan(-1);
-    expect(r.err.indexOf("claude -p --model sonnet --output-format text")).toBeLessThan(r.err.indexOf("canon human ask"));
-    expect(git(root, "branch", "--list", "change/*")).toBe("");
-    expect(existsSync(join(root, "..", `${root.split("/").pop()}.worktrees`))).toBe(false);
-    writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ntests: []\nreview: none\n');
-    git(root, "add", "-A");
-    commitOnMain(root, "review off by the owner");
-    expect(canon(root, env, "update").code).toBe(0);
+    expect([r.code, r.err]).toEqual([0, expect.any(String)]);
+    expect(git(root, "show", "main:.claude/skills/canon-a/SKILL.md")).toBe("a v2");
   });
 
   test("BR-2086 BR-2022: an update whose landing is refused exits 1 and keeps its change and worktree; one still queued at the timeout exits 75", () => {
