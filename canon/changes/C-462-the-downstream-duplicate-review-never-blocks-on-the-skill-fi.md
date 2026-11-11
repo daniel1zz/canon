@@ -1,8 +1,15 @@
 ---
 id: C-462
 title: The downstream duplicate review never blocks on the skill files canon ships
-status: open
-rules: [BR-2410, BR-2143, BR-2086]
+status: done
+rules:
+  - BR-2410
+  - BR-2143
+  - BR-2086
+passes:
+  BR-2086: e4bedeee22c03f64 test
+  BR-2143: 92b289db4bad40ff test
+  BR-2410: 1fb52fdfedd22715 test
 ---
 
 ## 为什么
