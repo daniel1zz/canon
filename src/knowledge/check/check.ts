@@ -239,7 +239,7 @@ export function check(input: CheckInput): Finding[] {
   for (const f of listFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "list-mismatch", message: f.message });
   findings.push(...architectureFindings(input));
   for (const s of staleLinks(input.corpus)) {
-    findings.push({ path: s.doc.path, rule: "link-stale", message: `\`links\` records ${s.id}, which the text of ${s.doc.id} no longer names as a rule or decision: delete that line from \`links\`, or run canon links confirm on a reference of ${s.doc.id} (BR-2426)` });
+    findings.push({ path: s.doc.path, rule: "link-stale", message: `\`links\` records ${s.id}, which the text of ${s.doc.id} no longer names as a rule or decision: delete that line from \`links\` (BR-2426)` });
   }
   return findings;
 }
