@@ -83,6 +83,6 @@ Many worktrees running full suites at once once drove load to 150 and produced 7
 
 ## 7. Before committing
 
-Go through sections 1, 4 and 5 once more against the diff: each is a check, not advice. The false-green scan is clean, and the uncovered list (section 5 item 7) is in the commit message.
+Go through sections 1, 4 and 5 once more against the diff: each is a check, not advice.
 
 A defect found but not fixed in this change becomes a GitHub issue (`gh issue create`), written as the brief says.
