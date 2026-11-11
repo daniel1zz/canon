@@ -34,7 +34,7 @@ Stop at step 2 if you cannot say which business the requirement belongs to. That
 
 First read both rules' scope, conditions and exceptions: different cases are not a conflict. If the same case requires incompatible outcomes, follow the latest effective requirement change. Establish that order from the recorded decisions, completed changes and the semantic diff in git history, not the largest rule id, file timestamps or the most recent edit to a file. A wording correction, title change, move or rebase does not make an older requirement newer; an unaccepted proposal or an unlanded draft does not override an effective requirement. If the effective order cannot be established, report the conflicting text and the missing evidence instead of guessing; resolve the open choice through section 5.
 
-Record the winning requirement and its source in the change. Apply section 0 to correct the obsolete statements, use references for shared behaviour, retire a rule only when none of its requirements remain, and check the affected references and tests. This precedence resolves what to implement; it does not leave contradictory rules in place or bypass the project's checks.
+Record the winning requirement and its source in the change. Apply section 0 to correct the obsolete statements, retire a rule only when none of its requirements remain, and check the affected references and tests. This precedence resolves what to implement; it does not leave contradictory rules in place or bypass the project's checks.
 
 ## 2. Interrogate the requirement before writing
 

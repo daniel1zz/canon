@@ -42,7 +42,7 @@ Record one of four results in an issue comment, with the commands and their outp
 
 | Situation | Outcome |
 |-----------|---------|
-| Known limit: needs an abnormal setup or action, no data loss, no security problem, no broken promise | `gh issue close <n> --reason "not planned" --comment "Needs an abnormal setup or action; reopen if it happens in normal use. <the situation>"`; no new mechanism |
+| Known limit (section 2) | `gh issue close <n> --reason "not planned" --comment "Needs an abnormal setup or action; reopen if it happens in normal use. <the situation>"`; no new mechanism |
 | Not reproducible, or already fixed on main | `gh issue close <n> --reason "not planned" --comment "<what was tried, at which commit>"` |
 | Same root cause as another issue | comment `Duplicate of #m: <why it is the same root cause>`, then close it the same way. |
 | Matches a decision that rejected it | comment linking the decision and its reason, close; add the issue number to that decision's 背景 in your next commit |

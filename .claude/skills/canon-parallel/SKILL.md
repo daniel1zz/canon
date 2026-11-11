@@ -13,14 +13,13 @@ Landings are serial: one at a time, each one spends most of its turn running the
 
 Split when the tasks are:
 
-- **independent**: no task needs another one's result to start;
+- **independent**: no task needs another one's result to start (otherwise do them in order);
 - **medium-sized**: each implements a whole change against the task's rules, with its own tests, minutes to tens of minutes of work. A tiny task costs a full landing turn of its own, and a subagent first spends tens of thousands of tokens reading context;
 - **3 to 5 at once.** In a measured run, 5 subagents finished in about 44 minutes what took them about 122 minutes added up (about 2.8 times faster), and kept the landing queue busy the whole time. More than that only adds waiting.
 
 Do not split, or put the tasks in one agent's hands, when:
 
 - **two tasks change the same file** (see section 2, step 3);
-- one task needs another's result (do them in order);
 - the main agent already holds the context and the work is small: doing it yourself is cheaper than briefing someone.
 
 ## 2. Before dispatching
