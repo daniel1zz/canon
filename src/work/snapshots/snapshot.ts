@@ -29,7 +29,8 @@ export const MAX_FILE_BYTES = 5 * 1024 * 1024;
  * out of a snapshot whatever its size, so a plaintext secret nobody gitignored never lands in refs/canon/snapshots.
  */
 export function isSecretFile(path: string): boolean {
-  const name = basename(path);
+  // reason: case-insensitive, since on macOS and Windows a program opening `.env` reads `.ENV` (BR-2406)
+  const name = basename(path).toLowerCase();
   if (name === ".env") return true;
   // reason: these hold only which settings exist, never values, and stay in the snapshot (BR-2406, D-85)
   if (name.startsWith(".env.")) return ![".env.schema", ".env.example", ".env.sample", ".env.template"].includes(name);

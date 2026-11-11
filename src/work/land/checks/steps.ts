@@ -121,13 +121,13 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   const scope = reviewScope(wt, base.value, head.value, read.corpus);
   const { entries, changedDocs, deleted, readmes, deletedReadmes, reviewed } = scope;
   if (scope.renamed.length > 0) say(`review: ${scope.renamed.length} file(s) only moved, not reviewed`);
-  // Sources new to main are checked once, here, on the tree that becomes main (BR-2111).
-  const sourceFailures = await checkSources(wt, base.value, entries, read.corpus.docs, opts.fetcher ?? httpFetch);
-  if (sourceFailures.length > 0) return refuse("source", `decision sources do not hold:\n${sourceFailures.map((f) => `  - ${f}`).join("\n")}`);
-  // reason: a plaintext secret is refused before the rule review sends the diff to a model and before main moves (BR-2407, BR-2408, D-86)
+  // reason: a plaintext secret is refused before the source check fetches new source URLs (a key inside a URL would reach that server), before the rule review sends the diff to a model and before main moves (BR-2407, BR-2408, D-86)
   const secrets = await scanSecrets(wt, base.value, head.value);
   if (!secrets.ok) return refuse(secrets.reason, secrets.message);
   if (secrets.scanned > 0) say(`secret scan: ${secrets.scanned} changed file(s) scanned by varlock, no plaintext secret`);
+  // Sources new to main are checked once, here, on the tree that becomes main (BR-2111).
+  const sourceFailures = await checkSources(wt, base.value, entries, read.corpus.docs, opts.fetcher ?? httpFetch);
+  if (sourceFailures.length > 0) return refuse("source", `decision sources do not hold:\n${sourceFailures.map((f) => `  - ${f}`).join("\n")}`);
   let reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined;
   // reason: how a landing is reviewed (the command, its limit, the standing instruction list) comes from main's already-landed
   // config, never from the change's own tree: a change that swaps the reviewer would otherwise review itself (BR-2074, #115)

@@ -27,7 +27,7 @@ creation_rules:
 EOF
 ```
 
-`.gitignore` must list `*.key`, `keys.txt`, `.env`, `.env.local`, and every plaintext secret file. canon snapshots record untracked files git does not ignore, so an un-ignored plaintext file ends up in `refs/canon/snapshots/*`.
+`.gitignore` must list `*.key`, `keys.txt`, `.env`, `.env.local`, and every plaintext secret file. canon snapshots leave out common secret file names (`.env*`, `*.key`, `*.pem`, `id_*`, `keys.txt`), but any other plaintext secret file git does not ignore still ends up in `refs/canon/snapshots/*`.
 
 `.env.schema` (committed; this is what you read instead of values):
 
@@ -52,7 +52,7 @@ Where the private key comes from: `SOPS_AGE_KEY_FILE=<path>` locally; `SOPS_AGE_
 | Code reads a secret | read the env var by name; fail loudly when it is missing | a default value, a fallback key, logging the value |
 | Add or rotate a secret | ask the human to run `sops edit secrets.enc.env` themselves in their own terminal (it opens an editor on the decrypted file and re-encrypts on save), then add the name to `.env.schema` yourself | asking them to paste it into the conversation |
 | A login (website, dashboard) | the human logs in once in a persistent browser profile you reuse, or issues a scoped token | typing their password |
-| Before committing | `varlock scan --staged` (exit 1 = a real value is in a staged file; install it as the pre-commit hook) | committing first and checking later |
+| Before committing | `varlock scan --staged` (exit 1 = a real value is in a staged file; install it as the pre-commit hook). `canon work land` runs the same scan on the change's files before anything goes to a model and refuses with reason `secret`; it fails with exit 4 when the landing machine has no varlock or cannot decrypt | committing first and relying on the landing to catch it |
 
 ## Limits you must know
 

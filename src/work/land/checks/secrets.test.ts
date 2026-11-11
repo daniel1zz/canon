@@ -96,6 +96,23 @@ describe("the secret scan refuses a plaintext secret before the rule review (BR-
     expect(sh(root, "log", "-1", "--format=%s", "main")).toBe("fixture");
   });
 
+  test("BR-2407: a secret inside a new decision's source URL is refused before the source check, so the URL is never fetched", async () => {
+    const { root, log } = fixture();
+    const decision = `---\nid: D-1\ntitle: Pick\nstatus: accepted\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：https://api.example/x?key=${SECRET} “refunds are allowed within 30 days”\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
+    const s = startNew(root, "Change");
+    mkdirSync(join(s.worktree, "canon/decisions"), { recursive: true });
+    writeFileSync(join(s.worktree, "canon/decisions/D-1.md"), decision);
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "decision");
+    fakeVarlock(join(s.worktree, "node_modules/.bin/varlock"), "local", log);
+    const fetched: string[] = [];
+    const fetcher = async (url: string) => (fetched.push(url), { status: 200, text: "refunds are allowed within 30 days" });
+    const out = await land(ws(s.worktree), { ...FAST, fetcher }, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("secret");
+    expect(out.kind === "refused" ? out.message : "").toContain("canon/decisions/D-1.md:");
+    expect(fetched).toEqual([]);
+  });
+
   test("BR-2407: changed files without a secret value pass the scan and the landing goes on to the review", async () => {
     const { root, marker, log } = fixture();
     const s = change(root, { "app.js": "const k = process.env.API_KEY;\n" });
