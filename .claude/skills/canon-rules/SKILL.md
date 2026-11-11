@@ -71,8 +71,8 @@ Banned verbs (no observer, no observation): works, runs, handles, supports, inte
 
 Never write a guess as if it were settled.
 
-- The owner's: direction; product feel, meaning anything they would notice using the product (controls, look, wording, where the art or data comes from); and a decision explicitly reserved for humans (spending money, irreversible on shared scope, needing a person's credentials). `canon human ask "<question>"`, and keep working on what does not depend on the answer.
-- The agent's: anything else with real alternatives, such as internal structure or a library the owner would not notice. The main session settles choices that affect the baseline and records why with a decision (canon-design section 4), then writes the rule. A subagent hands such choices back; small implementation choices within its brief remain its own.
+- The owner's: what the brief says to ask the human about, and product feel, meaning anything they would notice using the product (controls, look, wording, where the art or data comes from). `canon human ask "<question>"`, and keep working on what does not depend on the answer.
+- The agent's: anything else with real alternatives, such as internal structure or a library the owner would not notice. The main session settles choices that affect the baseline and records why with a decision (canon-design section 4), then writes the rule. A subagent hands such choices back (canon-parallel section 3).
 
 ## 5a. Before landing rules: list the open choices
 

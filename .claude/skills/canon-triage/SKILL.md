@@ -5,7 +5,7 @@ description: "Use when triaging open GitHub issues, especially the ones canon's 
 
 # Triage (canon)
 
-Every open issue leaves triage with exactly one outcome: closed with a reason, fixed, turned into a canon change, or rejected by a decision. An issue that is only read and left open has not been triaged. The agent decides; only direction or a decision reserved for humans goes to `canon human ask` (P7).
+Every open issue leaves triage with exactly one outcome: closed with a reason, fixed, turned into a canon change, or rejected by a decision. An issue that is only read and left open has not been triaged. The agent decides; only what the brief says to ask the human about goes to `canon human ask` (P7).
 
 ## 1. Collect
 
@@ -49,7 +49,7 @@ Record one of four results in an issue comment, with the commands and their outp
 | Reproduced and simple: at most 2 files, a test proves it, no rule's meaning changes | fix now (section 4, small) |
 | Reproduced, bigger | a canon change (section 4) |
 | A request that should not be done | a decision (section 5) |
-| Needs direction, or a decision reserved for humans (money, irreversible on shared scope, a person's credentials) | `canon human ask "<question with the options>"`; comment on the issue that it waits on that question |
+| Needs the human (the brief's list of what to ask about) | `canon human ask "<question with the options>"`; comment on the issue that it waits on that question |
 
 ## 4. Turn it into a change
 

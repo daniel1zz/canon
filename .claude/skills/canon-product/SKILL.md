@@ -25,7 +25,7 @@ Usual order for a new bet: benchmark → opportunity → validate → decompose.
 
 ## 2. Before starting
 
-1. `canon search <topic>` and `canon context <domain>`: earlier notes, decisions and rules on the same question. Extend or supersede an earlier note; never silently redo it. A benchmark older than about two quarters is re-run, not trusted.
+1. `canon search <topic>` and `canon context <domain>`: earlier notes, decisions and rules on the same question. Build on them as canon-design section 2 step 2 says. A benchmark older than about two quarters is re-run, not trusted.
 2. Name the **one** outcome this work serves (a metric with a baseline and a target). If nobody has stated one, that is a direction question: `canon human ask`.
 
 ## 3. The evidence ladder (all modes)

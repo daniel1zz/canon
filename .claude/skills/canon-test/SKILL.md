@@ -14,7 +14,7 @@ A test exists to find bugs. A suite that passes on broken code is worse than no 
    - every example becomes a case, input and expected result taken from the example, not from the code;
    - every refusal the rule implies becomes a case, checked as section 4 says.
    Reading the implementation first produces tests that mirror it, bugs included.
-3. No rule covers the behaviour, or its examples do not reach the boundary: resolve the gap through canon-rules section 0. For conflicting rules use its section 1a before choosing expectations. Derive test expectations from the rules or public contract, never the function body.
+3. No rule covers the behaviour, or its examples do not reach the boundary: resolve the gap through canon-rules section 0. For conflicting rules use its section 1a before choosing expectations.
 4. A test that fails because the code contradicts the rule has found a defect. Do not change the expected value to match the code. Fix the code. If the requirement itself needs to change, use canon-rules section 0 and record why in the change.
 
 ## 2. Read the implementation adversarially
