@@ -25,7 +25,7 @@ const D2 = id("D", 2);
 const C1 = id("C", 1);
 
 const rule = (n: number, statement: string, o: { examples?: string; title?: string; status?: string; links?: Record<string, string> } = {}) =>
-  `---\nid: ${id("BR", n)}\ntitle: ${o.title ?? `Rule ${n}`}\nstatus: ${o.status ?? "active"}\nuntested: fixture\n${o.links ? `links:\n${Object.entries(o.links).map(([k, v]) => `  ${k}: "${v}"`).join("\n")}\n` : ""}---\n\n## 规则\n\n${statement}\n\n## 例子\n\n${o.examples ?? "- a → b"}\n`;
+  `---\nid: ${id("BR", n)}\ntitle: ${o.title ?? `Rule ${n}`}\nstatus: ${o.status ?? "active"}\nbusiness: 退款\nuntested: fixture\n${o.links ? `links:\n${Object.entries(o.links).map(([k, v]) => `  ${k}: "${v}"`).join("\n")}\n` : ""}---\n\n## 规则\n\n${statement}\n\n## 例子\n\n${o.examples ?? "- a → b"}\n`;
 const decision = (n: number, o: { background?: string; decide?: string; status?: string } = {}) =>
   `---\nid: ${id("D", n)}\ntitle: Decision ${n}\nstatus: ${o.status ?? "accepted"}\n---\n\n## 背景\n\n${o.background ?? "背景"}\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\n${o.decide ?? "采用 A。"}\n\n## 后果\n\n无。\n`;
 
@@ -52,8 +52,8 @@ function commit(root: string, files: Record<string, string>, message = "step"): 
 function repo(files: Record<string, string>): { root: string; first: string } {
   const root = project();
   put(root, {
-    [`${RULES}/README.md`]: "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n",
-    "canon/rules/shipping/README.md": "---\ncode: [src/shipping]\n---\n# shipping\n\n## 术语\n\n- **运单**：寄出的包裹\n",
+    [`${RULES}/README.md`]: "---\ncode: [src/billing]\n---\n# billing\n\n## 业务\n\n- **退款**：钱退回\n\n## 术语\n\n- **退款**：钱退回\n",
+    "canon/rules/shipping/README.md": "---\ncode: [src/shipping]\n---\n# shipping\n\n## 业务\n\n- **退款**：退回的包裹\n\n## 术语\n\n- **运单**：寄出的包裹\n",
     "src/billing/.keep": "",
     "src/shipping/.keep": "",
   });
