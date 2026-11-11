@@ -2,7 +2,7 @@
 id: C-457
 title: canon-design's concurrency lens points to canon-triage's criterion
   instead of restating it (#182)
-status: open
+status: done
 rules: []
 ---
 
