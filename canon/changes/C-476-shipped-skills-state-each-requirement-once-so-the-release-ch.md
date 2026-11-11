@@ -28,7 +28,7 @@ main 的后台测试通过后，`bun scripts/release.ts`（BR-2411、BR-2412、D
 - 一个根因一个 issue：canon-triage、canon-parallel 不再复述。
 - 行为和规则同一提交：canon-rules 第 6 节第 5 步只说测试也在同一提交，canon-test 清单不再复述。
 - 测试按规则命名只留在 brief，canon-test 第 4 节只留自己的补充，其他 skill 不再写 `it("BR-n: ...")`。
-- 向人提问的范围只留在 brief，canon-rules 第 5 节只补“产品手感”；“不依赖答案的工作继续”只留在 canon-rules 第 5 节。
+- 向人提问的范围只留在 brief，canon-rules 第 5 节只补“产品手感”；“不依赖答案的工作继续”由 brief 的“do not wait for them on anything else”和 `canon human ask` 的命令说明表达，skill 不再复述（canon-domains 指向它的半句一并删掉）。
 - canon-test 第 7 节清单、canon-product 退出清单改成指回原节（“没跑的实验也要报”并入 canon-product 第 5 节）。
 - 拒绝的测试方式只留在 canon-test 第 4 节；先见红只留在 canon-test 第 3 节（并入“继承的测试集先变异一处”）；从规则推期望只留在第 1 节第 2 步；`untested` 只留在 canon-rules 第 6 节第 5 步；“断言外部可观察结果”只留在 canon-test 第 4 节。
 - canon-prototype：原型代码并入方式只留在第 5 节；第 4 节说的是谁选赢家（新界面用哪种结构），第 3 节说的是改现有界面结构前先问。
