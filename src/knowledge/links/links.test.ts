@@ -163,6 +163,9 @@ describe("the starting commit of an unconfirmed reference", () => {
     const r = canon(root, "links", "list");
     expect([r.code, r.err]).toEqual([4, expect.stringContaining("canon/config.yaml has no links_since")]);
     expect(canon(root, "links", "confirm", B1, B2).code).toBe(4);
+    const recorded = repo({ [ruleFile(1)]: rule(1, A_NAMES_B, { links: { [B2]: ruleFp(rule(2, "二")) } }), [ruleFile(2)]: rule(2, "二") });
+    expect(canon(recorded.root, "links", "confirm", B1, B2).code).toBe(4);
+    expect(sh(recorded.root, "status", "--short")).toBe("");
     writeFileSync(join(root, "canon/config.yaml"), `${readFileSync(join(root, "canon/config.yaml"), "utf8")}links_since: ABC123\n`);
     const bad = canon(root, "links", "list");
     expect([bad.code, bad.err]).toEqual([2, expect.stringContaining("links_since")]);
