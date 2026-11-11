@@ -47,9 +47,10 @@ function fixture(opts: { schema?: boolean; mainFiles?: Record<string, string> } 
   const root = project();
   const marker = `${root}-review-ran`;
   const log = `${root}-varlock-log`;
+  const floor = `${root}-floor-ran`;
   mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
   writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
-  writeFileSync(join(root, "canon/config.yaml"), `floor: "test ! -e FAIL"\ntests: []\nreview: 'touch ${marker}; cat > /dev/null; echo ''{"verdict":"ok","findings":[]}'''\n`);
+  writeFileSync(join(root, "canon/config.yaml"), `floor: "touch ${floor}; test ! -e FAIL"\ntests: []\nreview: 'touch ${marker}; cat > /dev/null; echo ''{"verdict":"ok","findings":[]}'''\n`);
   mkdirSync(join(root, "src/billing"), { recursive: true });
   writeFileSync(join(root, "src/billing/.keep"), "");
   writeFileSync(join(root, ".gitignore"), "node_modules/\n");
@@ -58,7 +59,7 @@ function fixture(opts: { schema?: boolean; mainFiles?: Record<string, string> } 
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "fixture");
   process.env["PATH"] = pathWithoutVarlock();
-  return { root, marker, log };
+  return { root, marker, log, floor };
 }
 
 /** A change that adds a rule (so the rule review would run) and the given files. */
@@ -77,8 +78,8 @@ const refuseDetails = (root: string) =>
 const logOf = (log: string) => (existsSync(log) ? readFileSync(log, "utf8") : "");
 
 describe("the secret scan refuses a plaintext secret before the rule review (BR-2407)", () => {
-  test("BR-2407: a changed file holding a secret value is refused with reason secret, naming file, line and variable but never the value, and the review never runs", async () => {
-    const { root, marker, log } = fixture();
+  test("BR-2407 BR-2014: a changed file holding a secret value is refused with reason secret, naming file, line and variable but never the value; neither the review nor the floor runs", async () => {
+    const { root, marker, log, floor } = fixture();
     const s = change(root, { "app.js": `// config\nconst k = "${SECRET}";\n` });
     fakeVarlock(join(s.worktree, "node_modules/.bin/varlock"), "local", log);
     const out = await land(ws(s.worktree), FAST, quiet);
@@ -91,6 +92,7 @@ describe("the secret scan refuses a plaintext secret before the rule review (BR-
     expect(details.map((d) => JSON.parse(d).reason)).toEqual(["secret"]);
     expect(details.join("\n")).not.toContain("T0PSECRET");
     expect(existsSync(marker)).toBe(false);
+    expect(existsSync(floor)).toBe(false);
     expect(sh(root, "log", "-1", "--format=%s", "main")).toBe("fixture");
   });
 
