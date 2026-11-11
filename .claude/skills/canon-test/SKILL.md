@@ -41,7 +41,7 @@ WRONG:  every test of the change,  then all the code
 
 The unit of a cycle is one rule: its `## 例子` were written together, before any code, so writing their tests together adds nothing imagined. Each cycle: write the tests for every example of one rule (and the refusals it implies) → run them once and **check that each new test fails for the expected reason** (the assertion, not an import or load error; a test that passes already, or fails for another reason, is looked at before going on) → write the minimum code to pass → run them green → next rule. The next rule's tests respond to what this cycle taught you. One test per cycle is still right for a rule whose behaviour you do not understand yet. Refactor only when green, re-running after each step.
 
-Testing code that already exists still needs the red: break the input or revert the fix and watch the test catch it.
+Testing code that already exists, or trusting an inherited suite, still needs the red: break the input, revert the fix or mutate one guarded behaviour, and watch the tests catch it.
 
 ## 4. What every test must satisfy
 
@@ -59,7 +59,7 @@ False-green patterns to scan for before committing, with grep commands: [referen
 ## 5. Verification discipline (all eight, every time)
 
 1. **Enumerate mandated failures first.** Before running anything, list every case where the target must fail: invalid input → usage error, missing permission → denial, corrupt state → loud abort, check violation → refusal with a fix hint. Each gets exercised and compared with the rule (section 4). An unexercised mandated failure is an uncovered requirement.
-2. **Prove the oracle can fail before trusting its pass.** New tests: section 3. Inherited suite: mutate one guarded behaviour and confirm the suite catches it. A suspiciously fast pass gets re-run before it is believed.
+2. **Prove the oracle can fail before trusting its pass** (section 3). A suspiciously fast pass gets re-run before it is believed.
 3. **Negative controls travel in pairs.** Every "X is now allowed / fixed" ships with "Y is still refused". Fixed a false denial? Prove the true denial still fires. Loosened a matcher? Prove the true positives still match.
 4. **Hunt silent fallbacks on purpose.** Feed unknown flags, out-of-range config values, undeclared fields, unparseable files. If the answer to "what happens on bad input?" is "nothing visible", that is a finding (one real case: a TTL of `0` silently became 120).
 5. **Boundaries are failure scenarios.** Zero, empty, duplicate, expired, concurrent, over limit, already deleted, already done. Exercise illegal state transitions, not only the happy walk.

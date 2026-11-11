@@ -5,7 +5,7 @@ description: "Use when dispatching several subagents to work at the same time in
 
 # Parallel subagents (canon)
 
-Several agents can work on one canon project at once: each holds its own change in its own worktree, and landings take turns. That keeps work from being lost, but it does not make landings faster. Split only when the gain is real, brief every subagent the same way, and judge the outcome by what canon recorded, not by what the subagents say.
+Several agents can work on one canon project at once: each holds its own change in its own worktree, and landings take turns. That keeps work from being lost, but it does not make landings faster. Split only when the gain is real, brief every subagent the same way, and judge the outcome as section 5 says.
 
 ## 1. Split or not
 
@@ -42,7 +42,7 @@ Copy this list into each brief and fill in the task. A subagent starts with none
 - **Its own change**: run `canon work start --title "<title>"` (or `canon work start C-n`) from the primary checkout, with the `--as` that `canon brief` names for a subagent,, then `cd` into the worktree it prints and do every edit there. The rest of the workflow is in `canon brief`: tell the subagent to run it.
 - **Hands off the others**: never enter or edit another agent's worktree, and never edit the primary checkout.
 - **Test before landing**: as canon-test section 6 says; where `canon work test` does not exist, run each related test file in its own test-runner invocation (several files in one run have hung under load).
-- **Landing**: redirect the output of `canon work land --finish` to a log file outside the worktree (the scratchpad or `/tmp`): an untracked file inside it makes the landing refuse as dirty. Exit 75: still queued after the wait, run it again.
+- **Landing**: redirect the output of `canon work land --finish` to a log file outside the worktree (the scratchpad or `/tmp`): an untracked file inside it makes the landing refuse as dirty.
 - **No background work left behind**: the agent tool moves a subagent's command to the background after about three minutes, so a test run or a landing usually ends up there. The subagent then waits for that command's completion notice and does not end its turn or write its final report while the command still runs; it starts no other background commands or monitors, and stops any it did start before its final report. A subagent that ends its turn with background work still running stays listed as waiting, and a landing it left running was once killed with it, silently.
 - **After landing**: `canon brief` says how to wait for the post-land commands. Where `canon work after-land` does not exist, read the after-land log whose path the landing printed, until every background command has written its exit line. A simple real bug found in the code-review findings is fixed in a new change; anything else is reported.
 - **Clean only its own worktree**: `canon work clean <C-n>` with its own change id, never a bare `canon work clean`.
@@ -72,4 +72,4 @@ A subagent's report is a claim; the coordination database recorded what happened
 
 Where `canon stats --since` or `canon events` does not exist yet, use `canon stats` (totals only), `canon work status` and `git log` on main, and say in your summary that the run was checked without the event window.
 
-Report the run with the numbers from these commands (landings, refusals and why, queue waits, conflicts, wall time against the subagents' time added up), not with the subagents' own summaries.
+Report the run with the numbers from these commands (landings, refusals and why, queue waits, conflicts, wall time against the subagents' time added up).

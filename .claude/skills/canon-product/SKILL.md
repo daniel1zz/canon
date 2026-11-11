@@ -59,7 +59,7 @@ What cannot be run is marked `unvalidated` with the reason. If the missing exper
 
 ## 5. Record the result
 
-1. **Research → a note.** `canon note new --title "<topic> 的<对标/机会树/验证/故事地图>"`, then edit the file. Language: canon-rules section 6 step 2. It holds the matrix, tree, ledger or map, every claim with its tier and source, failed experiments next to passing ones, and the rejected branches with the reason and what evidence would reopen each. It does not hold a version's slice of the map (item 5).
+1. **Research → a note.** `canon note new --title "<topic> 的<对标/机会树/验证/故事地图>"`, then edit the file. Language: canon-rules section 6 step 2. It holds the matrix, tree, ledger or map, every claim with its tier and source, failed and not-run experiments next to passing ones, and the rejected branches with the reason and what evidence would reopen each. It does not hold a version's slice of the map (item 5).
 2. **Direction → `canon human ask`.** Which outcome to pursue and which branch to bet on is the humans' call:
    ```
    canon human ask "<问题，一句话>" --option "<推荐>,<备选>,<不推荐>" --change C-n
@@ -71,7 +71,4 @@ What cannot be run is marked `unvalidated` with the reason. If the missing exper
 
 ## Exit checks (every mode)
 
-- [ ] Every user or demand claim carries a tier and a source; no E6-only claim is presented as established.
-- [ ] Failed and not-run experiments are reported alongside passing ones.
-- [ ] Rejected options are written down with reasons.
-- [ ] The result is in a note; the direction question (if any) is asked with the note cited.
+Before reporting, check the result against sections 3 and 5.
