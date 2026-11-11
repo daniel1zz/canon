@@ -84,7 +84,7 @@ Mark each slice as one an agent can finish alone, or one that needs a human (a d
 A request rejected only in an issue comment will be filed again and argued again. Record it by **concept**, so the next request is recognised even in different words:
 
 1. `canon search <concept>`: if a decision already covers it, link it (section 3) instead of writing another.
-2. Otherwise `canon decision new --title "不做：<concept>"`: 背景 lists the issues that asked for it; 方案 gives doing it and not doing it, each with its reason; 决定 states the durable reason (scope, a constraint, an earlier decision), not a temporary one ("busy now" is a deferral, not a rejection; leave that issue open); 后果 says what would make it worth revisiting.
+2. Otherwise `canon decision new --title "不做：<concept>"`: 背景 lists the issues that asked for it; 方案 weighs doing it against not doing it; 决定 states the durable reason (scope, a constraint, an earlier decision), not a temporary one ("busy now" is a deferral, not a rejection; leave that issue open); 后果 says what would make it worth revisiting.
 3. Comment on the issue linking the decision, then close it with `--reason "not planned"`.
 
 If a later issue makes the case again and it is now right, supersede the decision (`canon decision new --supersedes D-n`) and treat the issue as a normal change.

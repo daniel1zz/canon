@@ -60,7 +60,7 @@ git -C "$T" init -q && git -C "$T" commit -q --allow-empty -m init
 git -C "$T" branch --list > "$E/03.git"; git -C "$T" status --short >> "$E/03.git"
 ```
 
-Record per step: command, exit code (read unpiped, never through `| tail`), stdout, stderr, and the files and git state afterwards. A fresh repo per journey; journeys never share one.
+Record per step: command, exit code (read unpiped: canon-test section 5, item 6), stdout, stderr, and the files and git state afterwards. A fresh repo per journey; journeys never share one.
 
 **Web driver**: `agent-browser`; decide each step from screenshots (what a user sees), not from the DOM or accessibility tree; use the snapshot only to label what was clicked. Isolate concurrent journeys by **browser profile**, not session name: sessions on one origin share local storage and cookies.
 
@@ -94,6 +94,6 @@ Report in the reply (and in the change file's tasks when accepting a change): ve
 
 Each finding lands in canon, not in a report nobody reads again:
 
-- **Product contradicts a rule** → a defect. Fix it in this change with a regression test named after the rule (see canon-test), or open a GitHub issue (`gh issue create`): one root cause, the reproducing command, expected vs actual.
+- **Product contradicts a rule** → a defect. Fix it in this change with a regression test named after the rule (see canon-test), or open a GitHub issue (`gh issue create`) as the brief says.
 - **Rule gap** → edit the rule (`## 规则`, `## 例子` with the boundary just found) or add one with `canon rule new`, in a change. If what the rule should say is a product direction call, `canon human ask` and carry on; do not wait for the answer.
 - **Accepted P0 journeys** → freeze into automated tests named after their rules (`it("BR-n: ...")`), asserting the same oracle the judge probed, so the floor re-checks them at every land.

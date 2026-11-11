@@ -69,10 +69,10 @@ False-green patterns to scan for before committing, with grep commands: [referen
 
 ## 6. Running tests in a worktree
 
-The floor runs the full suite at `canon work land`. Inside a worktree run **only the tests relevant to the change**, the way the project runs them:
+Run tests the way the project runs them:
 
 ```
-canon work test                  # picks the related test files, runs each through the project's test_command
+canon work test                  # each picked file through the project's test_command
 sh scripts/test.sh src/a.test.ts # one file yourself, when test_command is "sh scripts/test.sh {file}"
 bun test src/a.test.ts           # the same, when test_command is "bun test {file}"
 ```
@@ -90,4 +90,4 @@ Many worktrees running full suites at once once drove load to 150 and produced 7
 - [ ] each rule touched is named by a test or carries `untested: <reason>`; changed behaviour changed the rule in the same commit
 - [ ] the uncovered list is in the commit message
 
-A defect found but not fixed in this change becomes a GitHub issue (`gh issue create`): one root cause, the command that reproduces it, expected and actual result.
+A defect found but not fixed in this change becomes a GitHub issue (`gh issue create`), written as the brief says.
