@@ -45,7 +45,7 @@ const WRAP_SH = [
   "",
 ].join("\n");
 
-const ruleText = (title: string) => `---\nid: ${rule}\ntitle: ${title}\nstatus: active\n---\n\n## 规则\n\nx\n\n## 例子\n\n- a → b\n`;
+const ruleText = (title: string) => `---\nid: ${rule}\ntitle: ${title}\nstatus: active\nbusiness: x\n---\n\n## 规则\n\nx\n\n## 例子\n\n- a → b\n`;
 
 /**
  * A project whose "tests" are files run by run.sh: it appends each path to runs.log and fails when the file holds FAILME.
@@ -70,7 +70,7 @@ function fixture(testCommand = "sh wrap.sh {file} {report}", extra: Record<strin
     "src/f.test.ts": `it.skip("${rule}: skipped", () => {});\n`,
     "README.md": "readme\n",
     // reason: canon work test ends with canon check (BR-2227), so the rule the tests name must exist
-    "canon/rules/core/README.md": "---\ncode: [src]\n---\n# core\n\n## 术语\n\n- **x**：y\n",
+    "canon/rules/core/README.md": "---\ncode: [src]\n---\n# core\n\n## 术语\n\n- **x**：y\n\n## 业务\n\n- **x**：y\n",
     [`canon/rules/core/${rule}.md`]: ruleText("x"),
     ...extra,
   });

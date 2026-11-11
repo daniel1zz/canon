@@ -18,6 +18,8 @@ If the behaviour clearly belongs to an existing domain, skip this skill and use 
 
 ## 2. Subdomain and context: one thing in canon
 
+Inside one domain the split goes on in its README `## 业务` list, not in more directories: a business is a name several rules point at, so one business can cover rules that different commands implement. Split a domain into subdomains only when the vocabulary differs, as below.
+
 DDD has two notions: a subdomain (a part of the business, problem space) and a bounded context (the boundary inside which one model and one vocabulary hold, solution space). In canon one domain is both, because code mirrors domains and the README `## 术语` is the vocabulary. Aim for one-to-one. When it does not fit:
 
 - One context would cover several subdomains: keep one domain and make the subdomains its sub-domains (`<domain>/<sub>`), as long as they share one vocabulary. If their vocabularies differ, they are separate domains.

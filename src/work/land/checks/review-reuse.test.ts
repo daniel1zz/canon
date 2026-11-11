@@ -7,7 +7,7 @@ import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 import { reviewKey } from "./review-reuse.ts";
 
 const id = ["BR", 1].join("-");
-const ruleText = (text: string) => `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\n${text}\n\n## 例子\n\n- a → b\n`;
+const ruleText = (text: string) => `---\nid: ${id}\ntitle: Refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\n${text}\n\n## 例子\n\n- a → b\n`;
 
 /** billing with a counting reviewer (`verdicts` are its answers in turn, the last repeats) and a before_land hook that fails once. */
 function reusing(verdicts: string[] = ["ok"], extraConfig = "") {
@@ -21,7 +21,7 @@ function reusing(verdicts: string[] = ["ok"], extraConfig = "") {
   chmodSync(script, 0o755);
   writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: ${JSON.stringify(script)}\n${extraConfig}hooks:\n  before_land: 'test -f ${marker} || { touch ${marker}; exit 1; }'\n`);
   mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
-  writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
+  writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
   mkdirSync(join(root, "src/billing"), { recursive: true });
   writeFileSync(join(root, "src/billing/.keep"), "");
   sh(root, "add", "-A");
@@ -165,11 +165,11 @@ describe("reusing a passed rule review (BR-2361)", () => {
     writeFileSync(script, `#!/bin/sh\ncat > /dev/null\necho run >> ${log}\nn=$(wc -l < ${log} | tr -d ' ')\nif [ "$n" = 2 ]; then echo '{"verdict":"block","findings":["second blocks"]}'; else echo '{"verdict":"ok","findings":[]}'; fi\n`);
     chmodSync(script, 0o755);
     writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview_max_prompt_kb: 20\nreview: ${JSON.stringify(script)}\nhooks:\n  before_land: 'test -f ${marker} || { touch ${marker}; exit 1; }'\n`);
-    const big = (n: number, tag: string) => `---\nid: ${["BR", n].join("-")}\ntitle: Big ${n}\nuntested: demo\n---\n## 规则\n\n${tag} ${"x".repeat(9 * 1024)}\n\n## 例子\n\n- a → b\n`;
+    const big = (n: number, tag: string) => `---\nid: ${["BR", n].join("-")}\ntitle: Big ${n}\nuntested: demo\nbusiness: x\n---\n## 规则\n\n${tag} ${"x".repeat(9 * 1024)}\n\n## 例子\n\n- a → b\n`;
     for (const [path, text] of Object.entries({
-      "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n",
-      "canon/rules/billing/x/README.md": "# billing/x\n\n## 术语\n\n- **子域 X**：x\n",
-      "canon/rules/billing/y/README.md": "# billing/y\n\n## 术语\n\n- **子域 Y**：y\n",
+      "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n",
+      "canon/rules/billing/x/README.md": "# billing/x\n\n## 术语\n\n- **子域 X**：x\n\n## 业务\n\n- **x**：y\n",
+      "canon/rules/billing/y/README.md": "# billing/y\n\n## 术语\n\n- **子域 Y**：y\n\n## 业务\n\n- **x**：y\n",
       "canon/rules/billing/x/BR-10.md": big(10, "TEXT-10"),
       "canon/rules/billing/y/BR-11.md": big(11, "TEXT-11"),
       "src/billing/.keep": "",

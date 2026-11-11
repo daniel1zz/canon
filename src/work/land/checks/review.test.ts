@@ -17,7 +17,7 @@ describe("rule review at land", () => {
       `floor: "true"\ntests: []\nreview: 'cat > ${promptFile}; echo ''{"verdict":"${verdict}","findings":["${["BR", 1].join("-")} is vague"]}'''\n`,
     );
     mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
-    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
+    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
     mkdirSync(join(root, "src/billing"), { recursive: true });
     writeFileSync(join(root, "src/billing/.keep"), ""); // the domain's code path exists (BR-2079)
     sh(root, "add", "-A");
@@ -30,7 +30,7 @@ describe("rule review at land", () => {
     const before = sh(root, "rev-parse", "main");
     const s = startNew(root, "New rule");
     const id = ["BR", 1].join("-");
-    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds are fine.\n`);
+    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\nRefunds are fine.\n`);
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "rule");
     const out = await land(ws(s.worktree), FAST, quiet);
@@ -47,7 +47,7 @@ describe("rule review at land", () => {
   describe("the architecture overview as review input (D-65)", () => {
     const OVERVIEW = "canon/architecture.md";
     const withOverview = (body: string) => `---\ntitle: 架构总览\n---\n# 架构总览\n\n${body}`;
-    const rule = (text: string) => `---\nid: ${["BR", 1].join("-")}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\n${text}\n\n## 例子\n\n- a → b\n`;
+    const rule = (text: string) => `---\nid: ${["BR", 1].join("-")}\ntitle: Refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\n${text}\n\n## 例子\n\n- a → b\n`;
     function overviewProject(body: string | undefined) {
       const { root, promptFile } = reviewedProject("ok");
       if (body !== undefined) writeFileSync(join(root, OVERVIEW), withOverview(body));
@@ -125,7 +125,7 @@ describe("rule review at land", () => {
     const { root } = reviewedProject("block");
     const s = startNew(root, "New rule");
     const id = ["BR", 1].join("-");
-    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds are fine.\n`);
+    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\nRefunds are fine.\n`);
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "rule");
     const out = await land(ws(s.worktree), FAST, quiet);
@@ -139,14 +139,14 @@ describe("rule review at land", () => {
     const root = project();
     writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: "exit 3"\n`);
     mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
-    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
+    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
     mkdirSync(join(root, "src/billing"), { recursive: true });
     writeFileSync(join(root, "src/billing/.keep"), ""); // the domain's code path exists (BR-2079)
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "domain");
     const s = startNew(root, "New rule");
     const id = ["BR", 1].join("-");
-    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds are fine.\n`);
+    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\nRefunds are fine.\n`);
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "rule");
     const out = await land(ws(s.worktree), FAST, quiet);
@@ -162,7 +162,7 @@ describe("rule review at land", () => {
     const root = project();
     writeFileSync(join(root, "canon/config.yaml"), config);
     mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
-    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
+    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
     mkdirSync(join(root, "src/billing"), { recursive: true });
     writeFileSync(join(root, "src/billing/.keep"), ""); // the domain's code path exists (BR-2079)
     sh(root, "add", "-A");
@@ -172,7 +172,7 @@ describe("rule review at land", () => {
   const skips = (root: string) => ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'review.skip'").get()?.n;
   const id = ["BR", 1].join("-");
   const addRule = (wt: string) => {
-    writeFileSync(join(wt, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds are fine.\n`);
+    writeFileSync(join(wt, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\nRefunds are fine.\n`);
     sh(wt, "add", "-A");
     sh(wt, "commit", "-qm", "rule");
   };
@@ -650,7 +650,7 @@ tests: []
     const { root, promptFile } = reviewedProject("block");
     const before = sh(root, "rev-parse", "main");
     const s = startNew(root, "Readme only");
-    writeFileSync(join(s.worktree, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\nRules here are optional.\n\n## 术语\n\n- **退款**：钱退回\n");
+    writeFileSync(join(s.worktree, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\nRules here are optional.\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
     sh(s.worktree, "commit", "-qam", "readme");
     const out = await land(ws(s.worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("review");
@@ -685,7 +685,7 @@ tests: []
     const { root, promptFile } = reviewedProject("ok");
     const id = ["BR", 1].join("-");
     const seed = startNew(root, "Seed rule");
-    writeFileSync(join(seed.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds within 30 days.\n`);
+    writeFileSync(join(seed.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\nRefunds within 30 days.\n`);
     sh(seed.worktree, "add", "-A");
     sh(seed.worktree, "commit", "-qm", "rule");
     expect((await land(ws(seed.worktree), FAST, quiet)).kind).toBe("landed");
@@ -704,11 +704,11 @@ tests: []
   test("BR-2009: a rule file moved with identical content is not reviewed; moved and edited is reviewed as deleted plus added", async () => {
     const { root, promptFile } = reviewedProject("ok");
     const id = ["BR", 1].join("-");
-    const text = `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds within 30 days.\n`;
+    const text = `---\nid: ${id}\ntitle: Refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\nRefunds within 30 days.\n`;
     const seed = startNew(root, "Seed rule");
     writeFileSync(join(seed.worktree, `canon/rules/billing/${id}.md`), text);
     mkdirSync(join(seed.worktree, "canon/rules/billing/refunds"), { recursive: true });
-    writeFileSync(join(seed.worktree, "canon/rules/billing/refunds/README.md"), "# billing/refunds\n\n## 术语\n\n- **退款**：钱退回\n");
+    writeFileSync(join(seed.worktree, "canon/rules/billing/refunds/README.md"), "# billing/refunds\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
     sh(seed.worktree, "add", "-A");
     sh(seed.worktree, "commit", "-qm", "rule");
     expect((await land(ws(seed.worktree), FAST, quiet)).kind).toBe("landed");

@@ -49,7 +49,7 @@ function fixture(opts: { schema?: boolean; mainFiles?: Record<string, string> } 
   const log = `${root}-varlock-log`;
   const floor = `${root}-floor-ran`;
   mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
-  writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
+  writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
   writeFileSync(join(root, "canon/config.yaml"), `floor: "touch ${floor}; test ! -e FAIL"\ntests: []\nreview: 'touch ${marker}; cat > /dev/null; echo ''{"verdict":"ok","findings":[]}'''\n`);
   mkdirSync(join(root, "src/billing"), { recursive: true });
   writeFileSync(join(root, "src/billing/.keep"), "");
@@ -65,7 +65,7 @@ function fixture(opts: { schema?: boolean; mainFiles?: Record<string, string> } 
 /** A change that adds a rule (so the rule review would run) and the given files. */
 function change(root: string, files: Record<string, string>, remove: string[] = []) {
   const s = startNew(root, "Change");
-  writeFileSync(join(s.worktree, `canon/rules/billing/${["BR", 1].join("-")}.md`), `---\nid: ${["BR", 1].join("-")}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds are fine.\n`);
+  writeFileSync(join(s.worktree, `canon/rules/billing/${["BR", 1].join("-")}.md`), `---\nid: ${["BR", 1].join("-")}\ntitle: Refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\nRefunds are fine.\n`);
   for (const [f, text] of Object.entries(files)) writeFileSync(join(s.worktree, f), text);
   for (const f of remove) rmSync(join(s.worktree, f));
   sh(s.worktree, "add", "-A");

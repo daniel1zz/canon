@@ -42,6 +42,8 @@ export interface Rule extends Base {
   readonly status: RuleStatus;
   /** Present when the rule deliberately has no test; the reason is required. */
   readonly untested?: string;
+  /** The business of this rule's domain that it draws a boundary of; the name is listed in the domain README (BR-2430, D-96). */
+  readonly business?: string;
   /** Code lists the rule names items of instead of copying them; `canon check` compares the two (BR-2180). */
   readonly lists?: readonly CodeList[];
   /** The release that introduces this behaviour (`release: R-n`); a rule without it belongs to no release (D-61). */

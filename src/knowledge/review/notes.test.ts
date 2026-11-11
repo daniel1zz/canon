@@ -18,7 +18,7 @@ function reviewed(notes: readonly string[]) {
   const root = project();
   writeFileSync(join(root, "canon/config.yaml"), config(notes));
   mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
-  writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
+  writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
   mkdirSync(join(root, "src/billing"), { recursive: true });
   writeFileSync(join(root, "src/billing/.keep"), "");
   sh(root, "add", "-A");
@@ -34,7 +34,7 @@ function setReviewer(root: string, notes: readonly string[], hook?: string) {
 /** Lands a change that writes the given rules, returning what land said. */
 async function landRules(root: string, title: string, rules: readonly number[]) {
   const s = startNew(root, title);
-  for (const n of rules) writeFileSync(join(s.worktree, `canon/rules/billing/${id(n)}.md`), `---\nid: ${id(n)}\ntitle: R${n} ${title}\nuntested: demo\n---\n## 规则\n\n${title} ${n}.\n\n## 例子\n\n- a → b\n`);
+  for (const n of rules) writeFileSync(join(s.worktree, `canon/rules/billing/${id(n)}.md`), `---\nid: ${id(n)}\ntitle: R${n} ${title}\nuntested: demo\nbusiness: x\n---\n## 规则\n\n${title} ${n}.\n\n## 例子\n\n- a → b\n`);
   sh(s.worktree, "add", "-A");
   sh(s.worktree, "commit", "-qm", title);
   const lines: string[] = [];

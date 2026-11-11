@@ -12,7 +12,7 @@ function fixture(extraConfig = "") {
   const root = project();
   const marker = `${root}-floor-ran`;
   mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
-  writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
+  writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
   mkdirSync(join(root, "src/billing"), { recursive: true });
   writeFileSync(join(root, "src/billing/.keep"), "");
   writeFileSync(join(root, "canon/config.yaml"), `floor: "touch ${marker}; test ! -e FAIL"\ntests: ["src/**/*.test.ts"]\n${extraConfig}`);
@@ -21,7 +21,7 @@ function fixture(extraConfig = "") {
   return { root, marker };
 }
 
-const ruleText = `---\nid: ${["BR", 1].join("-")}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds are fine.\n`;
+const ruleText = `---\nid: ${["BR", 1].join("-")}\ntitle: Refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\nRefunds are fine.\n`;
 
 function withRule(root: string) {
   const s = startNew(root, "New rule");

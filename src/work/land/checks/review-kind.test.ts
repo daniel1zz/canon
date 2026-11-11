@@ -20,7 +20,7 @@ function kindProject() {
   writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\ninstructions: [CLAUDE.md]\nreview: ${JSON.stringify(script)}\n`);
   writeFileSync(join(root, "CLAUDE.md"), "# Project\n\nRun the tests.\n");
   mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
-  writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
+  writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
   mkdirSync(join(root, "src/billing"), { recursive: true });
   writeFileSync(join(root, "src/billing/.keep"), "");
   sh(root, "add", "-A");
@@ -28,7 +28,7 @@ function kindProject() {
   const kinds = () => (existsSync(log) ? readFileSync(log, "utf8").trim().split("\n") : []);
   const change = (claudeLine = false) => {
     const s = startNew(root, "New rule");
-    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nRefunds are fine.\n\n## 例子\n\n- a → b\n`);
+    writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\nRefunds are fine.\n\n## 例子\n\n- a → b\n`);
     if (claudeLine) writeFileSync(join(s.worktree, "CLAUDE.md"), "# Project\n\nRun the tests.\n\nRun them twice.\n");
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "rule");

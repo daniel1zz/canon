@@ -102,6 +102,11 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         problems.push({ path: rel(full), message: "`untested` must state the reason the rule has no test" });
         continue;
       }
+      const business = p.meta["business"];
+      if (business !== undefined && (typeof business !== "string" || business.trim() === "")) {
+        problems.push({ path: rel(full), message: "`business` must name a business its domain README lists" });
+        continue;
+      }
       const lists = codeLists(p.meta["lists"]);
       if (typeof lists === "string") {
         problems.push({ path: rel(full), message: lists });
@@ -126,6 +131,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         domain,
         status: p.status as RuleStatus,
         ...(typeof untested === "string" ? { untested } : {}),
+        ...(typeof business === "string" ? { business: business.trim() } : {}),
         ...(lists.length > 0 ? { lists } : {}),
         ...(tags.release !== undefined ? { release: tags.release } : {}),
         ...(tags.changedIn.length > 0 ? { changedIn: tags.changedIn } : {}),

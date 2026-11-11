@@ -15,9 +15,18 @@ Subagents read the rules, implement and test them, and report gaps or contradict
 
 The main session is task-local, not one project-wide writer: concurrent top-level sessions stay within their assigned change and rule scope. For a rule edit discovered during delegated implementation, hand the change back through canon's existing claim workflow before the main session edits it.
 
-## 1. Find what exists
+## 1. Find the business, then the rule
 
-- `canon context <domain|path>` and `canon search <word>` first. Most requirements change an existing rule; edit it in place, keep its id. A rule that is no longer true is retired (`canon rule retire`), never left beside its replacement.
+A requirement lands in a business, not in a directory. Work down, in this order:
+
+1. `canon context <domain|path>`. Read the domain README's `## 业务` list before any rule: it names the businesses this domain covers.
+2. Pick the business the requirement belongs to, and read every rule marked with it. `canon rule new --domain <domain>` prints them grouped by business, the unassigned ones last. Those rules are the boundary of that business as it stands: your requirement either changes one of them, or draws a boundary none of them draws yet.
+3. Then `canon search <word>` for the same behaviour elsewhere. A hit under another business or domain means either the boundary is in the wrong place, or the two have to name each other.
+4. No business fits: write the new one into the domain README first, then point the rule at it. `canon check` refuses a rule this work added or changed that names a business its domain does not list.
+
+Stop at step 2 if you cannot say which business the requirement belongs to. That is the signal to use canon-domains, not to write a rule and sort it out later.
+
+- Most requirements change an existing rule; edit it in place, keep its id. A rule that is no longer true is retired (`canon rule retire`), never left beside its replacement.
 - Choosing or creating the domain for a rule, or a domain that has grown mixed: use canon-domains.
 - The same threshold stated in two rules will drift apart. Keep it in one and let the other rule name it.
 

@@ -27,7 +27,7 @@ function record(db: CoordDb, findings: readonly Finding[], reviewed: readonly st
   return { ...r.value, event };
 }
 
-const ruleFile = (n: number, status = "active") => `---\nid: ${BR(n)}\ntitle: Rule ${n}\nstatus: ${status}\nuntested: fixture\n---\n## 规则\n\nRule ${n}.\n\n## 例子\n\n- a → b\n`;
+const ruleFile = (n: number, status = "active") => `---\nid: ${BR(n)}\ntitle: Rule ${n}\nstatus: ${status}\nuntested: fixture\nbusiness: x\n---\n## 规则\n\nRule ${n}.\n\n## 例子\n\n- a → b\n`;
 
 /** A project with a billing domain holding BR-1, BR-2, BR-3 and a reviewer that answers with no findings, or `review: none`. */
 function billing(review: "none" | "empty" = "none") {
@@ -35,7 +35,7 @@ function billing(review: "none" | "empty" = "none") {
   const reviewer = review === "none" ? "none" : `"echo '{\\"findings\\":[]}'"`;
   writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: ${reviewer}\n`);
   mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
-  writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
+  writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
   mkdirSync(join(root, "src/billing"), { recursive: true });
   writeFileSync(join(root, "src/billing/.keep"), "");
   for (const n of [1, 2, 3]) writeFileSync(join(root, `canon/rules/billing/${BR(n)}.md`), ruleFile(n));

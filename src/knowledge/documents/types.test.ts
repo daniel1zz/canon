@@ -12,7 +12,7 @@ const SPEC = "types:\n  spec:\n    prefix: SP\n    dir: specs\n    statuses: [dr
 function repo(config: string, files: Record<string, string> = {}): string {
   const root = mkdtempSync(join(tmpdir(), "canon-types-"));
   Bun.spawnSync(["git", "init", "-q", "-b", "main"], { cwd: root });
-  const all = { "canon/config.yaml": `floor: "true"\ntests: []\n${config}`, "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n", ...files };
+  const all = { "canon/config.yaml": `floor: "true"\ntests: []\n${config}`, "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n", ...files };
   for (const [p, text] of Object.entries(all)) {
     mkdirSync(dirname(join(root, p)), { recursive: true });
     writeFileSync(join(root, p), text);
@@ -90,7 +90,7 @@ describe("declared document types", () => {
   });
 
   test("BR-2053: context lists declared-type documents that mention the domain's rules, and a declared id resolves to its domains", () => {
-    const rule = `---\nid: ${id("BR", 1)}\ntitle: Refunds\nuntested: fixture\n---\n## 规则\n\nRefunds.\n`;
+    const rule = `---\nid: ${id("BR", 1)}\ntitle: Refunds\nuntested: fixture\nbusiness: x\n---\n## 规则\n\nRefunds.\n`;
     const root = repo(SPEC, {
       [`canon/rules/billing/${id("BR", 1)}.md`]: rule,
       [`canon/specs/${id("SP", 1)}.md`]: doc("SP", 1, "", `Builds on ${id("BR", 1)}.`),
@@ -104,7 +104,7 @@ describe("declared document types", () => {
   });
 
   test("BR-2054: declared fields must be filled; new documents get them empty until then", () => {
-    const rule = (n: number, extra: string) => `---\nid: ${id("BR", n)}\ntitle: R${n}\nuntested: fixture\n${extra}---\n## 规则\n\nS.\n`;
+    const rule = (n: number, extra: string) => `---\nid: ${id("BR", n)}\ntitle: R${n}\nuntested: fixture\n${extra}business: x\n---\n## 规则\n\nS.\n`;
     const root = repo("types:\n  rule:\n    fields: [owner]\n", {
       [`canon/rules/billing/${id("BR", 1)}.md`]: rule(1, ""),
       [`canon/rules/billing/${id("BR", 2)}.md`]: rule(2, "owner: billing-team\n"),
@@ -114,7 +114,7 @@ describe("declared document types", () => {
     expect(out).toContain(`file-invalid       canon/rules/billing/${id("BR", 1)}.md: front matter \`owner\` is required`);
     expect(out).not.toContain(`${id("BR", 2)}.md`);
     expect(out).not.toContain("ref-dangling"); // the rule missing a field still resolves
-    const made = canon(root, "rule", "new", "--domain", "billing", "--title", "New", "--untested", "fixture").out.trim();
+    const made = canon(root, "rule", "new", "--domain", "billing", "--title", "New", "--untested", "fixture").out.trim().split("\n").at(-1)!;
     expect(readFileSync(join(root, made), "utf8")).toContain('owner: ""');
   });
 

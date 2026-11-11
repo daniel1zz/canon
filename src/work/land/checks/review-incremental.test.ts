@@ -5,7 +5,7 @@ import { land } from "../land.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 const [one, two] = [["BR", 1].join("-"), ["BR", 2].join("-")];
-const ruleText = (id: string, text: string) => `---\nid: ${id}\ntitle: Refunds ${id}\nuntested: demo\n---\n## 规则\n\n${text}\n\n## 例子\n\n- a → b\n`;
+const ruleText = (id: string, text: string) => `---\nid: ${id}\ntitle: Refunds ${id}\nuntested: demo\nbusiness: x\n---\n## 规则\n\n${text}\n\n## 例子\n\n- a → b\n`;
 
 /**
  * billing with a reviewer that answers `verdicts` in turn (the last repeats) and keeps each prompt, and a before_land
@@ -22,7 +22,7 @@ function relanding(verdicts: string[] = ["ok"]) {
   chmodSync(script, 0o755);
   writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: ${JSON.stringify(script)}\nhooks:\n  before_land: 'test -f ${marker} || { touch ${marker}; exit 1; }'\n`);
   mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
-  writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
+  writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
   mkdirSync(join(root, "src/billing"), { recursive: true });
   writeFileSync(join(root, "src/billing/.keep"), "");
   sh(root, "add", "-A");
@@ -75,7 +75,7 @@ describe("reviewing a re-landing whose changed documents already passed (D-81)",
     const s = t.start();
     await land(ws(s.worktree), FAST, quiet);
     // a domain README is not a rule or a decision: the full prompt changes, the documents that landed do not
-    t.onMain("canon/rules/billing/README.md", "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回给客户\n");
+    t.onMain("canon/rules/billing/README.md", "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回给客户\n\n## 业务\n\n- **x**：y\n");
     const said: string[] = [];
     expect((await land(ws(s.worktree), FAST, (l) => said.push(l))).kind).toBe("landed");
     expect(t.runs()).toBe(1);
@@ -103,7 +103,7 @@ describe("reviewing a re-landing whose changed documents already passed (D-81)",
     expect(small).toContain("# Incremental review");
     const section = "\n# Lines added or changed in this landing\n"; // the section heading, not the criterion's mention of it
     expect(small).toContain(section);
-    expect(small).toContain(`## ${one} (canon/rules/billing/${one}.md)\n\n10: ${restating}\n`); // only the added line
+    expect(small).toContain(`## ${one} (canon/rules/billing/${one}.md)\n\n11: ${restating}\n`); // only the added line
     expect(small).not.toContain("# Possible restatements found by shared wording");
     // the other side: a rule new in this landing has no entry, so all of its lines are new
     const n = relanding();

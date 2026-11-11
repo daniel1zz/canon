@@ -18,12 +18,13 @@ function corpusOf(files: Record<string, string>) {
   return { root, ...readCorpus(root) };
 }
 
-const rule = (n: number, title: string, body: string, status = "active") => `---\nid: ${id("BR", n)}\ntitle: ${title}\nstatus: ${status}\nuntested: fixture\n---\n${body}\n`;
+const rule = (n: number, title: string, body: string, status = "active", business?: string) =>
+  `---\nid: ${id("BR", n)}\ntitle: ${title}\nstatus: ${status}\nuntested: fixture\n${business === undefined ? "" : `business: ${business}\n`}---\n${body}\n`;
 
 const files = {
-  "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney in and out.\n\n## 术语\n\n- **退款**：钱退回\n",
+  "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney in and out.\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **退款**：钱怎么退回去\n",
   "canon/rules/auth/README.md": "---\ncode: [src/auth]\n---\n# auth\n\n## 术语\n\n- **退款**：钱退回\n",
-  [`canon/rules/billing/${id("BR", 1)}.md`]: rule(1, "Refund window", "Refunds within 30 days."),
+  [`canon/rules/billing/${id("BR", 1)}.md`]: rule(1, "Refund window", "Refunds within 30 days.", "active", "退款"),
   [`canon/rules/billing/${id("BR", 2)}.md`]: rule(2, "Old fee", "Retired.", "retired"),
   [`canon/rules/auth/${id("BR", 3)}.md`]: rule(3, "Session length", "Sessions last 12 hours."),
   [`canon/decisions/${id("D", 1)}-a.md`]: `---\nid: ${id("D", 1)}\ntitle: Why 30 days\nstatus: accepted\n---\nBecause of ${id("BR", 1)}.\n`,
@@ -39,6 +40,9 @@ describe("context", () => {
     expect(ctx.rules.map((r) => r.id)).toEqual([id("BR", 1)]); // retired rule left out, auth not included
     expect(ctx.decisions.map((d) => d.id)).toEqual([id("D", 1)]); // proposed decision left out
     expect(ctx.changes.map((c) => c.id)).toEqual([id("C", 1)]);
+    // BR-2007: the title line of a rule that names a business carries it; a rule without one carries nothing
+    expect(renderContext("", ctx, { full: false, target: "billing" })).toContain(`- ${id("BR", 1)} Refund window [业务: 退款]`);
+    expect(renderContext("", contextFor(corpus, "src/auth/session.ts"), { full: false, target: "auth" })).not.toContain("[业务:");
   });
 
   test("BR-2112: by default rules are listed by id and title only; with full every rule's text is printed", () => {

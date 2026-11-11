@@ -12,6 +12,7 @@ import type { TestReports } from "../../work/verify/ledger.ts";
 import { historyOf, pathFindings } from "./paths.ts";
 import { listFindings } from "./lists.ts";
 import { architectureFindings, type ArchitectureBase, type ArchitectureRule } from "./architecture.ts";
+import { businessFindings } from "../domains/business.ts";
 import { releaseFindings } from "../releases/check.ts";
 import { planFindings } from "../plans/check.ts";
 import { staleLinks } from "../links/links.ts";
@@ -43,6 +44,7 @@ export type CheckRule =
   | "rule-no-statement" // an active or planned rule has no non-empty "## 规则" section
   | "rule-no-example" // an active or planned rule without `untested:` has no example in "## 例子"
   | "example-before-change" // a current rule's "## 例子" states how the product behaved before the change (BR-2301)
+  | "rule-business-unmapped" // a rule this work added or changed names no business its domain lists (BR-2431)
   | "domain-code-missing" // a domain README lists a code path that does not exist (BR-2079)
   | "domain-name-technical" // a domain named after a technical layer: only ever a note, never a finding (BR-2318)
   | "domain-code-declared" // a README lists `code:` where the layout gives the location (BR-2117)
@@ -238,6 +240,8 @@ export function check(input: CheckInput): Finding[] {
   findings.push(...planFindings(input.corpus));
   for (const f of listFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "list-mismatch", message: f.message });
   findings.push(...architectureFindings(input));
+  // reason: `architecture.since` is this work's base commit, which is also what "added or changed by this work" means here (BR-2431, BR-2344)
+  for (const f of businessFindings(input.root, input.corpus, input.architecture?.since)) findings.push({ path: f.path, rule: "rule-business-unmapped", message: f.message });
   for (const s of staleLinks(input.corpus)) {
     findings.push({ path: s.doc.path, rule: "link-stale", message: `\`links\` records ${s.id}, which the text of ${s.doc.id} no longer names as a rule or decision: delete that line from \`links\` (BR-2426)` });
   }

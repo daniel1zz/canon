@@ -15,10 +15,10 @@ const B2 = id("BR", 2);
 
 const STATEMENT = "退款在七个工作日内原路退回到付款账户";
 const rule = (n: number, statement: string, status = "active", examples = "- a → b") =>
-  `---\nid: ${id("BR", n)}\ntitle: Rule ${n}\nstatus: ${status}\nuntested: fixture\n---\n\n## 规则\n\n${statement}\n\n## 例子\n\n${examples}\n`;
+  `---\nid: ${id("BR", n)}\ntitle: Rule ${n}\nstatus: ${status}\nuntested: fixture\nbusiness: x\n---\n\n## 规则\n\n${statement}\n\n## 例子\n\n${examples}\n`;
 const decision = (n: number, body: string) =>
   `---\nid: ${id("D", n)}\ntitle: D${n}\nstatus: accepted\n---\n\n## 背景\n\n${body}\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\nA\n\n## 后果\n\nx\n`;
-const README = "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n";
+const README = "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n";
 
 function canon(cwd: string, args: string[], stdin?: string) {
   const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: stdin === undefined ? "ignore" : Buffer.from(stdin), env: { ...process.env, CANON_ACTOR: "agent:test" } });
@@ -47,12 +47,12 @@ describe("canon restatements", () => {
     const r = list(root);
     expect(r.code).toBe(0);
     expect(r.out.split("\n")).toEqual([
-      `canon/rules/billing/${B2}.md:10: ${B2} restates ${B1} (13 runs shared with its 规则 section): "退款按 ${B1} 在七个工作日内原路退回到付款账户。"; keep what ${B2} adds and name ${B1} for the rest`,
+      `canon/rules/billing/${B2}.md:11: ${B2} restates ${B1} (13 runs shared with its 规则 section): "退款按 ${B1} 在七个工作日内原路退回到付款账户。"; keep what ${B2} adds and name ${B1} for the rest`,
       "1 restatement(s) in 1 document(s)",
       "",
     ]);
     const j = canon(root, ["restatements", "--json"]);
-    expect(JSON.parse(j.out)).toEqual([{ path: `canon/rules/billing/${B2}.md`, line: 10, id: B2, cited: B1, shared: 13, sentence: `退款按 ${B1} 在七个工作日内原路退回到付款账户。` }]);
+    expect(JSON.parse(j.out)).toEqual([{ path: `canon/rules/billing/${B2}.md`, line: 11, id: B2, cited: B1, shared: 13, sentence: `退款按 ${B1} 在七个工作日内原路退回到付款账户。` }]);
   });
 
   test("BR-2401: 9 shared runs (12 characters copied) are not a restatement; 10 (13 characters) are", () => {
@@ -150,7 +150,7 @@ describe("canon check restatement notes", () => {
   test("BR-2403: in a change's worktree a restatement in new lines is a note on stderr; stdout and the exit code stay", () => {
     const { wt } = inWorktree("x。", (t) => t.replace("x。", `x。\n${COPY}`));
     const r = canon(wt, ["check"]);
-    expect(r.err).toContain(`note: canon/rules/billing/${B2}.md:11: ${B2} restates ${B1}`);
+    expect(r.err).toContain(`note: canon/rules/billing/${B2}.md:12: ${B2} restates ${B1}`);
     expect(r.out).toMatch(/^ok: /);
     expect(r.code).toBe(0);
   });

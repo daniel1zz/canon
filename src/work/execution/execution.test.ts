@@ -18,7 +18,7 @@ const br = (n: number) => ["BR", n].join("-");
 const FINISH = { ...FAST, finish: true };
 
 const ruleText = (n: number, o: { status?: string; untested?: string; statement?: string; examples?: string; title?: string } = {}) =>
-  `---\nid: ${br(n)}\ntitle: ${o.title ?? `Rule ${n}`}\n${o.status ? `status: ${o.status}\n` : ""}${o.untested ? `untested: ${o.untested}\n` : ""}---\n## 规则\n\n${o.statement ?? `Statement ${n}.`}\n\n## 例子\n\n${o.examples ?? `- input ${n} → output ${n}`}\n`;
+  `---\nid: ${br(n)}\ntitle: ${o.title ?? `Rule ${n}`}\n${o.status ? `status: ${o.status}\n` : ""}${o.untested ? `untested: ${o.untested}\n` : ""}business: x\n---\n## 规则\n\n${o.statement ?? `Statement ${n}.`}\n\n## 例子\n\n${o.examples ?? `- input ${n} → output ${n}`}\n`;
 
 const testFile = (ns: number[], extra = "") => `${ns.map((n) => `it("${br(n)}: case", () => {\n  expect(${n}).toBe(${n});\n});\n`).join("")}${extra}`;
 
@@ -43,7 +43,7 @@ function fixture(o: { files?: Record<string, string>; review?: string; timing?: 
   const root = project();
   const files: Record<string, string> = {
     "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\n${o.timing ? `floor_timing: ${o.timing}\n` : ""}review: ${JSON.stringify(o.review ?? "none")}\n`,
-    "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n",
+    "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n",
     [`canon/rules/billing/${br(1)}.md`]: ruleText(1),
     [`canon/rules/billing/${br(2)}.md`]: ruleText(2),
     "src/billing/a.test.ts": testFile([1, 2]),
@@ -269,7 +269,7 @@ describe("rules a change edits without listing them (BR-2241, issue #104)", () =
     const s = startNew(root, "Move only");
     setChange(s.worktree, s.change, []);
     mkdirSync(join(s.worktree, "canon/rules/billing/refunds"), { recursive: true });
-    writeFileSync(join(s.worktree, "canon/rules/billing/refunds/README.md"), "# billing/refunds\n\n## 术语\n\n- **退款**：钱退回\n");
+    writeFileSync(join(s.worktree, "canon/rules/billing/refunds/README.md"), "# billing/refunds\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
     renameSync(join(s.worktree, `canon/rules/billing/${br(1)}.md`), join(s.worktree, `canon/rules/billing/refunds/${br(1)}.md`));
     sh(s.worktree, "rm", "-q", "src/billing/c.test.ts");
     write(s.worktree, { [`canon/rules/billing/${br(2)}.md`]: ruleText(2, { title: "Retitled" }), [`canon/rules/billing/${br(3)}.md`]: ruleText(3, { status: "retired", examples: "- gone → yes" }) });
@@ -462,7 +462,7 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
   test("BR-2243: a rule moved to a subdomain with only its statement changed still finds its earlier version", async () => {
     const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`));
     mkdirSync(join(s.worktree, "canon/rules/billing/refunds"), { recursive: true });
-    writeFileSync(join(s.worktree, "canon/rules/billing/refunds/README.md"), "# billing/refunds\n\n## 术语\n\n- **退款**：钱退回\n");
+    writeFileSync(join(s.worktree, "canon/rules/billing/refunds/README.md"), "# billing/refunds\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
     renameSync(join(s.worktree, `canon/rules/billing/${br(1)}.md`), join(s.worktree, `canon/rules/billing/refunds/${br(1)}.md`));
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "move");

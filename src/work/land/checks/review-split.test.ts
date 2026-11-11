@@ -5,7 +5,7 @@ import { land } from "../land.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
 
 const KB = 1024;
-const bigRule = (n: number, title: string, tag: string) => `---\nid: ${["BR", n].join("-")}\ntitle: ${title}\nuntested: demo\n---\n## 规则\n\n${tag} ${"x".repeat(9 * KB)}\n\n## 例子\n\n- a → b\n`;
+const bigRule = (n: number, title: string, tag: string) => `---\nid: ${["BR", n].join("-")}\ntitle: ${title}\nuntested: demo\nbusiness: x\n---\n## 规则\n\n${tag} ${"x".repeat(9 * KB)}\n\n## 例子\n\n- a → b\n`;
 
 /**
  * A project whose billing domain has two subdomains of one 9 KB rule each, and a reviewer script that keeps the prompt of
@@ -25,9 +25,9 @@ if [ "$mode" = block2 ] && [ "$n" = 2 ]; then echo '{"verdict":"block","findings
   );
   writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview_max_prompt_kb: ${maxKb}\n# the script numbers the calls as they arrive, so they run one after another\nreview_parallel: 1\nreview: 'sh ${script} ${dir} ${mode}'\n`);
   for (const [path, text] of Object.entries({
-    "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n",
-    "canon/rules/billing/x/README.md": "# billing/x\n\n## 术语\n\n- **子域 X**：x\n",
-    "canon/rules/billing/y/README.md": "# billing/y\n\n## 术语\n\n- **子域 Y**：y\n",
+    "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n",
+    "canon/rules/billing/x/README.md": "# billing/x\n\n## 术语\n\n- **子域 X**：x\n\n## 业务\n\n- **x**：y\n",
+    "canon/rules/billing/y/README.md": "# billing/y\n\n## 术语\n\n- **子域 Y**：y\n\n## 业务\n\n- **x**：y\n",
     "canon/rules/billing/x/BR-10.md": bigRule(10, "Rule ten", "TEXT-10"),
     "canon/rules/billing/y/BR-11.md": bigRule(11, "Rule eleven", "TEXT-11"),
     "src/billing/.keep": "",
@@ -39,7 +39,7 @@ if [ "$mode" = block2 ] && [ "$n" = 2 ]; then echo '{"verdict":"block","findings
   sh(root, "commit", "-qm", "domain");
   const change = (extra = "") => {
     const s = startNew(root, "New rule");
-    writeFileSync(join(s.worktree, "canon/rules/billing/BR-1.md"), `---\nid: BR-1\ntitle: Refunds\nuntested: demo\n---\n## 规则\n\nCHANGED-1 refunds are fine.${extra}\n\n## 例子\n\n- a → b\n`);
+    writeFileSync(join(s.worktree, "canon/rules/billing/BR-1.md"), `---\nid: BR-1\ntitle: Refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\nCHANGED-1 refunds are fine.${extra}\n\n## 例子\n\n- a → b\n`);
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "rule");
     return s;

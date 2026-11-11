@@ -16,7 +16,7 @@ async function canonIn(cwd: string, ...args: string[]) {
 // Ids are assembled at runtime so this file does not itself name rules when canon check scans the repo.
 const rid = (n: number) => ["BR", n].join("-");
 const did = (n: number) => ["D", n].join("-");
-const rule = (n: number, text = "Rule text.") => `---\nid: ${rid(n)}\ntitle: Rule ${n}\nstatus: active\nuntested: fixture\n---\n\n## 规则\n\n${text}\n\n## 例子\n\n- a → b\n`;
+const rule = (n: number, text = "Rule text.") => `---\nid: ${rid(n)}\ntitle: Rule ${n}\nstatus: active\nuntested: fixture\nbusiness: x\n---\n\n## 规则\n\n${text}\n\n## 例子\n\n- a → b\n`;
 const decision = (n: number) => `---\nid: ${did(n)}\ntitle: Pick ${n}\nstatus: proposed\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：refund.txt “export function refund(order)”\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
 
 const write = (wt: string, path: string, text: string) => {
@@ -27,7 +27,7 @@ const commit = (wt: string) => {
   sh(wt, "add", "-A");
   sh(wt, "commit", "-qm", "docs");
 };
-const readme = (name: string) => `---\nname: ${name}\ncode: [refund.txt]\n---\n# ${name}\n\nOne domain.\n\n## 术语\n\n- **x**：y。\n`;
+const readme = (name: string) => `---\nname: ${name}\ncode: [refund.txt]\n---\n# ${name}\n\nOne domain.\n\n## 术语\n\n- **x**：y。\n\n## 业务\n\n- **x**：y\n`;
 const withDomain = (wt: string) => {
   write(wt, "refund.txt", "export function refund(order) {}\n");
   write(wt, "canon/rules/shop/README.md", readme("shop"));

@@ -6,6 +6,7 @@ import { readBacklog } from "./backlog.ts";
 import { listedChanges, marksOf } from "../../work/session/inflight.ts";
 import type { readCorpus } from "./read.ts";
 import { technicalLayerWord, technicalNameAdvice } from "./domain-names.ts";
+import { contractLines } from "../domains/business.ts";
 import { createDoc, createDomain, setMeta } from "./write.ts";
 import { refuseOnGuardedMain } from "./guarded.ts";
 import { findDoc } from "../query/query.ts";
@@ -22,6 +23,8 @@ function newDocCommand(kind: string, extra: Record<string, { type: "string"; des
       const { corpus } = corpusOf(ws);
       const a = args as Record<string, unknown>;
       refuseOnGuardedMain(ws, kind === "" ? String(a["type"]) : kind, String(a["title"]));
+      // reason: the domain's whole boundary is read at the moment a new rule would otherwise repeat part of it (BR-2432, D-96)
+      if (kind === "rule" && typeof a["domain"] === "string") for (const line of contractLines(corpus, a["domain"])) say(line);
       const path = must(
         createDoc(ws.root, corpus, ws.db, ws.actor, {
           kind: kind === "" ? String(a["type"]) : kind,

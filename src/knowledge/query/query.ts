@@ -207,7 +207,7 @@ export function renderContext(root: string, ctx: Context, opts: { readonly full:
   const out: string[] = [];
   const rulesOf = (rules: readonly Rule[]) => {
     if (opts.full) for (const r of rules) out.push(ruleSection(r));
-    else if (rules.length) out.push(`## Rules (${rules.length})\n\n${rules.map((r) => `- ${r.id}${plannedMark(r)}${releaseMark(r)} ${r.title}`).join("\n")}\n`);
+    else if (rules.length) out.push(`## Rules (${rules.length})\n\n${rules.map((r) => `- ${r.id}${plannedMark(r)}${releaseMark(r)} ${r.title}${businessMark(r)}`).join("\n")}\n`);
   };
   const amended = (id: string) => (ctx.amended.has(id) ? ` — partly amended by ${ctx.amended.get(id)!.join(", ")}` : "");
   if (ctx.target) out.push(`# ${ctx.target.id} ${ctx.target.title}${amended(ctx.target.id)}\n\n${ctx.target.body.trim()}\n`);
@@ -232,6 +232,9 @@ export const ruleSection = (r: Rule): string => `## ${r.id}${plannedMark(r)}${re
 
 /** ` [release R-1]` or ` [release R-1, changed in R-2, R-3]` after a tagged rule's id, nothing for a rule that belongs to no release (D-61). */
 export const releaseMark = (d: Doc): string => (d.kind === "rule" && d.release !== undefined ? ` [release ${d.release}${d.changedIn?.length ? `, changed in ${d.changedIn.join(", ")}` : ""}]` : "");
+
+/** ` [业务: <name>]` after a rule that names one, nothing otherwise (BR-2007, BR-2430). */
+export const businessMark = (d: Doc): string => (d.kind === "rule" && d.business !== undefined ? ` [业务: ${d.business}]` : "");
 
 /** ` [规划中]` after a planned rule's id, nothing otherwise (BR-2238). */
 export const plannedMark = (d: Doc): string => (d.kind === "rule" && d.status === "planned" ? " [规划中]" : "");

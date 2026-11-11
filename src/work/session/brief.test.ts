@@ -268,7 +268,7 @@ describe("the lessons reminder comes last", () => {
       `floor: "true"\ntests: []\nreview: 'cat > /dev/null; echo ''{"verdict":"ok","findings":["${rule} is vague"]}'''\nhooks:\n  after_stop: "echo stopped-hook"\n  after_land: "echo landed-hook"\n`,
     );
     mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
-    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n");
+    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
     mkdirSync(join(root, "src/billing"), { recursive: true });
     writeFileSync(join(root, "src/billing/.keep"), "");
     sh(root, "add", "-A");
@@ -279,7 +279,7 @@ describe("the lessons reminder comes last", () => {
     const stopLines = stopped.out.trim().split("\n");
     expect(stopLines.at(-1)).toBe(LESSON_REMINDER);
     expect(stopLines.findIndex((l) => l.includes("stopped-hook"))).toBeGreaterThan(-1);
-    writeFileSync(join(s.worktree, `canon/rules/billing/${rule}.md`), `---\nid: ${rule}\ntitle: 退款\nstatus: active\nuntested: fixture\n---\n## 规则\n\n退款。\n\n## 例子\n\n- 退 → 退\n`);
+    writeFileSync(join(s.worktree, `canon/rules/billing/${rule}.md`), `---\nid: ${rule}\ntitle: 退款\nstatus: active\nuntested: fixture\nbusiness: x\n---\n## 规则\n\n退款。\n\n## 例子\n\n- 退 → 退\n`);
     // reason: the new active rule is executed by this change, so its close needs evidence: an acceptance line (BR-2241)
     const changeFile = join(s.worktree, "canon/changes", readdirSync(join(s.worktree, "canon/changes")).find((f) => f.startsWith(`${s.change}-`) || f === `${s.change}.md`)!);
     writeFileSync(changeFile, `${readFileSync(changeFile, "utf8").trimEnd()}\n\n## 验收\n\n- ${rule}：退一笔 → 已退\n`);

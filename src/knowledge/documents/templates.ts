@@ -82,7 +82,8 @@ export function templateFor(type: string, projectTemplates: Readonly<Record<stri
 }
 
 export function domainReadme(name: string, description: string): string {
-  return `# ${name}\n\n${description || "<这个领域管什么、不管什么。>"}\n\n## 术语\n\n- **<术语>**：<在这个领域里的含义>\n`;
+  // reason: a new domain states its businesses from the start; a rule must name one of them (BR-2430, D-96)
+  return `# ${name}\n\n${description || "<这个领域管什么、不管什么。>"}\n\n## 术语\n\n- **<术语>**：<在这个领域里的含义>\n\n## 业务\n\n- **<业务名>**：<这个业务管什么>\n`;
 }
 
 /** The text of one `## ` section of a rule body, or undefined when the section is absent. */
