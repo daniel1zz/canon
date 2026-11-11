@@ -11,6 +11,7 @@ import { err, ok, type Result } from "../../kernel/result.ts";
 import { backlogAt } from "../../knowledge/documents/backlog.ts";
 import { findDoc, referencedIds } from "../../knowledge/query/query.ts";
 import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
+import { suspectNotice } from "../../knowledge/links/brief.ts";
 import { claimOfWorktree, claimsWithState, type ClaimState } from "../claims/claims.ts";
 import { questions } from "../humans/questions.ts";
 import { activeQueue, keptPlaces } from "../land/queue/queue.ts";
@@ -176,8 +177,11 @@ function briefState(ws: Workspace): Result<void> {
     for (const u of overlaps.unreadable) say(`Overlap check failed: ${u}`);
     for (const o of overlaps.found) say(`Overlap: ${o.change} also changes ${o.files.join(", ")}`);
     // Open review notes on the rules and decisions this change names, handled in this change if it touches them (BR-2147).
-    const own = findDoc(corpusOf(ws).corpus, mine.subject);
+    const corpus = corpusOf(ws).corpus;
+    const own = findDoc(corpus, mine.subject);
     if (own) for (const n of openNotes(ws.db, [...referencedIds(own, ws.config.types)].filter((id) => id !== own.id))) say(`Open review note on ${renderNote(n)}`);
+    // Suspect references on the rules and decisions this change names (BR-2429).
+    if (own) for (const line of suspectNotice(ws.root, corpus, referencedIds(own, ws.config.types))) say(line);
   } else {
     // reason: other sessions' handoffs and the question queue are shown only where no change is claimed; injected
     // into a change's session they draw it into work that is not its own (BR-2024)
@@ -186,6 +190,8 @@ function briefState(ws: Workspace): Result<void> {
     if (hs.length) say(`Unfinished changes with handoffs: ${hs.map((h) => h.subject).join(", ")} (canon work status)`);
     const pending = questions(ws.db, "pending").length;
     if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
+    // Suspect references project-wide, counted (BR-2429).
+    for (const line of suspectNotice(ws.root, corpusOf(ws).corpus)) say(line);
     // The owner's order of open changes on main and on change branches main lacks yet, the same list and marks as
     // canon change list, so an agent without a task takes the first unclaimed one (BR-2149, BR-2291, D-20, D-50).
     const onMain = mainCorpus(ws);

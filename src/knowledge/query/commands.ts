@@ -1,7 +1,10 @@
 import { defineCommand } from "citty";
 import { corpusOf, entry, fail, json, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import type { CanonError } from "../../kernel/result.ts";
 import { openNotes, renderNote } from "../review/notes.ts";
 import { relatedElsewhere, relatedLines } from "./related.ts";
+import { linksOf } from "../links/history.ts";
+import { referenceSection } from "../links/links.ts";
 import { amendedBy, contextFor, findDoc, isIdQuery, plannedMark, rawText, releaseMark, renderContext, renderSearch, search } from "./query.ts";
 
 /** `canon show`, `search`, `context`: reading the corpus. */
@@ -54,10 +57,21 @@ const context = defineCommand({
       const lines = relatedLines(ctx.target, relatedElsewhere(corpus, ctx.target));
       if (lines.length) say(`${lines.join("\n")}\n`);
     }
+    // References both ways, the suspect ones marked (BR-2428); a history that cannot be read is said here and exits 4 at the end.
+    let linksFailed: CanonError | undefined;
+    if (ctx.target && (ctx.target.kind === "rule" || ctx.target.kind === "decision")) {
+      const links = linksOf(ws.root, corpus);
+      if (links.ok) say(referenceSection(corpus, links.value, ctx.target));
+      else {
+        linksFailed = links.error;
+        say(`# References\n\ncanon links: ${links.error.message}\n`);
+      }
+    }
     // Open review notes on what this context covers, shown to whoever is about to change it (BR-2146, D-21).
     const ids = [...(ctx.target && ctx.target.kind !== "change" ? [ctx.target.id] : []), ...ctx.rules.map((r) => r.id), ...ctx.decisions.map((d) => d.id)];
     const notes = openNotes(ws.db, ids);
     if (notes.length) say(`# Open review notes\n\nNot blocking and not changes of their own: handle them when you change the document they name.\n${notes.map((n) => `- ${renderNote(n)}`).join("\n")}\n`);
+    if (linksFailed) fail(linksFailed);
   },
 });
 

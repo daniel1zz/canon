@@ -48,6 +48,8 @@ export interface Rule extends Base {
   readonly release?: string;
   /** Later releases that change this behaviour (`changed_in`); only with `release` (D-61). */
   readonly changedIn?: readonly string[];
+  /** Confirmed references (`links`): named document id → its fingerprint when confirmed; only `canon links confirm` writes it (BR-2425). */
+  readonly links?: Readonly<Record<string, string>>;
 }
 
 /** A rule's `lists` entry: the constant `name` in `file` holds each of `items` as a string literal (BR-2180). */
@@ -64,6 +66,8 @@ export interface Decision extends Base {
   readonly supersedes: readonly string[];
   /** Decisions this one changes in part without replacing them (BR-2139). */
   readonly amends: readonly string[];
+  /** Confirmed references, as on a rule (BR-2425). */
+  readonly links?: Readonly<Record<string, string>>;
 }
 
 export interface Change extends Base {

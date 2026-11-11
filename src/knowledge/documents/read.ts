@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { parseDocFile, parseReadme } from "./docfile.ts";
-import { parsePasses } from "./behaviour.ts";
+import { parseLinks, parsePasses } from "./behaviour.ts";
 import { planLink } from "./planlink.ts";
 import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type DecisionStatus, type Doc, type Domain, type Layout, type ReleaseStatus, type RuleStatus } from "./model.ts";
 import { BUILTIN_TYPES, type DocType } from "./types.ts";
@@ -112,6 +112,11 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         problems.push({ path: rel(full), message: tags });
         continue;
       }
+      const links = parseLinks(p.meta["links"]);
+      if (typeof links === "string") {
+        problems.push({ path: rel(full), message: links });
+        continue;
+      }
       docs.push({
         kind: "rule",
         id,
@@ -124,6 +129,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         ...(lists.length > 0 ? { lists } : {}),
         ...(tags.release !== undefined ? { release: tags.release } : {}),
         ...(tags.changedIn.length > 0 ? { changedIn: tags.changedIn } : {}),
+        ...(Object.keys(links).length > 0 ? { links } : {}),
       });
     }
     for (const sub of listDirs(dir)) walk(`${domain}/${sub}`, domain);
@@ -157,7 +163,12 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: "`amends` must be a list of decision ids" });
           continue;
         }
-        docs.push({ kind: "decision", ...common, status: p.status as DecisionStatus, supersedes, amends: amends as string[] });
+        const links = parseLinks(p.meta["links"]);
+        if (typeof links === "string") {
+          problems.push({ path, message: links });
+          continue;
+        }
+        docs.push({ kind: "decision", ...common, status: p.status as DecisionStatus, supersedes, amends: amends as string[], ...(Object.keys(links).length > 0 ? { links } : {}) });
       } else if (type.name === "change") {
         const rules = p.meta["rules"] ?? [];
         if (!Array.isArray(rules) || rules.some((r) => typeof r !== "string")) {

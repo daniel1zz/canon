@@ -14,6 +14,7 @@ import { listFindings } from "./lists.ts";
 import { architectureFindings, type ArchitectureBase, type ArchitectureRule } from "./architecture.ts";
 import { releaseFindings } from "../releases/check.ts";
 import { planFindings } from "../plans/check.ts";
+import { staleLinks } from "../links/links.ts";
 import { EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, RULE_SECTION, section } from "../documents/templates.ts";
 
 /**
@@ -52,6 +53,7 @@ export type CheckRule =
   | "doc-missing-section" // a document lacks a section its type requires, or the section is empty (BR-2091)
   | "path-missing" // a current document names, in backticks, a repository path that was moved or deleted
   | "list-mismatch" // a rule's `lists` front matter disagrees with its text or with the code (BR-2180)
+  | "link-stale" // a rule's or decision's `links` names a document its prose does not name (BR-2426)
   | "release-frozen" // a shipped release's 目标, 范围, 不做 or its set of tagged rules differs from what it was at `shipped_at` (D-61)
   | ArchitectureRule // the architecture overview and the domains and decisions it must follow (D-65)
   | "template-unfilled"; // a rule, decision, change, declared-type document or domain README still holds a template placeholder line
@@ -236,6 +238,9 @@ export function check(input: CheckInput): Finding[] {
   findings.push(...planFindings(input.corpus));
   for (const f of listFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "list-mismatch", message: f.message });
   findings.push(...architectureFindings(input));
+  for (const s of staleLinks(input.corpus)) {
+    findings.push({ path: s.doc.path, rule: "link-stale", message: `\`links\` records ${s.id}, which the text of ${s.doc.id} no longer names as a rule or decision: delete that line from \`links\`, or run canon links confirm on a reference of ${s.doc.id} (BR-2426)` });
+  }
   return findings;
 }
 

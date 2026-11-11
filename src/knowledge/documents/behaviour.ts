@@ -39,3 +39,18 @@ export function parsePasses(v: unknown): Record<string, PassRecord> | string {
   }
   return out;
 }
+
+const LINK_VALUE = /^[0-9a-f]{16}$/;
+
+/** A rule's or decision's `links` front matter (BR-2425): document id → 16 hex fingerprint, or the problem with it. */
+export function parseLinks(v: unknown): Record<string, string> | string {
+  if (v === undefined) return {};
+  const bad = "`links` must map document ids to the 16 hex fingerprint `canon links confirm` wrote (BR-2425)";
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return bad;
+  const out: Record<string, string> = {};
+  for (const [id, value] of Object.entries(v as Record<string, unknown>)) {
+    if (!RULE_ID.test(id) || typeof value !== "string" || !LINK_VALUE.test(value)) return bad;
+    out[id] = value;
+  }
+  return out;
+}
