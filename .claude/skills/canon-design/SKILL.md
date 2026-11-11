@@ -53,7 +53,7 @@ Read only the files of the mode you need. Cross-cutting references (`references/
 | Concern | When | Do |
 |---------|------|----|
 | Security | user input, auth, storage, external calls | trace the data flow, list threats and mitigations |
-| Concurrency | shared state, several sessions or processes | name the interleaving that could break it in normal use and what makes it atomic; judge any other interleaving by canon-triage's criterion (its section 2) |
+| Concurrency | shared state, several sessions or processes | name the interleaving that could break it in normal use and what makes it atomic |
 | Performance | latency-sensitive paths, large data | set a budget and show the design meets it |
 | Observability | new component | what is logged or recorded, and how a failure is noticed |
 | Data privacy | PII or other user data | classify its sensitivity; encryption at rest and in transit; retention period and deletion; audit trail of who reads or changes it |
