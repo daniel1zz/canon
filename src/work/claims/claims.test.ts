@@ -328,6 +328,23 @@ describe("claim lapses become events", () => {
     expect(lapses(d).map((e) => e.kind)).toEqual(["claim.expired"]);
   });
 
+  test("BR-2360: a lease that has expired and whose session process is gone writes only claim.expired", async () => {
+    const d = db();
+    takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * HOUR, await deadProcess());
+    shift(d, "C-1", -13 * HOUR);
+    claimsWithState(d);
+    expect(lapses(d).map((e) => e.kind)).toEqual(["claim.expired"]);
+  });
+
+  test("BR-2360: holder-gone recorded first, then the lease expires: the same version gets a claim.expired too", async () => {
+    const d = db();
+    takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * HOUR, await deadProcess());
+    claimsWithState(d);
+    shift(d, "C-1", -13 * HOUR);
+    claimsWithState(d);
+    expect(lapses(d).map((e) => `${e.kind} ${e.detail["version"]}`)).toEqual(["claim.holder-gone 1", "claim.expired 1"]);
+  });
+
   test("BR-2360: a live claim writes nothing", () => {
     const d = db();
     takeClaim(d, "C-1", "/wt/C-1", "agent:a", 12 * HOUR, selfProcess());
