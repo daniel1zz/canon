@@ -2,11 +2,15 @@
 id: C-455
 title: The incremental rule review lists the lines each changed document adds,
   so already-reviewed text is not judged as new (#178)
-status: open
+status: done
 rules:
   - BR-2405
   - BR-2396
   - BR-2359
+passes:
+  BR-2359: 71e30b6ebe1624f2 test
+  BR-2396: fcdfd9cd1dca831e test
+  BR-2405: 5f954355a9f04678 test
 ---
 
 ## 为什么
