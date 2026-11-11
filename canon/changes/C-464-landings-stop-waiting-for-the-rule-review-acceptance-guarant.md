@@ -3,7 +3,7 @@ id: C-464
 title: Landings stop waiting for the rule review; acceptance guarantees
   consistency; related documents and suspect links surface problems while
   writing
-status: open
+status: done
 rules: []
 ---
 
