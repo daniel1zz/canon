@@ -53,7 +53,7 @@ title: 架构总览
 
 **装进项目的 hook、skill 和 git 守卫**
 - 职责：Claude Code hook（会话开始跑 `canon brief`；每次 Bash 前快照、检查 `canon work` 命令带不带 `--as`（`canon work check-as`，只拒绝、不改写）；提问工具之后记录回答；Write、Edit 或 MultiEdit 之后提示改动的规则或决策在新行里复述了别的规则，并列出和它最相关的几份文档，`canon restatements --hook`，不调模型，D-84、D-90）、`.claude/skills/canon-*`、git 的 `reference-transaction` hook（main 只能由 `canon work land` 移动；新建文档的命令也问 `githook.ts` 当前签出是不是受守卫的 main，是就拒绝，BR-2409）。
-- 数据：项目的 `.claude/settings.json`、`.claude/skills/`、git hook 目录里的守卫文件；skill 的来源是 canon 自己仓库的 `.claude/skills`。`canon init` 和 `canon update` 还写只有标题的 `canon/architecture.md`（已有的不覆盖）。
+- 数据：项目的 `.claude/settings.json`、`.claude/skills/`、git hook 目录里的守卫文件；skill 的来源是 canon 自己仓库的 `.claude/skills`；编译好的 `dist/canon` 先用和它一起发布的 `dist/skills`（BR-2082、BR-2412）。`canon init` 和 `canon update` 还写只有标题的 `canon/architecture.md`（已有的不覆盖）。
 - 代码：`src/install`（`init`、`install`、`update`、`uninstall`、`githook.ts`）。
 - 决策：D-9、D-10、D-16、D-36、D-46、D-53、D-62、D-65、D-84。
 
@@ -73,8 +73,8 @@ title: 架构总览
 
 canon 这个仓库在 `canon/config.yaml` 里配了下面这些，是项目配置，不是 canon 的部件：
 
-- **`dist/canon`**：只在主 checkout 里，PATH 上的 canon 指向它；`after_green` 从后台测过的提交 `bun build --compile` 出来，不从没测过的 main 构建（D-31）。
-- **`scripts/review-claude.sh`**：`review` 配的命令，用 `claude -p` 做规则评审。
+- **`dist/canon` 和 `dist/skills`**：只在主 checkout 里，PATH 上的 canon 指向 `dist/canon`，它装进项目的 skill 来自 `dist/skills`（指向 `skills-<提交>` 的符号链接）。`after_green` 运行 `scripts/release.ts`：先把测过的提交里所有 `canon-*` 的 SKILL.md 和工作说明放在一起做一次重复评审（同样的文字只评审一次），通过才从这个提交编译二进制、复制 skill、切换链接；拦截时什么也不发布，提一个 `canon-review` issue，退出码 1。不从没测过的 main 构建（D-31、D-91、BR-2411、BR-2412）。
+- **`scripts/review-claude.sh`**：`review` 配的命令，用 `claude -p` 做规则评审，也用于发布评审（`CANON_REVIEW_KIND=release`）。
 - **`scripts/code-review.ts`**：`after_land` 配的命令，攒批后让 `claude -p` 评审合入的代码，只找安全和并发问题，发现的提成 GitHub issue；没到点时在后台留一个等待进程（`--wait`，协调数据库的 `code_review_waiter` 保证只有一个），到点评审后退出（D-59、D-68）。
 - **floor**：类型检查加 `scripts/test.sh`；`floor_timing: after`、`land_batch_max: 4`。
 

@@ -73,7 +73,7 @@ export const RULE_CRITERIA = ["contradiction", "untestable", "no-rejected-option
 export const DUPLICATE_CRITERIA = ["duplication"] as const;
 const CRITERIA: readonly string[] = [...RULE_CRITERIA, ...DUPLICATE_CRITERIA];
 const ANSWER_FORMAT_RULE = `{"findings":[{"criterion":"${RULE_CRITERIA.join('"|"')}"|"note","text":"<one sentence, naming the id>"}]`;
-const NO_VERDICT = "Do not give a verdict: canon derives it from the keys.";
+export const NO_VERDICT = "Do not give a verdict: canon derives it from the keys.";
 
 /** The review prompt with every affected domain's whole text in it, however large. */
 export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras = {}): string {
@@ -251,7 +251,7 @@ function deletedDomains(corpus: Corpus, deleted: readonly DeletedDoc[]): string[
 }
 
 /** The two ways a review runs: for a landing (`land`) or for `canon work review` (`preview`). */
-export type ReviewKind = "land" | "preview";
+export type ReviewKind = "land" | "preview" | "release";
 
 /** How a review run is bounded: its time limit, and where a signal handler finds it to stop it (BR-2296). */
 export interface ReviewLimits {

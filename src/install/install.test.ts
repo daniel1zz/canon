@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { installSkills, MANIFEST, skillsSource, versionOf } from "./install.ts";
@@ -111,7 +111,7 @@ describe("project-level skills", () => {
 });
 
 describe("where the skills come from and their version", () => {
-  test("BR-2082: the compiled dist/canon installs from the .claude/skills of the repository that holds it", () => {
+  test("BR-2082 BR-2412: the compiled dist/canon installs from the dist/skills published beside it, else from the .claude/skills of the repository that holds it", () => {
     const repo = dir({ ".claude/skills/canon-z/SKILL.md": "z from the repository holding dist/canon\n" });
     const built = Bun.spawnSync(["bun", "build", "--compile", MAIN, "--outfile", join(repo, "dist/canon")], { stdout: "pipe", stderr: "pipe" });
     expect(built.exitCode).toBe(0);
@@ -121,6 +121,13 @@ describe("where the skills come from and their version", () => {
     const r = Bun.spawnSync([join(repo, "dist/canon"), "install"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env });
     expect([r.exitCode, r.stderr.toString()]).toEqual([0, ""]);
     expect(readFileSync(join(root, ".claude/skills/canon-z/SKILL.md"), "utf8")).toBe("z from the repository holding dist/canon\n");
+    // a release published beside the binary wins over the repository's newer, unchecked skills (BR-2412)
+    mkdirSync(join(repo, "dist/skills-abc1234/canon-z"), { recursive: true });
+    writeFileSync(join(repo, "dist/skills-abc1234/canon-z/SKILL.md"), "z as published\n");
+    symlinkSync("skills-abc1234", join(repo, "dist/skills"));
+    const again = Bun.spawnSync([join(repo, "dist/canon"), "install"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env });
+    expect([again.exitCode, again.stderr.toString()]).toEqual([0, ""]);
+    expect(readFileSync(join(root, ".claude/skills/canon-z/SKILL.md"), "utf8")).toBe("z as published\n");
   });
 
   test("BR-2082: the npm package's bundled dist/canon.js installs from the .claude/skills inside the package", () => {

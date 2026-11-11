@@ -77,9 +77,10 @@ hooks:
     # FORCE_PROMPT_CACHING_5M=1：每次评审的内容只用一次，5 分钟缓存的写入比 1 小时便宜（C-326）
     - "FORCE_PROMPT_CACHING_5M=1 CANON_CODE_REVIEW_AI='claude -p --model sonnet --output-format text' bun scripts/code-review.ts"
   after_green:
-    # main 的后台 floor 通过后，从这个测过的提交重新构建主 checkout 的 dist/canon（PATH 上的 canon），
-    # 不从没测过的 main 构建：合入了把命令行弄坏的变更时，修复变更还能用旧的 canon 合进来（D-31、BR-2222）
-    - 'bun build --compile src/invocation/main.ts --outfile "$CANON_PRIMARY/dist/canon"'
+    # main 的后台 floor 通过后，从这个测过的提交发布主 checkout 的 dist/canon（PATH 上的 canon）和它安装的 dist/skills，
+    # 不从没测过的 main 构建：合入了把命令行弄坏的变更时，修复变更还能用旧的 canon 合进来（D-31、BR-2222）。
+    # 发布前把所有 canon-* skill 和工作说明一起做一次重复评审，拦截时不发布、提 issue、退出码 1（D-91、BR-2411、BR-2412）
+    - "bun scripts/release.ts"
 # 每个检查的复审日期（BR-2069）：到期后 `canon stats` 把它列为待复审
 check_reviews:
   on-main: "2027-02-03"

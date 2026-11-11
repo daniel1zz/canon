@@ -29,7 +29,7 @@ export function readReview(v: unknown): Result<string | undefined> {
 export const reviewKeys = {
   review: configKey<string | undefined>({
     key: "review",
-    doc: `Reviewer for rule and decision text and for standing instructions, the built-in first \`before_land\` step (D-3). Receives the review prompt on stdin, and in \`CANON_REVIEW_KIND\` \`land\` when a landing runs it or \`preview\` when \`canon work review\` does (BR-2366), and prints JSON \`{"findings":[{"criterion":"<criterion key the prompt lists>|note","text":"..."}]}\`: canon derives the verdict, which is block when a finding names a criterion (BR-2367); the older \`{"verdict":"ok"|"block","findings":["..."]}\` is still read as given. Unset refuses a landing that changes them (BR-2074); \`${REVIEW_NONE}\` skips the reviews on purpose (D-51).`,
+    doc: `Reviewer for rule and decision text and for standing instructions, the built-in first \`before_land\` step (D-3). Receives the review prompt on stdin, and in \`CANON_REVIEW_KIND\` \`land\` when a landing runs it, \`preview\` when \`canon work review\` does, or \`release\` when canon's own release check does (BR-2366, BR-2411), and prints JSON \`{"findings":[{"criterion":"<criterion key the prompt lists>|note","text":"..."}]}\`: canon derives the verdict, which is block when a finding names a criterion (BR-2367); the older \`{"verdict":"ok"|"block","findings":["..."]}\` is still read as given. Unset refuses a landing that changes them (BR-2074); \`${REVIEW_NONE}\` skips the reviews on purpose (D-51).`,
     default: undefined,
     schema: optionalString,
     read: readReview,

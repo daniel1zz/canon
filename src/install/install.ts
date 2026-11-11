@@ -28,8 +28,8 @@ const sha = (text: Buffer | string) => createHash("sha256").update(text).digest(
 
 /**
  * Where canon's skills come from (BR-2082): CANON_SKILLS_SOURCE when set (and only it), else the repository or package this canon
- * runs from (source checkout under `bun`, the repository holding the compiled `dist/canon`, or the npm package holding the bundled
- * `dist/canon.js`). Missing → environment error.
+ * runs from (source checkout under `bun`; for the compiled `dist/canon`, the `dist/skills` published with it, else the repository
+ * holding it; the npm package holding the bundled `dist/canon.js`). Missing → environment error.
  */
 export function skillsSource(env: Record<string, string | undefined> = process.env): Result<string> {
   const explicit = env["CANON_SKILLS_SOURCE"];
@@ -37,6 +37,8 @@ export function skillsSource(env: Record<string, string | undefined> = process.e
     join(import.meta.dir, "..", "..", ".claude", "skills"),
     // reason: the npm package bundles every source into dist/canon.js, so import.meta.dir is dist/ and the skills sit one level up (BR-2082).
     join(import.meta.dir, "..", ".claude", "skills"),
+    // reason: a compiled canon installs the skills published with it from a tested, release-checked commit, not main's newest (BR-2082, D-91)
+    join(dirname(realpathSync(process.execPath)), "skills"),
     join(dirname(realpathSync(process.execPath)), "..", ".claude", "skills"),
   ].filter((c): c is string => typeof c === "string" && c !== "");
   for (const c of candidates) {
