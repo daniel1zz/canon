@@ -67,6 +67,8 @@ land_batch_max: 4
 setup: "bun install"
 # 规则和决策文字的评审：从 stdin 读提示，在 stdout 输出 JSON 结论
 review: "scripts/review-claude.sh"
+# 临时调大（canon human #28）：C-475 的合入仍由旧版 canon 在合入里评审，提示最小的一次约 283 KB；C-479 把它改回 250
+review_max_prompt_kb: 300
 # 合入移动 main 之后把 main 推到这个 git 远端（D-38、BR-2259）；推送失败不改变合入结果，canon brief 提示没推上去的提交数
 remote: origin
 # 生命周期 hook（D-2、D-3）：每项是一条命令或命令列表
