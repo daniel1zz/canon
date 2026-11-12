@@ -54,14 +54,12 @@ describe("a single landing runs its own steps before the floor", () => {
     expect(ws(root).db.db.query("SELECT COUNT(*) AS n FROM landed_reviews").get()).toEqual({ n: 0 });
   });
 
-  test("BR-2014 BR-2057: a failing before_land refuses with reason hook and the floor never runs", async () => {
-    const { root, marker } = fixture("hooks:\n  before_land: \"exit 1\"\n");
-    const s = startNew(root, "Hooked");
-    writeFileSync(join(s.worktree, "app.txt"), "changed\n");
-    sh(s.worktree, "commit", "-qam", "change");
-    const out = await land(ws(s.worktree), FAST, quiet);
+  test("BR-2014 BR-2057: a failing before_land refuses with reason hook, the floor never runs and no review is queued", async () => {
+    const { root, marker } = fixture(`review: 'cat > /dev/null; echo ''{"findings":[]}'''\nhooks:\n  before_land: "exit 1"\n`);
+    const out = await land(ws(withRule(root).worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("hook");
     expect(existsSync(marker)).toBe(false);
+    expect(ws(root).db.db.query("SELECT COUNT(*) AS n FROM landed_reviews").get()).toEqual({ n: 0 });
   });
 
   test("BR-2014 BR-2016: a canon check finding refuses with reason check and the floor never runs", async () => {
