@@ -269,8 +269,12 @@ describe("rules a change edits without listing them (BR-2241, issue #104)", () =
     await migrated(root);
     const s = startNew(root, "Move only");
     setChange(s.worktree, s.change, []);
+    // reason: the subdomain is not what this case is about; on main it is not a domain the change adds (BR-2446)
+    mkdirSync(join(root, "canon/rules/billing/refunds"), { recursive: true });
+    writeFileSync(join(root, "canon/rules/billing/refunds/README.md"), "# billing/refunds\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "subdomain");
     mkdirSync(join(s.worktree, "canon/rules/billing/refunds"), { recursive: true });
-    writeFileSync(join(s.worktree, "canon/rules/billing/refunds/README.md"), "# billing/refunds\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
     renameSync(join(s.worktree, `canon/rules/billing/${br(1)}.md`), join(s.worktree, `canon/rules/billing/refunds/${br(1)}.md`));
     sh(s.worktree, "rm", "-q", "src/billing/c.test.ts");
     write(s.worktree, { [`canon/rules/billing/${br(2)}.md`]: ruleText(2, { title: "Retitled" }), [`canon/rules/billing/${br(3)}.md`]: ruleText(3, { status: "retired", examples: "- gone → yes" }) });
@@ -466,8 +470,12 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
 
   test("BR-2243: a rule moved to a subdomain with only its statement changed still finds its earlier version", async () => {
     const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`));
+    // reason: the subdomain is not what this case is about; on main it is not a domain the change adds (BR-2446)
+    mkdirSync(join(root, "canon/rules/billing/refunds"), { recursive: true });
+    writeFileSync(join(root, "canon/rules/billing/refunds/README.md"), "# billing/refunds\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "subdomain");
     mkdirSync(join(s.worktree, "canon/rules/billing/refunds"), { recursive: true });
-    writeFileSync(join(s.worktree, "canon/rules/billing/refunds/README.md"), "# billing/refunds\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
     renameSync(join(s.worktree, `canon/rules/billing/${br(1)}.md`), join(s.worktree, `canon/rules/billing/refunds/${br(1)}.md`));
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "move");

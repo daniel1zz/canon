@@ -27,10 +27,14 @@ const commit = (wt: string) => {
   sh(wt, "add", "-A");
   sh(wt, "commit", "-qm", "docs");
 };
+// reason: a domain a change adds needs a decision naming it, or the landing is refused (BR-2446)
+const domainDecision = (n: number, name: string) =>
+  `---\nid: ${did(n)}\ntitle: Why ${name}\nstatus: accepted\n---\n## 背景\n\n领域 \`${name}\` 只管这一件事。\n\n## 方案\n\n1. A：采用。\n   - 来源：canon/config.yaml “floor: test ! -e FAIL”\n2. B：否决。\n\n## 决定\n\nA。\n\n## 后果\n\n无。\n`;
 const readme = (name: string) => `---\nname: ${name}\ncode: [refund.txt]\n---\n# ${name}\n\nOne domain.\n\n## 术语\n\n- **x**：y。\n\n## 业务\n\n- **x**：y\n`;
 const withDomain = (wt: string) => {
   write(wt, "refund.txt", "export function refund(order) {}\n");
   write(wt, "canon/rules/shop/README.md", readme("shop"));
+  write(wt, `canon/decisions/${did(99)}.md`, domainDecision(99, "shop"));
 };
 /** Allocates `prefix-n` in `where`, as `canon rule new` run there would. */
 const allocateIn = (where: string, prefix: string, n: number) => {
@@ -115,6 +119,7 @@ describe("a landing that adds an id allocated to another change's worktree is re
     allocateIn(other.worktree, "BR", 7);
     const move = startNew(root, "Moves");
     write(move.worktree, "canon/rules/store/README.md", readme("store"));
+    write(move.worktree, `canon/decisions/${did(98)}.md`, domainDecision(98, "store"));
     renameSync(join(move.worktree, `canon/rules/shop/${rid(7)}.md`), join(move.worktree, `canon/rules/store/${rid(7)}.md`));
     commit(move.worktree);
     const r = await canonIn(move.worktree, "work", "land");

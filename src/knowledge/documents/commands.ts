@@ -143,6 +143,9 @@ const rule = defineCommand({
         const ws = workspace();
         if (args.code !== undefined && list(args.code).length === 0) fail({ code: "invalid", message: "--code needs at least one directory" });
         refuseOnGuardedMain(ws, "domain README", String(args.name));
+        // reason: a new domain is only right when no existing one covers it; the list is read at the moment it would otherwise be duplicated (BR-2115, D-98)
+        say("domains that already exist — a new one is for a business none of them covers; a decision must say why this one exists:");
+        for (const line of domainLines(corpusOf(ws).corpus)) say(line);
         say(must(createDomain(ws.root, String(args.name), list(args.code), typeof args.description === "string" ? args.description : "", ws.config.codeRoot)));
         // reason: a hint, not a refusal: the name may be right for this business, the exit code stays 0 (BR-2317)
         const word = technicalLayerWord(String(args.name));

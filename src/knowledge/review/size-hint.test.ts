@@ -39,7 +39,7 @@ describe("review size hint", () => {
   test("BR-2375: a big top README near the budget gives one hint with the domain and the three sizes, and no subdomain split", () => {
     const { hints } = hintsFor(dungeon(79), 60 * KB);
     expect(hints).toHaveLength(1);
-    expect(hints[0]).toMatch(/^hint review-size: dungeon: changed documents 0 KB \(not known without a change\), review instructions \+ rule index \+ accepted decision titles \d+ KB, domain text 8\d KB; 8\d KB together is 13\d% of review_max_prompt_kb = 60 KB/);
+    expect(hints[0]).toMatch(/^hint review-size: dungeon: changed documents 0 KB \(not known without a change\), review instructions \+ rule index \+ accepted decision titles \d+ KB, domain text 8\d KB; 8\d KB together is 1[34]\d% of review_max_prompt_kb = 60 KB/);
     expect(hints[0]).toContain("shorten the README of dungeon");
     expect(hints[0]).toContain("does not make them smaller");
     expect(hints[0]).not.toContain("canon rule domain");

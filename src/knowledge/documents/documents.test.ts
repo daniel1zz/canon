@@ -234,6 +234,10 @@ describe("creating documents where main is checked out and guarded", () => {
       expect(r.err).toContain("canon work start");
       expect(r.err).toContain("main-dirty");
     }
+    // BR-2115: refused on a guarded main before anything is printed, so the list of domains is not shown either
+    const domain = canon(root, "rule", "domain", "shipping", "--code", "src/shipping");
+    expect(domain.code).toBe(1);
+    expect(domain.out).not.toContain("domains that already exist");
     expect(status(root)).toBe("");
     // no id was allocated by the refused command: the first change started afterwards is still number 1
     const started = canon(root, "work", "start", "--title", "y");

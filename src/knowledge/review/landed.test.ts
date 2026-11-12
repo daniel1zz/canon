@@ -639,10 +639,13 @@ describe("rule review after landing", () => {
     const { root, promptFile } = reviewedProject("ok");
     const id = ["BR", 1].join("-");
     const text = `---\nid: ${id}\ntitle: Refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\nRefunds within 30 days.\n`;
+    // reason: the subdomain is not what this case is about, and a domain a change adds would need a decision (BR-2446)
+    mkdirSync(join(root, "canon/rules/billing/refunds"), { recursive: true });
+    writeFileSync(join(root, "canon/rules/billing/refunds/README.md"), "# billing/refunds\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "subdomain");
     const seed = startNew(root, "Seed rule");
     writeFileSync(join(seed.worktree, `canon/rules/billing/${id}.md`), text);
-    mkdirSync(join(seed.worktree, "canon/rules/billing/refunds"), { recursive: true });
-    writeFileSync(join(seed.worktree, "canon/rules/billing/refunds/README.md"), "# billing/refunds\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n");
     sh(seed.worktree, "add", "-A");
     sh(seed.worktree, "commit", "-qm", "rule");
     expect((await landReviewed(root, seed.worktree)).out.kind).toBe("landed");

@@ -184,10 +184,20 @@ describe("review verdict derived from the criteria findings name (BR-2367)", () 
     }
   });
 
+  test("BR-2447: the rule review prompt carries the business-overlap criterion, and only a line this landing adds can block for it", () => {
+    const { root, corpus } = corpusOf(files);
+    const prompt = reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 4)));
+    expect(RULE_CRITERIA).toContain("business-overlap");
+    expect(prompt).toContain("`business-overlap`:");
+    expect(prompt).toContain("`## 业务`");
+    expect(prompt).toContain("A line this landing did not add is a `note`");
+    expect(prompt).toContain("Name both business names and the domain");
+  });
+
   test("BR-2367: the rule review prompt lists every criterion key and the answer format; the duplicate review prompt lists duplication", () => {
     const { root, corpus } = corpusOf(files);
     const prompt = reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 4)));
-    expect(RULE_CRITERIA).toEqual(["contradiction", "untestable", "no-rejected-options", "release", "amends", "overview", "restatement"]);
+    expect(RULE_CRITERIA).toEqual(["contradiction", "untestable", "no-rejected-options", "release", "amends", "overview", "restatement", "business-overlap"]);
     for (const key of RULE_CRITERIA) expect(prompt).toContain(`\`${key}\`:`);
     expect(prompt).toContain('{"findings":[{"criterion":"contradiction"|"untestable"');
     expect(prompt).toContain("canon derives it from the keys");

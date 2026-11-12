@@ -549,7 +549,14 @@ describe("subdomains from the CLI", () => {
     expect(existsSync(join(root, "canon/rules/billing/refunds"))).toBe(false);
     expect(canon(root, "rule", "domain", "billing/refunds").code).toBe(0);
     expect(readFileSync(join(root, "canon/rules/billing/refunds/README.md"), "utf8")).toStartWith("# billing/refunds");
-    expect(canon(root, "rule", "domain", "Billing/x").code).toBe(2);
+    // BR-2115: a refusal at creation has already printed the list, and nothing is created
+    const bad = canon(root, "rule", "domain", "Billing/x");
+    expect(bad.code).toBe(2);
+    expect(bad.out).toContain("domains that already exist");
+    const noParent = canon(root, "rule", "domain", "nowhere/sub");
+    expect(noParent.code).toBe(3);
+    expect(noParent.out).toContain("domains that already exist");
+    expect(existsSync(join(root, "canon/rules/nowhere"))).toBe(false);
     expect(canon(root, "rule", "new", "--domain", "billing/refunds", "--title", "Refund window", "--untested", "fixture").code).toBe(0);
     expect(canon(root, "rule", "list", "--domain", "billing").out).toContain("Refund window"); // a domain's list includes its subdomains
     expect(canon(root, "check").out).not.toContain("domain-code-declared");
@@ -563,6 +570,11 @@ describe("subdomains from the CLI", () => {
     const r = canon(root, "rule", "domain", "billing");
     expect(r.code).toBe(0);
     expect(r.out).toContain("code: src/billing");
+    // BR-2115: the domains that already exist are listed before the new one is created, and no rule id is printed
+    expect(r.out.split("\n")[0]).toStartWith("domains that already exist");
+    expect(r.out).not.toMatch(/BR-\d+/);
+    const second = canon(root, "rule", "domain", "shipping");
+    expect(second.out.split("\n").find((l) => l.trim().startsWith("billing"))).toContain("0 rules");
     expect(readFileSync(join(root, "canon/rules/billing/README.md"), "utf8")).toStartWith("# billing");
     // BR-2115: a name ending in a technical-layer word is created all the same, with a hint (BR-2317)
     expect([canon(root, "rule", "domain", "config").code, existsSync(join(root, "canon/rules/config/README.md"))]).toEqual([0, true]);

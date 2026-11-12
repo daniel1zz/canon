@@ -38,6 +38,13 @@ export function businessesOf(domain: Domain): readonly Business[] {
   return out;
 }
 
+/** True in a change's worktree, false in the main checkout: a linked worktree has its own git dir (BR-2431, BR-2446). */
+export function inAChange(root: string): boolean {
+  const dir = git(root, "rev-parse", "--git-dir");
+  const common = git(root, "rev-parse", "--git-common-dir");
+  return dir.ok && common.ok && dir.value.trim() !== common.value.trim();
+}
+
 /** The rule files this work added or changed: differences from its base, plus files not tracked yet (BR-2431, as BR-2344). */
 function workRuleFiles(root: string, base: string): ReadonlySet<string> {
   const out = new Set<string>();
@@ -60,10 +67,8 @@ export interface BusinessFinding {
  */
 export function businessFindings(root: string, corpus: Corpus, base: string | undefined): readonly BusinessFinding[] {
   if (base === undefined) return [];
-  // reason: the main checkout is the primary worktree, not a change; there is no work to compare with, so nothing is reported (BR-2431, as BR-2344)
-  const dir = git(root, "rev-parse", "--git-dir");
-  const common = git(root, "rev-parse", "--git-common-dir");
-  if (!dir.ok || !common.ok || dir.value.trim() === common.value.trim()) return [];
+  // reason: the main checkout is the primary worktree, not a change; there is no work to compare with (BR-2431, as BR-2344)
+  if (!inAChange(root)) return [];
   const touched = workRuleFiles(root, base);
   if (touched.size === 0) return [];
   const listed = new Map<string, readonly string[]>();
