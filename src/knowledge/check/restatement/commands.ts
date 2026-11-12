@@ -10,7 +10,7 @@ import { editedDoc, editedRestatements } from "./work.ts";
 /** What the hook tells the session that just wrote the restating lines (BR-2402). */
 export function hookContext(found: readonly Restatement[]): string {
   return [
-    `canon: ${found.length} sentence(s) you just wrote restate another rule's behaviour instead of naming it. A copy goes stale when that rule changes, and the landing's rule review blocks a restatement in added lines (BR-2405).`,
+    `canon: ${found.length} sentence(s) you just wrote restate another rule's behaviour instead of naming it. A copy goes stale when that rule changes, and the rule review after landing records a restatement in added lines as a blocking finding (BR-2405).`,
     "Keep only what this document adds, and refer to the other rule for its behaviour (按 BR-x / 见 BR-x):",
     ...found.map((r) => `- ${restatementLine(r)}`),
   ].join("\n");
