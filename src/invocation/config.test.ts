@@ -122,6 +122,8 @@ describe("config validation", () => {
     expect(fallback.ok && fallback.value.reviewTimeoutMs).toBe(20 * 60_000);
     const zero = canon(repo({ "canon/config.yaml": "review_timeout_minutes: 0\n" }), "show", ["C", 1].join("-"));
     expect([zero.code, zero.err.includes("review_timeout_minutes")]).toEqual([2, true]);
+    // reason: review_verify is gone with the verifier (D-99); main's config names only the reviewer, its limits and the instruction list
+    expect(readConfig(repo({ "canon/config.yaml": "review_verify: x\n" })).ok).toBe(false);
   });
 
   test("BR-2045 BR-2359: review_max_prompt_kb is 250 KB when unset, is read in KB, and must be above 0", () => {

@@ -208,6 +208,7 @@ describe("canon work review", () => {
     const block = run(s.worktree);
     expect(block.code).toBe(1);
     expect(block.out).toContain(`review finding (rule): ${id} is block`);
+    expect(block.out).toContain("open findings for the main agent to settle (canon finding close); the landing is not refused");
     t.reviewer("exit 3");
     reword("Refunds are fine, third.");
     expect(run(s.worktree).code).toBe(4);

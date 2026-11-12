@@ -10,12 +10,12 @@ import { FAST, project, quiet, reviewLandings, sh, startNew, ws } from "../../te
 const id = ["BR", 1].join("-");
 
 /** A project whose reviewer appends `$CANON_REVIEW_KIND` to a log, one line per run. */
-function kindProject() {
+function kindProject(answer = '{"verdict":"ok","findings":[]}') {
   const root = project();
   const base = join(root, "..", root.split("/").pop()!);
   const log = `${base}-kinds.log`;
   const script = `${base}-reviewer.sh`;
-  writeFileSync(script, `#!/bin/sh\ncat > /dev/null\necho "\${CANON_REVIEW_KIND:-unset}" >> ${log}\necho '{"verdict":"ok","findings":[]}'\n`);
+  writeFileSync(script, `#!/bin/sh\ncat > /dev/null\necho "\${CANON_REVIEW_KIND:-unset}" >> ${log}\necho '${answer}'\n`);
   chmodSync(script, 0o755);
   writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\ninstructions: [CLAUDE.md]\nreview: ${JSON.stringify(script)}\n`);
   writeFileSync(join(root, "CLAUDE.md"), "# Project\n\nRun the tests.\n");
@@ -38,8 +38,8 @@ function kindProject() {
 }
 
 describe("CANON_REVIEW_KIND (BR-2366)", () => {
-  test("BR-2366: the review command of the review after a landing runs with CANON_REVIEW_KIND=land", async () => {
-    const t = kindProject();
+  test("BR-2366: the review command of the review after a landing runs with CANON_REVIEW_KIND=land; a blocking finding runs no other command", async () => {
+    const t = kindProject(`{"findings":[{"criterion":"contradiction","text":"${id} contradicts itself"}]}`);
     expect((await land(ws(t.change().worktree), FAST, quiet)).kind).toBe("landed");
     await reviewLandings(t.root);
     expect(t.kinds()).toEqual(["land"]);

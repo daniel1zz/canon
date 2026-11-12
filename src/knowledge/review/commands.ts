@@ -40,7 +40,7 @@ const review = defineCommand({
         say(`review: ${out.reviewed.join(", ")}`);
         if (out.reusedFrom !== undefined) say(`review: reused the passing preview of the same prompts (event ${out.reusedFrom}); the review command was not run for the rule review`);
         for (const f of out.findings) say(`${out.kind === "block" ? "review finding" : "review note"} (${f.review}): ${f.text}`);
-        say(out.kind === "block" ? "review: block; the review after landing would record these findings as open findings once the verifier confirms them" : "review: ok");
+        say(out.kind === "block" ? "review: block; the review after landing would record these findings as open findings for the main agent to settle (canon finding close); the landing is not refused" : "review: ok");
         // reason: the landing asks the same question after its queue turn; asked here, a "behaviour" answer is known before landing (BR-2358, BR-2239, #166)
         for (const w of out.wording) {
           if (w.answer === "wording") say(`wording judgement: ${w.id}: wording; the landing records it as a wording-only edit and needs no new evidence for it`);

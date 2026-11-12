@@ -526,6 +526,7 @@ describe("rule review after landing", () => {
     expect(out.out.kind).toBe("landed");
     expect(out.review).toContain("did not finish within");
     expect(kinds(root)).toEqual(["review.fail"]);
+    expect(openFindings(ws(root).db)).toEqual([]);
     expect(await gone(Number(readFileSync(pidFile, "utf8").trim()))).toBe(true);
   }, 75_000);
 
