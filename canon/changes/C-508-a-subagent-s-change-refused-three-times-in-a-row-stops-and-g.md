@@ -2,10 +2,14 @@
 id: C-508
 title: A subagent's change refused three times in a row stops and goes to the
   main agent; the main session lets it land again (#195, D-99)
-status: open
+status: done
 rules:
   - BR-2454
   - BR-2455
+passes:
+  BR-2340: 92b90ae79f1959d4 test
+  BR-2454: 49afe1a81b963858 test
+  BR-2455: d6def36201bf16eb test
 ---
 
 ## 为什么
