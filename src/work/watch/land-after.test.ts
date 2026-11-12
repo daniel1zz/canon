@@ -71,8 +71,9 @@ afterAll(() => {
 });
 
 describe("landing with floor_timing: after", () => {
-  test("BR-2218: a floor that fails does not stop the landing: main moves, land.ok says floor_deferred, the floor is not run, and the background floor starts on the new main", async () => {
+  test("BR-2017 BR-2218: a floor that fails does not stop the landing: main moves, land.ok says floor_deferred, the floor is not run, and the background floor starts on the new main", async () => {
     const root = configured("floor: exit 1\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
+    const base = sh(root, "rev-parse", "main");
     const s = startNew(root, "Deferred");
     commitFile(s.worktree, "new.txt", "x\n");
     const said: string[] = [];
@@ -80,6 +81,9 @@ describe("landing with floor_timing: after", () => {
     expect(out.kind).toBe("landed");
     const main = sh(root, "rev-parse", "main");
     expect(out.kind === "landed" && out.sha).toBe(main);
+    expect(main).toBe(sh(s.worktree, "rev-parse", "HEAD"));
+    expect(main).not.toBe(base);
+    expect(sh(root, "merge-base", base, main)).toBe(base);
     expect(events(root, "land.ok").at(-1)!["floor_deferred"]).toBe(true);
     expect(said.some((m) => m === "floor: exit 1")).toBe(false);
     expect(said).toContain("floor: deferred — floor_timing is after; main is tested in the background once it moves (canon floor watch)");
@@ -87,6 +91,19 @@ describe("landing with floor_timing: after", () => {
     expect(existsSync(join(logs, `land-${events(root, "land.turn").at(-1)!["entry"]}.log`))).toBe(false);
     // The landing started the background floor on the main it made (BR-2219).
     expect(await backgroundResult(root, main)).toBe("floor.fail");
+  });
+
+  test("BR-2017: in after mode a main moved during before_land is not overwritten and the landing asks to run again", async () => {
+    const root = configured("floor: exit 1\nfloor_timing: after\n");
+    const s = startNew(root, "Main moved without a floor run");
+    writeFileSync(join(s.worktree, "canon/config.yaml"), `tests: []\nfloor: exit 1\nfloor_timing: after\nhooks:\n  before_land: "git -C ${root} commit -q --allow-empty -m moved-during-hook"\n`);
+    sh(s.worktree, "commit", "-qam", "hook moves main");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("main-moved");
+    expect(out.kind === "refused" && out.message).toContain("land again");
+    expect(sh(root, "log", "-1", "--format=%s", "main")).toBe("moved-during-hook");
+    expect(events(root, "land.ok")).toEqual([]);
+    expect(events(root, "floor.pass").length + events(root, "floor.fail").length).toBe(0);
   });
 
   test("BR-2218: in after mode the change's own steps still refuse: a canon check finding keeps main where it was", async () => {
