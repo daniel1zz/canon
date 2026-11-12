@@ -2,7 +2,7 @@
 id: C-475
 title: The rule and duplicate reviews run after landing, blocking findings are
   verified and recorded, and landing no longer waits for them (C-464 B)
-status: open
+status: done
 rules:
   - BR-2009
   - BR-2010
@@ -33,6 +33,50 @@ rules:
   - BR-2410
   - BR-2441
   - BR-2442
+passes:
+  BR-2009: aefd794f9c5e1271 test
+  BR-2010: 33e6ac2c4a37a79b test
+  BR-2014: 94e966cc87691a76 test
+  BR-2022: 889579fc284df397 test
+  BR-2049: d3b27df80bf2327b test
+  BR-2057: 9e97f24824518831 test
+  BR-2068: 779d97e643c77016 test
+  BR-2074: ea81b651da106edf test
+  BR-2086: 829cad316db1a186 test
+  BR-2106: 97f59ab75e352235 test
+  BR-2111: d54c3a25070ca2ad test
+  BR-2112: 4652db3face71500 test
+  BR-2143: 90953410b7033ffb test
+  BR-2145: 5b5d2b8bce72dd09 test
+  BR-2163: a1602132c789a4bb test
+  BR-2164: 73530293b4ea460c test
+  BR-2166: 510f63b64a11522c test
+  BR-2167: 8f68b951a17cb8fa test
+  BR-2172: 702356b5e76b2321 test
+  BR-2173: 483c0d230c806182 test
+  BR-2216: a5b5068a1443eba7 test
+  BR-2218: 3a4df2fe36f513d9 test
+  BR-2237: f5481f0ea2ab1ab7 test wording
+  BR-2239: 3657b8973e684980 test
+  BR-2241: db1711a33723604a test
+  BR-2296: 91ac98ea49235136 test
+  BR-2310: 0d05eeb909cd7764 test
+  BR-2355: f8c91fe289e2ff23 test
+  BR-2358: a626685bca80cfc4 test
+  BR-2359: ddd0cdeac4e1e447 test
+  BR-2361: 364ea8475e9df6a8 test
+  BR-2366: fa5a53b87d3e54d8 test
+  BR-2367: 171b47a3ca02dd00 test
+  BR-2375: aee1d555b2f8623e test
+  BR-2388: 665414072b1a154b test
+  BR-2396: 5782f0fd8fcff970 test
+  BR-2402: cf0ca59ca0bdd93b test
+  BR-2405: b1596183e669195b test
+  BR-2407: abe1773e1b22978f test
+  BR-2408: fb2338d169fd3981 test
+  BR-2410: 599300aa376c77de test
+  BR-2441: db8e46668a3d2338 test
+  BR-2442: 622ae0d33f4296dd test
 ---
 
 ## 为什么
