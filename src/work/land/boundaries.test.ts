@@ -105,7 +105,7 @@ describe("boundaries record and clean up", () => {
     }
   }, TIMED);
 
-  test("BR-2049: the heartbeat runs through the whole landing, so a slow step is not mistaken for a dead lander", async () => {
+  test("BR-2049: the heartbeat runs through the whole landing, so a slow step such as before_land is not mistaken for a dead lander", async () => {
     const root = project();
     // before_land holds the landing until the test releases it, so the slow step lasts exactly as long as the test needs
     const marker = join(root, "..", `${root.split("/").pop()}-before-land`);

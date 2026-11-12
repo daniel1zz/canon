@@ -62,6 +62,7 @@ describe("context", () => {
     const full = renderContext("", ctx, { full: true });
     expect(full).toContain(`## ${id("BR", 1)} Refund window`);
     expect(full).toContain("Refunds within 30 days.");
+    expect(full).not.toContain("canon context billing --full"); // the full text needs no hint to ask for it
     expect(full).not.toContain("--full");
   });
 

@@ -141,6 +141,7 @@ describe("canon stats", () => {
   });
 
   test("BR-2068: a refusal is changed when the change later lands with other code, same when it lands unchanged", async () => {
+    // the reason does not matter: a floor refusal here, a wording-judgement refusal (reason review) is classified the same way
     const root = project();
     const fixed = startNew(root, "Fixed");
     commit(fixed.worktree, "FAIL", "x");

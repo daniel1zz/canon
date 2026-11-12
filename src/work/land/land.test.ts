@@ -208,7 +208,7 @@ describe("work land", () => {
     expect(queued.kind === "refused" && queued.message.includes("nothing changed since")).toBe(false);
   });
 
-  test("BR-2388: a review refusal is not repeated without queueing", () => {
+  test("BR-2388: a refusal by the landing's wording judgement (reason review) is not repeated without queueing", () => {
     expect(CONTENT_REASONS).toEqual(["check"]);
   });
 

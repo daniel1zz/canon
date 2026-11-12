@@ -110,6 +110,7 @@ describe("evidence at --finish (BR-2241)", () => {
     const root = fixture();
     await migrated(root);
     const s = startNew(root, "Wrong test");
+    // the examples change, so this is not a wording-only edit for the landing's wording judgement (BR-2243, BR-2239): it needs evidence
     setChange(s.worktree, s.change, [br(1)]);
     write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { examples: "- input 1 → output 10" }), "src/billing/a.test.ts": testFile([1, 2]).replace("toBe(2)", "toBe(2); // other") });
     const head = sh(s.worktree, "rev-parse", "HEAD");
