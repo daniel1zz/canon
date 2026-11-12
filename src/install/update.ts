@@ -36,6 +36,8 @@ export interface AssetsStatus {
   readonly exclude: boolean;
   /** The project has no canon/architecture.md (D-65); an update writes the template in a change. */
   readonly architecture: boolean;
+  /** canon/config.yaml has no links_since while main has a commit; an update writes main's commit in a change (BR-2452). */
+  readonly linksSince: boolean;
 }
 
 /** What `canon init` and `canon update` write into canon/architecture.md: the headings only, so no check of it applies yet (D-65, BR-2032). */
@@ -47,6 +49,41 @@ export function ensureArchitecture(root: string): boolean {
   if (existsSync(full)) return false;
   writeFileSync(full, ARCHITECTURE_TEMPLATE);
   return true;
+}
+
+/** The comment `canon init` and `canon update` put above the links_since they write (BR-2032, BR-2452). */
+// reason: canon/ documents and the config canon writes are in Chinese (CLAUDE.md); a project's text names no canon document id (BR-2096)
+export const LINKS_SINCE_COMMENT = "# 可疑引用的起点提交：这个提交里规则和决策之间已有的引用都算复核过，之后的变化才跟踪（canon links）";
+
+/** The commit `main` names in `root`, or undefined when that branch has no commit yet (BR-2032, BR-2452). */
+export function mainTip(root: string, main: string): string | undefined {
+  const r = git(root, "rev-parse", "--verify", "--quiet", `refs/heads/${main}^{commit}`);
+  return r.ok && r.value !== "" ? r.value : undefined;
+}
+
+/** `canon/config.yaml` text with `links_since` set to `sha`: a line that sets it (to null) is replaced, otherwise the key goes at the end under its comment; every other line stays (BR-2452). */
+export function withLinksSince(text: string, sha: string): string {
+  const line = `links_since: ${JSON.stringify(sha)}`;
+  const set = /^links_since:.*$/m;
+  if (set.test(text)) return text.replace(set, line);
+  return `${text}${text === "" || text.endsWith("\n") ? "" : "\n"}${LINKS_SINCE_COMMENT}\n${line}\n`;
+}
+
+/** The commit an update writes as links_since: main's, when canon/config.yaml has none and main has a commit (BR-2452). */
+function missingLinksSince(root: string): Result<string | undefined> {
+  const config = readConfig(root);
+  if (!config.ok) return config;
+  return ok(config.value.linksSince === undefined ? mainTip(root, config.value.main) : undefined);
+}
+
+/** Writes main's current commit as links_since into canon/config.yaml of `root` when it has none (BR-2452). True when it wrote it. */
+function ensureLinksSince(root: string): Result<boolean> {
+  const sha = missingLinksSince(root);
+  if (!sha.ok) return sha;
+  if (sha.value === undefined) return ok(false);
+  const path = join(root, "canon/config.yaml");
+  writeFileSync(path, withLinksSince(existsSync(path) ? readFileSync(path, "utf8") : "", sha.value));
+  return ok(true);
 }
 
 /** The line git's info/exclude needs so Claude Code's subagent worktrees do not dirty the checkout (BR-2305). */
@@ -75,10 +112,13 @@ export function assetsStatus(root: string, source: string): Result<AssetsStatus>
   const exclude = x.value ? [`git exclude: ${WORKTREES_EXCLUDE} in the repository's info/exclude, so Claude Code's subagent worktrees do not dirty the checkout`] : [];
   const missingOverview = !existsSync(join(root, ARCHITECTURE_FILE));
   const overview = missingOverview ? [`file ${ARCHITECTURE_FILE}: missing, a template with only its headings`] : [];
-  const outdated = [...s.value.outdated.map((f) => `skill ${f}`), ...hook, ...overview, ...g.value.line, ...exclude];
+  const since = missingLinksSince(root);
+  if (!since.ok) return since;
+  const links = since.value === undefined ? [] : [`config canon/config.yaml: links_since missing, main's commit ${since.value.slice(0, 9)} as the start of suspect references`];
+  const outdated = [...s.value.outdated.map((f) => `skill ${f}`), ...hook, ...overview, ...links, ...g.value.line, ...exclude];
   const local = g.value.line.length > 0 || x.value;
-  // reason: the overview is a tracked file, so its absence is never a local-only update (BR-2086)
-  return ok({ version: s.value.version, current: outdated.length === 0, outdated, edited: s.value.edited, localOnly: s.value.outdated.length === 0 && hook.length === 0 && !missingOverview && local, guard: g.value.line.length > 0, exclude: x.value, architecture: missingOverview });
+  // reason: the overview and canon/config.yaml are tracked files, so their updates are never local-only (BR-2086, BR-2452)
+  return ok({ version: s.value.version, current: outdated.length === 0, outdated, edited: s.value.edited, localOnly: s.value.outdated.length === 0 && hook.length === 0 && !missingOverview && links.length === 0 && local, guard: g.value.line.length > 0, exclude: x.value, architecture: missingOverview, linksSince: links.length > 0 });
 }
 
 /** The update-check line for the git guard (BR-2123, BR-2124). */
@@ -173,6 +213,9 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
   const installed = installAssets(wt, source, force);
   if (!installed.ok) return installed;
   const overview = ensureArchitecture(wt);
+  // reason: main's commit when the change starts, read in its worktree, is the start of suspect references (BR-2452)
+  const since = ensureLinksSince(wt);
+  if (!since.ok) return since;
 
   const changeDir = join(wt, "canon", "changes");
   const file = readdirSync(changeDir).find((f) => f === `${started.value.change}.md` || f.startsWith(`${started.value.change}-`))!;
@@ -182,7 +225,7 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
     join(changeDir, file),
     `${head}\n## 为什么\n\n项目里 canon 装的文件（skill、会话开始时的 hook）落后于当前的 canon，按负责人的要求更新。\n\n## 要改什么\n\n${st.value.outdated.map((o) => `- ${o}`).join("\n")}\n\n## 教训\n\n无。\n\n## 任务\n\n- [x] 由 \`canon update\` 安装并合入\n`,
   );
-  for (const args of [["add", "-A", ".claude", "canon/changes", ...(overview ? [ARCHITECTURE_FILE] : [])], ["commit", "-q", "-m", `Update canon project files to ${st.value.version} (${started.value.change})`]]) {
+  for (const args of [["add", "-A", ".claude", "canon/changes", ...(overview ? [ARCHITECTURE_FILE] : []), ...(since.value ? ["canon/config.yaml"] : [])], ["commit", "-q", "-m", `Update canon project files to ${st.value.version} (${started.value.change})`]]) {
     const r = git(wt, ...args);
     if (!r.ok) return r;
   }

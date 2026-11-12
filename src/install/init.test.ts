@@ -79,6 +79,33 @@ describe("canon init names main after the current branch", () => {
     expect(again.out).not.toContain("has no commit yet");
   });
 
+  test("BR-2032: with a commit on main init writes main's commit as links_since, so canon links works at once; with none it leaves it out and says canon update writes it", () => {
+    const born = repo("main");
+    sh(born, "commit", "-q", "--allow-empty", "-m", "first");
+    const r = canon(born, "init", "--floor", "true");
+    expect(r.code).toBe(0);
+    expect(configOf(born)).toMatch(new RegExp(`\n# [^\n]+\nlinks_since: "${sh(born, "rev-parse", "main")}"\n$`));
+    expect(r.out).not.toContain("links_since");
+    expect(canon(born, "links", "list").code).toBe(0);
+    const empty = repo("main");
+    const e = canon(empty, "init", "--floor", "true");
+    expect(e.code).toBe(0);
+    expect(configOf(empty)).not.toContain("links_since");
+    expect(e.out).toContain("links_since is left out");
+    expect(e.out).toContain("canon update");
+  });
+
+  test("BR-2032: init leaves an existing canon/config.yaml without links_since as it is", () => {
+    const root = repo("main");
+    sh(root, "commit", "-q", "--allow-empty", "-m", "first");
+    mkdirSync(join(root, "canon"), { recursive: true });
+    writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ntests: []\n');
+    const r = canon(root, "init", "--floor", "true");
+    expect(r.code).toBe(0);
+    expect(configOf(root)).toBe('floor: "true"\ntests: []\n');
+    expect(r.out).not.toContain("links_since");
+  });
+
   test("BR-2032 BR-2022: a detached HEAD without canon/config.yaml refuses with 4 and writes nothing", () => {
     const root = repo("main");
     sh(root, "commit", "-q", "--allow-empty", "-m", "first");

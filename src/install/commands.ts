@@ -9,7 +9,7 @@ import { firstCommitStep, git, mainIsUnborn } from "../kernel/git.ts";
 import type { Workspace } from "../work/workspace.ts";
 import { REPORT_UPDATE_NOTE } from "../work/verify/report.ts";
 import { skillsSource, type InstallReport } from "./install.ts";
-import { ARCHITECTURE_TEMPLATE, assetsStatus, installAssets, updateNotice, updateProject, WORKTREES_EXCLUDE } from "./update.ts";
+import { ARCHITECTURE_TEMPLATE, assetsStatus, installAssets, mainTip, updateNotice, updateProject, withLinksSince, WORKTREES_EXCLUDE } from "./update.ts";
 import { uninstall as uninstallProject } from "./uninstall.ts";
 
 /** `canon init`, `install`, `update`: canon's own files in a project (D-9, D-10). */
@@ -23,10 +23,13 @@ const init = defineCommand({
     const branch = existsSync(join(root, "canon/config.yaml")) ? undefined : currentBranch(root);
     // Skills first: a missing source (BR-2082) or an edited skill copy (BR-2081) refuses before anything else is written.
     reportInstall(must(installAssets(root, must(skillsSource()), false, branch)));
+    // reason: references already in the repository count as confirmed from main's commit now; with no commit yet there is none to name, and none is needed (BR-2032, BR-2424)
+    const since = branch === undefined ? undefined : mainTip(root, branch);
+    const config = `${MODELINE}\nmain: ${JSON.stringify(branch ?? "main")}\nfloor: ${JSON.stringify(args.floor ?? "")}\n${TESTS_COMMENT}\ntests: []\n${REVIEW_COMMENT}\nreview: ${JSON.stringify(DEFAULT_REVIEW)}\n`;
     const files: Record<string, string> = {
       "canon/product.md": "---\ntitle: 产品\n---\n# 产品\n\n## 目的\n\n## 使用者\n\n## 承诺\n\n## 不做的事\n",
       "canon/architecture.md": ARCHITECTURE_TEMPLATE,
-      "canon/config.yaml": `${MODELINE}\nmain: ${JSON.stringify(branch ?? "main")}\nfloor: ${JSON.stringify(args.floor ?? "")}\n${TESTS_COMMENT}\ntests: []\n${REVIEW_COMMENT}\nreview: ${JSON.stringify(DEFAULT_REVIEW)}\n`,
+      "canon/config.yaml": since === undefined ? config : withLinksSince(config, since),
     };
     for (const [p, text] of Object.entries(files)) {
       const full = join(root, p);
@@ -39,6 +42,7 @@ const init = defineCommand({
     }
     for (const dir of ["rules", "decisions", "changes", "notes"]) mkdirSync(join(root, "canon", dir), { recursive: true });
     if (!args.floor) say("set `floor` in canon/config.yaml before landing anything");
+    if (branch !== undefined && since === undefined) say(`links_since is left out of canon/config.yaml: ${branch} has no commit yet; after the first commit, canon update writes it`);
     // reason: BR-2032 — until main has a commit no change can start (BR-2012); say so while the files are fresh
     const main = branch ?? configuredMain(root);
     if (main && mainIsUnborn(root, main)) say(`${main} has no commit yet: ${firstCommitStep(main)}`);

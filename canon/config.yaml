@@ -107,3 +107,6 @@ check_reviews:
   source: "2027-02-04"
   moved-during-land: "2027-02-04"
   release: "2027-02-05"
+# 可疑引用的起点提交（BR-2424、D-95）：这个提交里规则和决策之间已有的引用都算复核过，之后的变化才跟踪（负责人 canon human #25 A、#27 A）。
+# 设置时 main 和发布的 dist/canon 都在这个提交，两者都认识这个键（BR-2248、BR-2224）
+links_since: "ed64e11b5cdbcc7857c76500464a4f996665b6a5"

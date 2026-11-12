@@ -291,6 +291,11 @@ describe("the main branch name in the guard", () => {
     expect(canon(root, "install").code).toBe(0);
     sh(root, "add", "-A");
     expect(git(root, ["commit", "-qm", "adopt canon"]).code).toBe(0); // the first commit: the branch does not exist yet
+    // links_since names that commit, set past the guard as a landing would, so only the guard can be out of date (BR-2452)
+    writeFileSync(join(root, "canon/config.yaml"), `main: ${JSON.stringify(main)}\nfloor: "true"\nlinks_since: "${sh(root, "rev-parse", "HEAD")}"\n`);
+    sh(root, "add", "-A");
+    const c = sh(root, "commit-tree", sh(root, "write-tree"), "-p", "HEAD", "-m", "links_since");
+    expect(git(root, ["update-ref", `refs/heads/${main}`, c], { CANON_LAND_MAIN: c }).code).toBe(0);
     return root;
   }
 

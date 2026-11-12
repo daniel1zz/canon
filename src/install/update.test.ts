@@ -50,6 +50,10 @@ function project() {
   writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ntests: []\nreview: none\n'); // the updates land skill changes without a reviewer, on purpose (BR-2074)
   git(root, "add", "-A");
   git(root, "commit", "-qm", "init");
+  // links_since names the first commit, so only what a test changes is out of date (BR-2452)
+  writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: none\nlinks_since: "${git(root, "rev-parse", "HEAD")}"\n`);
+  git(root, "add", "-A");
+  commitOnMain(root, "links_since");
   return { src, root, env };
 }
 
@@ -131,6 +135,63 @@ describe("finding and applying updates", () => {
     expect(canon(root, env, "update", "--check").out).not.toContain("architecture.md");
     expect(canon(root, env, "update").code).toBe(0);
     expect(git(root, "show", "main:canon/architecture.md")).toBe(mine.trim());
+  });
+
+  /** Commits `config` as canon/config.yaml on main of `root` and checks it out. */
+  const setConfig = (root: string, config: string) => {
+    writeFileSync(join(root, "canon/config.yaml"), config);
+    git(root, "add", "-A");
+    commitOnMain(root, "config");
+    git(root, "reset", "-q", "--hard", "main");
+  };
+
+  test("BR-2452 BR-2084: a config without links_since is out of date; update writes main's commit at the end in a change, keeps every other line, and is then current", () => {
+    const { root, env } = project();
+    const mine = '# my note\nfloor: "true"\ntests: []\nreview: none\n';
+    setConfig(root, mine);
+    const check = canon(root, env, "update", "--check");
+    expect(check.code).toBe(1);
+    expect(check.out).toContain("config canon/config.yaml: links_since missing");
+    expect(readFileSync(join(root, "canon/config.yaml"), "utf8")).toBe(mine); // --check writes nothing
+    const tip = git(root, "rev-parse", "main");
+    const r = canon(root, env, "update");
+    expect([r.code, r.out + r.err]).toEqual([0, expect.stringMatching(/updated to \w+ in C-\d+, landed/)]);
+    const landed = git(root, "show", "main:canon/config.yaml");
+    expect(landed.startsWith(mine)).toBe(true);
+    expect(landed.endsWith(`\nlinks_since: "${tip}"`)).toBe(true);
+    expect(landed.split("\n").at(-2)).toMatch(/^# /); // the comment above it
+    expect(canon(root, env, "update", "--check").code).toBe(0);
+    expect(canon(root, env, "links", "list").code).toBe(0);
+  });
+
+  test("BR-2452: links_since written as null is replaced in place, so the file has one links_since", () => {
+    const { root, env } = project();
+    setConfig(root, 'floor: "true"\nlinks_since: null\ntests: []\nreview: none\n');
+    expect(canon(root, env, "update", "--check").out).toContain("links_since missing");
+    const tip = git(root, "rev-parse", "main");
+    expect(canon(root, env, "update").code).toBe(0);
+    expect(git(root, "show", "main:canon/config.yaml")).toBe(`floor: "true"\nlinks_since: "${tip}"\ntests: []\nreview: none`);
+  });
+
+  test("BR-2452: an existing links_since is never changed, also when the update lands for something else", () => {
+    const { src, root, env } = project();
+    const before = git(root, "show", "main:canon/config.yaml");
+    expect(canon(root, env, "update", "--check").out).not.toContain("links_since");
+    writeFileSync(join(src, "canon-a/SKILL.md"), "a v2\n");
+    expect(canon(root, env, "update").code).toBe(0);
+    expect(git(root, "show", "main:.claude/skills/canon-a/SKILL.md")).toBe("a v2");
+    expect(git(root, "show", "main:canon/config.yaml")).toBe(before);
+  });
+
+  test("BR-2452: with no commit on main links_since is not out of date", () => {
+    const src = dir({ "canon-a/SKILL.md": "a v1\n" });
+    const root = mkdtempSync(join(tmpdir(), "canon-update-unborn-"));
+    git(root, "init", "-q", "-b", "main");
+    const env = { CANON_SKILLS_SOURCE: src };
+    expect(canon(root, env, "init", "--floor", "true").code).toBe(0);
+    const check = canon(root, env, "update", "--check");
+    expect(check.code).toBe(0);
+    expect(check.out + check.err).not.toContain("links_since");
   });
 
   test("BR-2085 BR-2195: when the skills source is missing or the manifest is broken, brief says it cannot check, and why", () => {

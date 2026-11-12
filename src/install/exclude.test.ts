@@ -28,6 +28,15 @@ function repo(): string {
   return root;
 }
 
+/** Sets links_since to main's commit in a commit past canon's guard, as a landing would, so only what a test changes is out of date (BR-2452). */
+function setLinksSince(root: string) {
+  const config = join(root, "canon/config.yaml");
+  writeFileSync(config, `${readFileSync(config, "utf8")}links_since: "${git(root, "rev-parse", "HEAD")}"\n`);
+  git(root, "add", "-A");
+  const c = git(root, "commit-tree", git(root, "write-tree"), "-p", "HEAD", "-m", "links_since");
+  Bun.spawnSync(["git", "update-ref", "refs/heads/main", c], { cwd: root, env: { ...process.env, CANON_LAND_MAIN: c } });
+}
+
 const excludePath = (root: string) => join(root, ".git/info/exclude");
 const linesOf = (root: string) => readFileSync(excludePath(root), "utf8").split("\n").filter((l) => l === LINE);
 
@@ -49,6 +58,7 @@ describe("canon init, install and update ignore Claude Code's subagent worktrees
     expect(canon(root, "install").code).toBe(0);
     git(root, "add", "-A");
     git(root, "commit", "-qm", "init");
+    setLinksSince(root);
     expect(canon(root, "update").code).toBe(0);
     expect(readFileSync(excludePath(root), "utf8")).toBe(before);
     expect(linesOf(root)).toHaveLength(1);
@@ -68,6 +78,7 @@ describe("canon init, install and update ignore Claude Code's subagent worktrees
     expect(canon(root, "init", "--floor", "true").code).toBe(0);
     git(root, "add", "-A");
     git(root, "commit", "-qm", "init");
+    setLinksSince(root);
     rmSync(excludePath(root));
     const wt = join(mkdtempSync(join(tmpdir(), "canon-exclude-wt-")), "wt");
     git(root, "worktree", "add", "-q", "-b", "side", wt);
@@ -82,6 +93,7 @@ describe("canon init, install and update ignore Claude Code's subagent worktrees
     writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ntests: []\nreview: none\n');
     git(root, "add", "-A");
     git(root, "commit", "-qm", "init");
+    setLinksSince(root);
     expect(canon(root, "update", "--check").code).toBe(0);
     writeFileSync(excludePath(root), "");
     const head = git(root, "rev-parse", "HEAD");
@@ -101,6 +113,7 @@ describe("canon init, install and update ignore Claude Code's subagent worktrees
     writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ntests: []\nreview: none\n');
     git(root, "add", "-A");
     git(root, "commit", "-qm", "init");
+    setLinksSince(root);
     const head = git(root, "rev-parse", "HEAD");
     writeFileSync(excludePath(root), "");
     writeFileSync(join(src, "canon-a/SKILL.md"), "a v2\n");
@@ -130,6 +143,7 @@ describe("canon init, install and update ignore Claude Code's subagent worktrees
     writeFileSync(join(root, "canon/config.yaml"), 'floor: "true"\ntests: []\nreview: none\n');
     git(root, "add", "-A");
     git(root, "commit", "-qm", "init");
+    setLinksSince(root);
     const head = git(root, "rev-parse", "HEAD");
     rmSync(join(root, ".git/hooks/reference-transaction"));
     writeFileSync(excludePath(root), "");
