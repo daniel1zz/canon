@@ -782,6 +782,7 @@ describe("duplicate review of standing instructions after landing", () => {
     expect(prompt).toContain(GUIDE);
     expect(prompt).toContain(".claude/skills/x/SKILL.md: Use when writing tests");
     expect(openFindings(ws(root).db).map((f) => [...f.docs])).toEqual([["CLAUDE.md"]]);
+    expect(r.review).toContain("canon finding close <n>");
   });
 
   test("BR-2143: the prompt carries the diff and tells the reviewer to block only duplication on added lines; an old duplicate with an unrelated edit is an ok with the finding as a note (#121)", async () => {
@@ -931,6 +932,7 @@ describe("duplicate review of standing instructions after landing", () => {
       expect(prompt).toContain("cannot be changed in this project");
       expect(prompt).not.toContain(`# ${SHIPPED} (changed in this landing`);
       expect(prompt).not.toContain(`# ${SHIPPED} (diff of this landing`);
+      expect(openFindings(ws(root).db).map((f) => [...f.docs])).toEqual([["CLAUDE.md"]]);
     });
 
     test("BR-2410: a shipped skill the project edited, so its hash no longer matches the manifest, is reviewed as the project's own text", async () => {

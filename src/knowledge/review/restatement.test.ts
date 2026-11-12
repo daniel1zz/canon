@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { findingOf } from "./findings/findings.ts";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { readCorpus } from "../documents/read.ts";
@@ -63,5 +64,6 @@ describe("rule review of restatements", () => {
     expect(RULE_CRITERIA).toContain("restatement");
     const v = parseAnswer({ findings: [{ criterion: "restatement", text: `${B2} 复述了 ${B1}` }] });
     expect(v.ok && v.value.verdict).toBe("block");
+    expect(findingOf(`[restatement] ${B2} 复述了 ${B1}`).criterion).toBe("restatement");
   });
 });
