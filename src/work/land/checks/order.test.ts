@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../land.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
@@ -83,6 +83,34 @@ describe("a single landing runs its own steps before the floor", () => {
     expect(out.kind === "refused" && out.reason).toBe("check");
     expect(out.kind === "refused" && out.message + JSON.stringify(out.findings)).toContain("test-report-missing");
     expect(existsSync(marker)).toBe(false);
+  });
+
+  test("BR-2014: an env schema never invokes varlock and does not bypass the remaining landing checks", async () => {
+    for (const failFloor of [false, true]) {
+      const { root, marker } = fixture();
+      const s = startNew(root, "No built-in secret management");
+      const scanned = join(s.worktree, "varlock-ran");
+      mkdirSync(join(s.worktree, "node_modules/.bin"), { recursive: true });
+      const executable = join(s.worktree, "node_modules/.bin/varlock");
+      writeFileSync(executable, `#!/bin/sh\ntouch '${scanned}'\nexit 9\n`);
+      chmodSync(executable, 0o755);
+      writeFileSync(join(s.worktree, ".gitignore"), "node_modules/\n");
+      writeFileSync(join(s.worktree, ".env.schema"), "invalid schema\n");
+      writeFileSync(join(s.worktree, "app.txt"), "TOKEN=demo\n");
+      if (failFloor) writeFileSync(join(s.worktree, "FAIL"), "fail\n");
+      sh(s.worktree, "add", "-A");
+      sh(s.worktree, "commit", "-qm", "schema does not trigger secret management");
+      const out = await land(ws(s.worktree), FAST, quiet);
+      expect(existsSync(scanned)).toBe(false);
+      expect(existsSync(marker)).toBe(true);
+      if (failFloor) {
+        expect(out.kind === "refused" && out.reason).toBe("floor");
+        expect(sh(root, "log", "-1", "--format=%s", "main")).toBe("fixture");
+      } else {
+        expect(out.kind).toBe("landed");
+        expect(sh(root, "show", "main:app.txt")).toBe("TOKEN=demo");
+      }
+    }
   });
 
   test("BR-2014: a passing landing runs the floor once and lands", async () => {

@@ -21,7 +21,6 @@ import { landingAllocations } from "./allocated.ts";
 import { noticeProposedDecisions } from "./proposed.ts";
 import { reviewTree } from "./review-tree.ts";
 import { passedWording, reviewKey } from "./review-reuse.ts";
-import { scanSecrets } from "./secrets.ts";
 import { couldNotRun, reviewScope, reviewSettingsOn, standingTouched } from "./review-scope.ts";
 import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
 import { checksAddedAndReviewed, checksAddedAndReviewedMessage, keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
@@ -46,8 +45,8 @@ export type Steps = { readonly ok: true; readonly review: ReviewNeeds; readonly 
 
 /**
  * One change's own landing steps before the floor (BR-2014), on the checkout `wt` at `head` (main or the batch chain at
- * `base` below it): canon check, decision sources, the secret scan, the wording judgement, before_land (BR-2016, BR-2111,
- * BR-2407, BR-2239, BR-2057); the rule and duplicate reviews run after the landing (BR-2441, D-89). A solo landing runs them in
+ * `base` below it): canon check, decision sources, the wording judgement, before_land (BR-2016, BR-2111,
+ * BR-2239, BR-2057); the rule and duplicate reviews run after the landing (BR-2441, D-89). A solo landing runs them in
  * its worktree; a batch, per change (BR-2172).
  */
 type ChangeInput = { wt: string; base: string; main: string; head: string; before: string; subject: string | null; branch: string; running: Running; worktree: string };
@@ -121,10 +120,6 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   const scope = reviewScope(wt, base.value, head.value, read.corpus);
   const { entries } = scope;
   if (scope.renamed.length > 0) say(`review: ${scope.renamed.length} file(s) only moved, not reviewed`);
-  // reason: a plaintext secret is refused before the source check fetches new source URLs (a key inside a URL would reach that server), and before main moves, so before the review after the landing sends the diff to a model (BR-2407, BR-2408, D-86)
-  const secrets = await scanSecrets(wt, base.value, head.value);
-  if (!secrets.ok) return refuse(secrets.reason, secrets.message);
-  if (secrets.scanned > 0) say(`secret scan: ${secrets.scanned} changed file(s) scanned by varlock, no plaintext secret`);
   // Sources new to main are checked once, here, on the tree that becomes main (BR-2111).
   const sourceFailures = await checkSources(wt, base.value, entries, read.corpus.docs, opts.fetcher ?? httpFetch);
   if (sourceFailures.length > 0) return refuse("source", `decision sources do not hold:\n${sourceFailures.map((f) => `  - ${f}`).join("\n")}`);

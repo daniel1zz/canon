@@ -12,7 +12,6 @@ export const LAND_STAGES: readonly (readonly string[])[] = [
   ["check"],
   ["activate", "rule-changed", "passes"],
   ["release"],
-  ["secret"],
   ["source"],
   ["review"],
   ["hook"],

@@ -7,7 +7,7 @@ import { git } from "../../kernel/git.ts";
 import { takeClaim } from "../claims/claims.ts";
 import { CoordDb } from "../db.ts";
 import { project, sh, ws } from "../testkit.ts";
-import { isSecretFile, MAX_FILE_BYTES, snapshotKey, snapshots, takeSnapshot } from "./snapshot.ts";
+import { MAX_FILE_BYTES, snapshotKey, snapshots, takeSnapshot } from "./snapshot.ts";
 
 const MAIN = join(import.meta.dir, "../../invocation/main.ts");
 
@@ -52,6 +52,20 @@ describe("taking a snapshot", () => {
     expect(show(root, `${s.ref}:staged.txt`)).toEqual({ ok: true, value: "staged" });
     expect(show(root, `${s.ref}:.env`).ok).toBe(false);
     expect(sh(root, "rev-parse", `${s.ref}^`)).toBe(sh(root, "rev-parse", "HEAD"));
+  });
+
+  test("BR-2182: snapshot take includes an unignored env file and skips an ignored env file without filename filtering", () => {
+    const root = project();
+    writeFileSync(join(root, ".env"), "TOKEN=demo\n");
+    writeFileSync(join(root, ".env.local"), "TOKEN=ignored-demo\n");
+    writeFileSync(join(root, ".gitignore"), ".env.local\n");
+    const before = sh(root, "status", "--porcelain");
+    const r = canon(root, undefined, "snapshot", "take");
+    expect(r.code).toBe(0);
+    const snapshot = snapshots(root, snapshotKey(root))[0]!;
+    expect(show(root, `${snapshot.ref}:.env`)).toEqual({ ok: true, value: "TOKEN=demo" });
+    expect(show(root, `${snapshot.ref}:.env.local`).ok).toBe(false);
+    expect(sh(root, "status", "--porcelain")).toBe(before);
   });
 
   test("BR-2182: a snapshot leaves the index file byte for byte as it was, even when its stat data is out of date", () => {
@@ -105,75 +119,6 @@ describe("taking a snapshot", () => {
     const message = sh(root, "log", "-1", "--format=%B", s.ref);
     expect(message).toContain("left out");
     expect(message).toContain("big.bin");
-  });
-
-  test("BR-2406: an untracked secret file is left out and named, the worktree keeps it, other files go in", () => {
-    const root = project();
-    writeFileSync(join(root, ".env.local"), "TOKEN=secret\n");
-    writeFileSync(join(root, "notes.txt"), "notes\n");
-    const s = taken(root);
-    expect(s.skipped).toEqual([".env.local"]);
-    expect(show(root, `${s.ref}:.env.local`).ok).toBe(false);
-    expect(show(root, `${s.ref}:notes.txt`)).toEqual({ ok: true, value: "notes" });
-    const message = sh(root, "log", "-1", "--format=%B", s.ref);
-    expect(message).toContain("left out, secret files: .env.local");
-    expect(readFileSync(join(root, ".env.local"), "utf8")).toBe("TOKEN=secret\n");
-  });
-
-  test("BR-2406: the secret list matches on the case-insensitive basename, both sides of each boundary", () => {
-    const root = project();
-    const out = [".env", "config/.env", ".env.local", "certs/server.pem", "tls.key", "cert.p12", "cert.pfx", "id_ed25519", "id_rsa", "id_ecdsa", "id_rsa.old", "keys.txt"];
-    const kept = [".env.schema", ".env.example", ".env.sample", ".env.template", "env.txt", "my.env", "id_ed25519.pub", "id_rsa.old.pub", "keys.md", "monkey.txt"];
-    for (const f of [...out, ...kept]) {
-      mkdirSync(join(root, dirname(f)), { recursive: true });
-      writeFileSync(join(root, f), `${f}\n`);
-    }
-    const s = taken(root);
-    expect(s.skipped).toEqual([...out].sort());
-    for (const f of out) expect(show(root, `${s.ref}:${f}`).ok).toBe(false);
-    for (const f of kept) expect(show(root, `${s.ref}:${f}`)).toEqual({ ok: true, value: f });
-    for (const f of [...out, ...kept]) expect(isSecretFile(f)).toBe(out.includes(f));
-    // A separate repository, since on a case-insensitive file system `.ENV` and `.env` are one file
-    const upper = project();
-    const upperOut = [".ENV", "ID_RSA", "SERVER.PEM"];
-    const upperKept = [".ENV.EXAMPLE", "ID_RSA.PUB"];
-    for (const f of [...upperOut, ...upperKept]) writeFileSync(join(upper, f), `${f}\n`);
-    const u = taken(upper);
-    expect(u.skipped).toEqual(upperOut);
-    for (const f of upperOut) expect(show(upper, `${u.ref}:${f}`).ok).toBe(false);
-    for (const f of upperKept) expect(show(upper, `${u.ref}:${f}`)).toEqual({ ok: true, value: f });
-  });
-
-  test("BR-2406: a changed tracked secret file keeps HEAD's version in the snapshot; the worktree keeps the change", () => {
-    const root = project();
-    writeFileSync(join(root, ".env.production"), "A=1\n");
-    sh(root, "add", "-A");
-    sh(root, "commit", "-qm", "env");
-    writeFileSync(join(root, ".env.production"), "A=2\n");
-    writeFileSync(join(root, "app.txt"), "changed\n");
-    const s = taken(root);
-    expect(show(root, `${s.ref}:.env.production`)).toEqual({ ok: true, value: "A=1" });
-    expect(show(root, `${s.ref}:app.txt`)).toEqual({ ok: true, value: "changed" });
-    expect(sh(root, "log", "-1", "--format=%B", s.ref)).toContain(".env.production");
-    expect(readFileSync(join(root, ".env.production"), "utf8")).toBe("A=2\n");
-  });
-
-  test("BR-2406: a staged secret file whose worktree copy matches the index is still left out, and the index is unchanged", () => {
-    const root = project();
-    writeFileSync(join(root, ".env"), "TOKEN=1\n");
-    writeFileSync(join(root, "app.txt"), "changed\n");
-    sh(root, "add", ".env");
-    const before = sh(root, "status", "--porcelain");
-    const s = taken(root);
-    expect(s.skipped).toEqual([".env"]);
-    expect(show(root, `${s.ref}:.env`).ok).toBe(false);
-    expect(sh(root, "status", "--porcelain")).toBe(before);
-  });
-
-  test("BR-2406: when the only uncommitted change is a secret file no snapshot is made", () => {
-    const root = project();
-    writeFileSync(join(root, ".env.local"), "TOKEN=1\n");
-    expect(takeSnapshot(root)).toEqual({ ok: true, value: { kind: "none", why: "same as the last snapshot" } });
   });
 
   test("BR-2182: --hook snapshots the worktree named by the hook input's cwd and prints nothing", () => {
@@ -382,20 +327,6 @@ describe("listing snapshots", () => {
     expect(lines.at(-1)).toContain("git show <ref>:<path>");
     const j = JSON.parse(canon(root, undefined, "snapshot", "list", "--json").out) as { files: string[] }[];
     expect(j.map((s) => s.files)).toEqual([["a.txt", "b.txt"], ["a.txt"]]);
-  });
-
-  test("BR-2184: a snapshot that left out a large file and a secret file names both on its next line and in --json", () => {
-    const root = project();
-    writeFileSync(join(root, "big.bin"), Buffer.alloc(MAX_FILE_BYTES + 1024 * 1024));
-    writeFileSync(join(root, ".env.local"), "TOKEN=1\n");
-    writeFileSync(join(root, "a.txt"), "a\n");
-    taken(root);
-    const lines = canon(root, undefined, "snapshot", "list").out.trimEnd().split("\n");
-    expect(lines[1]).toContain("big.bin");
-    expect(lines[1]).toContain(".env.local");
-    const j = JSON.parse(canon(root, undefined, "snapshot", "list", "--json").out) as { leftOut: string }[];
-    expect(j[0]!.leftOut).toContain("big.bin");
-    expect(j[0]!.leftOut).toContain(".env.local");
   });
 
   test("BR-2184: outside a git repository it exits 4", () => {
