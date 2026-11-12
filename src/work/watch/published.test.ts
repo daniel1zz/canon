@@ -59,6 +59,13 @@ describe("the published canon's schema decides what a landing's config may use",
     expect(message(r)).toContain(bin);
   });
 
+  test("BR-2224: JSON that is not an object is no schema; the empty object is one that accepts any config", () => {
+    const array = setup("land_batch_max: 2\n", "echo '[]'");
+    expect(message(publishedCanonReads(array.wt, array.bin))).toContain("not a JSON Schema");
+    const empty = setup("anything_at_all: 1\n", "echo '{}'");
+    expect(publishedCanonReads(empty.wt, empty.bin).ok).toBe(true);
+  });
+
   test("BR-2224: a canon whose schema command fails is refused with its exit code and stderr", () => {
     const { wt, bin } = setup("land_batch_max: 2\n", "echo boom >&2; exit 2");
     const r = publishedCanonReads(wt, bin);
