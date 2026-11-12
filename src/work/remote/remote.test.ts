@@ -106,10 +106,10 @@ describe("push after landing", () => {
 
   test("BR-2259: with floor_timing after the landing pushes without waiting for the background floor", async () => {
     const fakeBin = mkdtempSync(join(tmpdir(), "canon-fake-bin-"));
-    writeFileSync(join(fakeBin, "canon"), "#!/bin/sh\nexit 0\n");
+    writeFileSync(join(fakeBin, "canon"), "#!/bin/sh\necho '{}'\n");
     chmodSync(join(fakeBin, "canon"), 0o755);
     const path = process.env["PATH"];
-    // reason: an after-mode landing asks PATH's canon to read the config (BR-2224); a stub keeps the test off the machine's canon
+    // reason: an after-mode landing asks PATH's canon for its config schema (BR-2224); a stub that accepts any config keeps the test off the machine's canon
     process.env["PATH"] = `${fakeBin}:${path}`;
     try {
       const { root, bare } = withRemote("remote: origin\nfloor_timing: after\nfloor_quiet_minutes: 0\nfloor: exit 1\n");

@@ -7,6 +7,7 @@ import { enqueue, finishEntry } from "../land/queue/queue.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 import { fixLandedIn, redMain, startFixMain } from "./redmain.ts";
 import { watch } from "./watch.ts";
+import { configSchema } from "../../invocation/reference/reference.ts";
 
 // reason: a landing in after mode starts the background floor, a spawned `canon floor watch`; these tests wait for it
 setDefaultTimeout(60_000);
@@ -45,17 +46,24 @@ async function backgroundResult(root: string, sha: string): Promise<string | und
   return undefined;
 }
 
-// reason: an after-mode landing runs the canon on PATH (BR-2224); these tests put their own one first on PATH, so
-// they do not depend on what canon this machine has installed.
+// reason: an after-mode landing asks the canon on PATH for its config schema (BR-2224); these tests put their own one
+// first on PATH, whose schema accepts any config, so they do not depend on what canon this machine has installed.
 const FAKE_BIN = mkdtempSync(join(tmpdir(), "canon-fake-bin-"));
 const FAKE_CANON = join(FAKE_BIN, "canon");
 const fakeCanon = (script: string) => {
   writeFileSync(FAKE_CANON, `#!/bin/sh\n${script}\n`);
   chmodSync(FAKE_CANON, 0o755);
 };
+const ACCEPTS = "echo '{}'";
+/** This source's config schema without `key`: a published canon released before `key` was added. */
+const withoutKey = (key: string) => {
+  const schema = configSchema() as { properties: Record<string, unknown> };
+  const { [key]: _gone, ...properties } = schema.properties;
+  return { ...schema, properties };
+};
 const realPath = process.env["PATH"];
 beforeAll(() => {
-  fakeCanon("exit 0");
+  fakeCanon(ACCEPTS);
   process.env["PATH"] = `${FAKE_BIN}:${realPath}`;
 });
 afterAll(() => {
@@ -144,33 +152,58 @@ describe("landing with floor_timing: after", () => {
   });
 });
 
-describe("the canon on PATH reads the landing's config in after mode", () => {
-  test("BR-2224: a PATH canon that cannot read the config refuses the landing with reason config, naming its path, exit code and error; main stays", async () => {
+describe("the published canon on PATH reads the landing's config in after mode", () => {
+  test("BR-2224: a config key the PATH canon's schema does not know refuses the landing with reason config, naming its path and the key; main stays", async () => {
     const root = configured("floor: test ! -e FAIL\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
     const before = sh(root, "rev-parse", "main");
-    const s = startNew(root, "New key");
+    const s = startNew(root, "Use a key");
+    writeFileSync(join(s.worktree, "canon/config.yaml"), `${readFileSync(join(s.worktree, "canon/config.yaml"), "utf8")}links_since: ${before}\n`);
+    sh(s.worktree, "commit", "-qam", "use links_since");
+    fakeCanon(`cat <<'JSON'\n${JSON.stringify(withoutKey("links_since"))}\nJSON`);
+    try {
+      const out = await land(ws(s.worktree), FAST, quiet);
+      expect(out.kind === "refused" && out.reason).toBe("config");
+      const message = out.kind === "refused" ? out.message : "";
+      expect(message).toContain(FAKE_CANON);
+      expect(message).toContain("`links_since`");
+      expect(message).toContain("Wait for a release");
+      expect(sh(root, "rev-parse", "main")).toBe(before);
+      expect(events(root, "land.refuse").at(-1)).toMatchObject({ reason: "config", floor_deferred: true });
+    } finally {
+      fakeCanon(ACCEPTS);
+    }
+  });
+
+  test("BR-2224: the same key lands when the PATH canon's schema knows it", async () => {
+    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
+    const s = startNew(root, "Known key");
+    writeFileSync(join(s.worktree, "canon/config.yaml"), `${readFileSync(join(s.worktree, "canon/config.yaml"), "utf8")}links_since: ${sh(root, "rev-parse", "main")}\n`);
+    sh(s.worktree, "commit", "-qam", "use links_since");
+    fakeCanon(`cat <<'JSON'\n${JSON.stringify(configSchema())}\nJSON`);
+    try {
+      expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    } finally {
+      fakeCanon(ACCEPTS);
+    }
+  });
+
+  test("BR-2224: a PATH canon that cannot print its schema refuses the landing with reason config, naming its path, exit code and error; main stays", async () => {
+    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
+    const before = sh(root, "rev-parse", "main");
+    const s = startNew(root, "Broken canon");
     commitFile(s.worktree, "new.txt", "x\n");
-    fakeCanon("echo \"canon: canon/config.yaml: unknown key \\`brand_new\\`\" >&2; exit 2");
+    fakeCanon("echo boom >&2; exit 2");
     try {
       const out = await land(ws(s.worktree), FAST, quiet);
       expect(out.kind === "refused" && out.reason).toBe("config");
       const message = out.kind === "refused" ? out.message : "";
       expect(message).toContain(FAKE_CANON);
       expect(message).toContain("exited 2");
-      expect(message).toContain("unknown key");
+      expect(message).toContain("boom");
       expect(sh(root, "rev-parse", "main")).toBe(before);
-      expect(events(root, "land.refuse").at(-1)).toMatchObject({ reason: "config", floor_deferred: true });
     } finally {
-      fakeCanon("exit 0");
+      fakeCanon(ACCEPTS);
     }
-  });
-
-  test("BR-2224: a PATH canon that reads the config lets the landing go ahead", async () => {
-    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
-    const s = startNew(root, "Fine");
-    commitFile(s.worktree, "new.txt", "x\n");
-    const out = await land(ws(s.worktree), FAST, quiet);
-    expect(out.kind).toBe("landed");
   });
 
   test("BR-2224: no canon on PATH refuses the landing with reason config", async () => {
@@ -200,7 +233,7 @@ describe("the canon on PATH reads the landing's config in after mode", () => {
       const out = await land(ws(s.worktree), FAST, quiet);
       expect(out.kind).toBe("landed");
     } finally {
-      fakeCanon("exit 0");
+      fakeCanon(ACCEPTS);
     }
   });
 });

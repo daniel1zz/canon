@@ -15,6 +15,7 @@ import { plan, untestedLine } from "./batch.ts";
 import { clearRedMain, fixLandedIn, recordFailure } from "./redmain.ts";
 import { stopStarted } from "./stop.ts";
 import { floorWithReport } from "../land/checks/floor.ts";
+import { publishedCanonReads } from "./published.ts";
 
 /**
  * Merge-then-test (D-31): with `floor_timing: after`, landings move main without the floor and `canon floor watch`
@@ -46,22 +47,12 @@ export function timingOf(wt: string): FloorTiming {
 }
 
 /**
- * Whether the canon on PATH, the one sessions run after this landing, can read the config of the tree in `wt`
- * (BR-2224). In after mode PATH's canon is rebuilt only from a passed commit (BR-2222), so a key added and used in
- * one landing would leave every session's canon failing on main's config until the background floor passes.
+ * Whether the published canon, the one on PATH that sessions run after this landing, knows every key and value of the
+ * config of the tree in `wt` (BR-2224). In after mode PATH's canon is published only from a passed commit (BR-2222), so a
+ * key main already knows can still be unknown to it until the background floor passes and the release is made.
  */
 export function pathCanonReads(wt: string): Result<void> {
-  const bin = pathCanon();
-  if (!bin) return err("invalid", "canon is not on PATH, so nothing shows that the canon sessions run after this landing can read its canon/config.yaml (floor_timing: after, BR-2224)");
-  const r = Bun.spawnSync([bin, "config", "--schema"], { cwd: wt, stdout: "ignore", stderr: "pipe", stdin: "ignore" });
-  if (r.exitCode === 0) return ok(undefined);
-  const said = r.stderr.toString().trim().split("\n").slice(0, 5).map((l) => `  ${l}`).join("\n");
-  return err(
-    "invalid",
-    `the canon on PATH (${bin}) cannot read this landing's canon/config.yaml: \`canon config --schema\` exited ${r.exitCode ?? "on a signal"}${said ? `\n${said}` : ""}\n` +
-      "With floor_timing after, PATH's canon is rebuilt only once main passes its background floor (after_green), so land a new config key first, " +
-      "and use it in another landing after main has passed (BR-2224).",
-  );
+  return publishedCanonReads(wt, pathCanon());
 }
 
 /** The canon PATH names now, or null when there is none. */

@@ -80,11 +80,11 @@ describe("a config key added and used in one landing", () => {
       const root = canonLike(`floor_timing: ${timing}\n`);
       const s = startNew(root, `Key and use ${timing}`);
       commit(s.worktree, { [KEYS]: declarations("floor", "tests", "floor_timing", "typecheck_command"), "canon/config.yaml": withKey(s.worktree) });
-      // reason: in after mode BR-2224 runs PATH's canon first; it is pointed at one that reads any config
+      // reason: in after mode BR-2224 asks PATH's canon for its config schema first; it is pointed at one whose schema accepts any config
       const path = process.env["PATH"];
       const bin = join(root, "..", `${root.split("/").pop()}-bin`);
       mkdirSync(bin, { recursive: true });
-      writeFileSync(join(bin, "canon"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+      writeFileSync(join(bin, "canon"), "#!/bin/sh\necho '{}'\n", { mode: 0o755 });
       process.env["PATH"] = `${bin}:${path}`;
       try {
         const out = await land(ws(s.worktree), FAST, quiet);

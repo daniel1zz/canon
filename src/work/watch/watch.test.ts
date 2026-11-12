@@ -111,7 +111,7 @@ async function withPath<T>(bin: string, run: () => Promise<T>, path?: string): P
 }
 
 /**
- * A directory with a `canon` that exits `reads` for `config --schema` and, for `floor watch`, writes its directory
+ * A directory with a `canon` that exits `reads` for `config --schema` (printing a schema that accepts any config when 0, BR-2224) and, for `floor watch`, writes its directory
  * to `started`. With `real`, `floor watch` runs this source's canon too.
  */
 function fakeCanon(root: string, reads = 0, real = false) {
@@ -121,7 +121,7 @@ function fakeCanon(root: string, reads = 0, real = false) {
   fakes.push({ root, bin });
   writeFileSync(
     join(bin, "canon"),
-    `#!/bin/sh\nif [ "$1" = config ]; then exit ${reads}; fi\nif [ "$1 $2" = "floor watch" ]; then echo $$ >> ${join(bin, "pids")}; printf '%s\\n' "$(pwd -P)" >> ${started}; fi\n${real ? `exec bun ${MAIN} "$@"\n` : ""}`,
+    `#!/bin/sh\nif [ "$1" = config ]; then ${reads === 0 ? "echo '{}'; " : ""}exit ${reads}; fi\nif [ "$1 $2" = "floor watch" ]; then echo $$ >> ${join(bin, "pids")}; printf '%s\\n' "$(pwd -P)" >> ${started}; fi\n${real ? `exec bun ${MAIN} "$@"\n` : ""}`,
     { mode: 0o755 },
   );
   return { bin, started };
