@@ -2,9 +2,11 @@
 id: C-509
 title: canon work test names the rules a landing would refuse for missing
   evidence, instead of only the landing turn
-status: open
+status: done
 rules:
   - BR-2456
+passes:
+  BR-2456: 66050bdf47afe39d test
 ---
 
 ## 为什么
