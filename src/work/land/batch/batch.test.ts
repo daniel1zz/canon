@@ -135,6 +135,7 @@ describe("batched landings", () => {
   test("BR-2173 BR-2378: when the leader alone already fails the floor, the leader is refused for the floor and the member goes back to the queue and lands", async () => {
     const { root, floorRuns } = batchProject();
     const a = startNew(root, "Bad leader");
+    // the leader's own steps (BR-2014) pass here; it is the floor of the leader alone that fails
     commitFile(a.worktree, "FAIL", "x\n");
     const b = startNew(root, "Good");
     commitFile(b.worktree, "b.txt", "b\n");

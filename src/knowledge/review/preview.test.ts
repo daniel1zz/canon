@@ -45,7 +45,7 @@ describe("canon work review", () => {
     expect(t.lastPrompt()).toContain("Refunds are paid in 30 days.");
     expect(t.lastPrompt()).toContain(`- ${id} [billing] Refunds`);
     expect(t.events().map((e) => e.kind)).toEqual(["review.preview"]);
-    expect(JSON.parse(t.events()[0]!.detail)).toMatchObject({ verdict: "ok", findings: 1, docs: [id] });
+    expect(JSON.parse(t.events()[0]!.detail)).toMatchObject({ verdict: "ok", findings: 1, docs: [id] }); // the reviews the landing queues (BR-2441), recorded only as a preview
     // a second edit of the same file, still uncommitted, is what is read next
     sh(s.worktree, "add", "-A");
     writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), ruleText("Refunds are paid in 45 days."));

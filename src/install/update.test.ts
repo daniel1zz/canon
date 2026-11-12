@@ -113,6 +113,8 @@ describe("finding and applying updates", () => {
     const r = canon(root, env, "update");
     expect(r.out + r.err).toMatch(/updated to \w+ in C-\d+, landed/);
     expect(r.code).toBe(0);
+    // the update lands through the normal steps; nothing in it needs a review here, so no review after landing is queued (BR-2441)
+    expect(r.out + r.err).not.toContain("reviewed after the landing");
     expect(git(root, "show", "main:canon/architecture.md")).toBe("---\ntitle: 架构总览\n---\n# 架构总览\n\n## 上下文\n\n## 容器\n\n## 主要流程");
     expect(canon(root, env, "update", "--check").code).toBe(0);
     expect(canon(root, env, "update").out).toContain("up to date");

@@ -91,6 +91,7 @@ describe("landing with floor_timing: after", () => {
     expect(out.kind === "refused" && out.reason).toBe("check");
     expect(sh(root, "rev-parse", "main")).toBe(before);
     expect(events(root, "floor.pass").length + events(root, "floor.fail").length).toBe(0);
+    expect(events(root, "land.ok")).toEqual([]); // refused by its own steps before main moves, so nothing is queued after it either
   });
 
   test("BR-2218: with floor_timing before, or unset, a failing floor refuses the landing and main stays", async () => {

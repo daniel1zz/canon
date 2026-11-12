@@ -177,6 +177,7 @@ describe("a landing that adds a decision still proposed says so", () => {
     expect(r.out).toContain(`canon decision accept ${d(6)}`);
     expect(r.out).not.toContain(`proposed decision: ${d(7)}`);
     expect(events(root, "land.proposed").map((e) => e["decisions"])).toEqual([[d(5), d(6)]]);
+    // the line is printed once canon check and before_land have passed; no rule review runs in the landing (BR-2014)
   }, TIMED);
 
   test("BR-2355: an accepted new decision, an edit of a decision already on main, or no decision at all prints nothing and records no event", async () => {

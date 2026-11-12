@@ -104,6 +104,7 @@ describe("landing queue", () => {
 
 describe("batches", () => {
   test("BR-2172: candidates are the live waiting entries right behind the leader, in order, stopping at the first that may not join", () => {
+    // each member's own steps (BR-2014) then run on its part of the chain; who joins is decided here
     const d = db();
     const me = selfProcess();
     const lead = enqueue(d, "/wt/a", "C-1", "x", me);

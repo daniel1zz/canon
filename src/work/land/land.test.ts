@@ -113,6 +113,7 @@ describe("work land", () => {
     sh(s.worktree, "add", "x.txt");
     sh(s.worktree, "commit", "-qm", "x");
     const out = await land(ws(s.worktree), FAST, quiet);
+    // the commit the checks ran on is the one that lands, and the one a review after landing would review (BR-2441)
     expect(out.kind === "landed" && out.sha).toBe(sh(s.worktree, "rev-parse", "HEAD"));
   });
 
@@ -268,6 +269,7 @@ describe("work land", () => {
   });
 
   test("BR-2111: a source already on main is not fetched again, and editing an old decision needs no new source", async () => {
+    // sources are checked after canon check and before main moves; the rule review is no longer a landing step (BR-2014)
     const root = project();
     const s = startNew(root, "First");
     mkdirSync(join(s.worktree, "canon/decisions"), { recursive: true });

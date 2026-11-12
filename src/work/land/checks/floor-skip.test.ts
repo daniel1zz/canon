@@ -34,6 +34,7 @@ describe("floor skip for landings that change only declared paths", () => {
     expect(skip.length).toBe(1);
     expect(skip[0]!["paths"]).toEqual([`canon/changes/${s.change}-notes-only.md`, "canon/notes/N-1.md"]);
     expect(events(root, "land.ok")[0]!["floor_skipped"]).toBe(true);
+    expect(events(root, "review.ok").length + events(root, "review.block").length).toBe(0); // no rule review runs in the landing
   });
 
   test("BR-2164: a path outside the entries, a sibling with the same prefix, a test file, or no entries at all runs the floor", async () => {
