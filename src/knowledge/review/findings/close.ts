@@ -61,8 +61,9 @@ function touches(cwd: string, commit: string, docs: readonly string[]): Result<b
 
 /** The checks of BR-2453 in its order, then the event and the close in one write transaction. */
 export function closeFinding(db: CoordDb, input: CloseInput): Result<Closed> {
-  const n = Number(input.id);
-  if (!/^\d+$/.test(input.id) || !Number.isSafeInteger(n) || n <= 0) return err("invalid", `the finding number must be a positive whole number, got ${JSON.stringify(input.id)}`);
+  const raw = input.id.replace(/^#/, "");
+  const n = Number(raw);
+  if (!/^\d+$/.test(raw) || !Number.isSafeInteger(n) || n <= 0) return err("invalid", `the finding number must be a positive whole number, got ${JSON.stringify(input.id)}`);
   if ((input.fixed === undefined) === (input.spurious === undefined)) return err("invalid", "give exactly one of --fixed <commit> and --spurious \"<quote>\"");
   const reason = input.reason.trim();
   if (reason === "") return err("invalid", "--reason is required: say what fixed it or why it does not hold");

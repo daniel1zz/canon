@@ -223,19 +223,19 @@ describe("canon finding close (BR-2453)", () => {
     expect(row(db, n).closed_how).toBeNull();
   });
 
-  test("BR-2453: --spurious closes with a quote found word for word in one of its documents on main, across a line break; too short or not there is refused", () => {
+  test("BR-2453: --spurious closes with a quote of 8 or more characters found word for word in one of its documents on main, across a line break; 7 or not there is refused", () => {
     const { root, db, n, commit } = opened();
     commit(`canon/rules/billing/${BR(2)}.md`, ruleFile(2).replace("Rule 2.", "本规则只适用于\n海外订单的退款。"));
-    const short = closeFinding(db, input(root, n, { spurious: "海外订单" }));
+    const short = closeFinding(db, input(root, n, { spurious: "海外订单的退款" }));
     expect(!short.ok && short.error.code).toBe("refused");
     const absent = closeFinding(db, input(root, n, { spurious: "的「三天」矛盾，确实如此" }));
     expect(!absent.ok && [absent.error.code, absent.error.message.includes(`${BR(1)}, ${BR(2)}`)]).toEqual(["refused", true]);
-    const c = closeFinding(db, input(root, n, { spurious: "本规则只适用于 海外订单的退款" }));
+    const c = closeFinding(db, input(root, n, { spurious: "海外订单的退款。" }));
     expect(c.ok && c.value).toEqual({ id: n, how: "spurious", by: BR(2) });
     expect(row(db, n).closed_how).toBe("spurious");
   });
 
-  test("BR-2453: usage errors exit 2, an unknown finding or commit 3, a closed one 5; an agent may close one and the line says how", () => {
+  test("BR-2453: usage errors exit 2, an unknown finding or commit 3, a closed one 5; an agent may close one, #n works as n, and the line says how", () => {
     const { root, n, commit } = opened();
     expect(canon(root, "finding", "close", "0", "--fixed", "main", "--reason", "x").code).toBe(2);
     expect(canon(root, "finding", "close", String(n), "--reason", "x").code).toBe(2);
@@ -244,7 +244,7 @@ describe("canon finding close (BR-2453)", () => {
     expect(canon(root, "finding", "close", "99", "--fixed", "main", "--reason", "x").code).toBe(3);
     expect(canon(root, "finding", "close", String(n), "--fixed", "nosuchref", "--reason", "x").code).toBe(3);
     const fix = commit(`canon/rules/billing/${BR(1)}.md`, ruleFile(1).replace("Rule 1.", "Rule 1, fixed."));
-    const done = canon(root, "finding", "close", String(n), "--fixed", fix, "--reason", "x");
+    const done = canon(root, "finding", "close", `#${n}`, "--fixed", fix, "--reason", "x");
     expect([done.code, done.out.trim()]).toEqual([0, `closed review finding #${n}: fixed by ${fix.slice(0, 9)}`]);
     expect(canon(root, "finding", "close", String(n), "--fixed", fix, "--reason", "x").code).toBe(5);
   });
@@ -259,7 +259,7 @@ describe("showing findings", () => {
     record(db, [f("untestable", "「尽快」无法测试")], [BR(1), BR(2)], null);
     const today = new Date().toISOString().slice(0, 10);
     const out = canon(root, "context", "billing").out;
-    expect(out).toContain("# Open review findings\n\nSettle each now: fixed, canon finding close <n> --fixed <commit>;");
+    expect(out).toContain("# Open review findings\n\nSettle each now: fixed, canon finding close <n> --fixed <commit> --reason \"<why>\";");
     expect(out).toContain(`- #${first} [contradiction] ${BR(1)}, ${BR(7)}: ${BR(1)} 和 ${BR(7)} 的「三天」矛盾 (${id("C", 9)}, opened ${today}, 0 days ago)`);
     expect(out.match(/\[untestable\] -: 「尽快」无法测试 \(opened \d{4}-\d{2}-\d{2}, 0 days ago\)/g)?.length).toBe(1);
     // BR-7 lives in another domain; asked about directly, it shows the finding too.

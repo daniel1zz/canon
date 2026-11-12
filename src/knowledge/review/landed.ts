@@ -170,7 +170,7 @@ function settle(ws: Workspace, job: LandedJob, say: Say, verdict: ReviewVerdict,
   if (notes.length > 0 && !legacy) say("review notes do not block and are not changes of their own: canon context shows them to whoever next changes these documents, who handles them then");
   if (blocking.length > 0)
     say(
-      `review: ${blocking.length} blocking finding(s) recorded as open review findings (${ids.map((i) => `#${i}`).join(", ")}) on the documents they name; settle each now: fix a real one and canon finding close <n> --fixed <commit>, or canon finding close <n> --spurious "<quote from a document it names>" when it does not hold; canon context <id> lists them`,
+      `review: ${blocking.length} blocking finding(s) recorded as open review findings (${ids.map((i) => `#${i}`).join(", ")}) on the documents they name; settle each now: fix a real one and canon finding close <n> --fixed <commit> --reason "<why>", or canon finding close <n> --spurious "<quote from a document it names>" --reason "<why>" when it does not hold; canon context <id> lists them`,
     );
   else say(`review: ${review} review ${legacy ? "blocked in the old answer format" : "ok"}`);
   return ok(ids);

@@ -717,8 +717,8 @@ describe("rule review after landing", () => {
       expect(r.review).toContain(`review finding: [contradiction] ${id} 和 BR-7 的「三天」矛盾`);
       expect(r.review).toContain(`review note: ${id} could be shorter`);
       expect(r.review).toMatch(/1 blocking finding\(s\) recorded as open review findings \(#\d+\)/);
-      expect(r.review).toContain("canon finding close <n> --fixed <commit>");
-      expect(r.review).toContain('canon finding close <n> --spurious "<quote from a document it names>"');
+      expect(r.review).toContain('canon finding close <n> --fixed <commit> --reason "<why>"');
+      expect(r.review).toContain('canon finding close <n> --spurious "<quote from a document it names>" --reason "<why>"');
       const open = openFindings(ws(root).db);
       expect(open.map((f) => [f.criterion, [...f.docs]])).toEqual([["contradiction", [id, "BR-7"]]]);
       const event = ws(root).db.db.query<{ id: number; detail: string }, []>("SELECT id, detail FROM events WHERE kind = 'review.block'").get()!;

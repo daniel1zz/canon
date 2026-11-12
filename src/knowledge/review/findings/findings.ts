@@ -161,7 +161,7 @@ export function renderFinding(f: OpenFinding, now: Date = new Date()): string {
 }
 
 /** What `canon context` and `canon brief` say about open findings before listing them. */
-export const FINDINGS_HINT = 'Settle each now: fixed, canon finding close <n> --fixed <commit>; does not hold, canon finding close <n> --spurious "<quote from a document it names>". Open until closed explicitly (also: a document it names retired or superseded); a later review that does not mention one does not close it.';
+export const FINDINGS_HINT = 'Settle each now: fixed, canon finding close <n> --fixed <commit> --reason "<why>"; does not hold, canon finding close <n> --spurious "<quote from a document it names>" --reason "<why>". Open until closed explicitly (also: a document it names retired or superseded, or canon verdict record); a later review that does not mention one does not close it.';
 
 /** The line `canon brief` prints outside a change worktree: how many findings are open, on how many documents (BR-2437). */
 export function findingsCount(db: CoordDb): string | undefined {
