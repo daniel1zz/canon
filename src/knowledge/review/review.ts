@@ -66,6 +66,11 @@ export interface ReviewExtras {
   readonly added?: readonly AddedLines[];
   /** Restatements the text test finds in the added lines, given to the review as hints (BR-2405). */
   readonly restatements?: readonly Restatement[];
+  /**
+   * One part of a review whose changed documents do not fit one call (BR-2448): this is part `i` of `n`, and `others` are the
+   * changed documents the other parts show in full, listed here by id, title and first line.
+   */
+  readonly part?: { readonly i: number; readonly n: number; readonly others: readonly Doc[] };
 }
 
 /** The key of each blocking criterion in the prompts, and `note` for a remark that never blocks (BR-2367, D-74). */
@@ -121,9 +126,14 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
       ? `Answer with JSON only: ${ANSWER_FORMAT_RULE}, "wording":{"<rule id>":"wording"|"behaviour"}}, with one wording entry per rule under # Wording judgements`
       : `Answer with JSON only: ${ANSWER_FORMAT_RULE}}`,
     ...(note ? [note] : []),
+    ...(extras.part ? [partNote(extras.part.i, extras.part.n)] : []),
     "",
   ];
   if (extras.wording?.length) parts.push(...wordingSection(extras.wording));
+  if (extras.part) {
+    parts.push("# Other changed documents in this landing (only id, title and first line here; each is reviewed in full in another part)", "");
+    parts.push(...extras.part.others.map((d) => `- ${d.id} ${d.title} (${d.kind}${"status" in d ? `, ${d.status}` : ""}): ${firstLine(d)}`), "");
+  }
   parts.push("# Changed documents (new text)");
   for (const d of changed) parts.push(docSection(d));
   if (extras.added?.length) {
@@ -175,6 +185,17 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
   }
   if (extras.readmes?.length) parts.push(`# Domain READMEs changed: ${extras.readmes.join(", ")} (their new text is in the current context below)`);
   return parts;
+}
+
+/** What a part of a review split by its changed documents tells the reviewer (BR-2448). */
+function partNote(i: number, n: number): string {
+  return `This landing changed more documents than one call can hold, so they are reviewed in ${n} parts; this is part ${i} of ${n}. Only this part's changed documents are shown in full under # Changed documents; the other changed documents are listed by id, title and first line under # Other changed documents in this landing. Judge the documents shown in full against everything shown; a contradiction with another changed document can be found only from what that list shows, and never block because a changed document is not shown in full in this part.`;
+}
+
+/** A document's first line of text after its headings, at most 200 characters, for the list of the other changed documents (BR-2448). */
+function firstLine(d: Doc): string {
+  const line = d.body.split("\n").map((l) => l.trim()).find((l) => l !== "" && !l.startsWith("#")) ?? "";
+  return line.length > 200 ? `${line.slice(0, 200)}…` : line;
 }
 
 /** The `# Wording judgements` section: each rule's 规则 before and now, and its unchanged 例子 (BR-2239). */
@@ -424,7 +445,7 @@ interface Call {
 
 /** The note a call of a split review carries: which call it is and how many there are (BR-2359). */
 function callNote(i: number, n: number): string {
-  return `This review is split into ${n} calls because of its size; this is call ${i} of ${n}. Every call shows all changed documents, the rule index and the accepted decisions' titles, and only part of the affected domains' text: judge what is shown, and never block because a rule or domain text is not shown in this call.`;
+  return `This review is split into ${n} calls because of its size; this is call ${i} of ${n}. Every call shows the same changed documents, the rule index and the accepted decisions' titles, and only part of the affected domains' text: judge what is shown, and never block because a rule or domain text is not shown in this call.`;
 }
 
 /**
@@ -611,6 +632,78 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   // reason: every piece fits and the note room is its measured size, so this is a defect of the packer, not something raising the budget fixes (BR-2359, #160)
   if (worst > budgetBytes) throw new Error(`canon bug: a call of the split rule review is ${worst} bytes, above review_max_prompt_kb = ${kb(budgetBytes)} KB (${budgetBytes} bytes) although every piece fits; report it with the change that was reviewed (#160)`);
   return ok(prompts);
+}
+
+/** The prompts of a review whose changed documents may be split into parts, and the documents each part shows in full (BR-2448). */
+export interface PartedPrompts {
+  readonly prompts: readonly string[];
+  /** One entry per part; a single entry with every changed document when the review was not split by documents. */
+  readonly parts: readonly (readonly Doc[])[];
+}
+
+/**
+ * The prompts of a review after landing (BR-2448): `reviewPrompts` when it can make them; otherwise, when the changed documents
+ * are what does not fit, they are split into parts, in order of their domain, each part as many documents as fit with the
+ * fixed part and the largest domain piece it needs, and each part reviewed as `reviewPrompts` reviews (BR-2359). Every part
+ * lists the other changed documents by id, title and first line; the deleted documents, the domain READMEs, the change's lessons and
+ * the wording judgements go with the first part; the overview with every part. A single changed document that does not fit is the
+ * error `reviewPrompts` gives for it alone.
+ */
+export function reviewPromptParts(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras, budgetBytes: number): Result<PartedPrompts> {
+  const whole = reviewPrompts(root, corpus, changed, extras, budgetBytes);
+  if (whole.ok) return ok({ prompts: whole.value, parts: [changed] });
+  if (changed.length < 2) return whole;
+  const pieces = new Map(reviewSizes(root, corpus).pieces.map((p) => [p.top, p.piece]));
+  const tail = bytes(promptTail(corpus).join("\n"));
+  // reason: the documents of one domain go together, so a contradiction between them is seen whole in one part (BR-2448)
+  const key = (d: Doc): string => (d.kind === "rule" ? `0 ${d.domain}` : `1 ${d.kind}`);
+  const order = [...changed].sort((a, b) => key(a).localeCompare(key(b)));
+  const extrasOf = (docs: readonly Doc[], i: number, n: number): ReviewExtras => {
+    const ids = new Set(docs.map((d) => d.id));
+    const mine = new Set(docs);
+    const others = order.filter((d) => !mine.has(d));
+    return {
+      ...(i === 1 ? extras : { change: undefined, wording: [] }),
+      ...(extras.architecture ? { architecture: extras.architecture } : {}),
+      added: (extras.added ?? []).filter((a) => ids.has(a.id)),
+      restatements: (extras.restatements ?? []).filter((r) => ids.has(r.id)),
+      part: { i, n, others },
+    };
+  };
+  // the smallest prompt a part can have: its head with the most digits a part number can have, the tail, the split note's room and its largest domain piece
+  const fits = (docs: readonly Doc[], i: number): boolean => {
+    const ex = extrasOf(docs, i, changed.length);
+    const tops = contextTops(corpus, docs, ex);
+    const piece = Math.max(0, ...tops.map((t) => pieces.get(t) ?? 0));
+    return bytes(promptHead(corpus, docs, ex).join("\n")) + tail + noteRoom(corpus, maxCalls(root, corpus, tops)) + piece + 2 <= budgetBytes;
+  };
+  const groups: Doc[][] = [];
+  let cur: Doc[] = [];
+  for (const d of order) {
+    if (fits([...cur, d], groups.length + 1)) {
+      cur.push(d);
+      continue;
+    }
+    if (cur.length > 0) groups.push(cur);
+    cur = [d];
+    if (fits(cur, groups.length + 1)) continue;
+    // reason: one changed document that does not fit even alone cannot be split further; the error is the one its own review gives (BR-2448, BR-2359)
+    const alone = reviewPrompts(root, corpus, cur, extrasOf(cur, groups.length + 1, changed.length), budgetBytes);
+    if (!alone.ok) return alone;
+  }
+  groups.push(cur);
+  const prompts: string[] = [];
+  for (const [i, g] of groups.entries()) {
+    const r = reviewPrompts(root, corpus, g, extrasOf(g, i + 1, groups.length), budgetBytes);
+    if (!r.ok) return r;
+    prompts.push(...r.value);
+  }
+  return ok({ prompts, parts: groups });
+}
+
+/** The line a review split by its changed documents prints: how many parts and which documents each shows in full (BR-2448). */
+export function partsNote(parts: readonly (readonly Doc[])[]): string | undefined {
+  return parts.length > 1 ? `the changed documents do not fit one call, so they are reviewed in ${parts.length} parts: ${parts.map((p, i) => `${i + 1}: ${p.map((d) => d.id).join(", ")}`).join("; ")}` : undefined;
 }
 
 /** `Ncalls` sizes line for the landing output, e.g. `2 calls by size (review_max_prompt_kb): 1: 241 KB, 2: 224 KB`; undefined for a single call. */

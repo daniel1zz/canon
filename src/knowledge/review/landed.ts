@@ -6,13 +6,13 @@ import type { Running } from "../../work/land/outcome.ts";
 import { readCorpus } from "../documents/read.ts";
 import type { Corpus, Doc } from "../documents/model.ts";
 import { findDoc } from "../query/query.ts";
-import { CRITERION_TEXT, reviewPrompts, runJsonCommand, runReview, runReviews, splitNote, type ReviewLimits, type ReviewVerdict } from "./review.ts";
+import { CRITERION_TEXT, partsNote, reviewPromptParts, runJsonCommand, runReview, runReviews, splitNote, type ReviewLimits, type ReviewVerdict } from "./review.ts";
 import { REVIEW_NONE } from "./config-keys.ts";
 import { reviewTree } from "../../work/land/checks/review-tree.ts";
 import { architectureOf, couldNotRun, duplicateReviewPrompt, reviewScope, reviewSettingsOn, standingTouched, type ReviewSettings } from "../../work/land/checks/review-scope.ts";
 import { docsKey, passedDocs, passedReview, reviewKey } from "../../work/land/checks/review-reuse.ts";
 import { landedSince } from "../../work/land/checks/landed-since.ts";
-import { findingOf, namedIds, recordFindings, type Finding } from "./findings/findings.ts";
+import { closeNoLongerHolds, findingOf, namedIds, openFindings, recordFindings, type Finding } from "./findings/findings.ts";
 
 /**
  * The rule review and the duplicate review of one landed commit, run after the landing in the background (D-89, BR-2441):
@@ -87,12 +87,15 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
     if (!overview.ok) return overview;
     const architecture = overview.value;
     const extras = { deleted, readmes, deletedReadmes, change: change ? findDoc(read.corpus, change) : undefined, added: scope.added, restatements: scope.restatements, ...(architecture ? { architecture } : {}) };
-    const prompts = reviewPrompts(wt, read.corpus, changedDocs, extras, s.reviewMaxPromptBytes);
-    if (!prompts.ok) return err("invalid", prompts.error.message);
-    const split = splitNote(prompts.value);
+    const parted = reviewPromptParts(wt, read.corpus, changedDocs, extras, s.reviewMaxPromptBytes);
+    if (!parted.ok) return err("invalid", parted.error.message);
+    const prompts = parted.value.prompts;
+    const byDocs = partsNote(parted.value.parts);
+    if (byDocs) say(`review: ${byDocs}`);
+    const split = splitNote(prompts);
     if (split) say(`review: ${split}`);
     // reason: the same prompts, command and budget that already passed get the same answer without another model call (BR-2361, D-70)
-    const hash = reviewKey("land", reviewer, s.reviewMaxPromptBytes, prompts.value);
+    const hash = reviewKey("land", reviewer, s.reviewMaxPromptBytes, prompts);
     const reused = passedReview(ws.db, "land", hash);
     // The changed documents' own key: the same text that passed a full review needs only what landed on main since (BR-2396, D-81).
     const readmePaths = new Set(readmes.map((name) => read.corpus.domains.find((d) => d.name === name)?.path).filter((p): p is string => p !== undefined));
@@ -121,20 +124,23 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
         say(`review: the changed documents are the ones that passed review event ${usable.event}; reviewing them only against what landed on main since: ${since.map((d) => d.id).join(", ")}`);
         const keep = new Set<Doc>([...changedDocs, ...since]);
         // reason: without its added lines a changed document already on main would read as new, so its old restatements could block (BR-2405, D-84)
-        const small = reviewPrompts(wt, { ...read.corpus, docs: read.corpus.docs.filter((d) => keep.has(d)) }, changedDocs, { deleted, readmes, deletedReadmes, change: extras.change, added: scope.added, incremental: { from: usable.event, added: since } }, s.reviewMaxPromptBytes);
+        const small = reviewPromptParts(wt, { ...read.corpus, docs: read.corpus.docs.filter((d) => keep.has(d)) }, changedDocs, { deleted, readmes, deletedReadmes, change: extras.change, added: scope.added, incremental: { from: usable.event, added: since } }, s.reviewMaxPromptBytes);
         if (!small.ok) return err("invalid", small.error.message);
-        const r = await runReviews(reviewer, at.value, small.value, limits, s.reviewParallel);
+        const smallParts = partsNote(small.value.parts);
+        if (smallParts) say(`review: ${smallParts}`);
+        const r = await runReviews(reviewer, at.value, small.value.prompts, limits, s.reviewParallel);
         if (!r.ok) return err("io", couldNotRun("rule", r.error.message, at.value, base));
         // reason: the earlier pass's notes are kept with the new ones (BR-2145)
         verdict = { verdict: r.value.verdict, findings: [...usable.findings, ...r.value.findings] };
         incremental = { from: usable.event, added: since.map((d) => d.id) };
       } else {
-        const r = await runReviews(reviewer, at.value, prompts.value, limits, s.reviewParallel);
+        const r = await runReviews(reviewer, at.value, prompts, limits, s.reviewParallel);
         if (!r.ok) return err("io", couldNotRun("rule", r.error.message, at.value, base));
         verdict = r.value;
       }
       const done = await settle(ws, job, say, s, at.value, read.corpus, wt, verdict, attachTo, standing, "rule", { ...common, docs_hash, ...(incremental ? { incremental } : { hash }) });
       if (!done.ok) return done;
+      await reask(ws, job, say, s, reviewer, at.value, read.corpus, wt, attachTo, done.value);
     }
   }
   if (standing.length > 0) {
@@ -147,6 +153,7 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
     if (!v.ok) return err("io", couldNotRun("duplicate", v.error.message, at.value, base));
     const done = await settle(ws, job, say, s, at.value, read.corpus, wt, v.value, standing, standing, "duplicate", { landed: job.landed, docs: standing, reviewed: standing, commit: head, base });
     if (!done.ok) return done;
+    await reask(ws, job, say, s, reviewer, at.value, read.corpus, wt, standing, done.value);
   }
   return ok(undefined);
 }
@@ -168,7 +175,7 @@ async function settle(
   standing: readonly string[],
   review: "rule" | "duplicate",
   detail: Record<string, unknown>,
-): Promise<Result<void>> {
+): Promise<Result<readonly number[]>> {
   const findings = verdict.findings;
   const blocking = findings.filter((f) => findingOf(f).criterion !== "note");
   const notes = findings.filter((f) => findingOf(f).criterion === "note");
@@ -191,7 +198,25 @@ async function settle(
   if (notes.length > 0 && !legacy) say("review notes do not block and are not changes of their own: canon context shows them to whoever next changes these documents, who handles them then");
   if (keep.length > 0) say(`review: ${keep.length} blocking finding(s) recorded as open review findings (${ids.map((i) => `#${i}`).join(", ")}) on the documents they name: canon context <id> lists them; fix the real ones in a change of their own`);
   else say(`review: ${review} review ${blocking.length > 0 ? "found only findings the verifier rejected" : legacy ? "blocked in the old answer format" : "ok"}`);
-  return ok(undefined);
+  return ok(ids);
+}
+
+/**
+ * After a review that ran: each open finding attached to a document it reviewed, other than the ones it just recorded, is asked
+ * again whether it still holds for the landed text (BR-2450, D-89), by `review_verify`, or by `review` when no verifier is set.
+ * Each answer is a `review.reask` event; a finding that no longer holds is closed by that event (BR-2439).
+ */
+async function reask(ws: Workspace, job: LandedJob, say: Say, s: ReviewSettings, reviewer: string, cwd: string, corpus: Corpus, wt: string, docs: readonly string[], recorded: readonly number[]): Promise<void> {
+  const skip = new Set(recorded);
+  const command = s.verify ?? reviewer;
+  for (const f of openFindings(ws.db, docs).filter((x) => !skip.has(x.id))) {
+    const v = await holds(command, s, cwd, corpus, wt, { criterion: f.criterion, text: f.text }, f.docs);
+    const event = ws.db.event(ws.actor, "review.reask", job.change, { finding: f.id, holds: v.holds, reason: v.reason, asker: command, landed: job.landed, commit: job.head });
+    if (v.holds === false) {
+      const closed = closeNoLongerHolds(ws.db, f.id, event);
+      say(closed.ok ? `review: open finding #${f.id} no longer holds (${v.reason}): closed` : `review: open finding #${f.id} no longer holds (${v.reason}), but could not be closed: ${closed.error.message}`);
+    } else say(`review: open finding #${f.id} ${v.holds === null ? `stays open, the re-ask did not answer (${v.reason})` : `still holds (${v.reason})`}: ${f.text}`);
+  }
 }
 
 /** The documents a finding is checked against: the ones it names, else the ones it is attached to; each with its full text at the landed commit (BR-2442). */
@@ -224,12 +249,18 @@ export function verifyPrompt(f: Finding, documents: readonly string[]): string {
 }
 
 async function verifyOne(s: ReviewSettings, cwd: string, corpus: Corpus, wt: string, f: Finding, attachTo: readonly string[]): Promise<Verified> {
-  const finding = `[${f.criterion}] ${f.text}`;
   // reason: with no verifier the finding is recorded as it is and says so, never dropped (D-89, BR-2442)
-  if (s.verify === undefined) return { finding, holds: null, reason: "no review_verify on main" };
-  const v = await runJsonCommand(s.verify, cwd, verifyPrompt(f, documentsOf(corpus, wt, f, attachTo)), { timeoutMs: s.reviewTimeoutMs, kind: "verify" });
-  if (!v.ok) return { finding, holds: null, reason: `review_verify could not run: ${v.error.message.replace(/^review /, "")}` };
+  if (s.verify === undefined) return { finding: `[${f.criterion}] ${f.text}`, holds: null, reason: "no review_verify on main" };
+  return holds(s.verify, s, cwd, corpus, wt, f, attachTo);
+}
+
+/** Asks `command` whether finding `f` holds for the landed text (BR-2442, BR-2450); `holds` is null when it gave no usable answer. */
+async function holds(command: string, s: ReviewSettings, cwd: string, corpus: Corpus, wt: string, f: Finding, attachTo: readonly string[]): Promise<Verified> {
+  const finding = `[${f.criterion}] ${f.text}`;
+  const key = command === s.verify ? "review_verify" : "review";
+  const v = await runJsonCommand(command, cwd, verifyPrompt(f, documentsOf(corpus, wt, f, attachTo)), { timeoutMs: s.reviewTimeoutMs, kind: "verify" });
+  if (!v.ok) return { finding, holds: null, reason: `${key} could not run: ${v.error.message.replace(/^review /, "")}` };
   const a = v.value as { holds?: unknown; reason?: unknown } | null;
-  if (a === null || typeof a !== "object" || typeof a.holds !== "boolean") return { finding, holds: null, reason: `review_verify gave no "holds" true or false: ${JSON.stringify(v.value).slice(0, 200)}` };
+  if (a === null || typeof a !== "object" || typeof a.holds !== "boolean") return { finding, holds: null, reason: `${key} gave no "holds" true or false: ${JSON.stringify(v.value).slice(0, 200)}` };
   return { finding, holds: a.holds, reason: typeof a.reason === "string" && a.reason.trim() !== "" ? a.reason.trim() : "no reason given" };
 }

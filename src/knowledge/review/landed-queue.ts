@@ -70,6 +70,31 @@ export function queueLandedReview(ws: Workspace, say: Say, l: { entry: number; s
   return { id, entry: l.entry, change: l.subject, base: l.base, head: l.head, landed: l.landed, log, state: "queued" };
 }
 
+/**
+ * `canon work review-landed --again <C-n>` (BR-2449): queues the review after the change's latest landing again when the one
+ * queued for it failed, or when none was queued (a landing reviewed before D-89, or one whose review row is gone), and starts
+ * the reviewer. The review reads base and head from that landing's `land.ok`; its log is a new one.
+ */
+export function requeueLandedReview(ws: Workspace, say: Say, change: string): Result<Job> {
+  const landing = ws.db.db.query<{ id: number; detail: string }, [string]>("SELECT id, detail FROM events WHERE kind = 'land.ok' AND subject = ? ORDER BY id DESC LIMIT 1").get(change);
+  if (!landing) return err("not_found", `${change} has no landing (no land.ok event): there is no landed commit to review`);
+  const d = JSON.parse(landing.detail) as { sha?: unknown; base?: unknown };
+  // reason: a land.ok recorded after an interruption knows no base, so what the landing changed cannot be told (BR-2309)
+  if (typeof d.sha !== "string" || typeof d.base !== "string") return err("refused", `${change}'s latest landing (event ${landing.id}) records no base commit (recovered after an interruption, BR-2309), so what it changed cannot be reviewed`);
+  const last = ws.db.db.query<Job, [number]>(`SELECT ${COLS} FROM landed_reviews WHERE landed = ? ORDER BY id DESC LIMIT 1`).get(landing.id);
+  if (last && last.state !== "failed") return err("conflict", `the review after ${change}'s latest landing (event ${landing.id}) is ${last.state === "done" ? "done" : `${last.state} already`} (log: ${last.log}); only a failed or missing review is run again`);
+  const entry = last?.entry ?? ws.db.db.query<{ id: number }, [string]>("SELECT id FROM queue WHERE subject = ? AND state = 'landed' ORDER BY id DESC LIMIT 1").get(change)?.id;
+  if (entry === undefined) return err("not_found", `${change}'s latest landing (event ${landing.id}) has no landed queue entry to file its review under`);
+  const n = ws.db.db.query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM landed_reviews WHERE landed = ?").get(landing.id)!.n;
+  const log = logFile(ws.db, `landed-review-${entry}-${landing.id}${n > 0 ? `-again-${n}` : ""}.log`);
+  const id = Number(
+    ws.db.db.query("INSERT INTO landed_reviews(entry, change, base, head, landed, log, state, queued_at) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)").run(entry, change, d.base, d.sha, landing.id, log, new Date().toISOString()).lastInsertRowid,
+  );
+  say(`review: the review after ${change}'s landing of ${d.sha.slice(0, 9)} on ${d.base.slice(0, 9)} is queued ${last ? "again after it failed" : "(none was queued for it)"} (log: ${log}); canon work after-land --wait ${change} reports it`);
+  ensureLandedReviewer(ws, say);
+  return ok({ id, entry, change, base: d.base, head: d.sha, landed: landing.id, log, state: "queued" });
+}
+
 interface ReviewerRow {
   readonly pid: number;
   readonly pid_start: string;

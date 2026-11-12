@@ -135,6 +135,23 @@ describe("review size hint", () => {
     expect(reviewSizeHints(base.root, base.corpus, Math.round(static_ / 0.72))[0]).toContain("not known without a change");
   });
 
+  test("BR-2375 BR-2448: over the budget only with all of this work's changed documents, not with its largest alone: the hint says the review splits them into parts, not that it will fail", () => {
+    const root = mkdtempSync(join(tmpdir(), "canon-size-hint-"));
+    const decision = (n: number, kbSize: number) => `---\nid: ${id("D", n)}\ntitle: Big ${n}\nstatus: proposed\n---\n${"d".repeat(Math.round(kbSize * KB))}\n`;
+    const probe = mkdtempSync(join(tmpdir(), "canon-size-hint-"));
+    write(probe, dungeon(40));
+    const { fixed, pieces } = reviewSizes(probe, readCorpus(probe).corpus);
+    const budget = Math.round((fixed + pieces[0]!.piece) / 0.5);
+    // three decisions of a fifth of the budget each: together over it, each alone well under it
+    write(root, { ...dungeon(40), ...Object.fromEntries([5, 6, 7].map((n) => [`canon/decisions/${id("D", n)}.md`, decision(n, (0.2 * budget) / KB)])) });
+    const { corpus } = readCorpus(root);
+    const hints = reviewSizeHints(root, corpus, budget, { changed: corpus.docs.filter((d) => d.kind === "decision"), extras: {} });
+    expect(hints).toHaveLength(1);
+    expect(hints[0]).toContain("this work's");
+    expect(hints[0]).toContain("splits its changed documents into parts");
+    expect(hints[0]).not.toContain("will fail");
+  });
+
   test("BR-2375: a small README but a 70 KB rule gives a hint that suggests splitting into subdomains", () => {
     const { hints } = hintsFor({ "canon/rules/fat/README.md": readme("fat"), [`canon/rules/fat/${id("BR", 1)}.md`]: rule(1, "x".repeat(70 * KB)) }, 60 * KB);
     expect(hints).toHaveLength(1);

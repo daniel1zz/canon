@@ -5,7 +5,7 @@ import { land } from "../../work/land/land.ts";
 import { enqueue, finishEntry } from "../../work/land/queue/queue.ts";
 import { selfProcess } from "../../work/claims/liveness.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../work/testkit.ts";
-import { NO_START_ENV, ensureLandedReviewer, landedReview, runLandedReviews } from "./landed-queue.ts";
+import { NO_START_ENV, ensureLandedReviewer, landedReview, requeueLandedReview, runLandedReviews } from "./landed-queue.ts";
 
 const CLI = join(import.meta.dir, "../../invocation/main.ts");
 
@@ -203,5 +203,60 @@ describe("the queue of reviews after landing (BR-2441)", () => {
     sh(s.worktree, "commit", "-qm", "code");
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
     expect(jobs(root)).toEqual([]);
+  });
+});
+
+describe("canon work review-landed --again (BR-2449)", () => {
+  const cli = (root: string, ...args: string[]) => {
+    const r = Bun.spawnSync(["bun", CLI, "work", "review-landed", ...args], { cwd: root, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a", [NO_START_ENV]: "0" } });
+    return { code: r.exitCode, out: `${r.stdout.toString()}${r.stderr.toString()}` };
+  };
+
+  test("BR-2449: a failed review after a landing is queued again with the same base, head and entry and a new log; the reviewer then runs it to done; a done one is not queued again", async () => {
+    const { root, fail } = queueProject();
+    writeFileSync(fail, "");
+    const s = ruleChange(root, 1);
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    expect((await runLandedReviews(ws(root), quiet, undefined)).ok).toBe(true);
+    const [failed] = jobs(root);
+    expect(failed!.state).toBe("failed");
+    const r = cli(root, "--again", s.change);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`is queued again after it failed`);
+    expect(r.out).toContain(`canon work after-land --wait ${s.change} reports it`);
+    const again = jobs(root)[1]!;
+    expect(again).toMatchObject({ entry: failed!.entry, change: s.change, base: failed!.base, head: failed!.head, landed: failed!.landed, state: "queued" });
+    expect(again.log).toEndWith(`logs/landed-review-${failed!.entry}-${failed!.landed}-again-1.log`);
+    expect((await runLandedReviews(ws(root), quiet, undefined)).ok).toBe(true);
+    expect(lastLine(again.log)).toBe("review: done");
+    expect(landedReview(ws(root).db, { change: s.change })?.id).toBe(again.id);
+    const done = cli(root, "--again", s.change);
+    expect(done.code).toBe(5);
+    expect(done.out).toContain("is done");
+    expect(jobs(root)).toHaveLength(2);
+  });
+
+  test("BR-2449: a queued review is not queued twice; a landing that never had a review is queued with its landed entry and a log without -again", async () => {
+    const { root } = queueProject();
+    const s = ruleChange(root, 1);
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    expect(cli(root, "--again", s.change).code).toBe(5);
+    const [first] = jobs(root);
+    ws(root).db.db.query("DELETE FROM landed_reviews").run();
+    const q = requeueLandedReview(ws(root), quiet, s.change);
+    expect(q.ok).toBe(true);
+    const [job] = jobs(root);
+    expect(job).toMatchObject({ entry: first!.entry, base: first!.base, head: first!.head, state: "queued" });
+    expect(job!.log).toEndWith(`logs/landed-review-${first!.entry}-${first!.landed}.log`);
+  });
+
+  test("BR-2449: no landing is exit 3, a land.ok with no base is exit 1, and a value that is not a change id is exit 2", () => {
+    const { root } = queueProject();
+    expect(cli(root, "--again", "C-999").code).toBe(3);
+    ws(root).db.event("agent:a", "land.ok", "C-7", { sha: "abc", recovered: true });
+    const r = cli(root, "--again", "C-7");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("records no base commit");
+    for (const bad of ["5", "foo"]) expect(cli(root, "--again", bad).code).toBe(2);
   });
 });

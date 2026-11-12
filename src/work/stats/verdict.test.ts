@@ -81,6 +81,19 @@ describe("canon verdict pending", () => {
     expect(blocks[0]!.findings[0]).toEqual({ n: 1, text: "BR-1 contradicts BR-2", model: null, human: null });
   });
 
+  test("BR-2253: a review.block written by the review after landing is listed at once with the landed commit it reviewed, with no refusal; a verdict on it closes nothing else", () => {
+    const root = project();
+    const db = dbOf(root);
+    const landed = db.event("agent:a", "land.ok", "C-4", { sha: "z1", base: "b1", diff: "d" });
+    const block = db.event("reviewer", "review.block", "C-4", { review: "rule", docs: ["BR-1"], findings: ["[contradiction] BR-1 contradicts BR-2"], landed, commit: "z1", base: "b1" });
+    const blocks = pendingBlocks(db);
+    expect(blocks.map((b) => [b.block, b.subject, b.refusal, b.before])).toEqual([[block, "C-4", null, "z1"]]);
+    expect(renderPending(blocks)).toBe(`#${block} C-4 ${blocks[0]!.ts.slice(0, 10)}  reviewed after landing, commit z1\n  1. model - · human - · [contradiction] BR-1 contradicts BR-2`);
+    expect(recordVerdict(db, "human:h", String(block), "1", "real", "it does").ok).toBe(true);
+    expect(verdictRows(db).at(-1)!.detail).toMatchObject({ block, refusal: null, before: "z1" });
+    expect(verdictSummary(db)[1]).toMatchObject({ blocks: 1, findings: 1, judged: 1, real: 1 });
+  });
+
   test("BR-2253: existing verdicts show per finding; fully judged, unlanded and finding-less refusals are not listed; the author still sees it", () => {
     const root = project();
     const db = dbOf(root);

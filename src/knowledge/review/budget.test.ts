@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readCorpus } from "../documents/read.ts";
-import { reviewPrompt, reviewPrompts, runReviews } from "./review.ts";
+import { partsNote, reviewPrompt, reviewPromptParts, reviewPrompts, runReviews } from "./review.ts";
 
 const id = (p: string, n: number) => [p, n].join("-");
 const KB = 1024;
@@ -249,3 +249,67 @@ describe("rule review prompt budget", () => {
     }, 60_000);
   });
 });
+
+describe("a review after landing split by its changed documents (BR-2448)", () => {
+  const decision = (n: number, kb: number) => `---\nid: ${id("D", n)}\ntitle: Choice ${n}\nstatus: accepted\n---\n## 背景\n\nFIRST-${n} opens choice ${n}.\n\n${fat(`BODY-${n}`, kb)}\n`;
+  /** Three changed decisions of `kb` KB each that name no rule, so the prompt is the head and the tail only; a small domain `small`. */
+  function decisions(kb: number) {
+    const { root, corpus } = corpusOf({
+      "canon/rules/small/README.md": "---\ncode: [src/small]\n---\n# small\n\nSmall.\n",
+      [`canon/rules/small/${id("BR", 5)}.md`]: rule(5, "Small five", "Short text."),
+      [`canon/decisions/${id("D", 2)}.md`]: decision(2, kb),
+      [`canon/decisions/${id("D", 3)}.md`]: decision(3, kb),
+      [`canon/decisions/${id("D", 4)}.md`]: decision(4, kb),
+    });
+    return { root, corpus, changed: corpus.docs.filter((d) => d.kind === "decision") };
+  }
+  const parted = (r: ReturnType<typeof reviewPromptParts>) => {
+    if (!r.ok) throw new Error(r.error.message);
+    return r.value;
+  };
+  const full = (p: string, n: number) => p.includes(`\n## ${id("D", n)} Choice ${n} (decision, accepted)\n`);
+
+  test("BR-2448 BR-2359: changed documents that do not fit one call are reviewed in parts; each is in full in exactly one part, every other part lists it by id, title and first line, and no call is over the budget", () => {
+    const { root, corpus, changed } = decisions(30);
+    const budget = 80 * KB;
+    expect(reviewPrompts(root, corpus, changed, {}, budget).ok).toBe(false); // BR-2359 alone cannot
+    const r = parted(reviewPromptParts(root, corpus, changed, {}, budget));
+    expect(r.parts.length).toBeGreaterThan(1);
+    expect(r.prompts).toHaveLength(r.parts.length);
+    for (const p of r.prompts) expect(size(p)).toBeLessThanOrEqual(budget);
+    for (const n of [2, 3, 4]) {
+      expect(r.prompts.filter((p) => full(p, n))).toHaveLength(1);
+      for (const p of r.prompts.filter((q) => !full(q, n))) expect(p).toContain(`\n- ${id("D", n)} Choice ${n} (decision, accepted): FIRST-${n} opens choice ${n}.\n`);
+    }
+    for (const [i, p] of r.prompts.entries()) {
+      expect(p).toContain(`this is part ${i + 1} of ${r.parts.length}`);
+      expect(p).toContain("# Other changed documents in this landing");
+      expect(p).toContain("never block because a changed document is not shown in full in this part");
+    }
+    expect(partsNote(r.parts)).toBe(`the changed documents do not fit one call, so they are reviewed in ${r.parts.length} parts: ${r.parts.map((g, i) => `${i + 1}: ${g.map((d) => d.id).join(", ")}`).join("; ")}`);
+  });
+
+  test("BR-2448: changed documents that fit one call give BR-2359's prompt, with no part", () => {
+    const { root, corpus, changed } = decisions(30);
+    const r = parted(reviewPromptParts(root, corpus, changed, {}, 250 * KB));
+    expect(r.prompts).toEqual([reviewPrompt(root, corpus, changed)]);
+    expect(r.prompts[0]).not.toContain("Other changed documents");
+    expect(partsNote(r.parts)).toBeUndefined();
+  });
+
+  test("BR-2448: a changed document too large even alone fails with the sizes of that document in a part of its own; the deleted documents travel only with the first part", () => {
+    const { root, corpus, changed } = decisions(30);
+    const big = decision(2, 120);
+    const huge = { ...corpus, docs: corpus.docs.map((d) => (d.id === id("D", 2) ? { ...d, body: big } : d)) };
+    const hugeChanged = huge.docs.filter((d) => d.kind === "decision");
+    const r = reviewPromptParts(root, huge, hugeChanged, {}, 80 * KB);
+    expect(r.ok).toBe(false);
+    // the sizes are those of that one document in a part of its own: 120 KB of changed documents, not the 180 KB of all three
+    if (!r.ok) expect(r.error.message).toMatch(/cannot be made smaller than 12\d KB .*review_max_prompt_kb = 80 KB; sizes: changed documents 12\d KB/);
+    const deleted = [{ id: id("BR", 7), path: "canon/rules/small/BR-7.md", text: "GONE-7 was here." }];
+    const split = parted(reviewPromptParts(root, corpus, changed, { deleted }, 80 * KB));
+    expect(split.prompts[0]).toContain("GONE-7 was here.");
+    for (const p of split.prompts.slice(1)) expect(p).not.toContain("GONE-7");
+  });
+});
+

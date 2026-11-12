@@ -1,8 +1,8 @@
 import { defineCommand } from "citty";
-import { AS_ARG, entry, EXIT, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { AS_ARG, entry, EXIT, fail, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { previewReview } from "./preview.ts";
-import { runLandedReviews } from "./landed-queue.ts";
+import { requeueLandedReview, runLandedReviews } from "./landed-queue.ts";
 
 /** `canon work review`: the rule review that runs after landing, on this worktree's current text (BR-2358). */
 
@@ -56,8 +56,19 @@ const review = defineCommand({
 
 /** `canon work review-landed`: the background reviewer of landed commits (BR-2441); each landing that needs it starts it. */
 const reviewLanded = defineCommand({
-  meta: { description: "Run the queued reviews of landed commits (the rule and duplicate reviews after a landing) one at a time until none is left; each landing that needs one starts it in the background, and canon work after-land reports the results" },
-  async run() {
+  meta: { description: "Run the queued reviews of landed commits (the rule and duplicate reviews after a landing) one at a time until none is left; each landing that needs one starts it in the background, and canon work after-land reports the results. --again <C-n> queues the review after that change's latest landing again when it failed or was never queued" },
+  args: { again: { type: "string", description: "Change id: queue the review after its latest landing again (only when that review failed or was never queued) and start the reviewer" } },
+  async run({ args }) {
+    if (args.again !== undefined) {
+      const change = String(args.again).trim();
+      if (!/^C-\d+$/.test(change)) {
+        console.error(`canon: --again takes a change id (C-n), got ${JSON.stringify(args.again)}`);
+        process.exit(EXIT.usage);
+      }
+      const q = requeueLandedReview(workspace(), say, change);
+      if (!q.ok) fail(q.error);
+      return;
+    }
     const r = await runLandedReviews(workspace(), say, WORKFLOW_GUIDE);
     if (!r.ok) {
       console.error(`canon: ${r.error.message}`);

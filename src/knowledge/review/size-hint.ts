@@ -21,6 +21,8 @@ export interface WorkChanges {
 export function reviewSizeHints(root: string, corpus: Corpus, budgetBytes: number, work?: WorkChanges): string[] {
   const { fixed, pieces } = reviewSizes(root, corpus);
   const docs = work ? changedBytes(corpus, work.changed, work.extras) : 0;
+  // reason: the review after landing splits the changed documents into parts, so only the largest one alone can make it fail (BR-2448)
+  const largest = work ? Math.max(0, ...work.changed.map((d) => changedBytes(corpus, [d], {}))) : 0;
   const docsText = work ? `changed documents ${kb(docs)} KB (this work's, counted as the landing's review counts them)` : "changed documents 0 KB (not known without a change)";
   const out: string[] = [];
   for (const p of pieces) {
@@ -29,9 +31,12 @@ export function reviewSizeHints(root: string, corpus: Corpus, budgetBytes: numbe
     const pct = Math.round((total / budgetBytes) * 100);
     const sizes = `${docsText}, review instructions + rule index + accepted decision titles ${kb(fixed)} KB, domain text ${kb(p.piece)} KB; ${kb(total)} KB together is ${pct}% of review_max_prompt_kb = ${kb(budgetBytes)} KB`;
     // reason: with the real changed documents counted, over 100% is not a warning but the failure the review after landing will give (BR-2375, BR-2359)
-    const tail = work && total > budgetBytes
-      ? `the review of this work after landing will fail: ${refusalRemedy(root, corpus, { docs, index: fixed, piece: p.piece, where: p.where, need: total, budget: budgetBytes })}`
-      : `the review of a change to ${p.top} fails above 100%${work ? "" : " (the changed documents are not counted)"}: ${pieceRemedy(root, corpus, total, p.piece, p.where)}`;
+    const alone = largest + fixed + p.piece;
+    const tail = work && total > budgetBytes && alone > budgetBytes
+      ? `the review of this work after landing will fail: ${refusalRemedy(root, corpus, { docs: largest, index: fixed, piece: p.piece, where: p.where, need: alone, budget: budgetBytes })}`
+      : work && total > budgetBytes
+        ? `the review of this work after landing splits its changed documents into parts, each reviewed with only the titles and first lines of the others (BR-2448)`
+        : `the review of a change to ${p.top} fails above 100%${work ? "" : " (the changed documents are not counted)"}: ${pieceRemedy(root, corpus, total, p.piece, p.where)}`;
     out.push(`hint review-size: ${p.top}: ${sizes}, ${tail}`);
   }
   return out;

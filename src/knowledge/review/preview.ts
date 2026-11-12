@@ -15,7 +15,7 @@ import { REVIEW_NONE } from "./config-keys.ts";
 import { passedReview, reviewKey } from "../../work/land/checks/review-reuse.ts";
 import type { Doc, Corpus } from "../documents/model.ts";
 import { planClose, wordingQuestions } from "../../work/execution/landing.ts";
-import { reviewPrompts, type ReviewExtras, runReview, runReviews, type ReviewVerdict } from "./review.ts";
+import { reviewPromptParts, type ReviewExtras, runReview, runReviews, type ReviewVerdict } from "./review.ts";
 
 /** What `canon work review` found, as the command turns it into text and an exit code (BR-2358). */
 export type PreviewOutcome =
@@ -127,10 +127,11 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
     if (scope.reviewed.length > 0 || wording.questions.length > 0) {
       const architecture = architectureOf(ws.root, base.value, head.value);
       if (!architecture.ok) return { kind: "failed", message: architecture.error.message };
-      const prompts = reviewPrompts(ws.root, read.corpus, scope.changedDocs, { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change: findDoc(read.corpus, subject), wording: wording.questions, added: scope.added, restatements: scope.restatements, ...(architecture.value ? { architecture: architecture.value } : {}) }, onMain.reviewMaxPromptBytes);
+      // reason: the preview is the review after landing on this text, so it splits the changed documents the same way (BR-2358, BR-2448)
+      const prompts = reviewPromptParts(ws.root, read.corpus, scope.changedDocs, { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change: findDoc(read.corpus, subject), wording: wording.questions, added: scope.added, restatements: scope.restatements, ...(architecture.value ? { architecture: architecture.value } : {}) }, onMain.reviewMaxPromptBytes);
       if (!prompts.ok) return { kind: "failed", message: prompts.error.message };
       // reason: a preview reuses only a passing preview of the same prompts, command and budget, never a landing's pass: the reviewer may be another model for a preview (BR-2361, D-70)
-      const hash = reviewKey("preview", onMain.review, onMain.reviewMaxPromptBytes, prompts.value);
+      const hash = reviewKey("preview", onMain.review, onMain.reviewMaxPromptBytes, prompts.value.prompts);
       const earlier = passedReview(ws.db, "preview", hash);
       let v: ReviewVerdict;
       if (earlier) {
@@ -140,7 +141,7 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
       } else {
         const at = tree.get();
         if (!at.ok) return { kind: "failed", message: at.error.message };
-        const run = await runReviews(onMain.review, at.value, prompts.value, limits, onMain.reviewParallel);
+        const run = await runReviews(onMain.review, at.value, prompts.value.prompts, limits, onMain.reviewParallel);
         if (!run.ok) return { kind: "failed", message: couldNotRun("rule", run.error.message, at.value, main.value) };
         v = run.value;
       }

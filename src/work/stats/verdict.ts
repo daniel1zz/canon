@@ -45,11 +45,11 @@ export interface FindingState {
   readonly human: Verdict | null;
 }
 
-/** A review block of a change that landed afterwards, recorded with the commit the review saw (BR-2253). */
+/** A review block of a change that landed afterwards, or of a landed commit reviewed after landing, recorded with the commit the review saw (BR-2253). */
 export interface JudgeableBlock {
   readonly block: number;
-  /** The land.refuse this block caused. */
-  readonly refusal: number;
+  /** The land.refuse this block caused; null for a review after landing, which refuses nothing (D-89). */
+  readonly refusal: number | null;
   readonly subject: string;
   readonly ts: string;
   /** The commit the reviewer saw when it blocked, as the block event recorded it. */
@@ -63,12 +63,14 @@ function judgeable(db: CoordDb, b: EventRow, verdicts: readonly EventRow[]): Jud
   const before = b.detail["commit"];
   // reason: blocks written before the event recorded the commit cannot show the code the review saw, so they are not judgeable (BR-2253, D-49)
   if (!b.subject || texts.length === 0 || typeof before !== "string") return null;
+  const verdictOf = (n: number, judge: Judge) => (verdicts.find((v) => v.detail["block"] === b.id && v.detail["finding"] === n && v.detail["judge"] === judge)?.detail["verdict"] as Verdict | undefined) ?? null;
+  const findings = texts.map((text, i) => ({ n: i + 1, text, model: verdictOf(i + 1, "model"), human: verdictOf(i + 1, "human") }));
+  // reason: a review after landing reviewed a commit already on main, so it is judgeable at once and there is no refusal (D-89, BR-2441)
+  if (typeof b.detail["landed"] === "number") return { block: b.id, refusal: null, subject: b.subject, ts: b.ts, before, findings };
   // reason: the landing writes review.block and then returns the refusal, so the block's refusal is the next review refusal of the change (D-49)
   const refusal = rows(db, `SELECT ${COLS} FROM events WHERE kind = 'land.refuse' AND subject = ? AND id > ? ORDER BY id`, b.subject, b.id).find((r) => r.detail["reason"] === "review");
   if (!refusal) return null;
   if (rows(db, `SELECT ${COLS} FROM events WHERE kind = 'land.ok' AND subject = ? AND id > ? ORDER BY id LIMIT 1`, b.subject, refusal.id).length === 0) return null;
-  const verdictOf = (n: number, judge: Judge) => (verdicts.find((v) => v.detail["block"] === b.id && v.detail["finding"] === n && v.detail["judge"] === judge)?.detail["verdict"] as Verdict | undefined) ?? null;
-  const findings = texts.map((text, i) => ({ n: i + 1, text, model: verdictOf(i + 1, "model"), human: verdictOf(i + 1, "human") }));
   return { block: b.id, refusal: refusal.id, subject: b.subject, ts: refusal.ts, before, findings };
 }
 
@@ -87,7 +89,7 @@ export function renderPending(blocks: readonly JudgeableBlock[]): string {
   if (blocks.length === 0) return "(nothing to judge)";
   // reason: the landed commit is not shown: the question is whether the problem existed when blocked, not how it was fixed (D-49)
   return blocks
-    .map((b) => [`#${b.block} ${b.subject} ${b.ts.slice(0, 10)}  blocked commit ${b.before}`, ...b.findings.map((f) => `  ${f.n}. model ${f.model ?? "-"} · human ${f.human ?? "-"} · ${f.text}`)].join("\n"))
+    .map((b) => [`#${b.block} ${b.subject} ${b.ts.slice(0, 10)}  ${b.refusal === null ? "reviewed after landing, commit" : "blocked commit"} ${b.before}`, ...b.findings.map((f) => `  ${f.n}. model ${f.model ?? "-"} · human ${f.human ?? "-"} · ${f.text}`)].join("\n"))
     .join("\n\n");
 }
 
