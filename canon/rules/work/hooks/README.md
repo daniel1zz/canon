@@ -6,6 +6,11 @@
 
 不管：命令开头的脚本路径是否存在（所有配置的命令都检查，BR-2197，属于配置的读取）；`hooks`、`ports` 这两个键的名字、类型和校验写在这个领域的 `src/work/hooks/config-keys.ts`，由 `src/invocation/config.ts` 汇总（C-135）。
 
+## 业务
+
+- **合入时的 hook**：合入时在即将成为 main 的树上运行的命令。
+- **合入后的报告**：`canon work after-land` 怎么报告和等待一次合入之后的后台命令和评审。
+
 ## 术语
 
 - **hook**：在 `after_start`、`before_land`、`after_land`、`after_stop`、`after_green`（BR-2222）五个事件上运行的命令；只有 `before_land` 能拒绝合入。`after_green` 的命令必须能重复运行，以 `CANON_GREEN` 为准（BR-2222）。
