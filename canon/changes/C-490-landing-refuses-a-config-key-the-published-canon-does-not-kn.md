@@ -1,8 +1,11 @@
 ---
 id: C-490
 title: Landing refuses a config key the published canon does not know
-status: open
-rules: [BR-2224]
+status: done
+rules:
+  - BR-2224
+passes:
+  BR-2224: f8f269fdbc2cdc89 test
 ---
 
 ## 为什么
