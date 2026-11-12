@@ -39,35 +39,46 @@ describe("canon stats: how the rule reviews after landing were done", () => {
   });
 });
 
-describe("canon stats: the verifier's answers per criterion", () => {
-  const v = (criterion: string, holds: boolean | null) => ({ finding: `[${criterion}] ${criterion} finding`, holds, reason: "r" });
+describe("canon stats: how the findings of the reviews after landing ended, per criterion", () => {
+  /** Records one finding of `criterion` at a fresh review event and closes it `how` (null leaves it open); returns the event. */
+  function finding(db: CoordDb, criterion: string, how: string | null, n: number): number {
+    const event = db.event("agent:a", "review.block", "C-1", { findings: [] });
+    db.db
+      .query("INSERT INTO review_findings(identity, criterion, ids, docs, text, change, event, sha, opened_at, closed_at, closed_how) VALUES (?, ?, '[]', '[\"BR-1\"]', 't', 'C-1', ?, NULL, 'x', ?, ?)")
+      .run(`${criterion} ${n}`, criterion, event, how === null ? null : "y", how);
+    return event;
+  }
 
-  test("BR-2451: verified, rejected and not verified findings of the reviews after landing are counted per criterion, in the prompts' order, with no share below 10", () => {
+  test("BR-2451: open, fixed, spurious and retired findings are counted per criterion, in the prompts' order, with no share below 10; other closes are named", () => {
     const { root, db } = withDb();
-    db.event("agent:a", "review.block", "C-1", { docs: ["BR-1"], findings: [], landed: 1, verified: [v("restatement", null), v("contradiction", true), v("contradiction", false)] });
-    db.event("agent:a", "review.ok", "C-2", { docs: ["BR-2"], findings: [], landed: 2, verified: [v("contradiction", false)] });
+    finding(db, "restatement", null, 1);
+    finding(db, "contradiction", "fixed", 2);
+    finding(db, "contradiction", "spurious", 3);
+    finding(db, "contradiction", "spurious", 4);
+    finding(db, "contradiction", "no-longer-holds", 5);
     const r = canon(root, "stats");
     expect(r.code).toBe(0);
     const at = (s: string) => r.out.indexOf(s);
     expect(r.out).toContain("review findings after landing by criterion:");
-    expect(r.out).toContain("  contradiction: 1 verified, 2 rejected, 0 not verified; fewer than 10 verified or rejected, no share");
-    expect(r.out).toContain("  restatement: 0 verified, 0 rejected, 1 not verified; fewer than 10 verified or rejected, no share");
+    expect(r.out).toContain("  contradiction: 0 open, 1 fixed, 2 spurious, 0 retired, 1 closed otherwise; fewer than 10 fixed or spurious, no share");
+    expect(r.out).toContain("  restatement: 1 open, 0 fixed, 0 spurious, 0 retired; fewer than 10 fixed or spurious, no share");
     expect(at("  contradiction:")).toBeLessThan(at("  restatement:"));
     expect(canon(root, "stats", "--json").out).not.toContain("by criterion");
   });
 
-  test("BR-2451: 10 or more verified or rejected findings of a criterion give the rejected share", () => {
+  test("BR-2451: 10 or more fixed or spurious findings of a criterion give the spurious share", () => {
     const { root, db } = withDb();
-    db.event("agent:a", "review.block", "C-1", { docs: ["BR-1"], findings: [], landed: 1, verified: [...Array.from({ length: 4 }, () => v("contradiction", true)), ...Array.from({ length: 8 }, () => v("contradiction", false))] });
-    expect(canon(root, "stats").out).toContain("  contradiction: 4 verified, 8 rejected, 0 not verified, rejected share 66.7%");
+    for (let i = 0; i < 4; i++) finding(db, "contradiction", "fixed", i);
+    for (let i = 4; i < 12; i++) finding(db, "contradiction", "spurious", i);
+    expect(canon(root, "stats").out).toContain("  contradiction: 0 open, 4 fixed, 8 spurious, 0 retired, spurious share 66.7%");
   });
 
-  test("BR-2451: reviews with only notes, or a window without reviews after landing, have no section", () => {
+  test("BR-2451: reviews with only notes, or a window without recorded findings, have no section", () => {
     const { root, db } = withDb();
-    db.event("agent:a", "review.ok", "C-1", { docs: ["BR-1"], findings: ["a note"], landed: 1, verified: [] });
+    db.event("agent:a", "review.ok", "C-1", { docs: ["BR-1"], findings: [], notes: ["a note"], landed: 1 });
     expect(canon(root, "stats").out).not.toContain("by criterion");
-    const last = db.event("agent:a", "review.block", "C-2", { docs: ["BR-2"], findings: [], landed: 2, verified: [v("untestable", true)] });
-    expect(canon(root, "stats").out).toContain("  untestable: 1 verified");
+    const last = finding(db, "untestable", "retired", 1);
+    expect(canon(root, "stats").out).toContain("  untestable: 0 open, 0 fixed, 0 spurious, 1 retired");
     expect(canon(root, "stats", "--since", String(last)).out).not.toContain("by criterion");
   });
 });

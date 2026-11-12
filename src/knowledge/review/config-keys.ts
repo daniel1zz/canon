@@ -38,16 +38,6 @@ export const reviewKeys = {
     listed: 60,
     checked: 40,
   }),
-  reviewVerify: configKey<string | undefined>({
-    key: "review_verify",
-    doc: `Verifier for the blocking findings of the reviews that run after a landing (D-89, BR-2442): one run per finding, the finding, its criterion and the full text of the documents it names on stdin, \`CANON_REVIEW_KIND\` \`verify\`; prints JSON \`{"holds":true|false,"reason":"..."}\`. A finding that holds is recorded as an open finding, one that does not is kept only in the review's event. Unset records every blocking finding as is and says it was not verified. Read from main, like \`review\` (BR-2074).`,
-    default: undefined,
-    schema: optionalString,
-    read: (v) => (v === null || (typeof v === "string" && v.trim() === "") ? ok(undefined) : typeof v === "string" ? ok(v) : err("invalid", "`review_verify` must be a string")),
-    commands: (v) => (v === undefined ? [] : [v]),
-    listed: 61,
-    checked: 41,
-  }),
   reviewTimeoutMs: configKey<number>({
     key: "review_timeout_minutes",
     doc: "How long one run of the `review` command may take before canon stops it and its children; the review after the landing then fails (BR-2296).",

@@ -6,8 +6,8 @@ import { DUPLICATE_CRITERIA, RULE_CRITERIA } from "../review.ts";
 /**
  * Open review findings (D-89, D-97): a finding that names a blocking criterion has an identity (BR-2433), is
  * recorded once per identity on every document it names (BR-2434) and stays open until something closes it
- * explicitly: a document it names retired or superseded (BR-2435), a `spurious` verdict (BR-2438), or a re-asking
- * that says it no longer holds (BR-2439). A later review that does not mention it changes nothing. Notes (criterion
+ * explicitly: a document it names retired or superseded (BR-2435), a `spurious` verdict (BR-2438), or `canon finding
+ * close` with the fixing commit or a quote (BR-2453, D-99). A later review that does not mention it changes nothing. Notes (criterion
  * `note`) are not recorded here: they stay open notes on the documents they name and are replaced on the next review
  * (BR-2145, D-21).
  */
@@ -127,7 +127,7 @@ export function openFindings(db: CoordDb, docs?: Iterable<string>): OpenFinding[
   return all.filter((f) => f.docs.some((d) => want.has(d)));
 }
 
-type How = "retired" | "spurious" | "no-longer-holds";
+type How = "retired" | "spurious";
 
 function close(db: CoordDb, id: number, how: How, event: number): void {
   db.db.query("UPDATE review_findings SET closed_at = ?, closed_how = ?, closed_event = ? WHERE id = ? AND closed_at IS NULL").run(new Date().toISOString(), how, event, id);
@@ -154,21 +154,6 @@ export function closeSpurious(db: CoordDb, finding: Finding, event: number): num
   return open?.id;
 }
 
-/**
- * Closes one open finding that a later review, asked about it, said no longer holds (BR-2439); `event` is the event
- * that recorded that answer. Not found when no record has this id; a conflict when it is already closed.
- */
-export function closeNoLongerHolds(db: CoordDb, id: number, event: number): Result<OpenFinding> {
-  const tx = db.db.transaction((): Result<OpenFinding> => {
-    const r = db.db.query<Row & { closed_at: string | null; closed_how: string | null }, [number]>("SELECT id, identity, criterion, ids, docs, text, change, event, sha, opened_at, closed_at, closed_how FROM review_findings WHERE id = ?").get(id);
-    if (!r) return err("not_found", `review finding #${id} does not exist`);
-    if (r.closed_at !== null) return err("conflict", `review finding #${id} is already closed (${r.closed_how}, ${r.closed_at})`);
-    close(db, id, "no-longer-holds", event);
-    return ok(fromRow(r));
-  });
-  return tx.immediate();
-}
-
 /** One open finding as `canon context` and `canon brief` print it (BR-2436, BR-2437). */
 export function renderFinding(f: OpenFinding, now: Date = new Date()): string {
   const days = Math.max(0, Math.floor((now.getTime() - Date.parse(f.openedAt)) / 86_400_000));
@@ -176,7 +161,7 @@ export function renderFinding(f: OpenFinding, now: Date = new Date()): string {
 }
 
 /** What `canon context` and `canon brief` say about open findings before listing them. */
-export const FINDINGS_HINT = "Open until closed explicitly: judged spurious (canon verdict record), a document it names retired or superseded, or re-asked and no longer holding; a later review that does not mention one does not close it.";
+export const FINDINGS_HINT = 'Settle each now: fixed, canon finding close <n> --fixed <commit>; does not hold, canon finding close <n> --spurious "<quote from a document it names>". Open until closed explicitly (also: a document it names retired or superseded); a later review that does not mention one does not close it.';
 
 /** The line `canon brief` prints outside a change worktree: how many findings are open, on how many documents (BR-2437). */
 export function findingsCount(db: CoordDb): string | undefined {

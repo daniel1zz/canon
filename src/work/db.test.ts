@@ -31,6 +31,31 @@ describe("schema upgrades", () => {
     expect(() => addColumns(a.value.db)).not.toThrow();
   });
 
+  test("BR-2078 BR-2453: an old review_findings table is rebuilt once to accept fixed, keeping its rows, the open index and older closes", () => {
+    const path = join(mkdtempSync(join(tmpdir(), "canon-old-db-")), "state.db");
+    const old = new Database(path, { create: true });
+    old.exec(`CREATE TABLE review_findings (id INTEGER PRIMARY KEY AUTOINCREMENT, identity TEXT NOT NULL, criterion TEXT NOT NULL, ids TEXT NOT NULL, docs TEXT NOT NULL, text TEXT NOT NULL, change TEXT, event INTEGER NOT NULL, sha TEXT, opened_at TEXT NOT NULL, closed_at TEXT, closed_how TEXT CHECK (closed_how IN ('retired', 'spurious', 'no-longer-holds')), closed_event INTEGER);
+CREATE UNIQUE INDEX review_findings_open ON review_findings(identity) WHERE closed_at IS NULL;
+INSERT INTO review_findings(identity, criterion, ids, docs, text, event, opened_at) VALUES ('a', 'contradiction', '[]', '["x"]', 'open one', 1, 'x');
+INSERT INTO review_findings(identity, criterion, ids, docs, text, event, opened_at, closed_at, closed_how) VALUES ('b', 'untestable', '[]', '["x"]', 'old close', 1, 'x', 'y', 'no-longer-holds');`);
+    old.close();
+    const a = CoordDb.open(path);
+    const b = CoordDb.open(path);
+    expect(a.ok && b.ok).toBe(true);
+    if (!a.ok || !b.ok) return;
+    const db = a.value.db;
+    expect(db.query<{ text: string; closed_how: string | null }, []>("SELECT text, closed_how FROM review_findings ORDER BY id").all()).toEqual([
+      { text: "open one", closed_how: null },
+      { text: "old close", closed_how: "no-longer-holds" },
+    ]);
+    db.exec("UPDATE review_findings SET closed_at = 'z', closed_how = 'fixed' WHERE id = 1");
+    expect(db.query<{ closed_how: string }, []>("SELECT closed_how FROM review_findings WHERE id = 1").get()!.closed_how).toBe("fixed");
+    expect(() => db.exec("INSERT INTO review_findings(identity, criterion, ids, docs, text, event, opened_at, closed_how) VALUES ('c', 'x', '[]', '[]', 't', 1, 'x', 'bogus')")).toThrow();
+    db.exec("INSERT INTO review_findings(identity, criterion, ids, docs, text, event, opened_at) VALUES ('d', 'x', '[]', '[]', 't', 1, 'x')");
+    expect(() => db.exec("INSERT INTO review_findings(identity, criterion, ids, docs, text, event, opened_at) VALUES ('d', 'x', '[]', '[]', 't', 1, 'x')")).toThrow();
+    expect(db.query<{ n: number }, []>("SELECT count(*) AS n FROM sqlite_master WHERE name = 'review_findings_old'").get()!.n).toBe(0);
+  });
+
   test("BR-2131 BR-2078: an old events table gains the worktree column; old events keep an empty one, new ones record the opener's worktree", () => {
     const path = join(mkdtempSync(join(tmpdir(), "canon-old-db-")), "state.db");
     const old = new Database(path, { create: true });

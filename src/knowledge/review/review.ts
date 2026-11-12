@@ -283,7 +283,7 @@ function deletedDomains(corpus: Corpus, deleted: readonly DeletedDoc[]): string[
 }
 
 /** The two ways a review runs: for a landing (`land`) or for `canon work review` (`preview`). */
-export type ReviewKind = "land" | "preview" | "release" | "verify";
+export type ReviewKind = "land" | "preview" | "release";
 
 /** How a review run is bounded: its time limit, and where a signal handler finds it to stop it (BR-2296). */
 export interface ReviewLimits {

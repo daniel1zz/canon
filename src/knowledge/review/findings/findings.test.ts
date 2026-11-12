@@ -5,7 +5,8 @@ import { land } from "../../../work/land/land.ts";
 import { recordVerdict } from "../../../work/stats/verdict.ts";
 import type { CoordDb } from "../../../work/db.ts";
 import { FAST, project, reviewLandings, sh, startNew, ws } from "../../../work/testkit.ts";
-import { closeNoLongerHolds, closeRetired, findingOf, identityOf, namedIds, openFindings, quotedSpans, recordFindings, renderFinding, type Finding } from "./findings.ts";
+import { closeFinding } from "./close.ts";
+import { closeRetired, findingOf, identityOf, namedIds, openFindings, quotedSpans, recordFindings, renderFinding, type Finding } from "./findings.ts";
 
 // Ids are built at run time so this file names no real document (canon check reads ids in test files).
 const id = (prefix: string, n: number) => [prefix, n].join("-");
@@ -105,8 +106,7 @@ describe("recording findings", () => {
     expect(again.opened).toEqual([]);
     expect(again.existing).toEqual(first.opened);
     expect(openFindings(db).map((x) => x.docs)).toEqual([[BR(1), BR(2)]]);
-    const closed = closeNoLongerHolds(db, first.opened[0]!, again.event);
-    expect(closed.ok).toBe(true);
+    expect(closeRetired(db, new Set([BR(1), BR(2)]), again.event)).toEqual([...first.opened]);
     const third = record(db, [f("untestable", "「尽快」无法测试")], [BR(1)]);
     expect(third.opened.length).toBe(1);
     expect(third.opened[0]).not.toBe(first.opened[0]);
@@ -166,22 +166,87 @@ describe("closing findings", () => {
     expect(row).toEqual({ closed_how: "spurious", kind: "review.verdict" });
   });
 
-  test("BR-2439: closing as no longer holding records the event; again is a conflict, unknown is not found; a later review that says nothing leaves it open", async () => {
+  test("BR-2434: a later review that does not mention an open finding leaves it open", async () => {
     const root = billing("empty");
-    const db = ws(root).db;
-    const open = record(db, [f("contradiction", `${BR(1)} 和 ${BR(2)} 的「三天」矛盾`)]).opened[0]!;
-    const reviewed = await landRules(root, "Quiet review", [[1, "active"]]);
-    expect(reviewed.kind).toBe("landed");
+    const open = record(ws(root).db, [f("contradiction", `${BR(1)} 和 ${BR(2)} 的「三天」矛盾`)]).opened[0]!;
+    expect((await landRules(root, "Quiet review", [[1, "active"]])).kind).toBe("landed");
     expect(ws(root).db.db.query("SELECT 1 FROM events WHERE kind = 'review.ok'").get()).not.toBeNull();
     expect(openFindings(ws(root).db).map((x) => x.id)).toEqual([open]);
-    const said = db.event("agent:x", "review.reask", null, {});
-    const closed = closeNoLongerHolds(db, open, said);
-    expect(closed.ok && closed.value.id).toBe(open);
-    const again = closeNoLongerHolds(db, open, said + 1);
+  });
+});
+
+describe("canon finding close (BR-2453)", () => {
+  /** billing with open finding #n on BR-1 and BR-2, recorded at main's commit; `edit` commits a change to BR-1 on main afterwards. */
+  function opened() {
+    const root = billing();
+    const db = ws(root).db;
+    const event = db.event("agent:x", "review.block", id("C", 9), {});
+    const r = recordFindings(db, { findings: [f("contradiction", `${BR(1)} 和 ${BR(2)} 的「三天」矛盾`)], reviewed: [], change: id("C", 9), event, sha: sh(root, "rev-parse", "main") });
+    if (!r.ok) throw new Error(r.error.message);
+    const commit = (file: string, text: string) => {
+      writeFileSync(join(root, file), text);
+      sh(root, "add", "-A");
+      sh(root, "commit", "-qm", file);
+      return sh(root, "rev-parse", "HEAD");
+    };
+    return { root, db, n: r.value.opened[0]!, commit };
+  }
+  const input = (root: string, n: number | string, more: { fixed?: string; spurious?: string; reason?: string }) => ({ cwd: root, main: "main", actor: "agent:test", id: String(n), reason: "why", ...more });
+  const row = (db: CoordDb, n: number) => db.db.query<{ closed_how: string | null; closed_event: number | null }, [number]>("SELECT closed_how, closed_event FROM review_findings WHERE id = ?").get(n)!;
+
+  test("BR-2453: --fixed with a later commit on main that changed a document it is attached to closes it with a finding.close event; again is a conflict", () => {
+    const { root, db, n, commit } = opened();
+    const fix = commit(`canon/rules/billing/${BR(1)}.md`, ruleFile(1).replace("Rule 1.", "Rule 1, only overseas."));
+    const c = closeFinding(db, input(root, n, { fixed: fix.slice(0, 9), reason: "narrowed" }));
+    expect(c.ok && c.value).toEqual({ id: n, how: "fixed", by: fix });
+    const ev = db.db.query<{ id: number; subject: string; actor: string; detail: string }, []>("SELECT id, subject, actor, detail FROM events WHERE kind = 'finding.close'").get()!;
+    expect(JSON.parse(ev.detail)).toEqual({ finding: n, how: "fixed", commit: fix, reason: "narrowed" });
+    expect([ev.subject, ev.actor]).toEqual([id("C", 9), "agent:test"]);
+    expect(row(db, n)).toEqual({ closed_how: "fixed", closed_event: ev.id });
+    const again = closeFinding(db, input(root, n, { fixed: fix }));
     expect(!again.ok && again.error.code).toBe("conflict");
-    expect(db.db.query<{ closed_event: number; closed_how: string }, [number]>("SELECT closed_event, closed_how FROM review_findings WHERE id = ?").get(open)).toEqual({ closed_event: said, closed_how: "no-longer-holds" });
-    const missing = closeNoLongerHolds(db, 999, said);
-    expect(!missing.ok && missing.error.code).toBe("not_found");
+    expect(!again.ok && again.error.message).toContain("fixed");
+  });
+
+  test("BR-2453: --fixed refuses the commit the review saw, one that changes none of its documents, and one not on main", () => {
+    const { root, db, n, commit } = opened();
+    const seen = closeFinding(db, input(root, n, { fixed: "main" }));
+    expect(!seen.ok && [seen.error.code, seen.error.message.includes("must come after")]).toEqual(["refused", true]);
+    const code = commit("src/billing/a.ts", "x\n");
+    const other = closeFinding(db, input(root, n, { fixed: code }));
+    expect(!other.ok && [other.error.code, other.error.message.includes("changes none")]).toEqual(["refused", true]);
+    sh(root, "checkout", "-qb", "side");
+    const off = commit(`canon/rules/billing/${BR(2)}.md`, ruleFile(2).replace("Rule 2.", "Rule 2, side."));
+    sh(root, "checkout", "-q", "main");
+    const offMain = closeFinding(db, input(root, n, { fixed: off }));
+    expect(!offMain.ok && [offMain.error.code, offMain.error.message.includes("not on main")]).toEqual(["refused", true]);
+    expect(row(db, n).closed_how).toBeNull();
+  });
+
+  test("BR-2453: --spurious closes with a quote found word for word in one of its documents on main, across a line break; too short or not there is refused", () => {
+    const { root, db, n, commit } = opened();
+    commit(`canon/rules/billing/${BR(2)}.md`, ruleFile(2).replace("Rule 2.", "本规则只适用于\n海外订单的退款。"));
+    const short = closeFinding(db, input(root, n, { spurious: "海外订单" }));
+    expect(!short.ok && short.error.code).toBe("refused");
+    const absent = closeFinding(db, input(root, n, { spurious: "的「三天」矛盾，确实如此" }));
+    expect(!absent.ok && [absent.error.code, absent.error.message.includes(`${BR(1)}, ${BR(2)}`)]).toEqual(["refused", true]);
+    const c = closeFinding(db, input(root, n, { spurious: "本规则只适用于 海外订单的退款" }));
+    expect(c.ok && c.value).toEqual({ id: n, how: "spurious", by: BR(2) });
+    expect(row(db, n).closed_how).toBe("spurious");
+  });
+
+  test("BR-2453: usage errors exit 2, an unknown finding or commit 3, a closed one 5; an agent may close one and the line says how", () => {
+    const { root, n, commit } = opened();
+    expect(canon(root, "finding", "close", "0", "--fixed", "main", "--reason", "x").code).toBe(2);
+    expect(canon(root, "finding", "close", String(n), "--reason", "x").code).toBe(2);
+    expect(canon(root, "finding", "close", String(n), "--fixed", "main", "--spurious", "Rule 1 text", "--reason", "x").code).toBe(2);
+    expect(canon(root, "finding", "close", String(n), "--fixed", "main", "--reason", "  ").code).toBe(2);
+    expect(canon(root, "finding", "close", "99", "--fixed", "main", "--reason", "x").code).toBe(3);
+    expect(canon(root, "finding", "close", String(n), "--fixed", "nosuchref", "--reason", "x").code).toBe(3);
+    const fix = commit(`canon/rules/billing/${BR(1)}.md`, ruleFile(1).replace("Rule 1.", "Rule 1, fixed."));
+    const done = canon(root, "finding", "close", String(n), "--fixed", fix, "--reason", "x");
+    expect([done.code, done.out.trim()]).toEqual([0, `closed review finding #${n}: fixed by ${fix.slice(0, 9)}`]);
+    expect(canon(root, "finding", "close", String(n), "--fixed", fix, "--reason", "x").code).toBe(5);
   });
 });
 
@@ -194,7 +259,7 @@ describe("showing findings", () => {
     record(db, [f("untestable", "「尽快」无法测试")], [BR(1), BR(2)], null);
     const today = new Date().toISOString().slice(0, 10);
     const out = canon(root, "context", "billing").out;
-    expect(out).toContain("# Open review findings\n\nOpen until closed explicitly:");
+    expect(out).toContain("# Open review findings\n\nSettle each now: fixed, canon finding close <n> --fixed <commit>;");
     expect(out).toContain(`- #${first} [contradiction] ${BR(1)}, ${BR(7)}: ${BR(1)} 和 ${BR(7)} 的「三天」矛盾 (${id("C", 9)}, opened ${today}, 0 days ago)`);
     expect(out.match(/\[untestable\] -: 「尽快」无法测试 \(opened \d{4}-\d{2}-\d{2}, 0 days ago\)/g)?.length).toBe(1);
     // BR-7 lives in another domain; asked about directly, it shows the finding too.

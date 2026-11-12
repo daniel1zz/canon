@@ -698,148 +698,56 @@ describe("rule review after landing", () => {
     expect(queued(root)).toBe(0);
   });
 
-  describe("verifying blocking findings (BR-2442)", () => {
+  describe("blocking findings go to the main agent (BR-2442, D-99)", () => {
     const BLOCK = `cat > /dev/null\necho '{"findings":[{"criterion":"contradiction","text":"${id} 和 BR-7 的「三天」矛盾"},{"criterion":"note","text":"${id} could be shorter"}]}'`;
-    function verifiedProject(verify: string | undefined) {
+    function blockingProject(script: string) {
       const root = billingProject(`floor: "true"\ntests: []\n`);
       writeFileSync(join(root, "canon/rules/billing/BR-7.md"), `---\nid: BR-7\ntitle: Overseas refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\nOverseas refunds take three days.\n`);
       sh(root, "add", "-A");
-      const r = reviewer(root, BLOCK, "blocking");
-      const v = verify === undefined ? undefined : reviewer(root, verify, "verify");
-      configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n${v ? `review_verify: ${JSON.stringify(v.script)}\n` : ""}`);
-      return { root, verifyPrompt: v ? `${v.script}.prompt` : undefined };
+      const r = reviewer(root, script, "blocking");
+      configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n`);
+      return root;
     }
-    const verified = (root: string) => lastReview(root)?.detail["verified"] as { finding: string; holds: boolean | null; reason: string }[];
 
-    test("BR-2442: a finding the verifier says holds is recorded as an open finding on every document it names; it saw the criterion, the finding and the full text of the other rule it names, which the landing did not change", async () => {
-      const { root, verifyPrompt } = verifiedProject(`cat > $0.prompt\necho '{"holds":true,"reason":"两条都写了到账天数"}'`);
+    test("BR-2442: every blocking finding is recorded as an open finding on the review event, each said in the log with how to close it; notes are not recorded", async () => {
+      const root = blockingProject(BLOCK);
       const s = startNew(root, "Rule");
       addRule(s.worktree);
       const r = await landReviewed(root, s.worktree);
-      expect(r.review).toContain(`review finding verified (两条都写了到账天数): [contradiction] ${id} 和 BR-7 的「三天」矛盾`);
+      expect(r.review).toContain(`review finding: [contradiction] ${id} 和 BR-7 的「三天」矛盾`);
       expect(r.review).toContain(`review note: ${id} could be shorter`);
       expect(r.review).toMatch(/1 blocking finding\(s\) recorded as open review findings \(#\d+\)/);
+      expect(r.review).toContain("canon finding close <n> --fixed <commit>");
+      expect(r.review).toContain('canon finding close <n> --spurious "<quote from a document it names>"');
       const open = openFindings(ws(root).db);
       expect(open.map((f) => [f.criterion, [...f.docs]])).toEqual([["contradiction", [id, "BR-7"]]]);
-      const event = ws(root).db.db.query<{ id: number }, []>("SELECT id FROM events WHERE kind = 'review.block'").get()!.id;
-      expect(open[0]!.event).toBe(event);
+      const event = ws(root).db.db.query<{ id: number; detail: string }, []>("SELECT id, detail FROM events WHERE kind = 'review.block'").get()!;
+      expect(open[0]!.event).toBe(event.id);
       expect(open[0]!.sha).toBe(sh(root, "rev-parse", "main"));
-      expect(verified(root)).toEqual([{ finding: `[contradiction] ${id} 和 BR-7 的「三天」矛盾`, holds: true, reason: "两条都写了到账天数" }]);
-      const prompt = readFileSync(verifyPrompt!, "utf8");
-      expect(prompt).toContain("`contradiction`: a rule that contradicts another active rule");
-      expect(prompt).toContain(`The finding: ${id} 和 BR-7 的「三天」矛盾`);
-      expect(prompt).toContain("Overseas refunds take three days.");
-      expect(prompt).toContain("Refunds are fine.");
-      expect(prompt).not.toContain("could be shorter"); // notes are not verified
+      expect(JSON.parse(event.detail)).not.toHaveProperty("verified");
     });
 
-    test("BR-2442: a finding the verifier says does not hold is not recorded, only kept in the review event", async () => {
-      const { root } = verifiedProject(`cat > /dev/null\necho '{"holds":false,"reason":"BR-7 写明只适用于海外订单"}'`);
+    test("BR-2442: two blocking findings, one already open under the same identity: one new record, both numbers in the log", async () => {
+      const two = `cat > /dev/null\necho '{"findings":[{"criterion":"contradiction","text":"${id} 和 BR-7 的「三天」矛盾"},{"criterion":"untestable","text":"${id} 的「很快」无法测试"}]}'`;
+      const root = blockingProject(two);
+      const db = ws(root).db;
+      const seeded = recordFindings(db, { findings: [{ criterion: "contradiction", text: `${id} 和 BR-7 的「三天」矛盾` }], reviewed: [id], change: null, event: db.event("agent:t", "review.block", null, {}), sha: null });
+      if (!seeded.ok) throw new Error(seeded.error.message);
       const s = startNew(root, "Rule");
       addRule(s.worktree);
       const r = await landReviewed(root, s.worktree);
-      expect(r.review).toContain("review finding rejected by review_verify (BR-7 写明只适用于海外订单)");
-      expect(r.review).toContain("found only findings the verifier rejected");
+      const all = openFindings(ws(root).db);
+      expect(all).toHaveLength(2);
+      for (const f of all) expect(r.review).toContain(`#${f.id}`);
+    });
+
+    test("BR-2442: a review with only notes records nothing and says no canon finding close", async () => {
+      const root = blockingProject(`cat > /dev/null\necho '{"findings":[{"criterion":"note","text":"shorter"}]}'`);
+      const s = startNew(root, "Rule");
+      addRule(s.worktree);
+      const r = await landReviewed(root, s.worktree);
       expect(openFindings(ws(root).db)).toEqual([]);
-      expect(lastReview(root)?.kind).toBe("review.block");
-      expect(verified(root)[0]!.holds).toBe(false);
-    });
-
-    test("BR-2442: with no review_verify, or a verifier that fails or answers no boolean, the finding is recorded as it is and says it was not verified", async () => {
-      const cases: [string | undefined, string][] = [
-        [undefined, "not verified (no review_verify on main)"],
-        ["cat > /dev/null\nexit 2", "review_verify could not run"],
-        [`cat > /dev/null\necho '{"holds":"yes"}'`, 'gave no "holds" true or false'],
-      ];
-      for (const [verify, said] of cases) {
-        const { root } = verifiedProject(verify);
-        const s = startNew(root, "Rule");
-        addRule(s.worktree);
-        const r = await landReviewed(root, s.worktree);
-        expect(r.review).toContain(said);
-        expect(openFindings(ws(root).db).length).toBe(1);
-        expect(verified(root)[0]!.holds).toBeNull();
-        expect(lastReview(root)?.detail["verifier"]).toEqual(verify === undefined ? null : expect.any(String));
-      }
-    });
-
-    test("BR-2442: a change that swaps review_verify for one that always says no is verified by main's", async () => {
-      const { root } = verifiedProject(`cat > /dev/null\necho '{"holds":true,"reason":"holds"}'`);
-      const lenient = reviewer(root, `cat > /dev/null\necho '{"holds":false,"reason":"never"}'`, "lenient");
-      const s = startNew(root, "Rule");
-      const mainConfig = readFileSync(join(root, "canon/config.yaml"), "utf8");
-      writeFileSync(join(s.worktree, "canon/config.yaml"), mainConfig.replace(/review_verify: .*\n/, `review_verify: ${JSON.stringify(lenient.script)}\n`));
-      addRule(s.worktree);
-      const r = await landReviewed(root, s.worktree);
-      expect(r.review).toContain("review finding verified (holds)");
-      expect(openFindings(ws(root).db).length).toBe(1);
-    });
-
-    describe("re-asking open findings (BR-2450)", () => {
-      /** BR-1 on main with open finding #n attached to it and one on BR-7; a reviewer with no findings; `verify` as review_verify. */
-      async function openOn(verify: string | undefined) {
-        const root = billingProject(`floor: "true"\ntests: []\n`);
-        writeFileSync(join(root, "canon/rules/billing/BR-7.md"), `---\nid: BR-7\ntitle: Overseas refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\nOverseas refunds take three days.\n`);
-        sh(root, "add", "-A");
-        const r = reviewer(root, `cat > /dev/null\necho '{"findings":[]}'`, "clean");
-        const v = verify === undefined ? undefined : reviewer(root, verify, "verify");
-        configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(r.script)}\n${v ? `review_verify: ${JSON.stringify(v.script)}\n` : ""}`);
-        const seed = startNew(root, "Rule");
-        addRule(seed.worktree);
-        expect((await landReviewed(root, seed.worktree)).out.kind).toBe("landed");
-        const db = ws(root).db;
-        const at = db.event("agent:t", "review.block", null, {});
-        const rec = recordFindings(db, { findings: [{ criterion: "contradiction", text: `${id} 和 BR-7 的「三天」矛盾` }, { criterion: "untestable", text: "BR-7 的「三天」无法测试" }], reviewed: [id], change: null, event: at, sha: "x" });
-        if (!rec.ok) throw new Error(rec.error.message);
-        const [mine, other] = rec.value.opened;
-        // reason: the second finding names only BR-7, which the next landing does not review
-        return { root, mine: mine!, other: other!, verifyPrompt: v ? `${v.script}.prompt` : undefined, review: r.script };
-      }
-      const edit = async (root: string) => {
-        const s = startNew(root, "Edit rule");
-        writeFileSync(join(s.worktree, `canon/rules/billing/${id}.md`), `---\nid: ${id}\ntitle: Refunds\nuntested: demo\nbusiness: x\n---\n## 规则\n\nRefunds take five days.\n`);
-        sh(s.worktree, "commit", "-qam", "edit");
-        return landReviewed(root, s.worktree);
-      };
-      const reasks = (root: string) => ws(root).db.db.query<{ id: number; detail: string }, []>("SELECT id, detail FROM events WHERE kind = 'review.reask' ORDER BY id").all().map((e) => ({ id: e.id, ...(JSON.parse(e.detail) as Record<string, unknown>) }));
-      const closed = (root: string, n: number) => ws(root).db.db.query<{ closed_how: string | null; closed_event: number | null }, [number]>("SELECT closed_how, closed_event FROM review_findings WHERE id = ?").get(n)!;
-
-      test("BR-2450 BR-2439: an open finding on a reviewed document that the verifier says no longer holds is closed by the review.reask event; one on a document not reviewed is not asked", async () => {
-        const { root, mine, other, verifyPrompt } = await openOn(`cat > $0.prompt\necho '{"holds":false,"reason":"已改成五天"}'`);
-        const r = await edit(root);
-        expect(r.review).toContain(`review: open finding #${mine} no longer holds (已改成五天): closed`);
-        const [ask] = reasks(root);
-        expect(reasks(root)).toHaveLength(1);
-        expect(ask).toMatchObject({ finding: mine, holds: false, reason: "已改成五天", commit: sh(root, "rev-parse", "main") });
-        expect(closed(root, mine)).toEqual({ closed_how: "no-longer-holds", closed_event: ask!.id });
-        expect(closed(root, other).closed_how).toBeNull();
-        expect(readFileSync(verifyPrompt!, "utf8")).toContain("Refunds take five days.");
-      });
-
-      test("BR-2450: a finding that still holds stays open; with no review_verify the review command is asked, and an answer with no holds leaves it open without failing the review", async () => {
-        const holding = await openOn(`cat > /dev/null\necho '{"holds":true,"reason":"仍然矛盾"}'`);
-        const r = await edit(holding.root);
-        expect(r.review).toContain(`review: open finding #${holding.mine} still holds (仍然矛盾)`);
-        expect(closed(holding.root, holding.mine).closed_how).toBeNull();
-
-        const none = await openOn(undefined);
-        const n = await edit(none.root);
-        expect(n.review).toContain(`review: open finding #${none.mine} stays open, the re-ask did not answer (review gave no "holds" true or false`);
-        expect(reasks(none.root)[0]).toMatchObject({ finding: none.mine, holds: null, asker: none.review });
-        expect(n.review).toContain("review: done");
-        expect(closed(none.root, none.mine).closed_how).toBeNull();
-      });
-    });
-
-    test("BR-2442: a review with only notes runs no verifier", async () => {
-      const { root, verifyPrompt } = verifiedProject(`cat > $0.prompt\necho '{"holds":true,"reason":"x"}'`);
-      const notes = reviewer(root, `cat > /dev/null\necho '{"findings":[{"criterion":"note","text":"shorter"}]}'`, "notes");
-      const config = readFileSync(join(root, "canon/config.yaml"), "utf8").replace(/^review: .*$/m, `review: ${JSON.stringify(notes.script)}`);
-      configOnMain(root, config);
-      const s = startNew(root, "Rule");
-      addRule(s.worktree);
-      await landReviewed(root, s.worktree);
-      expect(existsSync(verifyPrompt!)).toBe(false);
+      expect(r.review).not.toContain("canon finding close");
       expect(lastReview(root)?.kind).toBe("review.ok");
     });
   });

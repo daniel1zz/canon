@@ -5,7 +5,7 @@ import { pendingBlocks, recordVerdict, renderPending, renderVerdictSummary, verd
 import { dirname } from "node:path";
 import { CoordDb } from "../db.ts";
 import { worktreesDir } from "../session/session.ts";
-import { renderReviewCounts, renderVerifiedByCriterion, reviewCounts, verifiedByCriterion } from "./reviews.ts";
+import { findingsByCriterion, renderFindingsByCriterion, renderReviewCounts, reviewCounts } from "./reviews.ts";
 import { DEFAULT_DAYS, projectsDir, renderUsage, usageReport } from "./usage.ts";
 import { claimsWithState } from "../claims/claims.ts";
 import { batchStats, renderBatchStats } from "./batches.ts";
@@ -42,7 +42,7 @@ const stats = defineCommand({
     const reviews = renderReviewCounts(reviewCounts(ws.db, since ?? 0, until));
     if (reviews) say(`\n${reviews}`);
     // reason: text-only like the review counts; the --json fields are fixed (BR-2202, BR-2451)
-    const byCriterion = renderVerifiedByCriterion(verifiedByCriterion(ws.db, since ?? 0, until));
+    const byCriterion = renderFindingsByCriterion(findingsByCriterion(ws.db, since ?? 0, until));
     if (byCriterion) say(`\n${byCriterion}`);
     // reason: the batch section is text-only too (BR-2202, BR-2379); `canon events --kind batch.end --json` has the raw rows
     const batches = renderBatchStats(batchStats(ws.db, since ?? 0, until));

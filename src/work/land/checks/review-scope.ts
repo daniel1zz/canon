@@ -112,7 +112,6 @@ export function duplicateReviewPrompt(wt: string, base: string, head: string, st
 export interface ReviewSettings {
   readonly review: string | undefined;
   /** The verifier of blocking findings after a landing (BR-2442); undefined when unset. */
-  readonly verify: string | undefined;
   readonly reviewTimeoutMs: number;
   readonly reviewMaxPromptBytes: number;
   readonly reviewParallel: number;
@@ -134,8 +133,6 @@ export function reviewSettingsOn(wt: string, rev: string): Result<ReviewSettings
   const field = <T>(k: { key: string; default: T; read: (value: unknown, c: typeof ctx) => Result<T> }): Result<T> => (raw[k.key] === undefined ? ok(k.default) : k.read(raw[k.key], ctx));
   const review = field(reviewKeys.review);
   if (!review.ok) return review;
-  const verify = field(reviewKeys.reviewVerify);
-  if (!verify.ok) return verify;
   const reviewTimeoutMs = field(reviewKeys.reviewTimeoutMs);
   if (!reviewTimeoutMs.ok) return reviewTimeoutMs;
   const reviewMaxPromptBytes = field(reviewKeys.reviewMaxPromptBytes);
@@ -144,7 +141,7 @@ export function reviewSettingsOn(wt: string, rev: string): Result<ReviewSettings
   if (!reviewParallel.ok) return reviewParallel;
   const instructions = field(reviewKeys.instructions);
   if (!instructions.ok) return instructions;
-  return ok({ review: review.value, verify: verify.value, reviewTimeoutMs: reviewTimeoutMs.value, reviewMaxPromptBytes: reviewMaxPromptBytes.value, reviewParallel: reviewParallel.value, instructions: instructions.value });
+  return ok({ review: review.value, reviewTimeoutMs: reviewTimeoutMs.value, reviewMaxPromptBytes: reviewMaxPromptBytes.value, reviewParallel: reviewParallel.value, instructions: instructions.value });
 }
 
 /** Whether two `<rev>:<path>` objects are the same blob, i.e. the same bytes. */

@@ -8,6 +8,24 @@ import { err, ok, type Result } from "../kernel/result.ts";
  * It lives in the git common dir so all linked worktrees see the same file, and every write is
  * immediately visible to every session (P4). Knowledge never goes here; it lives in files.
  */
+/** The open review findings table and its index (BR-2434), also used to rebuild an older one (widenFindingsCheck). */
+const FINDINGS_TABLE = `CREATE TABLE IF NOT EXISTS review_findings (
+  id           INTEGER PRIMARY KEY AUTOINCREMENT,
+  identity     TEXT NOT NULL,           -- criterion, sorted named ids and quote hash (BR-2433)
+  criterion    TEXT NOT NULL,
+  ids          TEXT NOT NULL,           -- JSON list of the document ids the text names, sorted
+  docs         TEXT NOT NULL,           -- JSON list of the documents it is attached to
+  text         TEXT NOT NULL,
+  change       TEXT,                    -- the change whose review gave it, when there was one
+  event        INTEGER NOT NULL,        -- the event that recorded the review it came from
+  sha          TEXT,                    -- the commit that review saw
+  opened_at    TEXT NOT NULL,
+  closed_at    TEXT,
+  closed_how   TEXT CHECK (closed_how IN ('retired', 'spurious', 'fixed', 'no-longer-holds')),
+  closed_event INTEGER                  -- the event that closed it: the landing, the verdict, the finding.close or an older re-asking
+);
+CREATE UNIQUE INDEX IF NOT EXISTS review_findings_open ON review_findings(identity) WHERE closed_at IS NULL;`;
+
 const SCHEMA = `
 CREATE TABLE IF NOT EXISTS ids (
   prefix TEXT PRIMARY KEY,
@@ -118,23 +136,8 @@ CREATE TABLE IF NOT EXISTS test_reports (
   UNIQUE (path, blob)
 );
 -- Open review findings (BR-2434, D-97): one row per finding identity while it is open, attached to every document it names;
--- closed only explicitly (BR-2435, BR-2438, BR-2439). A closed row stays as the record of how and by which event it closed.
-CREATE TABLE IF NOT EXISTS review_findings (
-  id           INTEGER PRIMARY KEY AUTOINCREMENT,
-  identity     TEXT NOT NULL,           -- criterion, sorted named ids and quote hash (BR-2433)
-  criterion    TEXT NOT NULL,
-  ids          TEXT NOT NULL,           -- JSON list of the document ids the text names, sorted
-  docs         TEXT NOT NULL,           -- JSON list of the documents it is attached to
-  text         TEXT NOT NULL,
-  change       TEXT,                    -- the change whose review gave it, when there was one
-  event        INTEGER NOT NULL,        -- the event that recorded the review it came from
-  sha          TEXT,                    -- the commit that review saw
-  opened_at    TEXT NOT NULL,
-  closed_at    TEXT,
-  closed_how   TEXT CHECK (closed_how IN ('retired', 'spurious', 'no-longer-holds')),
-  closed_event INTEGER                  -- the event that closed it: the landing, the verdict or the re-asking
-);
-CREATE UNIQUE INDEX IF NOT EXISTS review_findings_open ON review_findings(identity) WHERE closed_at IS NULL;
+-- closed only explicitly (BR-2435, BR-2438, BR-2453; older rows by re-asking). A closed row stays as the record of how and by which event it closed.
+${FINDINGS_TABLE}
 -- The rule and duplicate reviews of landed commits, queued by the landing and run one at a time after it (BR-2441, D-89).
 CREATE TABLE IF NOT EXISTS landed_reviews (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,  -- queue order
@@ -198,6 +201,27 @@ export function addColumns(db: Database): void {
 }
 
 /**
+ * Lets `review_findings.closed_how` hold `fixed` (BR-2453, D-99) in a DB created before it could. SQLite cannot change a
+ * CHECK in place, so the table is rebuilt once, in one immediate transaction that looks again inside it: two sessions
+ * opening the same old DB rebuild it once. Older canon builds keep working on the rebuilt table: it only accepts more.
+ */
+export function widenFindingsCheck(db: Database): void {
+  const old = (): boolean => {
+    const row = db.query<{ sql: string }, []>("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'review_findings'").get();
+    return row !== null && !row.sql.includes("'fixed'");
+  };
+  if (!old()) return;
+  db.transaction(() => {
+    if (!old()) return;
+    db.exec(`ALTER TABLE review_findings RENAME TO review_findings_old;
+DROP INDEX IF EXISTS review_findings_open;
+${FINDINGS_TABLE}
+INSERT INTO review_findings SELECT id, identity, criterion, ids, docs, text, change, event, sha, opened_at, closed_at, closed_how, closed_event FROM review_findings_old;
+DROP TABLE review_findings_old;`);
+  }).immediate();
+}
+
+/**
  * Switches the DB to WAL. SQLite answers "database is locked" at once, without calling the busy handler, when
  * another connection is switching the same fresh file at the same moment, so the switch is retried until the
  * busy timeout is spent; any other error, or a lock that outlasts it, still fails the open.
@@ -231,6 +255,7 @@ export class CoordDb {
       enableWal(db);
       db.exec(SCHEMA);
       addColumns(db);
+      widenFindingsCheck(db);
       return ok(new CoordDb(db, worktree ?? null));
     } catch (e) {
       return err("io", `cannot open coordination DB at ${path}: ${(e as Error).message}`);
