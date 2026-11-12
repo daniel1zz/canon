@@ -1,8 +1,15 @@
 ---
 id: C-491
 title: canon init and canon update write links_since when it is missing
-status: open
-rules: [BR-2452, BR-2032, BR-2084]
+status: done
+rules:
+  - BR-2452
+  - BR-2032
+  - BR-2084
+passes:
+  BR-2032: d3080306909a7c82 test
+  BR-2084: 02812cab2bd245c9 test
+  BR-2452: 9413e732a18a8919 test
 ---
 
 ## 为什么
