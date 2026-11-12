@@ -60,7 +60,8 @@ describe("context", () => {
     expect(brief).toContain("canon context billing --full");
     expect(brief).toContain(`${id("D", 1)} Why 30 days`);
     const full = renderContext("", ctx, { full: true });
-    expect(full).toContain(`## ${id("BR", 1)} Refund window`);
+    // BR-2112: --full is not grouped, but each rule's heading carries its business
+    expect(full).toContain(`## ${id("BR", 1)} Refund window [business: 退款]`);
     expect(full).toContain("Refunds within 30 days.");
     expect(full).not.toContain("canon context billing --full"); // the full text needs no hint to ask for it
     expect(full).not.toContain("--full");

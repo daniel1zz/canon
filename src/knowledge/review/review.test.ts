@@ -194,6 +194,22 @@ describe("review verdict derived from the criteria findings name (BR-2367)", () 
     expect(prompt).toContain("Name both business names and the domain");
   });
 
+  test("BR-2447: the prompt names the business of a changed rule and of every rule in the domain text, and nothing for a rule without one", () => {
+    const mapped = {
+      ...files,
+      "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 业务\n\n- **refunds**：giving money back\n",
+      [`canon/rules/billing/${id("BR", 4)}.md`]: `---\nid: ${id("BR", 4)}\ntitle: Refund window\nstatus: active\nuntested: fixture\nbusiness: refunds\n---\nRefunds within 30 days.\n`,
+    };
+    const { root, corpus } = corpusOf(mapped);
+    const refund = corpus.docs.find((d) => d.id === id("BR", 4))!;
+    const prompt = reviewPrompt(root, corpus, [refund]);
+    expect(prompt).toContain("business: refunds"); // under the changed rule's heading, like a decision's supersedes/amends
+    expect(prompt).toContain(`## ${id("BR", 4)} Refund window [business: refunds]`); // and in the domain's current context
+
+    const plain = reviewPrompt(root, corpus, [corpus.docs.find((d) => d.id === id("BR", 3))!]);
+    expect(plain).not.toContain("business:");
+  });
+
   test("BR-2367: the rule review prompt lists every criterion key and the answer format; the duplicate review prompt lists duplication", () => {
     const { root, corpus } = corpusOf(files);
     const prompt = reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 4)));

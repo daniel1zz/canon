@@ -102,8 +102,9 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
 
 /** One document as the prompt shows it: id, title, kind and status, a decision's links, its body. */
 function docSection(d: Doc): string {
-  // reason: the body has no front matter, so the reviewer could not see what a decision supersedes or amends (BR-2141)
-  const links = d.kind === "decision" ? [...(d.supersedes.length ? [`supersedes: ${d.supersedes.join(", ")}`] : []), ...(d.amends.length ? [`amends: ${d.amends.join(", ")}`] : [])] : [];
+  // reason: the body has no front matter, so the reviewer could not see what a decision supersedes or amends (BR-2141),
+  // reason: nor which business a rule draws a boundary of, which `business-overlap` has to judge (BR-2447)
+  const links = d.kind === "decision" ? [...(d.supersedes.length ? [`supersedes: ${d.supersedes.join(", ")}`] : []), ...(d.amends.length ? [`amends: ${d.amends.join(", ")}`] : [])] : d.kind === "rule" && d.business !== undefined ? [`business: ${d.business}`] : [];
   return `## ${d.id} ${d.title} (${d.kind}${"status" in d ? `, ${d.status}` : ""})\n\n${links.map((l) => `${l}\n`).join("")}${links.length ? "\n" : ""}${d.body.trim()}\n`;
 }
 
