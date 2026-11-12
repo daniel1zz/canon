@@ -4,7 +4,10 @@ title: "The main agent settles rule-review findings at once: findings are pushed
   to it, it closes them with a quoted reason or a fix, no separate verify or
   re-ask"
 status: open
-rules: []
+rules:
+  - BR-2442
+  - BR-2453
+  - BR-2451
 ---
 
 ## 为什么
@@ -26,6 +29,6 @@ rules: []
 ## 任务
 
 - [x] D-99
-- [ ] 规则改写和新规则
-- [ ] 代码和测试
-- [ ] 架构总览
+- [x] 规则改写和新规则
+- [x] 代码和测试
+- [x] 架构总览
