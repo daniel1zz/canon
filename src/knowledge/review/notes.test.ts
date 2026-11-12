@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../../work/land/land.ts";
-import { FAST, project, sh, startNew, ws } from "../../work/testkit.ts";
+import { FAST, project, reviewLandings, sh, startNew, ws } from "../../work/testkit.ts";
 import { names, notesByDoc, openNotes } from "./notes.ts";
 
 const id = (n: number) => ["BR", n].join("-");
@@ -31,7 +31,7 @@ function setReviewer(root: string, notes: readonly string[], hook?: string) {
   sh(root, "commit", "-qam", "reviewer");
 }
 
-/** Lands a change that writes the given rules, returning what land said. */
+/** Lands a change that writes the given rules and runs the review after it (BR-2441), returning what both said. */
 async function landRules(root: string, title: string, rules: readonly number[]) {
   const s = startNew(root, title);
   for (const n of rules) writeFileSync(join(s.worktree, `canon/rules/billing/${id(n)}.md`), `---\nid: ${id(n)}\ntitle: R${n} ${title}\nuntested: demo\nbusiness: x\n---\n## 规则\n\n${title} ${n}.\n\n## 例子\n\n- a → b\n`);
@@ -39,6 +39,7 @@ async function landRules(root: string, title: string, rules: readonly number[]) 
   sh(s.worktree, "commit", "-qm", title);
   const lines: string[] = [];
   const out = await land(ws(s.worktree), FAST, (l) => lines.push(l));
+  lines.push(...(await reviewLandings(root)));
   return { out, lines, change: s.change };
 }
 
@@ -51,7 +52,7 @@ describe("review notes", () => {
     expect(by.get(id(201))).toEqual([`${id(201)} 的例子缺少边界另一侧`, "措辞可以更短"]);
   });
 
-  test("BR-2145: a landing records its notes; a later review of a document replaces them; a refused landing changes nothing", async () => {
+  test("BR-2145: the review after a landing records its notes; a later review of a document replaces them; a refused landing changes nothing", async () => {
     const root = reviewed([`${id(1)} 的例子缺少边界另一侧`, "措辞可以更短"]);
     const first = await landRules(root, "First", [1, 2]);
     expect(first.out.kind).toBe("landed");
@@ -61,7 +62,7 @@ describe("review notes", () => {
     expect(openNotes(db, [id(2)]).map((n) => n.note)).toEqual(["措辞可以更短"]);
     expect(openNotes(db, [id(1)])[0]!.change).toBe(first.change);
 
-    // A landing refused after an ok review (before_land fails, which runs after the review and before the floor) records nothing.
+    // A refused landing (before_land fails) queues no review, so it records nothing.
     setReviewer(root, [`${id(1)} still vague`], "exit 1");
     const refused = await landRules(root, "Refused", [1]);
     expect(refused.out.kind === "refused" && refused.out.reason).toBe("hook");

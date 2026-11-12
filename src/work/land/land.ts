@@ -396,12 +396,12 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   if (moved !== "moved") return refuse(moved.reason, moved.message);
 
   finishEntry(ws.db, entry, "landed", head.value);
-  const landed = ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, base: base.value, branch: t.branch, diff: fingerprint, ...(steps.reviewNotes ?? {}), ...(floorSkipped ? { floor_skipped: true } : {}), ...(floorDeferred ? { floor_deferred: true } : {}) });
+  const landed = ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, base: base.value, branch: t.branch, diff: fingerprint, ...(floorSkipped ? { floor_skipped: true } : {}), ...(floorDeferred ? { floor_deferred: true } : {}) });
   // Open review findings naming a document now retired or superseded on main are closed by this landing (BR-2435).
   closeRetired(ws.db, new Set(steps.retired), landed);
   say(`landed ${head.value.slice(0, 9)} on ${main}`);
   // The background floor starts on the main this landing made, before after_land (BR-2218, BR-2219).
   if (floorDeferred) ensureWatcher(ws, say);
-  afterLand(ws, say, { entry, subject, base: base.value, head: head.value, branch: t.branch });
+  afterLand(ws, say, { entry, subject, base: base.value, head: head.value, branch: t.branch, landed, review: steps.review });
   return finishLanding(ws, opts, say, { entry, subject, sha: head.value });
 }

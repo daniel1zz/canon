@@ -9,6 +9,7 @@ import { readCorpus } from "../../../knowledge/documents/read.ts";
 import { setMeta } from "../../../knowledge/documents/write.ts";
 import { addedReferenceStamps } from "../../../knowledge/links/stamp.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
+import { queueLandedReview, type ReviewNeeds } from "../../../knowledge/review/landed-queue.ts";
 
 /** The `canon: close C-n` commit `--finish` made before queuing, so a landing that fails can take it back. */
 export interface CloseCommit {
@@ -89,8 +90,12 @@ export function stampAddedReferences(ws: Workspace, wt: string, close: CloseComm
   return ok(undefined);
 }
 
-/** Starts after_land in the background for one landed change, with its own base and head (BR-2030). */
-export function afterLand(ws: Workspace, say: Say, l: { entry: number; subject: string | null; base: string; head: string; branch: string }): void {
+/**
+ * After main moved for one landed change, with its own base and head: queues the reviews of the landed commit (BR-2441, D-89)
+ * and starts after_land in the background (BR-2030).
+ */
+export function afterLand(ws: Workspace, say: Say, l: { entry: number; subject: string | null; base: string; head: string; branch: string; landed: number; review: ReviewNeeds | undefined }): void {
+  if (l.review) queueLandedReview(ws, say, l, l.review);
   if (ws.config.hooks.after_land.length === 0) return;
   const env = { CANON_BASE: l.base, CANON_HEAD: l.head, CANON_BRANCH: l.branch };
   const log = runHooksInBackground({ db: ws.db, actor: ws.actor, event: "after_land", change: l.subject, cwd: ws.primary, env, port: changePort(ws, l.subject) }, ws.config.hooks.after_land, logFile(ws.db, `after-land-${l.entry}.log`), l.entry);

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { land } from "../land.ts";
 import { previewReview } from "../../../knowledge/review/preview.ts";
 import { runReview, runReviews } from "../../../knowledge/review/review.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
+import { FAST, project, quiet, reviewLandings, sh, startNew, ws } from "../../testkit.ts";
 
 const id = ["BR", 1].join("-");
 
@@ -38,9 +38,10 @@ function kindProject() {
 }
 
 describe("CANON_REVIEW_KIND (BR-2366)", () => {
-  test("BR-2366: the review command of a landing runs with CANON_REVIEW_KIND=land", async () => {
+  test("BR-2366: the review command of the review after a landing runs with CANON_REVIEW_KIND=land", async () => {
     const t = kindProject();
     expect((await land(ws(t.change().worktree), FAST, quiet)).kind).toBe("landed");
+    await reviewLandings(t.root);
     expect(t.kinds()).toEqual(["land"]);
   }, 60_000);
 
@@ -56,11 +57,12 @@ describe("CANON_REVIEW_KIND (BR-2366)", () => {
     expect(t.kinds()).toEqual(["preview", "preview"]);
   }, 60_000);
 
-  test("BR-2366: a landing with a rule and a standing-instruction change runs both reviews with land; a preview pass is still not reused by it", async () => {
+  test("BR-2366: the review after a landing with a rule and a standing-instruction change runs both reviews with land; a preview pass is still not reused by it", async () => {
     const t = kindProject();
     const s = t.change(true);
     expect((await previewReview(ws(s.worktree), "guide")).kind).toBe("ok");
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    await reviewLandings(t.root, "guide");
     expect(t.kinds()).toEqual(["preview", "preview", "land", "land"]);
   }, 60_000);
 

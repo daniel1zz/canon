@@ -139,6 +139,7 @@ export function runHooksInBackground(ctx: HookContext, commands: readonly string
 
 interface BackgroundRun {
   readonly subject: string | null;
+  readonly batch?: number;
   readonly event: string;
   readonly command: string;
   readonly log: string;
@@ -147,6 +148,8 @@ interface BackgroundRun {
 
 export interface BackgroundBatch {
   readonly change: string | null;
+  /** The landing's queue entry, by which the review after the same landing is found (BR-2166, BR-2441). */
+  readonly entry: number | null;
   readonly log: string;
   /** False when the log file is gone, so the exit codes cannot be known. */
   readonly logFound: boolean;
@@ -181,7 +184,8 @@ export function settleBackgroundHooks(db: CoordDb, actor: string, change?: strin
     .all(log)
     .map((e): BackgroundRun => ({ subject: e.subject, ...(JSON.parse(e.detail) as Omit<BackgroundRun, "subject">) }));
   const subject = runs[0]?.subject ?? null;
-  if (!existsSync(log)) return { change: subject, log, logFound: false, failed: [], commands: runs.map((r) => ({ index: r.index, command: r.command, exit: null })), review: [] };
+  const entry = runs[0]?.batch ?? null;
+  if (!existsSync(log)) return { change: subject, entry, log, logFound: false, failed: [], commands: runs.map((r) => ({ index: r.index, command: r.command, exit: null })), review: [] };
   const text = readFileSync(log, "utf8");
   const exits = new Map<number, number>();
   for (const m of text.matchAll(EXIT_LINE)) exits.set(Number(m[1]), Number(m[2]));
@@ -206,7 +210,7 @@ export function settleBackgroundHooks(db: CoordDb, actor: string, change?: strin
     return exit !== undefined && exit !== 0 ? [{ command: r.command, exit }] : [];
   });
   const commands = runs.map((r) => ({ index: r.index, command: r.command, exit: exits.get(r.index) ?? null }));
-  return { change: subject, log, logFound: true, failed, commands, review: [...text.matchAll(REVIEW_LINE)].map((m) => m[0]) };
+  return { change: subject, entry, log, logFound: true, failed, commands, review: [...text.matchAll(REVIEW_LINE)].map((m) => m[0]) };
 }
 
 /** The `canon brief` line about the latest background batch (BR-2138), or undefined when there is nothing to say. */

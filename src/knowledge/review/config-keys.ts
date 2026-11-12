@@ -1,16 +1,16 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { configKey, MINUTE, optionalString, positiveNumber, positiveValue, REL_DIR, relPath } from "../../invocation/key.ts";
 
-/** The `review` value that turns the rule and duplicate reviews off on purpose; unset refuses instead (BR-2074, D-51). */
+/** The `review` value that turns the rule and duplicate reviews off on purpose; unset lands unreviewed and says so (BR-2074, D-89). */
 export const REVIEW_NONE = "none";
 
 /** The command an unset `review` should become, as `canon init` writes it (BR-2032) and the refusal suggests (BR-2074). */
 export const DEFAULT_REVIEW = "claude -p --model sonnet --output-format text";
 
-/** How to set a reviewer, first; then that turning the review off is the owner's call, landed by itself (BR-2074, BR-2295, D-51). */
+/** How to set a reviewer, first; then that turning the review off is the owner's call (BR-2074, D-51). */
 export const REVIEW_WAYS_OUT = [
   `  set a reviewer in canon/config.yaml, a command that reads the review prompt on stdin and prints the verdict JSON on stdout: review: "${DEFAULT_REVIEW}"`,
-  `  review: ${REVIEW_NONE} turns the review off: ask the owner first with canon human ask (canon does not check who sets it), and with their yes land that canon/config.yaml change as a change of its own`,
+  `  review: ${REVIEW_NONE} turns the review off: ask the owner first with canon human ask (canon does not check who sets it)`,
 ];
 
 /**
@@ -29,7 +29,7 @@ export function readReview(v: unknown): Result<string | undefined> {
 export const reviewKeys = {
   review: configKey<string | undefined>({
     key: "review",
-    doc: `Reviewer for rule and decision text and for standing instructions, the built-in first \`before_land\` step (D-3). Receives the review prompt on stdin, and in \`CANON_REVIEW_KIND\` \`land\` when a landing runs it, \`preview\` when \`canon work review\` does, or \`release\` when canon's own release check does (BR-2366, BR-2411), and prints JSON \`{"findings":[{"criterion":"<criterion key the prompt lists>|note","text":"..."}]}\`: canon derives the verdict, which is block when a finding names a criterion (BR-2367); the older \`{"verdict":"ok"|"block","findings":["..."]}\` is still read as given. Unset refuses a landing that changes them (BR-2074); \`${REVIEW_NONE}\` skips the reviews on purpose (D-51).`,
+    doc: `Reviewer for rule and decision text and for standing instructions, run after each landing that changes them, in the background (BR-2441, D-89). Receives the review prompt on stdin, and in \`CANON_REVIEW_KIND\` \`land\` after a landing and for the landing's wording judgement, \`preview\` when \`canon work review\` does, or \`release\` when canon's own release check does (BR-2366, BR-2411), and prints JSON \`{"findings":[{"criterion":"<criterion key the prompt lists>|note","text":"..."}]}\`: canon derives the verdict, which is block when a finding names a criterion (BR-2367); the older \`{"verdict":"ok"|"block","findings":["..."]}\` is still read as given. Unset lands them unreviewed and says so (BR-2074); \`${REVIEW_NONE}\` skips the reviews on purpose (D-51).`,
     default: undefined,
     schema: optionalString,
     read: readReview,
@@ -38,9 +38,19 @@ export const reviewKeys = {
     listed: 60,
     checked: 40,
   }),
+  reviewVerify: configKey<string | undefined>({
+    key: "review_verify",
+    doc: `Verifier for the blocking findings of the reviews that run after a landing (D-89, BR-2442): one run per finding, the finding, its criterion and the full text of the documents it names on stdin, \`CANON_REVIEW_KIND\` \`verify\`; prints JSON \`{"holds":true|false,"reason":"..."}\`. A finding that holds is recorded as an open finding, one that does not is kept only in the review's event. Unset records every blocking finding as is and says it was not verified. Read from main, like \`review\` (BR-2074).`,
+    default: undefined,
+    schema: optionalString,
+    read: (v) => (v === null || (typeof v === "string" && v.trim() === "") ? ok(undefined) : typeof v === "string" ? ok(v) : err("invalid", "`review_verify` must be a string")),
+    commands: (v) => (v === undefined ? [] : [v]),
+    listed: 61,
+    checked: 41,
+  }),
   reviewTimeoutMs: configKey<number>({
     key: "review_timeout_minutes",
-    doc: "How long one run of the `review` command may take before canon stops it and its children and refuses the landing (BR-2296).",
+    doc: "How long one run of the `review` command may take before canon stops it and its children; the review after the landing then fails (BR-2296).",
     default: 20 * MINUTE,
     schema: positiveNumber(20),
     read: positiveValue("review_timeout_minutes", MINUTE),
@@ -49,7 +59,7 @@ export const reviewKeys = {
   }),
   reviewMaxPromptBytes: configKey<number>({
     key: "review_max_prompt_kb",
-    doc: "The most kilobytes (UTF-8) one run of the rule review's prompt may have; a larger review is split by subdomain into several runs of the `review` command, each with every changed document, and their findings are merged (BR-2359, D-67, D-83). The fixed part alone above it refuses the landing.",
+    doc: "The most kilobytes (UTF-8) one run of the rule review's prompt may have; a larger review is split by subdomain into several runs of the `review` command, each with every changed document, and their findings are merged (BR-2359, D-67, D-83). The fixed part alone above it fails the review.",
     default: 250 * 1024,
     schema: positiveNumber(250),
     read: positiveValue("review_max_prompt_kb", 1024),

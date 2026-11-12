@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { land } from "../../../work/land/land.ts";
 import { recordVerdict } from "../../../work/stats/verdict.ts";
 import type { CoordDb } from "../../../work/db.ts";
-import { FAST, project, sh, startNew, ws } from "../../../work/testkit.ts";
+import { FAST, project, reviewLandings, sh, startNew, ws } from "../../../work/testkit.ts";
 import { closeNoLongerHolds, closeRetired, findingOf, identityOf, namedIds, openFindings, quotedSpans, recordFindings, renderFinding, type Finding } from "./findings.ts";
 
 // Ids are built at run time so this file names no real document (canon check reads ids in test files).
@@ -44,13 +44,15 @@ function billing(review: "none" | "empty" = "none") {
   return root;
 }
 
-/** Lands a change that rewrites the given rules with the given status. */
+/** Lands a change that rewrites the given rules with the given status, and runs the review after it (BR-2441). */
 async function landRules(root: string, title: string, rules: readonly [number, string][]) {
   const s = startNew(root, title);
   for (const [n, status] of rules) writeFileSync(join(s.worktree, `canon/rules/billing/${BR(n)}.md`), ruleFile(n, status).replace(`Rule ${n}.`, `Rule ${n}, ${title}.`));
   sh(s.worktree, "add", "-A");
   sh(s.worktree, "commit", "-qm", title);
-  return land(ws(s.worktree), FAST, () => {});
+  const out = await land(ws(s.worktree), FAST, () => {});
+  await reviewLandings(root);
+  return out;
 }
 
 describe("finding identity", () => {

@@ -125,11 +125,11 @@ describe("review size hint", () => {
     expect(near).toHaveLength(1);
     expect(near[0]).toContain("this work's");
     expect(near[0]).toMatch(/is 7\d% of review_max_prompt_kb/);
-    expect(near[0]).not.toContain("will be refused");
+    expect(near[0]).not.toContain("will fail");
     const over = at((0.6 * budget) / KB);
     expect(over).toHaveLength(1);
     expect(over[0]).toMatch(/changed documents \d+ KB \(this work's/);
-    expect(over[0]).toContain("the landing's review of this work will be refused");
+    expect(over[0]).toContain("the review of this work after landing will fail");
     expect(over[0]).toContain("land the changed documents in several smaller changes");
     // without the work the same corpus counts 0 and says so
     expect(reviewSizeHints(base.root, base.corpus, Math.round(static_ / 0.72))[0]).toContain("not known without a change");
@@ -208,11 +208,11 @@ describe("canon check review size hint in a change worktree", () => {
     const near = hintOf(wt);
     expect(near).toHaveLength(1);
     expect(near[0]).toContain("this work's");
-    expect(near[0]).not.toContain("will be refused");
+    expect(near[0]).not.toContain("will fail");
     write(wt, { [`canon/decisions/${id("D", 5)}.md`]: decisionOf(60) });
     const over = hintOf(wt);
     expect(over).toHaveLength(1);
-    expect(over[0]).toContain("the landing's review of this work will be refused");
+    expect(over[0]).toContain("the review of this work after landing will fail");
     expect(hintOf(root)).toEqual([]);
   });
 

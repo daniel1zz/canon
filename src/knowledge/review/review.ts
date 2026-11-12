@@ -75,6 +75,18 @@ const CRITERIA: readonly string[] = [...RULE_CRITERIA, ...DUPLICATE_CRITERIA];
 const ANSWER_FORMAT_RULE = `{"findings":[{"criterion":"${RULE_CRITERIA.join('"|"')}"|"note","text":"<one sentence, naming the id>"}]`;
 export const NO_VERDICT = "Do not give a verdict: canon derives it from the keys.";
 
+/** What each blocking criterion means, as the review prompt states it; the verifier is shown the same words (BR-2367, BR-2442). */
+export const CRITERION_TEXT: Readonly<Record<string, string>> = {
+  contradiction: "`contradiction`: a rule that contradicts another active rule (in any domain: see the rule index) or an accepted decision.",
+  untestable: "`untestable`: a rule a test cannot decide (vague, no boundary, examples that do not pin the boundary).",
+  "no-rejected-options": "`no-rejected-options`: a decision without the options it rejected.",
+  release: "`release`: a release is a version's PRD; the rules whose front matter says `release: R-n` are its behaviour. A rule tagged with a release that does something that release's 不做 excludes or lies outside its 范围; a release whose 不做 contradicts its own 范围 or a rule tagged with it. Only a rule or release changed in this landing can be blocked for it.",
+  amends: "`amends`: a changed decision that replaces only part of an accepted decision must list it in `amends:` (one that replaces a whole decision uses `supersedes:`); a decision that says it changes part of another decision without listing it in `amends:`.",
+  overview: "`overview`: when an architecture overview is shown below, it is where readers start, not the judge: where it disagrees with the active rules and accepted decisions, they win. Use this key only when the part of the overview this landing changed (its diff is shown) contradicts an active rule or an accepted decision. When a rule or decision changed in this landing makes a statement in the overview wrong, add a `note` naming the overview section.",
+  restatement: "`restatement`: a changed rule or decision that, in a line this landing adds or changes, states again a behaviour another rule already states (its conditions, outcomes, numbers or order), in the same or other words, instead of only naming that rule (按 BR-x, 见 BR-x). The copy goes stale when the other rule changes. Not a restatement: naming the other rule with the few words that say which of its behaviours is meant (按 BR-11 的侦测半径); what this document adds to the other rule or how it departs from it; a decision's source line (来源：) quoting its target. The lines this landing adds or changes are listed under # Lines added or changed in this landing; a changed rule or decision with no entry there is new, and all of its lines are. A restatement only in lines this landing did not add or change is a `note`. Name both ids and quote the restating words.",
+  duplication: "`duplication`: one requirement (an instruction, a condition or a qualifier) is stated in two standing texts, or twice in one of them, in any wording or language, and at least one of the two places is in a line this landing added or changed.",
+};
+
 /** The review prompt with every affected domain's whole text in it, however large. */
 export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras = {}): string {
   const contexts = contextTops(corpus, changed, extras).map((top) => contextSection(root, corpus, top));
@@ -94,16 +106,8 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
     "You review changes to a project's rules and decisions. Rules are the current truth of what the product must do; decisions record why.",
     // reason: each blocking criterion has a key the reviewer must name on a finding, so canon derives the verdict and a finding that matches a criterion cannot pass as a note (BR-2367, D-74)
     "Every blocking criterion below has a key in backticks. A finding that matches one is given with that key; every other remark is given with the key `note`, which never blocks.",
-    "`contradiction`: a rule that contradicts another active rule (in any domain: see the rule index) or an accepted decision.",
-    "`untestable`: a rule a test cannot decide (vague, no boundary, examples that do not pin the boundary).",
-    "`no-rejected-options`: a decision without the options it rejected.",
-    // reason: a release's 不做 and 范围 are promises the tagged rules must keep (D-61, BR-2009)
-    "`release`: a release is a version's PRD; the rules whose front matter says `release: R-n` are its behaviour. A rule tagged with a release that does something that release's 不做 excludes or lies outside its 范围; a release whose 不做 contradicts its own 范围 or a rule tagged with it. Only a rule or release changed in this landing can be blocked for it.",
-    "`amends`: a changed decision that replaces only part of an accepted decision must list it in `amends:` (one that replaces a whole decision uses `supersedes:`); a decision that says it changes part of another decision without listing it in `amends:`.",
-    // reason: the overview is a reader's entry, so only a text this landing wrote into it can be blocked, never the overview as it stood (BR-2009, D-65)
-    "`overview`: when an architecture overview is shown below, it is where readers start, not the judge: where it disagrees with the active rules and accepted decisions, they win. Use this key only when the part of the overview this landing changed (its diff is shown) contradicts an active rule or an accepted decision. When a rule or decision changed in this landing makes a statement in the overview wrong, add a `note` naming the overview section.",
-    // reason: a copy of another rule's behaviour goes stale when that rule changes; only lines this landing writes can be blocked, so old copies do not block unrelated work (BR-2405, D-84, #177)
-    "`restatement`: a changed rule or decision that, in a line this landing adds or changes, states again a behaviour another rule already states (its conditions, outcomes, numbers or order), in the same or other words, instead of only naming that rule (按 BR-x, 见 BR-x). The copy goes stale when the other rule changes. Not a restatement: naming the other rule with the few words that say which of its behaviours is meant (按 BR-11 的侦测半径); what this document adds to the other rule or how it departs from it; a decision's source line (来源：) quoting its target. The lines this landing adds or changes are listed under # Lines added or changed in this landing; a changed rule or decision with no entry there is new, and all of its lines are. A restatement only in lines this landing did not add or change is a `note`. Name both ids and quote the restating words.",
+    // reason: each criterion's meaning lives in CRITERION_TEXT so the verifier reads the same words (BR-2442): release covers a release's 不做 and 范围 (D-61), overview only text this landing wrote into it (BR-2009, D-65), restatement only lines this landing wrote (BR-2405, D-84, #177)
+    ...RULE_CRITERIA.map((c) => CRITERION_TEXT[c]!),
     NO_VERDICT,
     // reason: a defect left out blocks a later landing of the same text, and each call reports what it happens to notice (BR-2009, #173)
     "List every blocking defect you find, not only the first: a defect you leave out blocks a later landing of the same text. A blocking finding must involve at least one changed or deleted document; a defect only between documents this landing does not change is a `note`.",
@@ -119,29 +123,7 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
     ...(note ? [note] : []),
     "",
   ];
-  if (extras.wording?.length) {
-    // reason: the close commit recorded these as wording-only edits; only this independent judgement lets them keep the earlier pass (BR-2239, D-32)
-    parts.push(
-      "# Wording judgements",
-      "",
-      'Each rule below changed only its 规则 section since the version that passed; its examples are the same. Answer "wording" when the edit changes no requirement (the product must do exactly what it had to before, for every input), "behaviour" when it adds, removes or changes any requirement, condition or boundary. When unsure, answer "behaviour". This judgement does not affect the verdict.',
-      "",
-    );
-    for (const q of extras.wording) parts.push(`## ${q.id} ${q.title}
-
-### 规则 before
-
-${q.before.trim()}
-
-### 规则 now
-
-${q.after.trim()}
-
-### 例子 (unchanged)
-
-${q.examples.trim()}
-`);
-  }
+  if (extras.wording?.length) parts.push(...wordingSection(extras.wording));
   parts.push("# Changed documents (new text)");
   for (const d of changed) parts.push(docSection(d));
   if (extras.added?.length) {
@@ -193,6 +175,32 @@ ${q.examples.trim()}
   }
   if (extras.readmes?.length) parts.push(`# Domain READMEs changed: ${extras.readmes.join(", ")} (their new text is in the current context below)`);
   return parts;
+}
+
+/** The `# Wording judgements` section: each rule's 规则 before and now, and its unchanged 例子 (BR-2239). */
+function wordingSection(questions: readonly WordingQuestion[]): string[] {
+  // reason: the close commit recorded these as wording-only edits; only this independent judgement lets them keep the earlier pass (BR-2239, D-32)
+  const parts = [
+    "# Wording judgements",
+    "",
+    'Each rule below changed only its 规则 section since the version that passed; its examples are the same. Answer "wording" when the edit changes no requirement (the product must do exactly what it had to before, for every input), "behaviour" when it adds, removes or changes any requirement, condition or boundary. When unsure, answer "behaviour". This judgement does not affect the verdict.',
+    "",
+  ];
+  for (const q of questions) parts.push(`## ${q.id} ${q.title}\n\n### 规则 before\n\n${q.before.trim()}\n\n### 规则 now\n\n${q.after.trim()}\n\n### 例子 (unchanged)\n\n${q.examples.trim()}\n`);
+  return parts;
+}
+
+/**
+ * The landing's wording call (BR-2239): only the wording judgements, no rule review, which runs after the landing (D-89).
+ * The answer is a review answer with no findings and a `wording` entry per rule.
+ */
+export function wordingPrompt(questions: readonly WordingQuestion[]): string {
+  return [
+    "You judge edits to a project's rules. Rules are the current truth of what the product must do.",
+    'Answer with JSON only: {"findings":[],"wording":{"<rule id>":"wording"|"behaviour"}}, with one wording entry per rule below.',
+    "",
+    ...wordingSection(questions),
+  ].join("\n");
 }
 
 /** The top-level domains whose whole text the review shows, in the order it shows them (BR-2009, #133). */
@@ -251,7 +259,7 @@ function deletedDomains(corpus: Corpus, deleted: readonly DeletedDoc[]): string[
 }
 
 /** The two ways a review runs: for a landing (`land`) or for `canon work review` (`preview`). */
-export type ReviewKind = "land" | "preview" | "release";
+export type ReviewKind = "land" | "preview" | "release" | "verify";
 
 /** How a review run is bounded: its time limit, and where a signal handler finds it to stop it (BR-2296). */
 export interface ReviewLimits {
@@ -272,7 +280,11 @@ function failureMessage(code: number, errText: string, out: string): string {
   return `review command exited ${code}: ${e ? e.slice(0, 500) : "no output"}`;
 }
 
-export async function runReview(command: string, cwd: string, prompt: string, limits: ReviewLimits): Promise<Result<ReviewVerdict>> {
+/**
+ * Runs `command` with `prompt` on stdin in its own process group, bounded by `limits` (BR-2216, BR-2296), and returns the
+ * JSON between the first `{` and the last `}` of its stdout, parsed. Shared by the reviews and the verifier (BR-2442).
+ */
+export async function runJsonCommand(command: string, cwd: string, prompt: string, limits: ReviewLimits): Promise<Result<unknown>> {
   // reason: its own process group, so a timeout or a signal stops the reviewer's children too (claude under sh), not only sh (BR-2296)
   const proc = Bun.spawn(["sh", "-c", command], { cwd, stdin: new Blob([prompt]), stdout: "pipe", stderr: "pipe", detached: true, env: { ...process.env, CANON_REVIEW_KIND: limits.kind } });
   const kill = () => {
@@ -299,13 +311,16 @@ export async function runReview(command: string, cwd: string, prompt: string, li
   if (code !== 0) return err("io", failureMessage(code, errText, out));
   const match = out.match(/\{[\s\S]*\}/);
   if (!match) return err("invalid", `review command printed no JSON: ${out.trim().slice(0, 300)}`);
-  let v: unknown;
   try {
-    v = JSON.parse(match[0]);
+    return ok(JSON.parse(match[0]) as unknown);
   } catch (e) {
     return err("invalid", `review JSON does not parse: ${(e as Error).message}`);
   }
-  return parseAnswer(v);
+}
+
+export async function runReview(command: string, cwd: string, prompt: string, limits: ReviewLimits): Promise<Result<ReviewVerdict>> {
+  const v = await runJsonCommand(command, cwd, prompt, limits);
+  return v.ok ? parseAnswer(v.value) : v;
 }
 
 /** What one review answer means: the verdict canon derives, the findings as text, the wording answers (BR-2367, D-74). */

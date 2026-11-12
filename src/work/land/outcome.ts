@@ -26,4 +26,6 @@ export interface Running {
   review?: { kill(): void } | undefined;
   /** The temporary worktree the review commands run in, while it exists (BR-2216). */
   reviewTree?: string | undefined;
+  /** The temporary worktree at the landed commit the review after landing reads the documents from, while it exists (BR-2441). */
+  readTree?: string | undefined;
 }

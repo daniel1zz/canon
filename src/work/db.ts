@@ -135,6 +135,26 @@ CREATE TABLE IF NOT EXISTS review_findings (
   closed_event INTEGER                  -- the event that closed it: the landing, the verdict or the re-asking
 );
 CREATE UNIQUE INDEX IF NOT EXISTS review_findings_open ON review_findings(identity) WHERE closed_at IS NULL;
+-- The rule and duplicate reviews of landed commits, queued by the landing and run one at a time after it (BR-2441, D-89).
+CREATE TABLE IF NOT EXISTS landed_reviews (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,  -- queue order
+  entry       INTEGER NOT NULL,         -- the landing's queue entry, as after_land batches are found by (BR-2166)
+  change      TEXT,
+  base        TEXT NOT NULL,            -- main before the landing: its config decides how the review runs (BR-2074)
+  head        TEXT NOT NULL,            -- the landed commit the review reads
+  landed      INTEGER NOT NULL,         -- the land.ok event
+  log         TEXT NOT NULL,
+  state       TEXT NOT NULL CHECK (state IN ('queued', 'running', 'done', 'failed')),
+  queued_at   TEXT NOT NULL,
+  finished_at TEXT
+);
+-- The one process running the queued landed reviews, by pid and process start (BR-2441, D-11, D-83).
+CREATE TABLE IF NOT EXISTS landed_reviewer (
+  id         INTEGER PRIMARY KEY CHECK (id = 1),
+  pid        INTEGER NOT NULL,
+  pid_start  TEXT NOT NULL,
+  started_at TEXT NOT NULL
+);
 `;
 
 /** Columns added after the first schema, as `table`, `column definition`. */

@@ -11,21 +11,18 @@ import { testMergedFiles } from "./merged-tests.ts";
 import { runHooks } from "../../hooks/hooks.ts";
 import { changePort } from "../../hooks/ports.ts";
 import { type Doc } from "../../../knowledge/documents/model.ts";
-import { findDoc } from "../../../knowledge/query/query.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
-import { reviewPrompts, runReview, runReviews, splitNote, type ReviewVerdict } from "../../../knowledge/review/review.ts";
-import { REVIEW_NONE, REVIEW_WAYS_OUT } from "../../../knowledge/review/config-keys.ts";
+import { runReview, wordingPrompt } from "../../../knowledge/review/review.ts";
+import { REVIEW_NONE } from "../../../knowledge/review/config-keys.ts";
+import type { ReviewNeeds } from "../../../knowledge/review/landed-queue.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
 import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
 import { landingAllocations } from "./allocated.ts";
 import { noticeProposedDecisions } from "./proposed.ts";
 import { reviewTree } from "./review-tree.ts";
-import { docsKey, passedDocs, passedReview, reviewKey } from "./review-reuse.ts";
-import { landedSince } from "./landed-since.ts";
+import { passedWording, reviewKey } from "./review-reuse.ts";
 import { scanSecrets } from "./secrets.ts";
-import { readFileSync } from "node:fs";
-import { join } from "node:path";
-import { architectureOf, couldNotRun, duplicateReviewPrompt, reviewScope, reviewSettingsOn, standingTouched } from "./review-scope.ts";
+import { couldNotRun, reviewScope, reviewSettingsOn, standingTouched } from "./review-scope.ts";
 import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
 import { checksAddedAndReviewed, checksAddedAndReviewedMessage, keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
 
@@ -44,16 +41,18 @@ export interface StepFailure {
   readonly findings?: readonly Finding[];
 }
 /** `retired`: the rules and decisions retired or superseded on the tree that lands, whose open findings the landing closes (BR-2435). */
-export type Steps = { readonly ok: true; readonly reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined; readonly retired: readonly string[] } | StepFailure;
+/** `review`: what the reviews after the landing read and main's reviewer (BR-2441). */
+export type Steps = { readonly ok: true; readonly review: ReviewNeeds; readonly retired: readonly string[] } | StepFailure;
 
 /**
  * One change's own landing steps before the floor (BR-2014), on the checkout `wt` at `head` (main or the batch chain at
- * `base` below it): canon check, decision sources, the secret scan, the rule and duplicate reviews, before_land (BR-2016,
- * BR-2009, BR-2111, BR-2407, BR-2143, BR-2057). A solo landing runs them in its worktree; a batch, per change (BR-2172).
+ * `base` below it): canon check, decision sources, the secret scan, the wording judgement, before_land (BR-2016, BR-2111,
+ * BR-2407, BR-2239, BR-2057); the rule and duplicate reviews run after the landing (BR-2441, D-89). A solo landing runs them in
+ * its worktree; a batch, per change (BR-2172).
  */
 type ChangeInput = { wt: string; base: string; main: string; head: string; before: string; subject: string | null; branch: string; running: Running; worktree: string };
 export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: ChangeInput): Promise<Steps> {
-  // reason: the review commands run in one temporary worktree at main's commit, so the change cannot edit its own reviewer (BR-2216, #115);
+  // reason: the wording call runs in a temporary worktree at main's commit, so the change cannot edit its own reviewer (BR-2216, #115);
   // it is removed after every outcome, and a removal that fails is an environment problem, never a verdict turned ok
   const tree = reviewTree(ws, v.running, v.main);
   let steps: Steps;
@@ -117,126 +116,58 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   const releases = landingReleases({ primary: ws.primary, timing: ws.config.floorTiming, db: ws.db, wt, base: base.value, head: head.value, corpus: read.corpus, subject });
   if (!releases.ok) return refuse("release", releases.message);
 
-  // Every added, edited or deleted file under canon/rules, canon/decisions or canon/releases is reviewed (BR-2009): rule,
-  // release and decision documents by their new text, deleted ones by the text they had on main, domain READMEs whole.
+  // Every added, edited or deleted file under canon/rules, canon/decisions or canon/releases is reviewed after the landing
+  // (BR-2009, BR-2441): rule, release and decision documents by their new text, deleted ones by their text on main, domain READMEs whole.
   const scope = reviewScope(wt, base.value, head.value, read.corpus);
-  const { entries, changedDocs, deleted, readmes, deletedReadmes, reviewed } = scope;
+  const { entries } = scope;
   if (scope.renamed.length > 0) say(`review: ${scope.renamed.length} file(s) only moved, not reviewed`);
-  // reason: a plaintext secret is refused before the source check fetches new source URLs (a key inside a URL would reach that server), before the rule review sends the diff to a model and before main moves (BR-2407, BR-2408, D-86)
+  // reason: a plaintext secret is refused before the source check fetches new source URLs (a key inside a URL would reach that server), and before main moves, so before the review after the landing sends the diff to a model (BR-2407, BR-2408, D-86)
   const secrets = await scanSecrets(wt, base.value, head.value);
   if (!secrets.ok) return refuse(secrets.reason, secrets.message);
   if (secrets.scanned > 0) say(`secret scan: ${secrets.scanned} changed file(s) scanned by varlock, no plaintext secret`);
   // Sources new to main are checked once, here, on the tree that becomes main (BR-2111).
   const sourceFailures = await checkSources(wt, base.value, entries, read.corpus.docs, opts.fetcher ?? httpFetch);
   if (sourceFailures.length > 0) return refuse("source", `decision sources do not hold:\n${sourceFailures.map((f) => `  - ${f}`).join("\n")}`);
-  let reviewNotes: { reviewed: string[]; notes: readonly string[] } | undefined;
   // reason: how a landing is reviewed (the command, its limit, the standing instruction list) comes from main's already-landed
   // config, never from the change's own tree: a change that swaps the reviewer would otherwise review itself (BR-2074, #115)
-  const mainAt = v.main; // the review results below are also named v
   const trusted = reviewSettingsOn(wt, v.main);
   if (!trusted.ok) return refuse("environment", `canon/config.yaml on main cannot be read for the review settings: ${trusted.error.message}`);
   const onMain = trusted.value;
-  // reason: `review: none` turns the reviews off on purpose; unset refuses, so they are never skipped silently (BR-2074, D-51)
   const reviewer = onMain.review === REVIEW_NONE ? undefined : onMain.review;
-  const limits = { timeoutMs: onMain.reviewTimeoutMs, kind: "land" as const, track: (r: { kill(): void } | undefined) => (v.running.review = r) };
-  // Standing instructions added or edited by this landing are reviewed for requirements stated twice (BR-2143), by main's list.
-  const standing = standingTouched(wt, base.value, head.value, onMain.instructions);
-  // reason: a wording-only record needs the review's judgement even when no rule file changed in this landing (BR-2239)
-  if (execution.wording.length > 0 && !reviewer) return refuse("review", wordingMessage(execution.wording.map((q) => q.id), undefined, false));
-  const needs = [...reviewed, ...standing];
-  if (needs.length > 0) {
-    // reason: the text landing together with turning the review off is exactly what nobody would review (BR-2295)
-    const next = landing.value.review;
-    if ((next === undefined || next === REVIEW_NONE) && next !== onMain.review) return refuse("review", turnedOffMessage(needs, onMain.review, next));
-    if (!onMain.review) return refuse("review", unconfiguredMessage(needs, next));
-  }
-  if (reviewed.length > 0 || execution.wording.length > 0) {
-    if (!reviewer) {
-      say(`review: ${REVIEW_NONE} — ${reviewed.join(", ")} land without a rule review`);
-      ws.db.event(ws.actor, "review.skip", subject, { docs: reviewed });
+  // The rule and duplicate reviews run after the landing, in the background, on the commit it puts on main (BR-2441, D-89);
+  // the landing only names what they will read. Standing instructions are found by main's list (BR-2143).
+  // reason: the reviews after the landing read their settings at this change's own base, a batch member's at the commit below it (BR-2074)
+  const below = v.base === v.main ? trusted : reviewSettingsOn(wt, v.base);
+  if (!below.ok) return refuse("environment", `canon/config.yaml at ${v.base.slice(0, 9)} cannot be read for the review settings: ${below.error.message}`);
+  const standing = standingTouched(wt, base.value, head.value, below.value.instructions);
+  const review: ReviewNeeds = { docs: scope.reviewed, standing, reviewer: below.value.review };
+  // reason: a wording-only record needs a judgement before the close commit lands, so this one model call stays in the landing (BR-2239, D-89)
+  if (execution.wording.length > 0) {
+    if (!reviewer) return refuse("review", wordingMessage(execution.wording.map((q) => q.id), undefined, false));
+    say(`wording judgement: ${execution.wording.map((q) => q.id).join(", ")}`);
+    const prompt = wordingPrompt(execution.wording);
+    const hash = reviewKey("land", reviewer, 0, [prompt]);
+    const earlier = passedWording(ws.db, hash);
+    let answers: Readonly<Record<string, string>> | undefined;
+    if (earlier && unconfirmedWording(execution.wording, earlier.wording).length === 0) {
+      say(`wording judgement: reused event ${earlier.event} for the same question; the review command was not run`);
+      answers = earlier.wording;
     } else {
-      say(`review: ${[...reviewed, ...execution.wording.map((q) => `${q.id} (wording judgement)`)].join(", ")}`);
-      const overview = architectureOf(wt, base.value, head.value);
-      if (!overview.ok) return refuse("environment", overview.error.message);
-      const architecture = overview.value;
-      const prompts = reviewPrompts(wt, read.corpus, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, wording: execution.wording, added: scope.added, restatements: scope.restatements, ...(architecture ? { architecture } : {}) }, onMain.reviewMaxPromptBytes);
-      if (!prompts.ok) return refuse("review", prompts.error.message);
-      const split = splitNote(prompts.value);
-      if (split) say(`review: ${split}`);
-      // reason: the same prompts, command and budget that already passed get the same answer without another model call; a pass whose wording answers did not confirm a wording-only edit is not reused, or the same refusal would repeat (BR-2361, BR-2239, D-70)
-      const hash = reviewKey("land", reviewer, onMain.reviewMaxPromptBytes, prompts.value);
-      const earlier = passedReview(ws.db, "land", hash);
-      const reused = earlier && unconfirmedWording(execution.wording, earlier.wording).length === 0 ? earlier : undefined;
-      // The changed documents' own key: the same text that passed a full review needs only what landed on main since (BR-2396, D-81).
-      const readmePaths = new Set(scope.readmes.map((name) => read.corpus.domains.find((d) => d.name === name)?.path).filter((p): p is string => p !== undefined));
-      const docs_hash = docsKey(reviewer, onMain.reviewMaxPromptBytes, {
-        live: [...changedDocs.map((d) => d.path), ...readmePaths].map((path) => ({ path, text: readFileSync(join(wt, path), "utf8") })),
-        deleted: [...deleted, ...deletedReadmes].map((d) => ({ path: d.path, text: d.text })),
-        architectureDiff: architecture?.diff ?? "",
-      });
-      const prior = reused ? undefined : passedDocs(ws.db, subject, docs_hash);
-      const usable = prior && unconfirmedWording(execution.wording, prior.wording).length === 0 ? prior : undefined;
-      const added = usable ? landedSince(wt, usable.base, base.value, read.corpus, new Set(changedDocs.map((d) => d.path))) : undefined;
-      let verdict: ReviewVerdict;
-      if (reused) {
-        say(`review: reused the passing review of the same prompts (event ${reused.event}, hash ${hash.slice(0, 12)}); the review command was not run`);
-        ws.db.event(ws.actor, "review.reused", subject, { review: "land", docs: reviewed, hash, from: reused.event, commit: head.value });
-        verdict = { verdict: "ok", findings: reused.findings, ...(reused.wording ? { wording: reused.wording } : {}) };
-      } else if (usable && added && added.length === 0) {
-        say(`review: the changed documents are the ones that passed review event ${usable.event}, and no rule or decision landed on main since; the review command was not run`);
-        ws.db.event(ws.actor, "review.reused", subject, { review: "land", by: "docs", docs: reviewed, docs_hash, from: usable.event, commit: head.value });
-        verdict = { verdict: "ok", findings: usable.findings, ...(usable.wording ? { wording: usable.wording } : {}) };
-      } else if (usable && added) {
-        say(`review: the changed documents are the ones that passed review event ${usable.event}; reviewing them only against what landed on main since: ${added.map((d) => d.id).join(", ")}`);
-        const keep = new Set([...changedDocs, ...added]);
-        // reason: without its added lines a changed document already on main would read as new, so its old restatements could block (BR-2405, D-84)
-        const small = reviewPrompts(wt, { ...read.corpus, docs: read.corpus.docs.filter((d) => keep.has(d)) }, changedDocs, { deleted, readmes, deletedReadmes, change: subject ? findDoc(read.corpus, subject) : undefined, added: scope.added, incremental: { from: usable.event, added } }, onMain.reviewMaxPromptBytes);
-        if (!small.ok) return refuse("review", small.error.message);
-        const at = tree.get();
-        if (!at.ok) return refuse("environment", at.error.message);
-        const run = await runReviews(reviewer, at.value, small.value, limits, onMain.reviewParallel);
-        if (!run.ok) return refuse("review", couldNotRun("rule", run.error.message, at.value, mainAt));
-        // reason: the earlier pass's notes are kept with the new ones, so the landing records them all (BR-2145); its wording answers stand (BR-2239)
-        verdict = { verdict: run.value.verdict, findings: run.value.verdict === "ok" ? [...usable.findings, ...run.value.findings] : run.value.findings, ...(usable.wording ? { wording: usable.wording } : {}) };
-        ws.db.event(ws.actor, `review.${run.value.verdict}`, subject, { docs: reviewed, findings: verdict.findings, commit: head.value, docs_hash, base: base.value, incremental: { from: usable.event, added: added.map((d) => d.id) }, ...(usable.wording ? { wording: usable.wording } : {}) });
-      } else {
-        const at = tree.get();
-        if (!at.ok) return refuse("environment", at.error.message);
-        const run = await runReviews(reviewer, at.value, prompts.value, limits, onMain.reviewParallel);
-        if (!run.ok) return refuse("review", couldNotRun("rule", run.error.message, at.value, mainAt));
-        verdict = run.value;
-        ws.db.event(ws.actor, `review.${verdict.verdict}`, subject, { docs: reviewed, findings: verdict.findings, commit: head.value, hash, docs_hash, base: base.value, ...(execution.wording.length > 0 ? { wording: verdict.wording ?? {} } : {}) });
-      }
-      if (verdict.verdict === "block") return refuse("review", `rule review blocked:\n${verdict.findings.map((f) => `  - ${f}`).join("\n")}`);
-      const unconfirmed = unconfirmedWording(execution.wording, verdict.wording);
-      if (unconfirmed.length > 0) return refuse("review", wordingMessage(unconfirmed, verdict.wording, true));
-      for (const f of verdict.findings) say(`review note: ${f}`);
-      // reason: notes do not block and are not changes of their own; they wait on the document they name (BR-2145, D-21)
-      reviewNotes = { reviewed: [...changedDocs.map((d) => d.id), ...deleted.map((d) => d.id)], notes: verdict.findings };
-      if (verdict.findings.length > 0) say("review notes do not block and are not changes of their own: canon context shows them to whoever next changes these documents, who handles them then");
-    }
-  }
-  if (standing.length > 0) {
-    if (!reviewer) {
-      say(`review: ${REVIEW_NONE} — ${standing.join(", ")} land without a duplicate review`);
-      ws.db.event(ws.actor, "review.skip", subject, { docs: standing });
-    } else {
-      say(`review: standing instructions ${standing.join(", ")}`);
       const at = tree.get();
       if (!at.ok) return refuse("environment", at.error.message);
-      const prompt = duplicateReviewPrompt(wt, base.value, head.value, standing, onMain.instructions, opts.guide);
-      if (!prompt.ok) return refuse("environment", prompt.error.message);
-      const v = await runReview(reviewer, at.value, prompt.value, limits);
-      if (!v.ok) return refuse("review", couldNotRun("duplicate", v.error.message, at.value, mainAt));
-      ws.db.event(ws.actor, `review.${v.value.verdict}`, subject, { docs: standing, findings: v.value.findings, commit: head.value });
-      if (v.value.verdict === "block") return refuse("review", `duplicate review blocked:\n${v.value.findings.map((f) => `  - ${f}`).join("\n")}`);
-      for (const f of v.value.findings) say(`review note: ${f}`);
+      const limits = { timeoutMs: onMain.reviewTimeoutMs, kind: "land" as const, track: (r: { kill(): void } | undefined) => (v.running.review = r) };
+      const run = await runReview(reviewer, at.value, prompt, limits);
+      if (!run.ok) return refuse("review", couldNotRun("wording", run.error.message, at.value, v.main));
+      answers = run.value.wording;
+      ws.db.event(ws.actor, "review.wording", subject, { docs: execution.wording.map((q) => q.id), wording: answers ?? {}, hash, commit: head.value });
     }
+    const unconfirmed = unconfirmedWording(execution.wording, answers);
+    if (unconfirmed.length > 0) return refuse("review", wordingMessage(unconfirmed, answers, true));
   }
-  // reason: the review is over, so the temporary worktree goes before before_land runs, not after it (BR-2216)
+  // reason: the wording call is over, so the temporary worktree goes before before_land runs, not after it (BR-2216)
   const gone = tree.release();
   if (!gone.ok) return refuse("environment", gone.error.message);
-  // before_land: after floor, canon check and the built-in review, on the exact tree that becomes main (BR-2057).
+  // before_land: after canon check and the built-in steps, on the exact tree that becomes main (BR-2057).
   const hookEnv = { CANON_BASE: base.value, CANON_HEAD: head.value, CANON_BRANCH: v.branch };
   const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env: hookEnv, port: changePort(ws, subject) }, ws.config.hooks.before_land, say, true);
   if (failed) return refuse("hook", `before_land \`${failed.command}\` exited ${failed.exit}\n${failed.output}`);
@@ -244,23 +175,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   const proposed = noticeProposedDecisions(ws, say, { wt, base: base.value, head: head.value, subject, corpus: read.corpus });
   if (!proposed.ok) return refuse("environment", proposed.error.message);
   const retired = read.corpus.docs.filter((d) => (d.kind === "rule" && d.status === "retired") || (d.kind === "decision" && d.status === "superseded")).map((d) => d.id);
-  return { ok: true, reviewNotes, retired };
-}
-
-/** Why a landing that needs a review is refused while main sets no `review`, even when this landing sets one (BR-2074, BR-2143, #115). */
-function unconfiguredMessage(docs: readonly string[], next: string | undefined): string {
-  return [
-    `review: not configured — ${docs.join(", ")} need a review and canon/config.yaml on main sets no \`review\``,
-    `  ${next ? `this landing sets \`review\`, but the reviewer comes from main: ` : ""}land a change that only sets \`review\` first, by itself, then land these changes`,
-    ...REVIEW_WAYS_OUT,
-  ].join("\n");
-}
-
-/** Why a landing that turns the review off, or removes it, may not carry text the review would read (BR-2295). */
-function turnedOffMessage(docs: readonly string[], before: string | undefined, now: string | undefined): string {
-  const was = before === undefined ? "unset" : JSON.stringify(before);
-  const is = now === undefined ? "removes `review`" : `sets \`review: ${now}\``;
-  return [`review: this landing ${is} (main has ${was}) and also changes ${docs.join(", ")}, which would then land unreviewed`, ...REVIEW_WAYS_OUT].join("\n");
+  return { ok: true, review, retired };
 }
 
 /**

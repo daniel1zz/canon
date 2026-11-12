@@ -109,7 +109,17 @@ export function duplicateReviewPrompt(wt: string, base: string, head: string, st
 }
 
 /** The review settings canon/config.yaml has at `rev` (main), each read as canon reads it; defaults when it has no config (#115). */
-export function reviewSettingsOn(wt: string, rev: string): Result<{ review: string | undefined; reviewTimeoutMs: number; reviewMaxPromptBytes: number; reviewParallel: number; instructions: readonly string[] }> {
+export interface ReviewSettings {
+  readonly review: string | undefined;
+  /** The verifier of blocking findings after a landing (BR-2442); undefined when unset. */
+  readonly verify: string | undefined;
+  readonly reviewTimeoutMs: number;
+  readonly reviewMaxPromptBytes: number;
+  readonly reviewParallel: number;
+  readonly instructions: readonly string[];
+}
+
+export function reviewSettingsOn(wt: string, rev: string): Result<ReviewSettings> {
   const text = git(wt, "show", `${rev}:canon/config.yaml`);
   let raw: Record<string, unknown> = {};
   if (text.ok) {
@@ -124,6 +134,8 @@ export function reviewSettingsOn(wt: string, rev: string): Result<{ review: stri
   const field = <T>(k: { key: string; default: T; read: (value: unknown, c: typeof ctx) => Result<T> }): Result<T> => (raw[k.key] === undefined ? ok(k.default) : k.read(raw[k.key], ctx));
   const review = field(reviewKeys.review);
   if (!review.ok) return review;
+  const verify = field(reviewKeys.reviewVerify);
+  if (!verify.ok) return verify;
   const reviewTimeoutMs = field(reviewKeys.reviewTimeoutMs);
   if (!reviewTimeoutMs.ok) return reviewTimeoutMs;
   const reviewMaxPromptBytes = field(reviewKeys.reviewMaxPromptBytes);
@@ -132,7 +144,7 @@ export function reviewSettingsOn(wt: string, rev: string): Result<{ review: stri
   if (!reviewParallel.ok) return reviewParallel;
   const instructions = field(reviewKeys.instructions);
   if (!instructions.ok) return instructions;
-  return ok({ review: review.value, reviewTimeoutMs: reviewTimeoutMs.value, reviewMaxPromptBytes: reviewMaxPromptBytes.value, reviewParallel: reviewParallel.value, instructions: instructions.value });
+  return ok({ review: review.value, verify: verify.value, reviewTimeoutMs: reviewTimeoutMs.value, reviewMaxPromptBytes: reviewMaxPromptBytes.value, reviewParallel: reviewParallel.value, instructions: instructions.value });
 }
 
 /** Whether two `<rev>:<path>` objects are the same blob, i.e. the same bytes. */
@@ -143,10 +155,10 @@ function sameBlob(wt: string, a: string, b: string): boolean {
 }
 
 /** Why a review that could not run refused the landing, and what its directory lacks (BR-2216). */
-export function couldNotRun(kind: "rule" | "duplicate", error: string, dir: string, main: string): string {
+export function couldNotRun(kind: "rule" | "duplicate" | "wording", error: string, dir: string, main: string): string {
   return [
-    `the ${kind} review could not run: ${error}`,
+    `the ${kind === "wording" ? "wording judgement" : `${kind} review`} could not run: ${error}`,
     // reason: the review runs in a checkout of main's commit, so a command that needs git-ignored files fails there (BR-2216, D-51)
-    `  the review command ran in a temporary worktree at main's commit ${main.slice(0, 9)} (${dir}, removed afterwards), which holds only committed files: git-ignored files such as node_modules, .env or *.local.json are not there, so the command must not depend on them`,
+    `  the review command ran in a temporary worktree at ${kind === "wording" ? "main's commit" : "the commit main was on before the landing"} ${main.slice(0, 9)} (${dir}, removed afterwards), which holds only committed files: git-ignored files such as node_modules, .env or *.local.json are not there, so the command must not depend on them`,
   ].join("\n");
 }

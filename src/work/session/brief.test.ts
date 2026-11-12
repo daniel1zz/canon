@@ -260,7 +260,7 @@ describe("brief failures on stdout", () => {
 });
 
 describe("the lessons reminder comes last", () => {
-  test("BR-2163: review notes and the after_land log path of land --finish, and after_stop's output, come before the lessons line", () => {
+  test("BR-2163: the line that queues the review after landing and the after_land log path of land --finish, and after_stop's output, come before the lessons line", () => {
     const root = project();
     const rule = ["BR", 1].join("-");
     writeFileSync(
@@ -289,7 +289,7 @@ describe("the lessons reminder comes last", () => {
     expect([landed.code, landed.err]).toEqual([0, ""]);
     const lines = landed.out.trim().split("\n");
     expect(lines.at(-1)).toBe(LESSON_REMINDER);
-    const note = lines.findIndex((l) => l === `review note: ${rule} is vague`);
+    const note = lines.findIndex((l) => l.startsWith(`review: ${rule} are reviewed after the landing, in the background`));
     const log = lines.findIndex((l) => /^after_land .*running in the background \(log: /.test(l));
     expect(note).toBeGreaterThan(-1);
     expect(log).toBeGreaterThan(-1);

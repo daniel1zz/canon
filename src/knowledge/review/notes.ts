@@ -3,8 +3,9 @@ import type { CoordDb } from "../../work/db.ts";
 /**
  * Rule-review notes: what a review said without blocking. They are not work of their own (D-21); a note stays
  * open on a rule or decision until a later landing reviews that document again, and is shown to whoever is
- * about to change it (BR-2145). Stored only in the `land.ok` event of the landing that got them, so nothing grows
- * but the event table.
+ * about to change it (BR-2145). Stored only in the event of the review after the landing that got them (`review.ok`,
+ * `review.block` or `review.reused` with `landed`, BR-2441), or, before reviews ran after landing, in the landing's `land.ok`;
+ * so nothing grows but the event table.
  */
 export interface OpenNote {
   readonly doc: string;
@@ -34,7 +35,8 @@ export function notesByDoc(reviewed: readonly string[], notes: readonly string[]
 }
 
 /**
- * The open notes on each of `ids`: those from the latest successful landing whose review covered the document.
+ * The open notes on each of `ids`: those from the latest review after a landing (or, before those, the latest successful
+ * landing) that covered the document.
  * A later review of the same document replaces them, with whatever it said (often nothing).
  */
 export function openNotes(db: CoordDb, ids: Iterable<string>): OpenNote[] {
@@ -42,7 +44,7 @@ export function openNotes(db: CoordDb, ids: Iterable<string>): OpenNote[] {
   const out: OpenNote[] = [];
   if (want.size === 0) return out;
   const rows = db.db
-    .query<{ ts: string; subject: string | null; detail: string }, []>("SELECT ts, subject, detail FROM events WHERE kind = 'land.ok' AND detail LIKE '%\"reviewed\"%' ORDER BY id DESC")
+    .query<{ ts: string; subject: string | null; detail: string }, []>("SELECT ts, subject, detail FROM events WHERE kind IN ('land.ok', 'review.ok', 'review.block', 'review.reused') AND detail LIKE '%\"reviewed\"%' ORDER BY id DESC")
     .all();
   for (const r of rows) {
     if (want.size === 0) break;

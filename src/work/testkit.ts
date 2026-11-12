@@ -5,10 +5,23 @@ import { join } from "node:path";
 import { openWorkspace, type Workspace } from "./workspace.ts";
 import { git } from "../kernel/git.ts";
 import { start } from "./session/session.ts";
+import { NO_START_ENV, runLandedReviews } from "../knowledge/review/landed-queue.ts";
 
 /** Fixtures shared by the work and hook tests: throwaway repositories and workspaces. */
 export const quiet = () => {};
 export const FAST = { finish: false, timeoutMs: 20_000 };
+
+// reason: a landing in a test queues its review without starting a background reviewer, so no test leaves one behind; a
+// test runs the queued reviews with reviewLandings (BR-2441). A spawned canon inherits this.
+process.env[NO_START_ENV] = "0";
+
+/** Runs the reviews the landings in `root` queued, in this process, as the background reviewer would (BR-2441); what they said. */
+export async function reviewLandings(root: string, guide?: string): Promise<string[]> {
+  const said: string[] = [];
+  const r = await runLandedReviews(ws(root), (l) => said.push(l), guide);
+  if (!r.ok) throw new Error(r.error.message);
+  return said;
+}
 
 /**
  * The environment that makes a `canon work land` this process spawns the background landing process itself (D-80): its exit code,

@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../land.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
+import { FAST, project, reviewLandings, sh, startNew, ws } from "../../testkit.ts";
 
 const KB = 1024;
 const bigRule = (n: number, title: string, tag: string) => `---\nid: ${["BR", n].join("-")}\ntitle: ${title}\nuntested: demo\nbusiness: x\n---\n## 规则\n\n${tag} ${"x".repeat(9 * KB)}\n\n## 例子\n\n- a → b\n`;
@@ -45,15 +45,20 @@ if [ "$mode" = block2 ] && [ "$n" = 2 ]; then echo '{"verdict":"block","findings
     return s;
   };
   const prompts = () => readdirSync(dir).filter((f) => f.startsWith("p.")).sort().map((f) => readFileSync(join(dir, f), "utf8"));
-  return { root, change, prompts, dir };
+  /** Lands `wt` and runs the review after it (BR-2441): the landing's outcome, what the review said, and its event kinds. */
+  const landReviewed = async (wt: string) => {
+    const out = await land(ws(wt), FAST, () => {});
+    const review = (await reviewLandings(root)).join("\n");
+    const kinds = ws(root).db.db.query<{ kind: string }, []>("SELECT kind FROM events WHERE kind LIKE 'review.%' ORDER BY id").all().map((e) => e.kind);
+    return { out, review, kinds };
+  };
+  return { root, change, prompts, dir, landReviewed };
 }
 
-describe("rule review split by size at land (BR-2359, D-67)", () => {
-  test("BR-2009 BR-2359: a review over review_max_prompt_kb runs as several calls, each with the changed rule and under the budget; the landing says how many and how big", async () => {
-    const { change, prompts } = splitProject(20, "ok");
-    const s = change();
-    const lines: string[] = [];
-    const out = await land(ws(s.worktree), FAST, (l: string) => void lines.push(l));
+describe("rule review split by size after landing (BR-2359, D-67)", () => {
+  test("BR-2009 BR-2359: a review over review_max_prompt_kb runs as several calls, each with the changed rule and under the budget; the review says how many and how big", async () => {
+    const { change, prompts, landReviewed } = splitProject(20, "ok");
+    const { out, review } = await landReviewed(change().worktree);
     expect(out.kind).toBe("landed");
     const calls = prompts();
     expect(calls).toHaveLength(2);
@@ -63,42 +68,43 @@ describe("rule review split by size at land (BR-2359, D-67)", () => {
     }
     expect(calls.filter((p) => p.includes("TEXT-10"))).toHaveLength(1);
     expect(calls.filter((p) => p.includes("TEXT-11"))).toHaveLength(1);
-    expect(lines.join("\n")).toMatch(/review: split into 2 calls by size \(review_max_prompt_kb\): 1: \d+ KB, 2: \d+ KB/);
+    expect(review).toMatch(/review: split into 2 calls by size \(review_max_prompt_kb\): 1: \d+ KB, 2: \d+ KB/);
   });
 
-  test("BR-2359: with a big enough budget the review is one call and the landing does not mention a split", async () => {
-    const { change, prompts } = splitProject(250, "ok");
-    const lines: string[] = [];
-    const out = await land(ws(change().worktree), FAST, (l: string) => void lines.push(l));
+  test("BR-2359: with a big enough budget the review is one call and does not mention a split", async () => {
+    const { change, prompts, landReviewed } = splitProject(250, "ok");
+    const { out, review } = await landReviewed(change().worktree);
     expect(out.kind).toBe("landed");
     expect(prompts()).toHaveLength(1);
-    expect(lines.join("\n")).not.toContain("split into");
+    expect(review).not.toContain("split into");
   });
 
-  test("BR-2359: a block in the second call refuses the landing with the findings of both calls, each once", async () => {
-    const { change, prompts } = splitProject(20, "block2");
-    const out = await land(ws(change().worktree), FAST, quiet);
-    expect(out.kind === "refused" && out.reason).toBe("review");
-    const message = out.kind === "refused" ? out.message : "";
-    expect(message).toContain("second blocks");
-    expect(message.split("same note").length - 1).toBe(1);
+  test("BR-2359: a block in the second call makes the review a block with the findings of both calls, each once; the change has landed", async () => {
+    const { change, prompts, landReviewed } = splitProject(20, "block2");
+    const { out, review, kinds } = await landReviewed(change().worktree);
+    expect(out.kind).toBe("landed");
+    expect(kinds).toEqual(["review.block"]);
+    expect(review).toContain("second blocks");
+    expect(review.split("same note").length - 1).toBe(1);
     expect(prompts()).toHaveLength(2);
   });
 
-  test("BR-2359 BR-2216: a call that fails refuses the landing at once; the later calls do not run", async () => {
-    const { change, prompts } = splitProject(20, "fail1");
-    const out = await land(ws(change().worktree), FAST, quiet);
-    expect(out.kind === "refused" && out.reason).toBe("review");
-    expect(out.kind === "refused" && out.message).toContain("first call failed");
+  test("BR-2359 BR-2216: a call that fails fails the review at once; the later calls do not run", async () => {
+    const { change, prompts, landReviewed } = splitProject(20, "fail1");
+    const { out, review, kinds } = await landReviewed(change().worktree);
+    expect(out.kind).toBe("landed");
+    expect(kinds).toEqual(["review.fail"]);
+    expect(review).toContain("review: could not run: ");
+    expect(review).toContain("first call failed");
     expect(prompts()).toHaveLength(1);
   });
 
-  test("BR-2359: the review's fixed part alone over the budget refuses the landing with reason review, the sizes and the remedy that fits (splitting the change cannot help); the reviewer never runs", async () => {
-    const { change, prompts, dir } = splitProject(2, "ok");
-    const out = await land(ws(change().worktree), FAST, quiet);
-    expect(out.kind === "refused" && out.reason).toBe("review");
-    const message = out.kind === "refused" ? out.message : "";
-    expect(message).toMatch(/cannot be made smaller than \d+ KB.*review_max_prompt_kb = 2 KB; sizes: changed documents \d+ KB, .* \d+ KB, domain text 0 KB/);
+  test("BR-2359: the review's fixed part alone over the budget fails the review with the sizes and the remedy that fits (splitting the change cannot help); the reviewer never runs", async () => {
+    const { change, prompts, dir, landReviewed } = splitProject(2, "ok");
+    const { out, review: message, kinds } = await landReviewed(change().worktree);
+    expect(out.kind).toBe("landed");
+    expect(kinds).toEqual(["review.fail"]);
+    expect(message).toMatch(/cannot be made smaller than \d+ KB[\s\S]*review_max_prompt_kb = 2 KB; sizes: changed documents \d+ KB, .* \d+ KB, domain text 0 KB/);
     expect(message).toContain("splitting the change cannot help");
     expect(message).toContain("raise review_max_prompt_kb");
     expect(message).not.toContain("several smaller changes");
@@ -106,11 +112,11 @@ describe("rule review split by size at land (BR-2359, D-67)", () => {
     expect(existsSync(join(dir, "review.sh"))).toBe(true);
   });
 
-  test("BR-2359: changed documents that are the large part refuse the landing with the advice to land several smaller changes; the reviewer never runs", async () => {
-    const { change, prompts } = splitProject(20, "ok");
-    const out = await land(ws(change(` ${"z".repeat(25 * KB)}`).worktree), FAST, quiet);
-    expect(out.kind === "refused" && out.reason).toBe("review");
-    const message = out.kind === "refused" ? out.message : "";
+  test("BR-2359: changed documents that are the large part fail the review with the advice to land several smaller changes; the reviewer never runs", async () => {
+    const { change, prompts, landReviewed } = splitProject(20, "ok");
+    const { out, review: message, kinds } = await landReviewed(change(` ${"z".repeat(25 * KB)}`).worktree);
+    expect(out.kind).toBe("landed");
+    expect(kinds).toEqual(["review.fail"]);
     expect(message).toMatch(/review_max_prompt_kb = 20 KB; sizes: changed documents 2\d KB/);
     expect(message).toContain("land the changed documents in several smaller changes");
     expect(prompts()).toHaveLength(0);

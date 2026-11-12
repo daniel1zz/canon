@@ -32,14 +32,17 @@ function withRule(root: string) {
 }
 
 describe("a single landing runs its own steps before the floor", () => {
-  test("BR-2014: a review that blocks refuses with reason review and the floor never runs", async () => {
-    const { root, marker } = fixture(`review: 'cat > /dev/null; echo ''{"verdict":"block","findings":["too vague"]}'''\n`);
-    const out = await land(ws(withRule(root).worktree), FAST, quiet);
-    expect(out.kind === "refused" && out.reason).toBe("review");
-    expect(existsSync(marker)).toBe(false);
+  test("BR-2014 BR-2441: the rule review is not a step of the landing: with a reviewer that would block or cannot run, the floor runs, the change lands and its review is queued", async () => {
+    for (const review of [`'cat > /dev/null; echo ''{"verdict":"block","findings":["too vague"]}'''`, `"exit 3"`]) {
+      const { root, marker } = fixture(`review: ${review}\n`);
+      const out = await land(ws(withRule(root).worktree), FAST, quiet);
+      expect(out.kind).toBe("landed");
+      expect(existsSync(marker)).toBe(true);
+      expect(ws(root).db.db.query<{ state: string }, []>("SELECT state FROM landed_reviews").all()).toEqual([{ state: "queued" }]);
+    }
   });
 
-  test("BR-2014: a review that passes and a floor that fails refuse with reason floor, and the floor ran", async () => {
+  test("BR-2014 BR-2441: a changed rule with a floor that fails is refused with reason floor, the floor ran, and no review is queued", async () => {
     const { root, marker } = fixture(`review: 'cat > /dev/null; echo ''{"verdict":"ok","findings":[]}'''\n`);
     const s = withRule(root);
     writeFileSync(join(s.worktree, "FAIL"), "x");
@@ -48,13 +51,7 @@ describe("a single landing runs its own steps before the floor", () => {
     const out = await land(ws(s.worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("floor");
     expect(existsSync(marker)).toBe(true);
-  });
-
-  test("BR-2014: a review command that fails to run refuses with reason review and the floor never runs", async () => {
-    const { root, marker } = fixture(`review: "exit 3"\n`);
-    const out = await land(ws(withRule(root).worktree), FAST, quiet);
-    expect(out.kind === "refused" && out.reason).toBe("review");
-    expect(existsSync(marker)).toBe(false);
+    expect(ws(root).db.db.query("SELECT COUNT(*) AS n FROM landed_reviews").get()).toEqual({ n: 0 });
   });
 
   test("BR-2014 BR-2057: a failing before_land refuses with reason hook and the floor never runs", async () => {

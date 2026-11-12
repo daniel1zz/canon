@@ -1,6 +1,6 @@
 # knowledge/check/restatement
 
-规则和决策复述别的规则的行为、而不是只点名它（按 BR-x、见 BR-x）时，尽早让写的人知道：编辑文件后由 hook 提示，`canon check` 在变更的 worktree 里提示，`canon restatements` 列出现有的复述供清理。这里只用文字判定，只提示、不拦截；拦截由合入时的规则评审做（knowledge/review）。为什么这么分见 D-84。
+规则和决策复述别的规则的行为、而不是只点名它（按 BR-x、见 BR-x）时，尽早让写的人知道：编辑文件后由 hook 提示，`canon check` 在变更的 worktree 里提示，`canon restatements` 列出现有的复述供清理。这里只用文字判定，只提示、不拦截；拦截意见由合入后的规则评审给出（knowledge/review）。为什么这么分见 D-84。
 
 ## 术语
 

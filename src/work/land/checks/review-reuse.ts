@@ -80,3 +80,14 @@ export function passedDocs(db: CoordDb, subject: string | null, key: string): Pa
   const wording = d.wording !== null && typeof d.wording === "object" && !Array.isArray(d.wording) ? (d.wording as Record<string, string>) : undefined;
   return { event: row.id, findings: Array.isArray(d.findings) ? d.findings.map(String) : [], wording, base: d.base };
 }
+
+/**
+ * The newest wording judgement of the landing with this key (BR-2239): the same question to the same reviewer gets the same
+ * answer without another model call; the caller reuses it only when it confirmed every rule as wording.
+ */
+export function passedWording(db: CoordDb, hash: string): { event: number; wording: Readonly<Record<string, string>> } | undefined {
+  const row = db.db.query<{ id: number; detail: string }, [string]>("SELECT id, detail FROM events WHERE kind = 'review.wording' AND json_extract(detail, '$.hash') = ? ORDER BY id DESC LIMIT 1").get(hash);
+  if (!row) return undefined;
+  const d = JSON.parse(row.detail) as { wording?: unknown };
+  return d.wording !== null && typeof d.wording === "object" && !Array.isArray(d.wording) ? { event: row.id, wording: d.wording as Record<string, string> } : undefined;
+}

@@ -16,7 +16,7 @@ export interface WorkChanges {
  * One hint line for each top domain whose smallest review piece plus the fixed part and the changed documents reaches 70% of
  * the budget; a hint, never a finding (BR-2375, D-76). The sizes are the ones the refusal names. Without `work` the changed
  * documents count 0 and the line says so; with it they are this work's real ones, and a total over the budget says the
- * landing's review will be refused.
+ * review after landing will fail.
  */
 export function reviewSizeHints(root: string, corpus: Corpus, budgetBytes: number, work?: WorkChanges): string[] {
   const { fixed, pieces } = reviewSizes(root, corpus);
@@ -28,10 +28,10 @@ export function reviewSizeHints(root: string, corpus: Corpus, budgetBytes: numbe
     if (total < budgetBytes * WARN_SHARE) continue;
     const pct = Math.round((total / budgetBytes) * 100);
     const sizes = `${docsText}, review instructions + rule index + accepted decision titles ${kb(fixed)} KB, domain text ${kb(p.piece)} KB; ${kb(total)} KB together is ${pct}% of review_max_prompt_kb = ${kb(budgetBytes)} KB`;
-    // reason: with the real changed documents counted, over 100% is not a warning but the refusal the landing will give (BR-2375, BR-2359)
+    // reason: with the real changed documents counted, over 100% is not a warning but the failure the review after landing will give (BR-2375, BR-2359)
     const tail = work && total > budgetBytes
-      ? `the landing's review of this work will be refused: ${refusalRemedy(root, corpus, { docs, index: fixed, piece: p.piece, where: p.where, need: total, budget: budgetBytes })}`
-      : `a change to ${p.top} is refused above 100%${work ? "" : " (the changed documents are not counted)"}: ${pieceRemedy(root, corpus, total, p.piece, p.where)}`;
+      ? `the review of this work after landing will fail: ${refusalRemedy(root, corpus, { docs, index: fixed, piece: p.piece, where: p.where, need: total, budget: budgetBytes })}`
+      : `the review of a change to ${p.top} fails above 100%${work ? "" : " (the changed documents are not counted)"}: ${pieceRemedy(root, corpus, total, p.piece, p.where)}`;
     out.push(`hint review-size: ${p.top}: ${sizes}, ${tail}`);
   }
   return out;

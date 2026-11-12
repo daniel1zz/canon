@@ -75,9 +75,11 @@ function change(root: string, files: Record<string, string>, remove: string[] = 
 
 const refuseDetails = (root: string) =>
   ws(root).db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = ? ORDER BY id").all("land.refuse").map((e) => e.detail);
+/** How many reviews after landing were queued (BR-2441): a refused landing queues none. */
+const queued = (root: string) => ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM landed_reviews").get()!.n;
 const logOf = (log: string) => (existsSync(log) ? readFileSync(log, "utf8") : "");
 
-describe("the secret scan refuses a plaintext secret before the rule review (BR-2407)", () => {
+describe("the secret scan refuses a plaintext secret before main moves and before any review (BR-2407)", () => {
   test("BR-2407 BR-2014: a changed file holding a secret value is refused with reason secret, naming file, line and variable but never the value; neither the review nor the floor runs", async () => {
     const { root, marker, log, floor } = fixture();
     const s = change(root, { "app.js": `// config\nconst k = "${SECRET}";\n` });
@@ -92,6 +94,7 @@ describe("the secret scan refuses a plaintext secret before the rule review (BR-
     expect(details.map((d) => JSON.parse(d).reason)).toEqual(["secret"]);
     expect(details.join("\n")).not.toContain("T0PSECRET");
     expect(existsSync(marker)).toBe(false);
+    expect(queued(root)).toBe(0);
     expect(existsSync(floor)).toBe(false);
     expect(sh(root, "log", "-1", "--format=%s", "main")).toBe("fixture");
   });
@@ -113,14 +116,14 @@ describe("the secret scan refuses a plaintext secret before the rule review (BR-
     expect(fetched).toEqual([]);
   });
 
-  test("BR-2407: changed files without a secret value pass the scan and the landing goes on to the review", async () => {
+  test("BR-2407: changed files without a secret value pass the scan, the change lands and its review is queued", async () => {
     const { root, marker, log } = fixture();
     const s = change(root, { "app.js": "const k = process.env.API_KEY;\n" });
     fakeVarlock(join(s.worktree, "node_modules/.bin/varlock"), "local", log);
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
     expect(logOf(log)).toContain("local load --agent");
     expect(logOf(log)).toContain("app.js");
-    expect(existsSync(marker)).toBe(true);
+    expect(queued(root)).toBe(1);
   });
 
   test("BR-2407: only files this change added or modified are scanned: an untouched file on main with the value and a deleted file are not", async () => {
@@ -140,7 +143,7 @@ describe("the secret scan refuses a plaintext secret before the rule review (BR-
     fakeVarlock(join(s.worktree, "node_modules/.bin/varlock"), "local", log);
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
     expect(existsSync(log)).toBe(false);
-    expect(existsSync(marker)).toBe(true);
+    expect(queued(root)).toBe(1);
   });
 
   test("BR-2407: only lines naming a scanned file are findings, so a quoted code line is never taken for one", () => {
@@ -157,6 +160,7 @@ describe("varlock missing or unusable fails the landing as an environment error 
     expect(out.kind === "refused" && out.reason).toBe("environment");
     expect(out.kind === "refused" && out.message).toContain("npm i -D varlock");
     expect(existsSync(marker)).toBe(false);
+    expect(queued(root)).toBe(0);
   });
 
   test("BR-2408: the tree's own node_modules/.bin/varlock runs ahead of the one on PATH", async () => {
@@ -192,6 +196,7 @@ describe("varlock missing or unusable fails the landing as an environment error 
     expect(message).not.toContain("T0PSECRET");
     expect(logOf(log)).not.toContain("local scan");
     expect(existsSync(marker)).toBe(false);
+    expect(queued(root)).toBe(0);
   });
 
   test("BR-2408: varlock scan exiting 1 with no finding canon can read fails with environment and does not echo its output", async () => {
@@ -203,5 +208,6 @@ describe("varlock missing or unusable fails the landing as an environment error 
     expect(out.kind === "refused" && out.message).not.toContain("T0PSECRET");
     expect(refuseDetails(root).join("\n")).not.toContain("T0PSECRET");
     expect(existsSync(marker)).toBe(false);
+    expect(queued(root)).toBe(0);
   });
 });

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, readdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { land } from "../land/land.ts";
 import { previewReview } from "../../knowledge/review/preview.ts";
@@ -356,7 +356,7 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     const root = fixture();
     const review = answer(root);
     if (review !== undefined) {
-      writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: ["src/**/*.test.ts"]\nreview: ${JSON.stringify(review)}\n`);
+      writeFileSync(join(root, "canon/config.yaml"), `floor: "touch ${root}-floor-ran"\ntests: ["src/**/*.test.ts"]\nreview: ${JSON.stringify(review)}\n`);
       sh(root, "commit", "-q", "--allow-empty", "-am", "review"); // the fixture may already hold this value
     }
     await migrated(root);
@@ -405,17 +405,21 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     expect(prompt).toContain("# Wording judgements");
     expect(prompt).toContain("Statement 1.");
     expect(prompt).toContain("Statement one, reworded.");
-    const ev = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'review.ok' ORDER BY id DESC LIMIT 1").get()!;
+    expect(prompt).not.toContain("# Domain: billing"); // the landing asks the wording judgement only; the rule review runs after it
+    const ev = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'review.wording' ORDER BY id DESC LIMIT 1").get()!;
     expect(JSON.parse(ev.detail).wording).toEqual({ [br(1)]: "wording" });
+    expect(ws(root).db.db.query("SELECT 1 FROM events WHERE kind IN ('review.ok', 'review.block')").get()).toBeNull();
   }, TIMED);
 
-  test("BR-2239: the review answering behaviour, or giving no wording field, refuses with reason review naming the rule; the change stays open", async () => {
+  test("BR-2239 BR-2014: the review answering behaviour, or giving no wording field, refuses with reason review naming the rule before the floor runs; the change stays open", async () => {
     for (const answer of [`{"verdict":"ok","findings":[],"wording":{"${br(1)}":"behaviour"}}`, `{"verdict":"ok","findings":[]}`]) {
       const { root, s } = await wordingProject((r) => reviewing(r, answer));
       write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+      rmSync(`${root}-floor-ran`, { force: true }); // the fixture's own landings ran the floor
       const out = await land(ws(s.worktree), FINISH, quiet);
       expect(out.kind === "refused" && out.reason).toBe("review");
       expect(out.kind === "refused" && out.message).toContain(br(1));
+      expect(existsSync(`${root}-floor-ran`)).toBe(false);
       expect(changeOn(s.worktree, "HEAD", s.change).status).toBe("open");
     }
   }, TIMED * 2);

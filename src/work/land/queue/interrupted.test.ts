@@ -387,7 +387,7 @@ describe("the next landing and the other commands report a killed landing", () =
     const never = startNew(p.root, "Never landed");
     const plain = await run(p.root, ["work", "after-land", never.change]);
     expect(plain.code).toBe(3);
-    expect(plain.err.trim()).toBe(`canon: no landing of ${never.change} ran background after_land commands`);
+    expect(plain.err.trim()).toBe(`canon: no landing of ${never.change} ran background after_land commands or a review after it`);
     const lander = await landingInFloor(p);
     const running = await run(p.root, ["work", "after-land", p.s.change]);
     expect(running.code).toBe(3);

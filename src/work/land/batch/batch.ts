@@ -278,16 +278,20 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
     finishEntry(ws.db, t.entry, "landed", t.head);
     landedMembers = memberIds;
     end("landed");
+    const landedAt = new Map<number, number>();
     for (const l of landing) {
       const s = notes.get(l.entry);
-      const reviewNotes = s?.ok ? s.reviewNotes : undefined;
-      const landed = ws.db.event(ws.actor, "land.ok", l.subject, { sha: l.head, base: l.base, branch: l.branch, diff: fingerprints.get(l.entry) ?? null, ...(reviewNotes ?? {}), ...(skipped ? { floor_skipped: true } : {}), ...(l.entry !== t.entry ? { batched_by: t.entry } : { batch: landing.slice(1).map((x) => x.entry), floors: run }) });
+      const landed = ws.db.event(ws.actor, "land.ok", l.subject, { sha: l.head, base: l.base, branch: l.branch, diff: fingerprints.get(l.entry) ?? null, ...(skipped ? { floor_skipped: true } : {}), ...(l.entry !== t.entry ? { batched_by: t.entry } : { batch: landing.slice(1).map((x) => x.entry), floors: run }) });
       // Open review findings naming a document retired or superseded on this member's tree are closed by its landing (BR-2435).
       if (s?.ok) closeRetired(ws.db, new Set(s.retired), landed);
+      landedAt.set(l.entry, landed);
       say(`landed ${l.head.slice(0, 9)} (${name(l)}) on ${main}`);
     }
     if (rest.length > 0) say(`batch: ${names(rest)} were not landed with it`);
-    for (const l of landing) afterLand(ws, say, { entry: l.entry, subject: l.subject, base: l.base, head: l.head, branch: l.branch });
+    for (const l of landing) {
+      const s = notes.get(l.entry);
+      afterLand(ws, say, { entry: l.entry, subject: l.subject, base: l.base, head: l.head, branch: l.branch, landed: landedAt.get(l.entry)!, review: s?.ok ? s.review : undefined });
+    }
     return { kind: "landed" };
   } finally {
     end("error"); // an exception ended the batch without an outcome; the throw itself carries the cause
