@@ -6,6 +6,7 @@ import { redMainLandingLines } from "../watch/redmain.ts";
 import { hookStatus } from "../../install/hook.ts";
 import { land } from "./land.ts";
 import { backgroundRun, landArgs, landInBackground, recordExit, stopLanding } from "./detach.ts";
+import { STALL_LIMIT, unstall } from "./stall.ts";
 
 /** `canon work land`. */
 
@@ -59,4 +60,19 @@ const landCmd = defineCommand({
   },
 });
 
-export const landCommands: DomainCommands = { commands: [entry("land", 20, landCmd, "work")] };
+/** `canon work unstall`: the main session or a person lets a subagent's change stopped by refusals land again (BR-2455). */
+const unstallCmd = defineCommand({
+  meta: { description: `Let a subagent's change refused ${STALL_LIMIT} times in a row land again (main session or a person only)` },
+  args: {
+    change: { type: "positional", required: true, description: "The stopped change (C-n)" },
+    reason: { type: "string", description: "What the main agent did about the refusals" },
+  },
+  run({ args }) {
+    const ws = workspace();
+    const r = unstall(ws.db, ws.actor, String(args.change), typeof args.reason === "string" ? args.reason : "");
+    if (!r.ok) fail({ code: r.code, message: r.message });
+    say(`${String(args.change)} may land again; ${STALL_LIMIT} more refusals in a row stop it again`);
+  },
+});
+
+export const landCommands: DomainCommands = { commands: [entry("land", 20, landCmd, "work"), entry("unstall", 21, unstallCmd, "work")] };

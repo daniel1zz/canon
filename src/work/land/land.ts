@@ -15,6 +15,7 @@ import { missingMessage, passesMeta, planClose } from "../execution/landing.ts";
 import type { LandOptions, LandOutcome, Running } from "./outcome.ts";
 import { changesIn, ownDiffId, rebaseInProgress } from "./worktree-state.ts";
 import { checkNow, CONTENT_REASONS, contentTree, repeatedRefusal } from "./repeat.ts";
+import { counted, isSubagent, refusalsInARow, STALL_LIMIT, stallAdvice, stalled } from "./stall.ts";
 import { keptNote, lostTurn, predictedConflicts, priorityNow, waitPollMs } from "./queue/wait.ts";
 import { removeReviewTree } from "./checks/review-tree.ts";
 import { findingDetail, verifyChange } from "./checks/steps.ts";
@@ -39,6 +40,16 @@ const KEPT_AFTER = { conflict: "its conflict", timeout: "its timeout", killed: "
  * compare-and-swap main. Runs on the exact tree that becomes main.
  */
 export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<LandOutcome> {
+  const out = await landOnce(ws, opts, say);
+  // reason: the refusal that makes a subagent's change reach the limit says at once to stop, not only the next landing (BR-2454)
+  if (out.kind !== "refused" || !counted(out.reason) || !isSubagent(ws.actor)) return out;
+  const last = ws.db.db.query<{ subject: string | null }, [string]>("SELECT subject FROM events WHERE actor = ? AND kind = 'land.refuse' ORDER BY id DESC LIMIT 1").get(ws.actor);
+  const change = last?.subject ?? null;
+  if (change === null || refusalsInARow(ws.db, change).length !== STALL_LIMIT) return out;
+  return { ...out, message: `${out.message}\n${stallAdvice(change)}` };
+}
+
+async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<LandOutcome> {
   const wt = ws.root;
   const main = ws.config.main;
   const renewed = renewClaim(ws.db, wt, ws.actor, ws.config.claimLeaseMs, sessionProcess());
@@ -50,6 +61,12 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
   const recovered = settleInterrupted(ws, say);
   // The previous landing reached main and was killed before it recorded that: it is recorded now, and nothing lands again (BR-2309).
   if (recovered) return finishLanding(ws, opts, say, { entry: 0, subject, sha: recovered.sha });
+  // A subagent's change refused three times in a row goes to the main agent before anything else runs (BR-2454, D-99).
+  const stop = stalled(ws.db, ws.actor, subject);
+  if (stop) {
+    ws.db.event(ws.actor, "land.refuse", subject, { reason: "stalled", message: stop.message.slice(0, 2000), refusals: stop.refusals });
+    return { kind: "refused", reason: "stalled", message: stop.message };
+  }
   // Before anything slow, so a landing killed from here on is found by its process (BR-2307, D-58).
   const lander = selfProcess();
   ws.db.event(ws.actor, "land.start", subject, { pid: lander?.pid ?? null, pid_start: lander?.start ?? null, ...(opts.run !== undefined ? { run: opts.run } : {}) });

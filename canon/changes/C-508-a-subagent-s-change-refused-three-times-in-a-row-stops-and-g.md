@@ -3,25 +3,29 @@ id: C-508
 title: A subagent's change refused three times in a row stops and goes to the
   main agent; the main session lets it land again (#195, D-99)
 status: open
-rules: []
+rules:
+  - BR-2454
+  - BR-2455
 ---
 
 ## 为什么
 
-<要解决什么问题。>
+负责人（canon human #34）：“还是保持之前那套把。然后三次没有合并成功再给主Agent”。D-99 定了做法；#195 记了同一个问题：子 agent 被拒后只会一轮轮重试，没有任何东西让它停下。
 
 ## 要改什么
 
-<具体改动，以及会新增或修改哪些规则。>
-
-## 陷阱和假设
-
-<新会话接手时最容易踩的坑，以及这个变更依赖的假设；没有就删掉这一节。>
+- BR-2454：子 agent 认领的变更，自上次合入或放行以来被拒满三次（只数它能改或派活能避免的原因），第四次 `canon work land` 在入队前以 `stalled` 拒绝；第三次拒绝的信息就写明要停下报给主 agent。
+- BR-2455：`canon work unstall <C-n> --reason` 由主会话或人放行，计数从零重来。
+- 代码：`src/work/land/stall.ts`，`land.ts` 在写 `land.start` 前检查，`commands.ts` 加 `unstall`。
+- canon-parallel 写明子 agent 被停下后怎么做；架构总览的合入流水线补上这一条。
+- 合入后关闭 #195。
 
 ## 教训
 
-<每条教训一行：这次工作对流程或工具的认识 → 现在由哪条规则、检查或命令保证（写编号），或“只靠文字：原因”，或“待负责人确认是否固化”；本变更为自己的功能或修复写的规则、测试和检查不是教训，不写在这里；没有教训就写“无”。>
+无
 
 ## 任务
 
-- [ ] <任务>
+- [x] 规则
+- [x] 代码和测试
+- [x] skill 和总览
