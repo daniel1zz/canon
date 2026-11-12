@@ -2,11 +2,18 @@
 id: C-481
 title: canon context and canon work review can let a configured command pick
   related documents from the fused top 50, cached and loud on failure (C-464 F)
-status: open
-rules: [BR-2443, BR-2444, BR-2445]
+status: done
+rules:
+  - BR-2443
+  - BR-2444
+  - BR-2445
 plan: C-464
 steps:
   - F
+passes:
+  BR-2443: 57c436499fa038f2 test
+  BR-2444: 11166852a50b6055 test
+  BR-2445: a93d4c0f5f2c9fdc test
 ---
 
 ## 为什么
