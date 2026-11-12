@@ -93,6 +93,13 @@ describe("the hook refuses canon claim commands with the wrong --as (BR-2340)", 
     });
   }
 
+  test("BR-2340 BR-2455: a subagent's canon work unstall is refused with or without its own --as, and the reason says to tell the main session", async () => {
+    for (const command of ["canon work unstall C-5 --reason x", "canon work unstall C-5 --reason x --as a1"]) {
+      const d = denied((await hook(input(command, root, A1), root)).out);
+      expect([d?.permissionDecision, d?.permissionDecisionReason.includes("report the refusals to the main session")]).toEqual(["deny", true]);
+    }
+  });
+
   test("BR-2340: a deny names the subagent's real agent id in the way to re-run", async () => {
     const r = await hook(input("canon work land", root, "af46bebbe7bc17e68"), root);
     expect(denied(r.out)?.permissionDecisionReason).toContain("--as af46bebbe7bc17e68");
