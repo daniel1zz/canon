@@ -2,7 +2,7 @@
 id: C-483
 title: Raise review_max_prompt_kb to 300 so C-475's landing review fits; C-479
   sets it back to 250
-status: open
+status: done
 rules: []
 ---
 
