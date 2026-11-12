@@ -3,11 +3,25 @@ id: C-494
 title: "The main agent settles rule-review findings at once: findings are pushed
   to it, it closes them with a quoted reason or a fix, no separate verify or
   re-ask"
-status: open
+status: done
 rules:
   - BR-2442
   - BR-2453
   - BR-2451
+passes:
+  BR-2009: 7765dc5bff4b5e53 test wording
+  BR-2074: 104ed702d1ad572e test
+  BR-2143: 7b564be50f1e25cf test
+  BR-2145: cb379eddd7c08da4 test wording
+  BR-2296: 641ee31e37c1d40b test
+  BR-2358: 24b35e3e881cbbee test
+  BR-2366: bfc67d9ddb4fe04e test
+  BR-2405: 3bf3d356e0078407 test
+  BR-2410: 79a0ec76c22a3356 test
+  BR-2436: 99a1db1a958050e1 test
+  BR-2442: cd977d3768bed722 test
+  BR-2451: 58c87f98e813822b test
+  BR-2453: 8a8a6fe7c8d02515 test
 ---
 
 ## 为什么
