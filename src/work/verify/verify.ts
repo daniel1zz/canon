@@ -15,6 +15,10 @@ import { budgetHint, sessionText } from "../../knowledge/check/session-text.ts";
 import { changesOf, paths, reportsFor } from "./changes.ts";
 import { guideFor } from "../../invocation/guide.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
+import type { Corpus } from "../../knowledge/documents/model.ts";
+import { findDoc } from "../../knowledge/query/query.ts";
+import { planClose } from "../execution/landing.ts";
+import type { Missing } from "../execution/evidence.ts";
 import { idsIn } from "../../knowledge/documents/types.ts";
 import { openNotes, renderNote } from "../../knowledge/review/notes.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
@@ -176,12 +180,14 @@ export interface WorkTestResult {
   readonly check: number;
   /** Number of `always_tests` globs that match no test file (BR-2297). */
   readonly unmatched: number;
+  /** Rules the landing would refuse for missing execution evidence (BR-2456); 0 outside an open change. */
+  readonly evidence: number;
   /** The signal that stopped the run, when one did (BR-2304). */
   readonly signal?: string;
 }
 
 /** True when `canon work test` must exit 1: a test file, the type check or canon check failed. */
-export const workTestFailed = (r: WorkTestResult) => r.signal !== undefined || r.failed > 0 || (r.typecheck !== null && r.typecheck !== 0) || r.check > 0 || r.unmatched > 0;
+export const workTestFailed = (r: WorkTestResult) => r.signal !== undefined || r.failed > 0 || (r.typecheck !== null && r.typecheck !== 0) || r.check > 0 || r.unmatched > 0 || r.evidence > 0;
 
 /** What `workTest` needs from the machine, so tests can give a machine that is idle, busy or stopped (BR-2302, BR-2304). */
 export interface WorkTestDeps {
@@ -266,7 +272,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
     // reason: everything the stop reports is taken here, before any file can end; later ends are not recorded (BR-2304)
     for (const g of [...groups]) if (!groupAlive(g)) groups.delete(g);
     const were = running();
-    const result: WorkTestResult = { files: finalized.size, failed: failedNow(), typecheck, check: 0, unmatched: unmatched.length, signal: sig };
+    const result: WorkTestResult = { files: finalized.size, failed: failedNow(), typecheck, check: 0, unmatched: unmatched.length, evidence: 0, signal: sig };
     const notStarted = files.length - finalized.size - were;
     const pids = [...groups];
     void (async () => {
@@ -375,6 +381,11 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   for (const n of staleReportNotes(input)) say(noteLine(n)); // never a failure (BR-2345)
   for (const n of backlogNotes(input)) say(noteLine(n)); // never a failure (BR-2150, #112)
   say(findings.length === 0 ? "canon check: ok" : `canon check: ${findings.length} finding(s)`);
+  // reason: the landing refuses missing evidence only in its turn; this run already has the reports it needs, so say it here (BR-2456)
+  const missing = missingEvidence(ws, read.corpus, subject);
+  if (!missing.ok) return missing;
+  for (const m of missing.value) say(`evidence: ${m.id}: change a line in a running test whose title names ${m.id}${m.untested ? ", or add a line under ## 验收" : ""}`);
+  if (missing.value.length > 0) say(`evidence: ${missing.value.length} rule(s) the landing would refuse for missing evidence (BR-2241)`);
   // A hint on standard error, never a failure (BR-2257, D-37).
   const hint = budgetHint(sessionText(ws.root, guideFor(ws.root)), ws.config.sessionTextBudget);
   if (hint) console.error(hint);
@@ -389,7 +400,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   const ms = Math.round(performance.now() - t0);
   // reason: a glob that matches nothing stopped protecting anything, which must not pass unnoticed (BR-2297)
   for (const g of unmatched) say(`always_tests: ${JSON.stringify(g)} matches no test file`);
-  const result: WorkTestResult = { files: files.length, failed: failed.length, typecheck, check: findings.length, unmatched: unmatched.length };
+  const result: WorkTestResult = { files: files.length, failed: failed.length, typecheck, check: findings.length, unmatched: unmatched.length, evidence: missing.value.length };
   if (files.length) say(`${files.length} file(s): ${files.length - failed.length} passed, ${failed.length} failed, ${secs(ms)}, at most ${jobs.peak} at once`);
   if (passedAlone.length) say(`failed alongside other files, passed alone: ${passedAlone.join(", ")}`);
   if (failed.length) say(`failed: ${failed.join(", ")}`);
@@ -400,4 +411,14 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
     all, ...result, ms, jobs: cap, ...jobs, rerun: rerunAlone.length, rerunFiles: rerunAlone, passedAlone: passedAlone.length, passedAloneFiles: passedAlone, rerunSkipped,
   });
   return ok(result);
+}
+
+/** The rules an open change executes with no evidence yet, as the landing's close commit would find them (BR-2456, BR-2241). */
+function missingEvidence(ws: Workspace, corpus: Corpus, subject: string | null): Result<readonly Missing[]> {
+  if (subject === null) return ok([]);
+  const change = findDoc(corpus, subject);
+  if (change?.kind !== "change" || change.status !== "open") return ok([]);
+  const planned = planClose(ws.db, ws.config, ws.root, ws.config.main, corpus, change);
+  if ("error" in planned) return err("io", planned.error);
+  return ok(planned.missing);
 }

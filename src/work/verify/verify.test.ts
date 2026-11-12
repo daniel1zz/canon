@@ -400,6 +400,24 @@ describe("canon work test type check and canon check", () => {
     expect(lastEvent(wt)).toMatchObject({ failed: 0, check: 1 });
   });
 
+  test("BR-2456: a rule whose examples the change edited with no test line changed is listed as missing evidence and fails the run; changing a line in its test clears it", () => {
+    const { root, wt } = fixture();
+    write(wt, { [`canon/rules/core/${rule}.md`]: ruleText("x").replace("- a → b", "- a → c") });
+    sh(wt, "commit", "-qam", "examples");
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain(`evidence: ${rule}: change a line in a running test whose title names ${rule}`);
+    expect(r.out).toContain("evidence: 1 rule(s) the landing would refuse for missing evidence (BR-2241)");
+    expect(r.out).toContain("canon check: ok");
+    expect(lastEvent(wt)).toMatchObject({ evidence: 1 });
+    write(wt, { "src/e.test.ts": `it("${rule}: names the rule, now a → c", () => {});\n` });
+    sh(wt, "commit", "-qam", "test");
+    const fixed = canon(wt, "work", "test");
+    expect(fixed.out).not.toContain("evidence:");
+    expect(fixed.code).toBe(0);
+    expect(canon(root, "work", "test").out).not.toContain("evidence:");
+  });
+
   test("BR-2227: canon check runs when nothing is selected, and failing tests and findings are both reported", () => {
     const { wt } = fixture();
     write(wt, { "canon/notes/N-1.md": "---\nid: N-1\ntitle: n\n---\n\nBR-999\n" });
