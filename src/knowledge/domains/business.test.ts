@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { project, sh, startNew } from "../../work/testkit.ts";
 import { businessesOf, contractLines } from "./business.ts";
@@ -119,15 +119,15 @@ describe("what canon rule new shows before it creates the file", () => {
       corpus([domain("# billing\n\n## 业务\n\n- **退款**：钱怎么退回去\n- **对账**：每天和银行对一次账\n")], [ruleDoc("BR-9", "退款要在三天内到账", "退款"), ruleDoc("BR-8", "退款只退原路", "退款"), ruleDoc("BR-10", "没有业务的一条")]),
       "billing",
     );
-    expect(lines.join("\n")).toContain("  退款 — 钱怎么退回去\n    BR-8 退款只退原路\n    BR-9 退款要在三天内到账");
-    expect(lines.join("\n")).toContain("  对账 — 每天和银行对一次账\n    (no rule yet)");
-    expect(lines.join("\n")).toContain("in no business (1)");
-    expect(lines.join("\n")).toContain("    BR-10 没有业务的一条");
+    expect(lines.join("\n")).toContain("business: 退款 — 钱怎么退回去\n- BR-8 退款只退原路\n- BR-9 退款要在三天内到账");
+    expect(lines.join("\n")).toContain("business: 对账 — 每天和银行对一次账\n- (no rule yet)");
+    expect(lines.join("\n")).toContain("in no business (1)\n- BR-10 没有业务的一条");
   });
 
   test("BR-2432: a domain that lists no business says so instead", () => {
     const lines = contractLines(corpus([domain("# billing\n\n## 术语\n\n- **x**：y\n")], [ruleDoc("BR-9", "一条规则")]), "billing");
     expect(lines[0]).toContain("domain billing lists no business yet");
+    expect(lines[1]).toBe("- BR-9 一条规则"); // the rules are still listed, just not grouped
   });
 
   test("BR-2432: canon rule new shows the domain's businesses first and the path last; canon decision new shows none", () => {
@@ -136,10 +136,22 @@ describe("what canon rule new shows before it creates the file", () => {
     const r = canon(change.worktree, "rule", "new", "--domain", "billing", "--title", "新的一条");
     expect(r.code).toBe(0);
     const lines = r.out.trim().split("\n");
-    expect(lines[0]).toContain("businesses of billing");
-    expect(r.out).toContain("    BR-9 Rule 9");
-    expect(r.out).toContain("in no business (1)");
+    expect(lines[0]).toStartWith("businesses of billing");
+    expect(r.out).toContain("business: 退款 — 钱怎么退回去\n- BR-9 Rule 9");
+    expect(r.out).toContain("in no business (1)\n- BR-10 Rule 10");
     expect(lines.at(-1)).toMatch(/^canon\/rules\/billing\/BR-\d+\.md$/);
     expect(canon(change.worktree, "decision", "new", "--title", "一个决策").out).not.toContain("businesses of");
+    // BR-2432: the listing comes before the file is created, so a refusal at creation has already printed it; an unknown domain prints nothing
+    const before = readdirSync(join(change.worktree, "canon/rules/billing")).length;
+    const empty = canon(change.worktree, "rule", "new", "--domain", "billing", "--title", "");
+    expect(empty.code).toBe(2);
+    expect(empty.out).toContain("businesses of billing");
+    expect(readdirSync(join(change.worktree, "canon/rules/billing")).length).toBe(before);
+    const nowhere = canon(change.worktree, "rule", "new", "--domain", "nowhere", "--title", "x");
+    expect(nowhere.code).toBe(3);
+    expect(nowhere.out).not.toContain("businesses of");
+    const neither = canon(change.worktree, "rule", "new", "--domain", "nowhere", "--title", "");
+    expect(neither.code).toBe(2);
+    expect(neither.out).not.toContain("businesses of");
   });
 });

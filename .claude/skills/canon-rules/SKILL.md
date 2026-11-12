@@ -19,8 +19,8 @@ The main session is task-local, not one project-wide writer: concurrent top-leve
 
 A requirement lands in a business, not in a directory. Work down, in this order:
 
-1. `canon context <domain|path>`. Read the domain README's `## 业务` list before any rule: it names the businesses this domain covers.
-2. Pick the business the requirement belongs to, and read every rule marked with it. `canon rule new --domain <domain>` prints them grouped by business, the unassigned ones last. Those rules are the boundary of that business as it stands: your requirement either changes one of them, or draws a boundary none of them draws yet.
+1. `canon context <domain|path>`. Its rule listing is grouped by the businesses the domain's README declares, the rules under none of them last.
+2. Pick the business the requirement belongs to and read every rule in that group. Those rules are the boundary of that business as it stands: your requirement either changes one of them, or draws a boundary none of them draws yet. A domain whose listing is not grouped has declared no business: say what its businesses are before adding to it.
 3. Then `canon search <word>` for the same behaviour elsewhere. A hit under another business or domain means either the boundary is in the wrong place, or the two have to name each other.
 4. No business fits: write the new one into the domain README first, then point the rule at it. `canon check` refuses a rule this work added or changed that names a business its domain does not list.
 

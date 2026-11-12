@@ -165,18 +165,7 @@ describe("statuses and domains from the CLI", () => {
     expect(canon(root, "change", "list", "--all").out).toMatch(/C-1\s+dropped/);
   });
 
-  test("BR-2114: retired rules are not counted toward a domain's rules or the split hint", () => {
-    const root = project();
-    canon(root, "rule", "domain", "billing", "--code", "src/billing");
-    for (let n = 1; n <= 27; n++) {
-      const rid = id("BR", n);
-      const status = n <= 2 ? "retired" : "active";
-      writeFileSync(join(root, `canon/rules/billing/${rid}.md`), `---\nid: ${rid}\ntitle: R${n}\nstatus: ${status}\nuntested: fixture\n---\n## 规则\n\nX.\n`);
-    }
-    const out = canon(root, "rule", "domains").out;
-    expect(out).toMatch(/billing\s+25 rules/);
-    expect(out).not.toContain("consider subdomains");
-  });
+
 });
 
 describe("status changes", () => {

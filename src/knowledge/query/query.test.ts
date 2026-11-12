@@ -22,11 +22,11 @@ const rule = (n: number, title: string, body: string, status = "active", busines
   `---\nid: ${id("BR", n)}\ntitle: ${title}\nstatus: ${status}\nuntested: fixture\n${business === undefined ? "" : `business: ${business}\n`}---\n${body}\n`;
 
 const files = {
-  "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney in and out.\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **退款**：钱怎么退回去\n",
+  "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\nMoney in and out.\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **退款**：钱怎么退回去\n- **对账**：每天和银行对一次账\n",
   "canon/rules/auth/README.md": "---\ncode: [src/auth]\n---\n# auth\n\n## 术语\n\n- **退款**：钱退回\n",
   [`canon/rules/billing/${id("BR", 1)}.md`]: rule(1, "Refund window", "Refunds within 30 days.", "active", "退款"),
   [`canon/rules/billing/${id("BR", 2)}.md`]: rule(2, "Old fee", "Retired.", "retired"),
-  [`canon/rules/auth/${id("BR", 3)}.md`]: rule(3, "Session length", "Sessions last 12 hours."),
+  [`canon/rules/auth/${id("BR", 3)}.md`]: rule(3, "Session length", "Sessions last 12 hours.", "active", "会话"),
   [`canon/decisions/${id("D", 1)}-a.md`]: `---\nid: ${id("D", 1)}\ntitle: Why 30 days\nstatus: accepted\n---\nBecause of ${id("BR", 1)}.\n`,
   [`canon/decisions/${id("D", 2)}-b.md`]: `---\nid: ${id("D", 2)}\ntitle: Draft idea\nstatus: proposed\n---\nAbout ${id("BR", 1)}.\n`,
   [`canon/changes/${id("C", 1)}-x.md`]: `---\nid: ${id("C", 1)}\ntitle: Shorten refunds\nstatus: open\nrules: [${id("BR", 1)}]\n---\nx\n`,
@@ -40,9 +40,15 @@ describe("context", () => {
     expect(ctx.rules.map((r) => r.id)).toEqual([id("BR", 1)]); // retired rule left out, auth not included
     expect(ctx.decisions.map((d) => d.id)).toEqual([id("D", 1)]); // proposed decision left out
     expect(ctx.changes.map((c) => c.id)).toEqual([id("C", 1)]);
-    // BR-2007: the title line of a rule that names a business carries it; a rule without one carries nothing
-    expect(renderContext("", ctx, { full: false, target: "billing" })).toContain(`- ${id("BR", 1)} Refund window [业务: 退款]`);
-    expect(renderContext("", contextFor(corpus, "src/auth/session.ts"), { full: false, target: "auth" })).not.toContain("[业务:");
+    // BR-2007: a domain that lists businesses is grouped by them, an empty business and the unassigned rules included
+    const grouped = renderContext("", ctx, { full: false, target: "billing" });
+    expect(grouped).toContain(`business: 退款 — 钱怎么退回去\n- ${id("BR", 1)} Refund window`);
+    expect(grouped).toContain("business: 对账 — 每天和银行对一次账\n- (no rule yet)");
+    expect(grouped).not.toContain("in no business"); // every active rule of billing names a listed business, so the group is left out
+    // BR-2007: a domain that lists none stays flat, and a rule that names a business carries the mark
+    expect(renderContext("", contextFor(corpus, "src/auth/session.ts"), { full: false, target: "auth" })).toContain(`- ${id("BR", 3)} Session length [business: 会话]`);
+    // BR-2007: --full is not grouped
+    expect(renderContext("", ctx, { full: true })).not.toContain("business: 退款 —");
   });
 
   test("BR-2112: by default rules are listed by id and title only; with full every rule's text is printed", () => {

@@ -3,6 +3,7 @@ import { join, posix } from "node:path";
 import { stripCode, type Change, type Corpus, type Decision, type Doc, type Domain, type Extra, type Rule } from "../documents/model.ts";
 import { idsIn, type DocType } from "../documents/types.ts";
 import { tokens } from "./bigrams.ts";
+import { businessListing } from "../domains/business.ts";
 
 /** Plain scan over the files: the corpus is small enough that an index would only add a second source of truth. */
 export interface Hit {
@@ -205,15 +206,20 @@ function isUnder(path: string, dir: string): boolean {
  */
 export function renderContext(root: string, ctx: Context, opts: { readonly full: boolean; readonly target?: string }): string {
   const out: string[] = [];
-  const rulesOf = (rules: readonly Rule[]) => {
+  const rulesOf = (domain: Domain, rules: readonly Rule[]) => {
+    // reason: --full is read whole (the rule review reads it): it stays in id order so its shape does not change (BR-2007)
     if (opts.full) for (const r of rules) out.push(ruleSection(r));
-    else if (rules.length) out.push(`## Rules (${rules.length})\n\n${rules.map((r) => `- ${r.id}${plannedMark(r)}${releaseMark(r)} ${r.title}${businessMark(r)}`).join("\n")}\n`);
+    else if (rules.length) {
+      const grouped = businessListing(domain, rules, (r) => `- ${r.id}${plannedMark(r)}${releaseMark(r)} ${r.title}`);
+      const flat = rules.map((r) => `- ${r.id}${plannedMark(r)}${releaseMark(r)} ${r.title}${businessMark(r)}`);
+      out.push(`## Rules (${rules.length})\n\n${(grouped.length > 0 ? grouped : flat).join("\n")}\n`);
+    }
   };
   const amended = (id: string) => (ctx.amended.has(id) ? ` — partly amended by ${ctx.amended.get(id)!.join(", ")}` : "");
   if (ctx.target) out.push(`# ${ctx.target.id} ${ctx.target.title}${amended(ctx.target.id)}\n\n${ctx.target.body.trim()}\n`);
   for (const d of ctx.domains) {
     out.push(`# Domain: ${d.name}  (code: ${d.code.length ? d.code.join(", ") : `through ${d.parent ?? "the enclosing domain"}`})\n\n${d.body.trim()}\n`);
-    rulesOf(ctx.rules.filter((x) => x.domain === d.name));
+    rulesOf(d, ctx.rules.filter((x) => x.domain === d.name));
   }
   if (ctx.others.length) out.push(`Other subdomains, not included: ${ctx.others.join(", ")} (canon context <name>)\n`);
   if (ctx.decisions.length) out.push(`# Decisions\n\n${ctx.decisions.map((d) => `- ${d.id} ${d.title} (${d.path})${amended(d.id)}`).join("\n")}\n`);
@@ -233,8 +239,8 @@ export const ruleSection = (r: Rule): string => `## ${r.id}${plannedMark(r)}${re
 /** ` [release R-1]` or ` [release R-1, changed in R-2, R-3]` after a tagged rule's id, nothing for a rule that belongs to no release (D-61). */
 export const releaseMark = (d: Doc): string => (d.kind === "rule" && d.release !== undefined ? ` [release ${d.release}${d.changedIn?.length ? `, changed in ${d.changedIn.join(", ")}` : ""}]` : "");
 
-/** ` [业务: <name>]` after a rule that names one, nothing otherwise (BR-2007, BR-2430). */
-export const businessMark = (d: Doc): string => (d.kind === "rule" && d.business !== undefined ? ` [业务: ${d.business}]` : "");
+/** ` [business: <name>]` after a rule that names one, in a domain whose listing is not grouped (BR-2007, BR-2430). */
+export const businessMark = (d: Doc): string => (d.kind === "rule" && d.business !== undefined ? ` [business: ${d.business}]` : "");
 
 /** ` [规划中]` after a planned rule's id, nothing otherwise (BR-2238). */
 export const plannedMark = (d: Doc): string => (d.kind === "rule" && d.status === "planned" ? " [规划中]" : "");

@@ -83,32 +83,57 @@ export function businessFindings(root: string, corpus: Corpus, base: string | un
   return out;
 }
 
+export interface BusinessGroup {
+  /** The business the README lists; undefined for the group of rules that name none of them. */
+  readonly name: string | undefined;
+  readonly text: string;
+  readonly rules: readonly Rule[];
+}
+
+const byId = (a: Rule, b: Rule) => a.id.localeCompare(b.id, "en", { numeric: true });
+
 /**
- * What `canon rule new --domain X` prints before it creates the file: each business the domain lists with the rules
- * that name it, then the rules that name none, so the author sees this business's whole boundary first (BR-2432).
+ * A domain's rules grouped by the businesses its README lists, in the README's order, the rules that name none of
+ * them last (BR-2007, BR-2114, BR-2432). Empty when the domain lists no business: there is nothing to group by, and
+ * every listing then stays flat, so a domain that has not declared its businesses reads exactly as it did before.
+ */
+export function groupByBusiness(domain: Domain, rules: readonly Rule[]): readonly BusinessGroup[] {
+  const businesses = businessesOf(domain);
+  if (businesses.length === 0) return [];
+  const named = new Set(businesses.map((b) => b.name));
+  const groups: BusinessGroup[] = businesses.map((b) => ({ name: b.name, text: b.text, rules: rules.filter((r) => r.business === b.name).sort(byId) }));
+  // reason: a rule whose business the README does not list is refused once this work touches it, but until then it is listed, not hidden (BR-2431)
+  const loose = rules.filter((r) => r.business === undefined || !named.has(r.business)).sort(byId);
+  if (loose.length > 0) groups.push({ name: undefined, text: "", rules: loose });
+  return groups;
+}
+
+/** Those groups as lines: a heading per business, then its rules through `line` (BR-2007, BR-2432). */
+export function businessListing(domain: Domain, rules: readonly Rule[], line: (rule: Rule) => string): readonly string[] {
+  const out: string[] = [];
+  for (const g of groupByBusiness(domain, rules)) {
+    if (out.length > 0) out.push("");
+    out.push(g.name === undefined ? `in no business (${g.rules.length})` : `business: ${g.name}${g.text === "" ? "" : ` — ${g.text}`}`);
+    if (g.rules.length === 0) out.push("- (no rule yet)");
+    for (const r of g.rules) out.push(line(r));
+  }
+  return out;
+}
+
+/**
+ * What `canon rule new --domain X` prints before it creates the file: the same groups `canon context` shows, so the
+ * author sees this business's whole boundary at the moment a new rule would otherwise repeat part of it (BR-2432).
  */
 export function contractLines(corpus: Corpus, domainName: string): readonly string[] {
   const domain = corpus.domains.find((d) => d.name === domainName);
   if (!domain) return [];
   const rules = corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.domain === domainName && (d.status === "active" || d.status === "planned"));
-  const byId = (a: Rule, b: Rule) => a.id.localeCompare(b.id, "en", { numeric: true });
-  const businesses = businessesOf(domain);
-  const out: string[] = [];
-  if (businesses.length === 0) {
-    out.push(`domain ${domainName} lists no business yet (${BUSINESS_SECTION} in canon/rules/${domainName}/README.md): write the business there first, then point this rule at it (BR-2430)`);
-  } else {
-    out.push(`businesses of ${domainName} — a new rule draws a boundary these do not cover yet, or starts a new business (BR-2432):`);
-    for (const b of businesses) {
-      out.push(`  ${b.name}${b.text === "" ? "" : ` — ${b.text}`}`);
-      const of = rules.filter((r) => r.business === b.name).sort(byId);
-      if (of.length === 0) out.push("    (no rule yet)");
-      for (const r of of) out.push(`    ${r.id} ${r.title}`);
-    }
+  const listing = businessListing(domain, rules, (r) => `- ${r.id} ${r.title}`);
+  if (listing.length === 0) {
+    return [
+      `domain ${domainName} lists no business yet (${BUSINESS_SECTION} in canon/rules/${domainName}/README.md): write the business there first, then point this rule at it (BR-2430)`,
+      ...rules.sort(byId).map((r) => `- ${r.id} ${r.title}`),
+    ];
   }
-  const loose = rules.filter((r) => r.business === undefined || !businesses.some((b) => b.name === r.business)).sort(byId);
-  if (loose.length > 0) {
-    out.push(`  in no business (${loose.length}) — they are not migrated, each gets a business when it is next changed (BR-2431):`);
-    for (const r of loose) out.push(`    ${r.id} ${r.title}`);
-  }
-  return out;
+  return [`businesses of ${domainName} — a new rule draws a boundary these do not cover yet, or starts a new business (BR-2432):`, ...listing];
 }
