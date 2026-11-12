@@ -1,8 +1,11 @@
 ---
 id: C-492
 title: BR-2452 points to BR-2084 for the update-check line instead of restating it
-status: open
-rules: [BR-2452]
+status: done
+rules:
+  - BR-2452
+passes:
+  BR-2452: 4b06e2134a0de49f test wording
 ---
 
 ## 为什么
