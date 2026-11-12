@@ -6,6 +6,10 @@
 
 不管：评审怎么判断（`knowledge/review`）、检查查什么（`knowledge/check`）、执行记录（`work/execution`）、先合后测时 main 上的后台测试（`work/watch`）。
 
+## 业务
+
+- **入队前的检查**：上次被拒、什么都没变时，合入在入队之前就重跑能当场重跑的检查。
+
 ## 术语
 
 - **合入者（lander）**：执行 `canon work land` 的那个进程。
