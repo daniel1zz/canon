@@ -1,9 +1,9 @@
 ---
 id: C-479
 title: "Step B, second half: a review after landing splits changed documents
-  that do not fit, a failed one can be queued again, open findings are
-  re-asked, verdict and stats cover the review after landing"
-status: open
+  that do not fit, a failed one can be queued again, open findings are re-asked,
+  verdict and stats cover the review after landing"
+status: done
 rules:
   - BR-2448
   - BR-2449
@@ -17,6 +17,16 @@ rules:
 plan: C-464
 steps:
   - B
+passes:
+  BR-2253: 87eeb8f4413525ff test
+  BR-2359: c23d3fdacc7a4cda test
+  BR-2375: 01f95c5a0478abcc test
+  BR-2397: 491bef642f30d96e test
+  BR-2439: 8bd3e74154d1dffc test
+  BR-2448: 432c6fe061c13d4d test
+  BR-2449: 531564d29b611841 test
+  BR-2450: d411ebf756487eb9 test
+  BR-2451: 06477752e3cc6a00 test
 ---
 
 ## 为什么
