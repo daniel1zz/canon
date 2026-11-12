@@ -50,6 +50,8 @@ const CASES: Case[] = [
   ["a claim command on a later line is checked: subagent take refused", "ls\ncanon work take C-5 --from abc", A1, "canon work take is for the main session only"],
   ["a claim command on a later line: main session take passes", "ls\ncanon work take C-5 --from abc", undefined, undefined],
   ["subagent take with --as is refused too", "canon work take C-5 --from abc --as a1", A1, "canon work take is for the main session only"],
+  ["subagent unstall, with or without --as, is refused", "canon work unstall C-5 --reason x", A1, "canon work unstall is for the main session only"],
+  ["main session unstall without --as passes", "canon work unstall C-5 --reason x", undefined, undefined],
   ["CANON_ACTOR prefix is refused for a subagent", "CANON_ACTOR=agent:x:y canon work land", A1, "do not set CANON_ACTOR"],
   ["CANON_ACTOR prefix is refused for the main session", "CANON_ACTOR=agent:x:y canon work land", undefined, "do not set CANON_ACTOR"],
   ["an absolute canon path counts", "/usr/local/bin/canon work land", A1, "--as a1"],

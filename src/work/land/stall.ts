@@ -9,7 +9,7 @@ import type { CoordDb } from "../db.ts";
 export const STALL_LIMIT = 3;
 
 // reason: races, the machine and setup mistakes are not the subagent's to fix nor the dispatcher's to avoid, so they do not count (BR-2454)
-const NOT_COUNTED: readonly string[] = ["claimed", "environment", "main-dirty", "main-moved", "moved-during-land", "lost-turn", "no-floor", "no-claim", "on-main", "stalled"];
+const NOT_COUNTED: readonly string[] = ["claimed", "environment", "timeout", "main-dirty", "main-moved", "moved-during-land", "lost-turn", "no-floor", "no-claim", "on-main", "stalled"];
 
 /** Whether `actor` is a subagent: `agent:<session>:<name>`, as BR-2023 builds it for `--as`. */
 export function isSubagent(actor: string): boolean {
@@ -59,7 +59,7 @@ export function unstall(db: CoordDb, actor: string, change: string, reason: stri
   const any = db.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM events WHERE subject = ? AND kind LIKE 'land.%'").get(change)?.n ?? 0;
   if (any === 0) return { ok: false, code: "not_found", message: `${change} has no landing events` };
   const n = refusalsInARow(db, change).length;
-  if (n < STALL_LIMIT) return { ok: false, code: "refused", message: `${change} has ${n} refusal(s) in a row, fewer than ${STALL_LIMIT}: it is not stopped, nothing to let go` };
+  if (n < STALL_LIMIT) return { ok: false, code: "refused", message: `${change} has ${n} refusal(s) in a row and is not stopped: nothing to let go` };
   db.event(actor, "land.unstall", change, { reason: why, refusals: n });
   return { ok: true, refusals: n };
 }

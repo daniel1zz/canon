@@ -10,7 +10,7 @@ export type Verdict =
   | { readonly kind: "skip"; readonly reason: "unparsable"; readonly sub: string };
 
 /** The `canon work` subcommands that act on a claim; the others (test, status, after-land, clean ...) are not checked. */
-const CLAIM_COMMANDS = new Set(["start", "land", "stop", "drop", "take"]);
+const CLAIM_COMMANDS = new Set(["start", "land", "stop", "drop", "take", "unstall"]);
 /** Words that put another command in front of the real one. */
 const PREFIXES = new Set(["env", "command", "time", "sudo", "exec", "nohup", "nice", "!", "{", "}", "then", "do", "else", "if", "while", "until", "elif"]);
 /** Prefixes that take options of their own (`env -i`, `sudo -u x` is not followed). */
@@ -53,6 +53,8 @@ function decide(f: Found, agentId: string | undefined, anyActor: boolean): strin
     return f.as.length === 0 ? undefined : `--as is only for subagents; the main session must not pass --as (got --as ${f.as[0]}). Re-run without --as.`;
   }
   if (f.sub === "take") return "canon work take is for the main session only: a subagent must not take over a claim. Do not run it; tell the main session.";
+  // reason: a subagent without --as would act as the main session and let its own stopped change land again (BR-2340, BR-2455)
+  if (f.sub === "unstall") return "canon work unstall is for the main session only: a subagent must not let its own stopped change land again. Do not run it; report the refusals to the main session.";
   const wrong = f.as.find((v) => v !== agentId);
   if (f.as.length > 0 && wrong === undefined) return undefined;
   const got = f.as.length === 0 ? "" : ` Got --as '${wrong}'.`;

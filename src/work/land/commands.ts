@@ -71,7 +71,7 @@ const unstallCmd = defineCommand({
     const ws = workspace();
     const r = unstall(ws.db, ws.actor, String(args.change), typeof args.reason === "string" ? args.reason : "");
     if (!r.ok) fail({ code: r.code, message: r.message });
-    say(`${String(args.change)} may land again; ${STALL_LIMIT} more refusals in a row stop it again`);
+    say(`${String(args.change)} may land again; its count of refusals in a row starts from zero`);
   },
 });
 
