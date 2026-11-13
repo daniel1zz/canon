@@ -1,6 +1,7 @@
 import { defineCommand } from "citty";
 import { entry, must, say, workspace, type DomainCommands } from "../../../invocation/command.ts";
 import { closeFinding, renderClosed } from "./close.ts";
+import { reconcileFindings, renderReconciled } from "./reconcile.ts";
 
 /** `canon finding close`: the main agent or a person settles an open review finding (BR-2453, D-99). */
 const finding = defineCommand({
@@ -28,6 +29,18 @@ const finding = defineCommand({
           }),
         );
         say(renderClosed(c));
+      },
+    }),
+    reconcile: defineCommand({
+      meta: { description: "Give two findings that pull the same documents opposite ways to the review for one wording that satisfies both; records an owner question when none exists" },
+      args: {
+        a: { type: "positional", required: true, description: "One finding's number" },
+        b: { type: "positional", required: true, description: "The other finding's number" },
+      },
+      async run({ args }) {
+        const ws = workspace();
+        const r = must(await reconcileFindings(ws.db, { cwd: ws.root, main: ws.config.main, actor: ws.actor, a: String(args.a), b: String(args.b) }));
+        say(renderReconciled(Number(String(args.a).replace(/^#/, "")), Number(String(args.b).replace(/^#/, "")), r));
       },
     }),
   },

@@ -46,7 +46,7 @@ interface Row {
 }
 
 /** The file of document `doc` on `main`: a rule, decision or release by its id, a standing instruction by its path. */
-function pathOn(cwd: string, main: string, doc: string): string | undefined {
+export function pathOn(cwd: string, main: string, doc: string): string | undefined {
   if (!ID.test(doc)) return doc;
   const names = git(cwd, "ls-tree", "-r", "--name-only", main, "canon/");
   if (!names.ok) return undefined;

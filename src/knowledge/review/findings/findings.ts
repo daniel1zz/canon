@@ -90,6 +90,16 @@ export interface Recorded {
  * reviewed document when it names none; a finding whose identity is already open adds its documents to that record and
  * opens nothing. Notes are skipped. `event` is the event that recorded the review, `sha` the commit it saw.
  */
+/** Open findings whose attached document set equals that of finding `id`, excluding itself (BR-2461). */
+export function sameDocsOpen(db: CoordDb, id: number): number[] {
+  const row = db.db.query<{ docs: string }, [number]>("SELECT docs FROM review_findings WHERE id = ?").get(id);
+  if (!row) return [];
+  return db.db
+    .query<{ id: number }, [string, number]>("SELECT id FROM review_findings WHERE docs = ? AND closed_at IS NULL AND id != ? ORDER BY id")
+    .all(row.docs, id)
+    .map((r) => r.id);
+}
+
 export function recordFindings(db: CoordDb, input: { readonly findings: readonly Finding[]; readonly reviewed: readonly string[]; readonly change: string | null; readonly event: number; readonly sha: string | null }): Result<Recorded> {
   const blocking = input.findings.filter((f) => f.criterion !== "note");
   // reason: a finding with nowhere to be shown would be recorded and never seen; fail loud instead (BR-2434)

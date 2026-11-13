@@ -12,7 +12,7 @@ import { reviewTree } from "../../work/land/checks/review-tree.ts";
 import { architectureOf, couldNotRun, duplicateReviewPrompt, reviewScope, reviewSettingsOn, standingTouched, type ReviewSettings } from "../../work/land/checks/review-scope.ts";
 import { docsKey, passedDocs, passedReview, reviewKey } from "../../work/land/checks/review-reuse.ts";
 import { landedSince } from "../../work/land/checks/landed-since.ts";
-import { findingOf, recordFindings } from "./findings/findings.ts";
+import { findingOf, recordFindings, sameDocsOpen } from "./findings/findings.ts";
 
 /**
  * The rule review and the duplicate review of one landed commit, run after the landing in the background (D-89, BR-2441):
@@ -164,6 +164,8 @@ function settle(ws: Workspace, job: LandedJob, say: Say, verdict: ReviewVerdict,
   if (!recorded.ok) return err("invalid", `the ${review} review's findings could not be recorded: ${recorded.error.message}`);
   const ids = [...recorded.value.opened, ...recorded.value.existing];
   for (const f of blocking) say(`review finding: ${f}`);
+  // reason: a mechanical hint only; whether the pair is really opposed is the review's call in canon finding reconcile (BR-2461, D-103)
+  for (const n of recorded.value.opened) for (const old of sameDocsOpen(ws.db, n)) say(`review: #${old} and #${n} name the same documents; if they pull opposite ways, run canon finding reconcile ${old} ${n}`);
   // reason: an answer in the old format blocks by its own verdict with findings that name no criterion: said, never recorded (D-74)
   const legacy = verdict.verdict === "block" && blocking.length === 0;
   for (const n of notes) say(legacy ? `review finding (old answer format with no criterion, so not recorded as an open finding): ${n}` : `review note: ${n}`);

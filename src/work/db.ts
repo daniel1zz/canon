@@ -183,6 +183,8 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ["questions", "multi INTEGER NOT NULL DEFAULT 0"],
   // Whether the entry runs a floor scope's command instead of the floor, so it goes ahead of full-floor landings (BR-2399, D-82).
   ["queue", "scoped INTEGER"],
+  // The owner-verdict question two opposed findings await, written by canon finding reconcile (BR-2461, D-103).
+  ["review_findings", "question INTEGER"],
 ];
 
 /**
@@ -254,8 +256,9 @@ export class CoordDb {
       db.exec("PRAGMA busy_timeout = 5000;");
       enableWal(db);
       db.exec(SCHEMA);
-      addColumns(db);
+      // reason: widenFindingsCheck rebuilds review_findings with FINDINGS_TABLE's columns only, so added columns must come after it (BR-2461)
       widenFindingsCheck(db);
+      addColumns(db);
       return ok(new CoordDb(db, worktree ?? null));
     } catch (e) {
       return err("io", `cannot open coordination DB at ${path}: ${(e as Error).message}`);
