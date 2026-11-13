@@ -220,7 +220,8 @@ const STOP_SIGNALS: readonly NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
  */
 export async function workTest(ws: Workspace, all: boolean, say: (line: string) => void, deps: WorkTestDeps = machineDeps, only: readonly string[] = []): Promise<Result<WorkTestResult>> {
   if (!ws.config.testCommand) {
-    return err("invalid", `canon/config.yaml has no \`test_command\`: set the command that runs one test file, with ${FILE_PLACEHOLDER} where its path goes (e.g. test_command: "bun test ${FILE_PLACEHOLDER}")`);
+    // reason: the hint must pass the {report} check a copied value meets next (BR-2160, review finding #4)
+    return err("invalid", `canon/config.yaml has no \`test_command\`: set the command that runs one test file, with ${FILE_PLACEHOLDER} where its path goes and ${REPORT_PLACEHOLDER} where it writes its JUnit XML report (e.g. test_command: "bun test ${FILE_PLACEHOLDER} --reporter=junit --reporter-outfile=${REPORT_PLACEHOLDER}")`);
   }
   const sel = selectTests(ws, all, only);
   if (!sel.ok) return sel;

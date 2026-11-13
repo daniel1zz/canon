@@ -313,7 +313,7 @@ describe("canon work test runs", () => {
     write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\n' });
     const r = canon(wt, "work", "test");
     expect(r.code).toBe(2);
-    expect(r.err).toContain('test_command: "bun test {file}"');
+    expect(r.err).toContain('test_command: "bun test {file} --reporter=junit --reporter-outfile={report}"');
     expect(canon(wt, "check").code).not.toBe(2);
   });
 });
