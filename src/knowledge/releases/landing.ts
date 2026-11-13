@@ -2,9 +2,8 @@ import { git } from "../../kernel/git.ts";
 import type { CoordDb } from "../../work/db.ts";
 import type { Corpus, Release } from "../documents/model.ts";
 import { parseDocFile } from "../documents/docfile.ts";
-import { executionStates } from "../../work/execution/state.ts";
 import type { FloorTiming } from "../../work/watch/config-keys.ts";
-import { ownerConfirmation, shipBlockers } from "./gate.ts";
+import { ownerConfirmation } from "./gate.ts";
 
 /**
  * The landing's release check (BR-2332, BR-2335, D-61): a release becomes `shipped` only through `canon release ship`, which
@@ -33,9 +32,14 @@ export function landingReleases(i: { readonly primary: string; readonly timing: 
       problems.push(`${now.id} becomes shipped, but ${i.subject ?? "this landing"} has no release.ship record for it at ${now.shippedAt}: only \`canon release ship ${now.id}\` ships a release, after the owner's recorded yes`);
       continue;
     }
-    // reason: ship checked these when it started; the landing may wait behind others, so they are checked again on the tree that lands (BR-2335)
-    const blockers = shipBlockers(i.corpus, executionStates(i.primary, i.corpus, i.timing), now.id);
-    if (blockers.length > 0) problems.push(`${now.id} no longer meets its conditions to ship (every rule tagged with it must be passed and every plan tagged with it done):\n${blockers.map((b) => `  - ${b}`).join("\n")}\nrun \`canon release ship ${now.id}\` again once they are`);
+    const at = now.shippedAt ?? "";
+    // reason: the ship's conditions are not recomputed here: executionStates reads the live green ref, so a frozen tree can flip from passed to waiting and the refusal would never converge; what must hold is that shipped_at was accepted (D-105, BR-2335)
+    const accepted = git(i.primary, "rev-parse", "--verify", "--quiet", "refs/canon/accepted^{commit}");
+    if (!accepted.ok || accepted.value === "") problems.push(`${now.id} ships ${at.slice(0, 9)}, but refs/canon/accepted does not exist: a release ships an accepted commit (canon accept, D-89)`);
+    else if (at !== accepted.value && !git(i.primary, "merge-base", "--is-ancestor", at, accepted.value).ok)
+      problems.push(`${now.id} ships ${at.slice(0, 9)}, which is not refs/canon/accepted (${accepted.value.slice(0, 9)}) or an ancestor of it`);
+    const acceptedEvent = i.db.db.query<{ n: number }, [string]>("SELECT COUNT(*) AS n FROM events WHERE kind = 'accept.ok' AND detail LIKE '%' || ? || '%'").get(at);
+    if ((acceptedEvent?.n ?? 0) === 0) problems.push(`${now.id} ships ${at.slice(0, 9)}, but no accept.ok event accepted that commit (canon accept, D-89)`);
     const confirmed = ownerConfirmation(i.db, now.id);
     if (!confirmed.ok) problems.push(`${now.id}: the owner's confirmation no longer stands: ${confirmed.message}`);
   }

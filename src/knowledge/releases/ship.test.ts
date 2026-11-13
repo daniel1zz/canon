@@ -57,7 +57,16 @@ function fixture(extra: Record<string, string> = {}, tagged = [1, 2]): string {
   });
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "fixture");
+  acceptNow(root);
   return root;
+}
+
+/** Marks main's tip accepted the way canon accept records it (BR-2462), so the ship under test has an accepted commit (D-89). */
+function acceptNow(root: string): string {
+  const sha = sh(root, "rev-parse", "main").trim();
+  sh(root, "update-ref", "refs/canon/accepted", sha);
+  ws(root).db.event("human:owner", "accept.ok", null, { commit: sha });
+  return sha;
 }
 
 const question = (n: number) => `ship ${R(n)}: 发 ${R(n)} 吗？标着它的规则全部已通过。`;
@@ -210,6 +219,34 @@ describe("canon release ship: what must be passed", () => {
 });
 
 describe("canon release ship: shipping and the landing gate", () => {
+  test("BR-2334: without refs/canon/accepted the ship is refused with a canon accept hint; an accepted commit behind main ships the accepted one", () => {
+    const root = fixture();
+    sh(root, "update-ref", "-d", "refs/canon/accepted");
+    ask(root, question(1), "yes");
+    const none = agent(root, "release", "ship", R(1));
+    expect([none.code, none.err.includes("canon accept")]).toEqual([1, true]);
+    const accepted = acceptNow(root);
+    write(root, { "unrelated.txt": "x\n" });
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "later landing");
+    const r = agent(root, "release", "ship", R(1), "--timeout", "5");
+    expect([r.code, r.out.includes(`shipped ${R(1)} at ${accepted.slice(0, 9)}`)]).toEqual([0, true]);
+    expect(r.out).toContain("behind");
+    expect(readFileSync(join(root, `canon/releases/${R(1)}.md`), "utf8")).toContain(`shipped_at: ${accepted}`);
+  });
+
+  test("BR-2334: the release changed on main after the acceptance: refused until accepted again", () => {
+    const root = fixture();
+    ask(root, question(1), "yes");
+    write(root, { [`canon/releases/${R(1)}.md`]: releaseText(1, "status: active\n").replace("成功标准的内容", "成功标准改了") });
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "release edited after accept");
+    const stale = agent(root, "release", "ship", R(1));
+    expect([stale.code, stale.err.includes("canon accept")]).toEqual([1, true]);
+    acceptNow(root);
+    expect(agent(root, "release", "ship", R(1), "--timeout", "5").code).toBe(0);
+  });
+
   test("BR-2334 BR-2332 BR-2331: with the relayed yes recorded by the question tool it lands R-1 shipped at main's commit, tags it, and canon check passes", () => {
     const root = fixture();
     const sha = sh(root, "rev-parse", "main").trim();
@@ -310,7 +347,7 @@ describe("canon release ship: shipping and the landing gate", () => {
 
 describe("canon release ship: conditions checked again when the change lands", () => {
   /** Ships R-1 while main's floor fails, so the ship change is committed but not landed; then main is repaired. Returns the ship change's worktree. */
-  function stuckShip(extra: Record<string, string> = {}): { root: string; worktree: string } {
+  function stuckShip(extra: Record<string, string> = {}): { root: string; worktree: string; accepted: string } {
     const root = fixture(extra);
     write(root, { FAIL: "x\n" });
     sh(root, "add", "-A");
@@ -321,46 +358,35 @@ describe("canon release ship: conditions checked again when the change lands", (
     const worktree = block.split("\n")[0]!.slice("worktree ".length);
     sh(root, "rm", "-q", "FAIL");
     sh(root, "commit", "-qm", "floor repaired");
-    return { root, worktree };
+    return { root, worktree, accepted: sh(root, "rev-parse", "refs/canon/accepted").trim() };
   }
   const land = (worktree: string) => canon(worktree, "agent:test", ["work", "land", "--finish", "--timeout", "5"]);
   const shipped = (root: string) => sh(root, "show", `main:canon/releases/${R(1)}.md`).includes("status: shipped");
   const rule1 = (root: string) => join(root, `canon/rules/billing/${BR(1)}.md`);
 
-  test("BR-2335: a rule that became waiting for rerun after ship started refuses the landing with reason release, also on a direct land --finish; once it passes again the landing goes through", () => {
+  test("BR-2335: a rule that became waiting for rerun after ship started no longer refuses the landing: the accepted snapshot ships", () => {
     const { root, worktree } = stuckShip();
     const original = readFileSync(rule1(root), "utf8");
     writeFileSync(rule1(root), original.replace("规则1的行为。", "规则1的行为变了。"));
     sh(root, "commit", "-qam", "rule 1 changes");
-    for (let attempt = 0; attempt < 2; attempt++) {
-      const r = land(worktree);
-      expect([r.code, r.err.includes("release")]).toEqual([1, true]);
-      expect(r.err).toContain(`${BR(1)} 规则1: 待重新执行`);
-      expect(r.err).not.toContain(`${BR(2)} `);
-      expect(r.err).toContain(`canon release ship ${R(1)}`);
-      expect(shipped(root)).toBe(false);
-    }
-    writeFileSync(rule1(root), original);
-    sh(root, "commit", "-qam", "rule 1 as it was");
-    const again = land(worktree);
-    expect([again.code, shipped(root)]).toEqual([0, true]);
+    // reason: the shipped content is the accepted snapshot; conditions are not recomputed at the landing (D-105, BR-2335)
+    const r = land(worktree);
+    expect([r.code, shipped(root)]).toEqual([0, true]);
+    expect(r.err).not.toContain("待重新执行");
   });
 
-  test("BR-2335: a step added to a tagged plan after ship started refuses the landing with reason release; once it is done the landing goes through", () => {
-    const table = (rows: string) => `| 步骤 | 内容 | 依赖 |\n|---|---|---|\n${rows}`;
-    const change = (n: number, status: string, front: string, body = "") => `---\nid: ${C(n)}\ntitle: 变更${n}\nstatus: ${status}\nrules: []\n${front}---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n${body}## 任务\n\n- [x] x\n`;
-    const plan = (rows: string) => change(5, "open", `release: ${R(1)}\n`, `## 计划\n\n${table(rows)}\n`);
-    const { root, worktree } = stuckShip({ [`canon/changes/${C(5)}.md`]: plan("| 1 | 建表 | - |\n"), [`canon/changes/${C(6)}.md`]: change(6, "done", `plan: ${C(5)}\nsteps: [1]\n`) });
-    write(root, { [`canon/changes/${C(5)}.md`]: plan("| 1 | 建表 | - |\n| 2 | 接口 | 1 |\n") });
-    sh(root, "commit", "-qam", "a step more");
-    const r = land(worktree);
-    expect([r.code, r.err.includes("release")]).toEqual([1, true]);
-    expect(r.err).toContain(`plan ${C(5)} 变更5: 已完成 1/2; not done: 2`);
+  test("BR-2335: the landing refuses when refs/canon/accepted is gone or shipped_at has no accept.ok, and lands once both are back", () => {
+    const { root, worktree, accepted } = stuckShip();
+    sh(root, "update-ref", "-d", "refs/canon/accepted");
+    const gone = land(worktree);
+    expect([gone.code, gone.err.includes("refs/canon/accepted")]).toEqual([1, true]);
     expect(shipped(root)).toBe(false);
-    // reason: C-7 is the fixture's passing change and C-8 the change ship opened
-    write(root, { [`canon/changes/${C(20)}.md`]: change(20, "done", `plan: ${C(5)}\nsteps: [2]\n`) });
-    sh(root, "add", "-A");
-    sh(root, "commit", "-qm", "step 2 done");
+    sh(root, "update-ref", "refs/canon/accepted", accepted);
+    ws(root).db.db.query("DELETE FROM events WHERE kind = 'accept.ok'").run();
+    const noEvent = land(worktree);
+    expect([noEvent.code, noEvent.err.includes("accept.ok")]).toEqual([1, true]);
+    // reason: the landing wants the acceptance of shipped_at itself, not of whatever the ref points at now (BR-2335)
+    ws(root).db.event("human:owner", "accept.ok", null, { commit: accepted });
     const again = land(worktree);
     expect([again.code, shipped(root)]).toEqual([0, true]);
   });
