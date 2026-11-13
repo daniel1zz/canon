@@ -32,10 +32,13 @@ export interface Closed {
 export const MIN_QUOTE = 8;
 const squash = (s: string): string => s.replace(/\s+/g, " ").trim();
 const ID = /^(BR|D|R)-\d+$/;
+/** The overview is not a document with an id, but an `overview` finding's fix usually lands there (BR-2453). */
+const OVERVIEW = "canon/architecture.md";
 
 interface Row {
   id: number;
   docs: string;
+  criterion: string;
   change: string | null;
   sha: string | null;
   closed_at: string | null;
@@ -67,7 +70,7 @@ export function closeFinding(db: CoordDb, input: CloseInput): Result<Closed> {
   if ((input.fixed === undefined) === (input.spurious === undefined)) return err("invalid", "give exactly one of --fixed <commit> and --spurious \"<quote>\"");
   const reason = input.reason.trim();
   if (reason === "") return err("invalid", "--reason is required: say what fixed it or why it does not hold");
-  const look = (): Row | null => db.db.query<Row, [number]>("SELECT id, docs, change, sha, closed_at, closed_how FROM review_findings WHERE id = ?").get(n);
+  const look = (): Row | null => db.db.query<Row, [number]>("SELECT id, docs, criterion, change, sha, closed_at, closed_how FROM review_findings WHERE id = ?").get(n);
   const row = look();
   if (!row) return err("not_found", `review finding #${n} does not exist`);
   let commit: string | undefined;
@@ -77,7 +80,8 @@ export function closeFinding(db: CoordDb, input: CloseInput): Result<Closed> {
     commit = c.value;
   }
   if (row.closed_at !== null) return err("conflict", `review finding #${n} is already closed (${row.closed_how}, ${row.closed_at})`);
-  const docs = JSON.parse(row.docs) as string[];
+  // reason: an overview finding is attached to the documents it contradicts, but its fix or its disproof is in the overview itself (BR-2453)
+  const docs = [...(JSON.parse(row.docs) as string[]), ...(row.criterion === "overview" ? [OVERVIEW] : [])];
   let by: string;
   if (commit !== undefined) {
     const onMain = git(input.cwd, "merge-base", "--is-ancestor", commit, input.main);

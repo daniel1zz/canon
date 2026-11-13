@@ -223,6 +223,39 @@ describe("canon finding close (BR-2453)", () => {
     expect(row(db, n).closed_how).toBeNull();
   });
 
+  test("BR-2453: an overview finding also accepts a fix or a quote in canon/architecture.md; other criteria do not", () => {
+    const root = billing();
+    const db = ws(root).db;
+    const event = db.event("agent:x", "review.block", id("C", 9), {});
+    const r = recordFindings(db, {
+      findings: [f("overview", `总览和 ${BR(1)} 矛盾`), f("contradiction", `${BR(2)} 和总览矛盾`)],
+      reviewed: [], change: id("C", 9), event, sha: sh(root, "rev-parse", "main"),
+    });
+    if (!r.ok) throw new Error(r.error.message);
+    const [over, contra] = r.value.opened;
+    const commit = (file: string, text: string) => {
+      writeFileSync(join(root, file), text);
+      sh(root, "add", "-A");
+      sh(root, "commit", "-qm", file);
+      return sh(root, "rev-parse", "HEAD");
+    };
+    const fix = commit("canon/architecture.md", "# 总览\n\n主 checkout 签出 main，细节见规则。\n");
+    const refused = closeFinding(db, input(root, contra!, { fixed: fix, reason: "overview only counts for overview findings" }));
+    expect(!refused.ok && [refused.error.code, refused.error.message.includes("changes none")]).toEqual(["refused", true]);
+    const closed = closeFinding(db, input(root, over!, { fixed: fix, reason: "the overview now matches the rule" }));
+    expect(closed.ok && closed.value).toEqual({ id: over!, how: "fixed", by: fix });
+    const quoted = closeFinding(db, input(root, contra!, { spurious: "主 checkout 签出 main，细节见规则。", reason: "quote is only in the overview" }));
+    expect(!quoted.ok && quoted.error.code).toBe("refused");
+    const r2 = recordFindings(db, {
+      findings: [f("overview", `总览和 ${BR(3)} 矛盾`)],
+      reviewed: [], change: id("C", 9), event: db.event("agent:x", "review.block", id("C", 9), {}), sha: sh(root, "rev-parse", "main"),
+    });
+    if (!r2.ok) throw new Error(r2.error.message);
+    const over2 = r2.value.opened[0]!;
+    const byQuote = closeFinding(db, input(root, over2, { spurious: "主 checkout 签出 main，细节见规则。", reason: "the overview already says so" }));
+    expect(byQuote.ok && byQuote.value).toEqual({ id: over2, how: "spurious", by: "canon/architecture.md" });
+  });
+
   test("BR-2453: --spurious closes with a quote of 8 or more characters found word for word in one of its documents on main, across a line break; 7 or not there is refused", () => {
     const { root, db, n, commit } = opened();
     commit(`canon/rules/billing/${BR(2)}.md`, ruleFile(2).replace("Rule 2.", "本规则只适用于\n海外订单的退款。"));
