@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../../work/land/land.ts";
 import { enqueue, finishEntry } from "../../work/land/queue/queue.ts";
@@ -235,6 +235,23 @@ describe("canon work review-landed --again (BR-2449)", () => {
     expect(done.out).toContain("is done");
     expect(jobs(root)).toHaveLength(2);
   });
+
+  test("BR-2449: canon work status lists a failed review with its log and the --again command until a later run is done", async () => {
+    const { root, fail } = queueProject();
+    writeFileSync(fail, "");
+    const s = ruleChange(root, 1);
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    expect((await runLandedReviews(ws(root), quiet, undefined)).ok).toBe(true);
+    const status = () => Bun.spawnSync(["bun", CLI, "work", "status"], { cwd: root, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } }).stdout.toString();
+    const shown = status();
+    expect(shown).toContain(`the review after the landing of ${s.change} failed`);
+    expect(shown).toContain(`canon work review-landed --again ${s.change}`);
+    expect(shown).toContain(jobs(root)[0]!.log);
+    rmSync(fail, { force: true });
+    expect(cli(root, "--again", s.change).code).toBe(0);
+    expect((await runLandedReviews(ws(root), quiet, undefined)).ok).toBe(true);
+    expect(status()).not.toContain("failed (log:");
+  }, 60_000);
 
   test("BR-2449: a queued review is not queued twice; a landing that never had a review is queued with its landed entry and a log without -again", async () => {
     const { root } = queueProject();

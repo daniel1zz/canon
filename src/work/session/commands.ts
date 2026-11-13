@@ -27,6 +27,7 @@ import { choreIn, choresInFlight, isChore } from "./subject.ts";
 import { redMainNotice, startFixMain } from "../watch/redmain.ts";
 import { ensureWatcher, untestedNotice } from "../watch/watch.ts";
 import { startTrailingReview, unreviewedNotice } from "../../knowledge/review/code-review-batch.ts";
+import { failedReviewNotice } from "../../knowledge/review/landed-queue.ts";
 import { unpushedNotice } from "../remote/remote.ts";
 import { briefLine, othersDoing, planStatuses } from "../../knowledge/plans/status.ts";
 
@@ -92,10 +93,11 @@ const status = defineCommand({
     const gone = goneLanders(ws.db);
     const untested = untestedNotice(ws);
     const unreviewed = unreviewedNotice(ws);
+    const failedReviews = failedReviewNotice(ws.db);
     const chores = must(choresInFlight(ws));
-    const data = { chores, ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending"), urgent: marks(ws.db) };
+    const data = { chores, ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), ...(failedReviews.length > 0 ? { failed_reviews: failedReviews } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending"), urgent: marks(ws.db) };
     if (args.json) return json(data);
-    for (const line of [...untested, ...unreviewed]) say(line);
+    for (const line of [...untested, ...unreviewed, ...failedReviews]) say(line);
     if (chores.length) say(`Unfinished chores: ${chores.map((c) => `${c.subject} (${c.branch})`).join(", ")}`);
     say("Claims:");
     // Every row is listed; one that no longer binds is marked, judged as `canon work start` judges it (BR-2192, BR-2100).

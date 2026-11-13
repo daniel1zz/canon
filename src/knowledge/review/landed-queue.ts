@@ -101,6 +101,15 @@ interface ReviewerRow {
 }
 
 /** Whether a reviewer is recorded and its process is not provably gone (an unreadable process table counts as alive, D-11). */
+/** One line per failed landed review not superseded by a later done one of the same head, with the way out (BR-2449, #196). */
+export function failedReviewNotice(db: CoordDb): string[] {
+  const rows = db.db.query<{ change: string | null; head: string; state: string; log: string }, []>("SELECT change, head, state, log FROM landed_reviews").all();
+  const done = new Set(rows.filter((r) => r.state === "done").map((r) => r.head));
+  return rows
+    .filter((r) => r.state === "failed" && !done.has(r.head))
+    .map((r) => `main: the review after the landing of ${r.change ?? r.head.slice(0, 9)} failed (log: ${r.log}): canon work review-landed --again ${r.change ?? "<C-n>"}`);
+}
+
 export function liveLandedReviewer(db: CoordDb): boolean {
   const row = db.db.query<ReviewerRow, []>("SELECT pid, pid_start FROM landed_reviewer WHERE id = 1").get();
   return row !== null && isGone({ pid: row.pid, start: row.pid_start }) !== true;
