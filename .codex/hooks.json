@@ -1,0 +1,66 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "canon brief --hook --runtime codex || echo 'canon brief failed (see above), or canon is not on PATH. This project keeps its rules, decisions and work in canon/, and every change lands through canon work land: do not edit the main branch directly. Fix the error or install canon (ask the user if needed), then run canon brief.'",
+            "additionalContextLimit": 8000
+          }
+        ]
+      }
+    ],
+    "SubagentStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "canon brief --hook --runtime codex || echo 'canon brief failed (see above), or canon is not on PATH. This project keeps its rules, decisions and work in canon/, and every change lands through canon work land: do not edit the main branch directly. Fix the error or install canon (ask the user if needed), then run canon brief.'",
+            "additionalContextLimit": 8000
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "canon snapshot take --hook --runtime codex || echo '{\"systemMessage\":\"canon snapshot take failed or canon is not on PATH: uncommitted work was not snapshotted before this Bash call\"}'"
+          }
+        ]
+      },
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "canon work check-as --hook --runtime codex || echo '{\"systemMessage\":\"canon work check-as failed or canon is not on PATH: --as was not checked for this Bash call\"}'"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "request_user_input",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "canon human record --runtime codex || echo '{\"systemMessage\":\"canon human record failed or canon is not on PATH: this answer was not recorded for canon\"}'"
+          }
+        ]
+      },
+      {
+        "matcher": "apply_patch|Write|Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "canon restatements --hook --runtime codex || echo '{\"systemMessage\":\"canon restatements --hook failed or canon is not on PATH: the edited rule or decision was not checked for restatements\"}'"
+          }
+        ]
+      }
+    ]
+  }
+}

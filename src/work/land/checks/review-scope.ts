@@ -1,3 +1,4 @@
+import { standingInstructions } from "../../../kernel/agent.ts";
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
@@ -109,7 +110,7 @@ export function reviewScope(wt: string, base: string, head: string, corpus: Corp
 export function standingTouched(wt: string, base: string, head: string, instructions: readonly string[]): string[] {
   const touched = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=d", base, head);
   const shipped = shippedUnedited(wt);
-  return (touched.ok && touched.value !== "" ? touched.value.split("\n") : []).filter((p) => (instructions.includes(p) || SKILL_FILE.test(p)) && !shipped.has(p));
+  return (touched.ok && touched.value !== "" ? touched.value.split("\n") : []).filter((p) => (standingInstructions(instructions).includes(p) || SKILL_FILE.test(p)) && !shipped.has(p));
 }
 
 /** The architecture overview and the diff the change makes to it, when the project has an overview with content (BR-2009, D-65). */

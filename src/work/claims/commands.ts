@@ -1,5 +1,6 @@
+import { readRuntime } from "../../kernel/agent.ts";
 import { defineCommand } from "citty";
-import { AS_ARG, entry, fail, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { AS_ARG, RUNTIME_ARG, entry, fail, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { readFileSync } from "node:fs";
 import { runAsCheck } from "./as-hook.ts";
 import { handOverClaim } from "./claims.ts";
@@ -21,7 +22,7 @@ const takeCmd = defineCommand({
     const from = String(args.from);
     if (!/^[A-Za-z0-9_-]+$/.test(from)) fail({ code: "invalid", message: `--from ${JSON.stringify(from)}: an agent id is letters, digits, - and _ only` });
     const ws = workspace();
-    if (!/^agent:[^:]+$/.test(ws.actor)) fail({ code: "invalid", message: `\`canon work take\` runs in the main session of a Claude Code conversation (actor agent:<session>), not as ${ws.actor}` });
+    if (!/^agent:[^:]+$/.test(ws.actor)) fail({ code: "invalid", message: `\`canon work take\` runs in the main session of a Claude Code or Codex conversation (actor agent:<session>), not as ${ws.actor}` });
     const change = normalizeSubject(String(args.change));
     const r = handOverClaim(ws.db, change, ws.actor, from, ws.config.claimLeaseMs, sessionProcess());
     if (!r.ok) fail(r.error);
@@ -32,11 +33,11 @@ const takeCmd = defineCommand({
 
 /** `canon work check-as --hook`: the PreToolUse hook that checks `--as` on canon claim commands (BR-2340, D-62). */
 const checkAsCmd = defineCommand({
-  meta: { description: "Run by Claude Code's PreToolUse hook before each Bash call: refuse a canon work start, land, stop, drop or take whose --as does not match who runs it; reads the hook input on stdin" },
-  args: { hook: { type: "boolean", description: "Read Claude Code's PreToolUse input from stdin (required)" } },
+  meta: { description: "Run by the host's PreToolUse hook before each Bash call: refuse a canon work start, land, stop, drop or take whose --as does not match who runs it; reads the hook input on stdin" },
+  args: { ...RUNTIME_ARG, hook: { type: "boolean", description: "Read the host's PreToolUse input from stdin (required)" } },
   run({ args }) {
-    if (!args.hook) fail({ code: "invalid", message: "`canon work check-as` is run by Claude Code's PreToolUse hook: pass --hook, the hook input comes on stdin" });
-    process.stdout.write(runAsCheck(readFileSync(0, "utf8"), process.cwd()));
+    if (!args.hook) fail({ code: "invalid", message: "`canon work check-as` is run by the host's PreToolUse hook: pass --hook, the hook input comes on stdin" });
+    process.stdout.write(runAsCheck(readFileSync(0, "utf8"), process.cwd(), must(readRuntime(args.runtime))));
   },
 });
 

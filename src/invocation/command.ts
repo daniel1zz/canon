@@ -24,7 +24,9 @@ export function must<T>(r: Result<T>): T {
 }
 
 /** `--as <agent id>` on the commands that take or use a claim (BR-2023, D-62). */
-export const AS_ARG = { as: { type: "string", description: "Subagent: your own agent id; acts as agent:<session>:<id> (Claude Code only)" } } as const;
+export const AS_ARG = { as: { type: "string", description: "Subagent: your own agent id; acts as agent:<session>:<id> (Claude Code or Codex)" } } as const;
+
+export const RUNTIME_ARG = { runtime: { type: "string", description: "Hook input protocol: claude or codex" } } as const;
 
 /** The workspace of the current directory; `as` is the value of `--as`, absent when it was not given. */
 export function workspace(as?: unknown): Workspace {

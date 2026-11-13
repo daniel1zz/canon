@@ -39,6 +39,7 @@ typecheck_command: "bunx tsc --noEmit -p tsconfig.json"
 # src/invocation/guide.ts 拼接，各领域目录下的 guide.ts 写自己的条目（C-133），新增一个这样的文件时加在这里
 instructions:
   - CLAUDE.md
+  - AGENTS.md
   - src/invocation/guide.ts
   - src/knowledge/documents/guide.ts
   - src/knowledge/query/guide.ts

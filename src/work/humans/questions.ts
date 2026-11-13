@@ -1,3 +1,4 @@
+import { agentSession, sessionActor, type AgentRuntime } from "../../kernel/agent.ts";
 import { currentActor } from "../workspace.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import type { CoordDb } from "../db.ts";
@@ -155,6 +156,7 @@ export interface AskedQuestion {
 /** What `human.asked` keeps from one AskUserQuestion call (BR-2275). */
 export interface AskedRecord {
   readonly session: string;
+  readonly agent_id?: string;
   readonly tool_use_id: string | null;
   readonly transcript_path: string | null;
   readonly questions: readonly AskedQuestion[];
@@ -180,7 +182,7 @@ const optString = (v: unknown): v is string | undefined | null => v === undefine
  * multi-select), `response` is a freeform reply and `annotations[q].notes` a note. Anything else is invalid: nothing is
  * recorded from a guess. On failure the session is returned when the data names one, so the refusal can be tied to it.
  */
-export function parseAsked(input: string): { ok: true; record: AskedRecord } | { ok: false; failure: RecordFailure } {
+export function parseAsked(input: string, runtime: AgentRuntime = "claude"): { ok: true; record: AskedRecord } | { ok: false; failure: RecordFailure } {
   const fail = (reason: RecordRefusal, session: string | null, message: string) => ({ ok: false as const, failure: { reason, session, message } });
   let data: unknown;
   try {
@@ -190,9 +192,11 @@ export function parseAsked(input: string): { ok: true; record: AskedRecord } | {
   }
   if (!isObject(data)) return fail("not-object", null, "canon human record: the PostToolUse data must be a JSON object");
   const session = typeof data["session_id"] === "string" && data["session_id"].trim() ? data["session_id"].trim() : null;
-  if (data["tool_name"] !== "AskUserQuestion") return fail("not-question-tool", session, `canon human record records only AskUserQuestion; got tool_name ${JSON.stringify(data["tool_name"])}`);
+  const expected = runtime === "codex" ? "request_user_input" : "AskUserQuestion";
+  if (data["tool_name"] !== expected) return fail("not-question-tool", session, `canon human record records only ${expected}; got tool_name ${JSON.stringify(data["tool_name"])}`);
   if (!session) return fail("no-session", null, "canon human record: the PostToolUse data has no session_id");
   const bad = (what: string) => fail("malformed", session, `canon human record: ${what}; nothing recorded`);
+  if (runtime === "codex") return parseCodexAsked(data, session);
   const out = data["tool_response"];
   if (!isObject(out) || !isObject(out["answers"])) return bad("tool_response.answers is missing");
   const asked = out["questions"];
@@ -228,14 +232,44 @@ export function parseAsked(input: string): { ok: true; record: AskedRecord } | {
   };
 }
 
+/** Native Codex response schema: codex-rs/protocol/src/request_user_input.rs, rust-v0.167.2. */
+function parseCodexAsked(data: Record<string, unknown>, session: string): ReturnType<typeof parseAsked> {
+  const bad = (message: string): ReturnType<typeof parseAsked> => ({ ok: false, failure: { reason: "malformed", session, message: `canon human record: ${message}; nothing recorded` } });
+  const input = data["tool_input"];
+  let out = data["tool_response"];
+  if (typeof out === "string") {
+    try { out = JSON.parse(out) as unknown; } catch { return bad("tool_response is not a JSON response"); }
+  }
+  if (!isObject(input) || !Array.isArray(input["questions"]) || !isObject(out) || !isObject(out["answers"])) return bad("Codex question input or answers are missing");
+  const asked = input["questions"];
+  const ids = new Set<string>();
+  for (const q of asked) {
+    if (!isObject(q) || typeof q["id"] !== "string" || !q["id"] || typeof q["question"] !== "string" || ids.has(q["id"]) || (q["isSecret"] !== undefined && typeof q["isSecret"] !== "boolean")) return bad("Codex questions need unique ids, text and a boolean isSecret when given");
+    ids.add(q["id"]);
+  }
+  const answers = new Map<string, string | null>();
+  for (const [id, entry] of Object.entries(out["answers"])) {
+    if (!ids.has(id) || !isObject(entry) || !Array.isArray(entry["answers"]) || !entry["answers"].every((a) => typeof a === "string")) return bad("Codex answers must name a known question id and contain a string array");
+    answers.set(id, entry["answers"].length ? entry["answers"].join(", ") : null);
+  }
+  const toolUse = data["tool_use_id"];
+  const transcript = data["transcript_path"];
+  if (!optString(toolUse) || !optString(transcript) || !optString(data["agent_id"])) return bad("tool_use_id, transcript_path and agent_id must be strings when given");
+  const questions = asked.map((v) => {
+    const q = v as Record<string, unknown>;
+    return { question: q["question"] as string, answer: q["isSecret"] === true ? null : answers.get(q["id"] as string) ?? null, note: null };
+  });
+  return { ok: true, record: { session, ...(typeof data["agent_id"] === "string" && data["agent_id"] ? { agent_id: data["agent_id"] } : {}), tool_use_id: toolUse ?? null, transcript_path: transcript ?? null, questions, response: null, afk_timeout_ms: null } };
+}
+
 /**
  * Who `canon human record` writes as (BR-2275): BR-2023's order with the session id taken from the data, so the hook's
  * record carries the same actor as the session's own commands; without a session in the data, BR-2023 as it stands.
  */
-export function recordActor(session: string | null, env: Record<string, string | undefined> = process.env): Result<string> {
+export function recordActor(session: string | null, env: Record<string, string | undefined> = process.env, runtime: AgentRuntime = agentSession(env)?.runtime ?? "claude", childId?: string): Result<string> {
   // reason: CLAUDECODE is not consulted when the data names a session: it comes from Claude Code's hook, so an agent wrote it (BR-2275)
-  if (env["CANON_ACTOR"]?.trim() || !session) return currentActor(env);
-  return ok(`agent:${session.slice(0, 8)}`);
+  if (env["CANON_ACTOR"]?.trim() || !session) return currentActor(runtime === "codex" && session ? { ...env, CODEX_SESSION_ID: session } : env);
+  return ok(sessionActor(runtime, session, runtime === "codex" ? childId : undefined));
 }
 
 /** Writes one `human.asked` event: what the human answered in Claude Code's question tool (BR-2275). */

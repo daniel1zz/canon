@@ -2,7 +2,7 @@
 
 Shared memory and coordination for a project built by many concurrent AI sessions.
 
-Several Claude Code sessions working on one repository at once lose track of each other: they forget why something was decided, overwrite each other's work and break `main`. Canon keeps the project's memory in the repository and coordinates the sessions, so that:
+Several AI coding sessions working on one repository at once lose track of each other: they forget why something was decided, overwrite each other's work and break `main`. Canon keeps the project's memory in the repository and coordinates the sessions, so that:
 
 - **The current truth is in one place.** `canon/rules/` says how the product must behave, and whether each rule is planned, passed, or changed and waiting to be run again.
 - **Every important decision says why.** `canon/decisions/` records the choice and the options that were rejected.
@@ -15,7 +15,7 @@ Several Claude Code sessions working on one repository at once lose track of eac
 
 - [Bun](https://bun.sh) 1.3 or later (canon runs on bun)
 - git
-- [Claude Code](https://claude.com/claude-code), for the skills and session hooks canon installs
+- Claude Code or Codex CLI with lifecycle hooks (validated with Codex CLI 0.167.2), for the skills and session hooks canon installs
 - Optional: the GitHub CLI `gh`, for `canon issues`
 
 ## Install
@@ -33,7 +33,13 @@ canon init --floor "bun run typecheck && bun test"   # the command that must pas
 git add -A && git commit -m "Add canon"
 ```
 
-`canon init` creates the `canon/` layout (`product.md`, `architecture.md`, `config.yaml`, rules, decisions, changes, notes) and installs canon's skills and hooks into `.claude/`. From then on every Claude Code session started in the repository runs `canon brief` and follows the workflow it prints:
+`canon init` creates the `canon/` layout (`product.md`, `architecture.md`, `config.yaml`, rules, decisions, changes, notes). The default integration is Claude Code (`.claude/skills` and `.claude/settings.json`). For Codex, use:
+
+```sh
+canon init --agent codex --floor "bun run typecheck && bun test"
+```
+
+Codex gets skills in `.agents/skills`, hooks in `.codex/hooks.json`, and a small managed block in `AGENTS.md` (or an existing nonempty `AGENTS.override.md`). Your other instructions and settings stay intact. Review and trust the hooks with Codex's `/hooks` before expecting them to run. The session-start hook runs `canon brief`, which prints this workflow:
 
 ```sh
 canon work start --title "what this change does"   # a new change in its own worktree
@@ -44,6 +50,13 @@ canon work land --finish                            # land it on main through th
 For non-business maintenance, use `canon chore start "update tools"`, then `canon chore land` in the printed worktree. Chores do not create a Change document or consume a C number. The other `canon work` commands apply to both kinds of work. `update`, `uninstall` and `release ship` create chores automatically.
 
 Before first using chores, stop old landing processes and drain their queue; all participating sessions must use a version that understands chores. Finish or archive chores before downgrading.
+
+
+Use `--agent all` to install both integrations. To add Codex to an existing project through a landed maintenance change, run `canon update --agent codex`. `canon install --agent codex` writes the assets into the current tree for you to commit. Later updates and uninstall follow the integrations Canon installed; an unrelated `.codex` directory does not opt a project in.
+
+Codex sessions and child threads get separate `agent:codex-…` identities. A child uses its own `CODEX_THREAD_ID` for `--as`; the parent does not pass `--as`. Snapshots, claim checks, native `request_user_input` records and multi-file `apply_patch` checks use Codex's hook protocol. Third-party clients must expose compatible hooks and stable session IDs to get that automation; asynchronous question tools that only return a pending request are not answer evidence.
+
+A newly initialized Codex-only project uses `codex exec --ephemeral --sandbox read-only -` as its reviewer. Existing `review` and lifecycle commands stay as configured, so a Codex developer can still use a Claude reviewer. The optional `canon usage` diagnostic continues to inspect Claude Code session logs; it does not report Codex usage.
 
 Fill in `canon/product.md` (what the product is for) and `canon/architecture.md` (its parts) first; every session reads them.
 

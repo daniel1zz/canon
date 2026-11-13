@@ -1,7 +1,10 @@
+import { readFileSync } from "node:fs";
+import { readRuntime } from "../../kernel/agent.ts";
+import { recordCodexStartup } from "../agent-session.ts";
 import { machineNow, startHint } from "./load.ts";
 import { defineCommand } from "citty";
 import { writeSchemaFile } from "../../invocation/reference/reference.ts";
-import { AS_ARG, corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { AS_ARG, RUNTIME_ARG, corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { takesMany } from "../../invocation/strict.ts";
 import { guideFor, WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { noticeUpdates } from "../../install/commands.ts";
@@ -143,8 +146,9 @@ const cleanCmd = takesMany(defineCommand({
 }));
 
 const brief = defineCommand({
+  args: { ...RUNTIME_ARG, hook: { type: "boolean", description: "Read Codex startup JSON and record its session relationship" } },
   meta: { description: "Session start: how to work in a canon project, in a change's worktree that change and its handoff, elsewhere what is in flight (printed by the session-start hook)" },
-  run() {
+  run({ args }) {
     // reason: the guide comes before anything that can fail, and failures are also said on stdout, which is what a
     // session-start hook shows the model; without it a session would know nothing about canon (BR-2090)
     // reason: the overview line needs the project root, found before anything that can fail; outside a repository the plain guide is printed and the failure follows (BR-2090)
@@ -152,7 +156,19 @@ const brief = defineCommand({
     say(top.ok ? guideFor(top.value) : WORKFLOW_GUIDE);
     const failed = (what: string) =>
       say(`canon brief failed: ${what}\nFix this, then run canon brief again. Until then work as the guide above says; do not edit the main branch directly.`);
-    const opened = openWorkspace(process.cwd());
+    let env = process.env;
+    if (args.hook) {
+      const runtime = readRuntime(args.runtime);
+      if (!runtime.ok || runtime.value !== "codex") {
+        const error = { code: "invalid" as const, message: "canon brief --hook requires --runtime codex" };
+        failed(error.message);
+        fail(error);
+      }
+      const registered = recordCodexStartup(process.cwd(), readFileSync(0, "utf8"), process.env["CANON_ACTOR"]);
+      if (!registered.ok) { failed(registered.error.message); fail(registered.error); }
+      env = { ...process.env, CODEX_SESSION_ID: registered.value.id, CODEX_THREAD_ID: registered.value.child ?? registered.value.id };
+    }
+    const opened = openWorkspace(process.cwd(), undefined, env);
     if (!opened.ok) {
       failed(opened.error.message);
       fail(opened.error);

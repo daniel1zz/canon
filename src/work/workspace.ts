@@ -1,3 +1,4 @@
+import { effectiveAgentSession } from "./agent-session.ts";
 import { userInfo, tmpdir } from "node:os";
 import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
@@ -5,6 +6,7 @@ import { CoordDb } from "./db.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { readConfig, type Config } from "../invocation/config.ts";
 import { git, listWorktreesLocked, toplevel } from "../kernel/git.ts";
+import { agentSession, sessionActor } from "../kernel/agent.ts";
 
 /**
  * Everything a command needs: which worktree it runs in, where the primary checkout is, the shared
@@ -23,34 +25,40 @@ export interface Workspace {
 /** What `--as` may be: a Claude Code agent id or any other plain name (BR-2023). */
 const AS_NAME = /^[A-Za-z0-9_-]+$/;
 
-/**
- * Who is acting (BR-2023): `--as <name>` inside a Claude Code session makes it `agent:<session>:<name>`; else
- * CANON_ACTOR when set; inside a Claude Code session (CLAUDECODE=1) the agent named by its session id; otherwise
- * the OS user as a human. An agent is never recorded as a human.
- */
-export function currentActor(env: Record<string, string | undefined> = process.env, as?: string): Result<string> {
-  const inAgent = env["CLAUDECODE"] === "1";
+/** BR-2023: explicit override, otherwise host session/child identity, otherwise the OS user. */
+export function currentActor(env: Record<string, string | undefined> = process.env, as?: string, cwd = process.cwd()): Result<string> {
+  if (as !== undefined && !AS_NAME.test(as)) return err("invalid", `--as ${JSON.stringify(as)}: a name is letters, digits, - and _ only`);
+  const override = env["CANON_ACTOR"]?.trim();
+  if (override && as === undefined) {
+    const host = agentSession(env);
+    if (host && !override.startsWith("agent:")) return err("invalid", `CANON_ACTOR=${override} inside a ${host.runtime === "codex" ? "Codex" : "Claude Code"} session: an agent session can only act as agent:<name>`);
+    return ok(override);
+  }
+  const resolved = effectiveAgentSession(env, cwd);
+  if (!resolved.ok) return resolved;
+  const session = resolved.value;
+  const inAgent = session !== undefined;
   const explicit = env["CANON_ACTOR"]?.trim();
-  const session = env["CLAUDE_CODE_SESSION_ID"]?.trim().slice(0, 8) || "unknown";
   if (as !== undefined) {
     if (!AS_NAME.test(as)) return err("invalid", `--as ${JSON.stringify(as)}: a name is letters, digits, - and _ only`);
-    if (!inAgent) return err("invalid", "--as is only for agents running in a Claude Code session; it is not set outside one");
+    if (!session) return err("invalid", "--as is only for agents running in a Claude Code or Codex session; it is not set outside one");
     if (explicit) return err("invalid", `--as ${as} and CANON_ACTOR=${explicit} both name the actor; give one of them`);
-    return ok(`agent:${session}:${as}`);
+    if (session.runtime === "codex" && session.child && session.child !== as) return err("invalid", `--as ${as} does not match this Codex subagent's thread id ${session.child}`);
+    return ok(sessionActor(session.runtime, session.id, as));
   }
   if (explicit) {
-    if (inAgent && !explicit.startsWith("agent:")) return err("invalid", `CANON_ACTOR=${explicit} inside a Claude Code session: an agent session can only act as agent:<name>`);
+    if (inAgent && !explicit.startsWith("agent:")) return err("invalid", `CANON_ACTOR=${explicit} inside a ${session.runtime === "codex" ? "Codex" : "Claude Code"} session: an agent session can only act as agent:<name>`);
     return ok(explicit);
   }
-  if (inAgent) return ok(`agent:${session}`);
+  if (session) return ok(sessionActor(session.runtime, session.id, session.child));
   return ok(`human:${userInfo().username}`);
 }
 
-export function openWorkspace(cwd: string, as?: string): Result<Workspace> {
+export function openWorkspace(cwd: string, as?: string, env: Record<string, string | undefined> = process.env): Result<Workspace> {
   const root = toplevel(cwd);
   if (!root.ok) return root;
   // reason: a bad --as is refused before the coordination DB is opened, so nothing is written (BR-2023)
-  const actor = currentActor(process.env, as);
+  const actor = currentActor(env, as, root.value);
   if (!actor.ok) return actor;
   const config = readWorkConfig(root.value);
   if (!config.ok) return config;

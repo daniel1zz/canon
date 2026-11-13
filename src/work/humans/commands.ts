@@ -1,5 +1,8 @@
+import { effectiveAgentSession } from "../agent-session.ts";
+import { agentSession, readRuntime } from "../../kernel/agent.ts";
+import { codexHookStatus } from "../../install/codex.ts";
 import { defineCommand } from "citty";
-import { entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { entry, fail, json, list, must, RUNTIME_ARG, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
@@ -55,12 +58,13 @@ const human = defineCommand({
       },
     }),
     record: defineCommand({
-      meta: { description: "Record what the human answered in Claude Code's question tool (run by the PostToolUse hook, reads its data on stdin)" },
-      args: {},
-      async run() {
-        const parsed = parseAsked(await Bun.stdin.text());
+      meta: { description: "Record what the human answered in the host's question tool (run by the PostToolUse hook, reads its data on stdin)" },
+      args: { ...RUNTIME_ARG },
+      async run({ args }) {
+        const runtime = must(readRuntime(args.runtime));
+        const parsed = parseAsked(await Bun.stdin.text(), runtime);
+        const actor = must(recordActor(parsed.ok ? parsed.record.session : parsed.failure.session, process.env, runtime, parsed.ok ? parsed.record.agent_id : undefined));
         const ws = workspace();
-        const actor = must(recordActor(parsed.ok ? parsed.record.session : parsed.failure.session));
         if (parsed.ok) return recordAsked(ws.db, actor, parsed.record);
         // reason: a failed record is kept with its session, so a later relay can say the record failed instead of "no record" (BR-2275, BR-2276, D-47)
         refuseRecord(ws.db, actor, parsed.failure);
@@ -82,7 +86,8 @@ const human = defineCommand({
         // reason: the terminal check runs inside answer(), so its refusal is recorded too (BR-2026, issue #57)
         // reason: the relaying session, not the actor, ties a relay to the question tool's record; the hook that writes
         // the record is looked for where Claude Code reads it, the primary checkout (BR-2276, D-47)
-        const ctx = { session: process.env["CLAUDE_CODE_SESSION_ID"]?.trim() || null, hookInstalled: () => { const h = hookStatus(ws.primary); return h.ok && h.value.record; } };
+        const context = must(effectiveAgentSession(process.env, ws.root));
+        const ctx = { session: context?.runtime === "codex" ? context.id : process.env["CLAUDE_CODE_SESSION_ID"]?.trim() || null, hookInstalled: () => { const h = agentSession()?.runtime === "codex" ? codexHookStatus(ws.primary) : hookStatus(ws.primary); return h.ok && h.value.record; } };
         must(answer(ws.db, Number(args.id), String(args.text), ws.actor, relayed, process.stdin.isTTY === true, ctx));
         say(`#${args.id} answered${relayed ? ` (relayed by ${ws.actor})` : ""}`);
       },

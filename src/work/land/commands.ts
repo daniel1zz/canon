@@ -1,3 +1,5 @@
+import { agentSession } from "../../kernel/agent.ts";
+import { codexHookStatus } from "../../install/codex.ts";
 import { defineCommand } from "citty";
 import { AS_ARG, entry, EXIT, fail, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
@@ -39,9 +41,11 @@ function landingCommand(chore: boolean) { return defineCommand({
         process.exit(stopped.code);
       }
       // reason: in Claude Code a project without the --as check hook has no protection for subagents; said here, where the agent lands (BR-2342, D-62)
-      if (process.env["CLAUDECODE"] === "1") {
-        const hooks = hookStatus(ws.root);
-        if (hooks.ok && !hooks.value.checkAs) say("this project's .claude/settings.json has no canon check-as hook: --as is not checked for subagents; run canon update");
+      const runtime = agentSession()?.runtime;
+      if (runtime) {
+        const hooks = runtime === "codex" ? codexHookStatus(ws.root) : hookStatus(ws.root);
+        const path = runtime === "codex" ? ".codex/hooks.json" : ".claude/settings.json";
+        if (hooks.ok && !hooks.value.checkAs) say(`this project's ${path} has no canon check-as hook: --as is not checked for subagents; run canon update`);
       }
       // The landing runs in its own background process; this one only follows it and exits with its code (D-80, BR-2390).
       process.exit(await landInBackground(ws, landArgs({ finish, timeout: args.timeout, as: args.as })));

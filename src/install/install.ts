@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { existsSync, lstatSync, mkdirSync, readdirSync, readFileSync, realpathSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { dirname, isAbsolute, join, normalize, relative, sep } from "node:path";
+import { dirname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import { SKILL_DIRS, type AgentRuntime } from "../kernel/agent.ts";
 import { git } from "../kernel/git.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 
@@ -71,7 +72,7 @@ function filesUnder(dir: string): string[] {
  * `dist/skills`, BR-2412) shares its git directory with `root`, as the primary checkout and its worktrees do.
  */
 function isSourceRepository(root: string, target: string, source: string): boolean {
-  if (existsSync(target) && realpathSync(target) === realpathSync(source)) return true;
+  if (resolve(target) === resolve(source)) return true;
   const home = dirname(dirname(realpathSync(source)));
   const common = (dir: string): string | undefined => {
     const r = git(dir, "rev-parse", "--path-format=absolute", "--git-common-dir");
@@ -115,7 +116,11 @@ function isBrokenLink(p: string): boolean {
  * counts as the project's own and is reviewed as before.
  */
 export function shippedUnedited(root: string): Set<string> {
-  const target = join(root, ".claude", "skills");
+  return new Set((["claude", "codex"] as const).flatMap((runtime) => [...shippedFor(root, runtime)]));
+}
+
+function shippedFor(root: string, runtime: AgentRuntime): Set<string> {
+  const target = join(root, SKILL_DIRS[runtime]);
   const shipped = new Set<string>();
   let files: unknown;
   try {
@@ -127,7 +132,7 @@ export function shippedUnedited(root: string): Set<string> {
   for (const [rel, hash] of Object.entries(files as Record<string, unknown>)) {
     if (!safeKey(rel) || typeof hash !== "string") continue;
     const full = join(target, rel);
-    if (existsSync(full) && !lstatSync(full).isSymbolicLink() && statSync(full).isFile() && sha(readFileSync(full)) === hash) shipped.add(`.claude/skills/${rel}`);
+    if (existsSync(full) && !lstatSync(full).isSymbolicLink() && statSync(full).isFile() && sha(readFileSync(full)) === hash) shipped.add(`${SKILL_DIRS[runtime]}/${rel}`);
   }
   return shipped;
 }
@@ -158,8 +163,8 @@ export interface SkillsStatus {
 }
 
 /** How the project's installed skills compare with the ones canon ships (BR-2084); reads only. */
-export function skillsStatus(root: string, source: string): Result<SkillsStatus> {
-  const target = join(root, ".claude", "skills");
+export function skillsStatus(root: string, source: string, runtime: AgentRuntime = "claude"): Result<SkillsStatus> {
+  const target = join(root, SKILL_DIRS[runtime]);
   const wanted = sourceFiles(source);
   const version = versionOf(Object.fromEntries([...wanted].map(([k, v]) => [k, sha(v)])));
   if (isSourceRepository(root, target, source)) return ok({ state: "source", version, outdated: [], edited: [] });
@@ -212,8 +217,8 @@ export interface SkillsPlan {
 }
 
 /** Reads only: refuses a bad manifest or a symlink on any path it would touch (exit 2), and lists the conflicts. */
-export function planSkills(root: string, source: string, force: boolean): Result<SkillsPlan> {
-  const target = join(root, ".claude", "skills");
+export function planSkills(root: string, source: string, force: boolean, runtime: AgentRuntime = "claude"): Result<SkillsPlan> {
+  const target = join(root, SKILL_DIRS[runtime]);
   const manifestPath = join(target, MANIFEST);
   if (isSourceRepository(root, target, source)) {
     return ok({ target, manifestPath, wanted: new Map(), write: [], unchanged: [], remove: [], kept: [], conflicts: [], source: true });
@@ -264,8 +269,8 @@ export function planSkills(root: string, source: string, force: boolean): Result
 }
 
 /** The refusal for skill files edited here that an install would overwrite (BR-2081). */
-export function editedSkills(conflicts: readonly string[], rerun: string): Result<never> {
-  return err("conflict", `these canon skill files were edited in this project and would be overwritten:\n${conflicts.map((c) => `  .claude/skills/${c}`).join("\n")}\nMove the edits into canon itself, or ${rerun} to discard them.`);
+export function editedSkills(conflicts: readonly string[], rerun: string, runtime: AgentRuntime = "claude"): Result<never> {
+  return err("conflict", `these canon skill files were edited in this project and would be overwritten:\n${conflicts.map((c) => `  ${SKILL_DIRS[runtime]}/${c}`).join("\n")}\nMove the edits into canon itself, or ${rerun} to discard them.`);
 }
 
 /** Writes a plan that has no conflicts (or was forced). */
@@ -295,8 +300,8 @@ export interface UnskillPlan {
 }
 
 /** Reads only: refuses a bad manifest (BR-2195) or a symlink on any path it would delete (BR-2083). */
-export function planUnskills(root: string, force: boolean): Result<UnskillPlan> {
-  const target = join(root, ".claude", "skills");
+export function planUnskills(root: string, force: boolean, runtime: AgentRuntime = "claude"): Result<UnskillPlan> {
+  const target = join(root, SKILL_DIRS[runtime]);
   const manifestPath = join(target, MANIFEST);
   if (!existsSync(manifestPath)) return ok({ target, manifestPath, remove: [], edited: [], manifest: false });
   let manifest: Record<string, string>;
@@ -339,9 +344,9 @@ export function applyUnskills(plan: UnskillPlan): readonly string[] {
 }
 
 /** Copies every `canon-*` skill from `source` into `<root>/.claude/skills`, keeping local edits safe; plans first, so a conflict refuses the whole install and nothing is half-updated. */
-export function installSkills(root: string, source: string, force: boolean): Result<InstallReport> {
-  const plan = planSkills(root, source, force);
+export function installSkills(root: string, source: string, force: boolean, runtime: AgentRuntime = "claude"): Result<InstallReport> {
+  const plan = planSkills(root, source, force, runtime);
   if (!plan.ok) return plan;
-  if (plan.value.conflicts.length > 0) return editedSkills(plan.value.conflicts, "run again with --force");
+  if (plan.value.conflicts.length > 0) return editedSkills(plan.value.conflicts, "run again with --force", runtime);
   return ok(applySkills(plan.value));
 }

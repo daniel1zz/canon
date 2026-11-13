@@ -5,6 +5,7 @@ import { configKey, MINUTE, optionalString, positiveNumber, positiveValue, REL_D
 export const REVIEW_NONE = "none";
 
 /** The command an unset `review` should become, as `canon init` writes it (BR-2032) and the refusal suggests (BR-2074). */
+export const DEFAULT_CODEX_REVIEW = "codex exec --ephemeral --sandbox read-only -";
 export const DEFAULT_REVIEW = "claude -p --model sonnet --output-format text";
 
 /** How to set a reviewer, first; then that turning the review off is the owner's call (BR-2074, D-51). */

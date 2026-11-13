@@ -22,7 +22,7 @@ export function mainIsUnborn(cwd: string, main: string): boolean {
 
 /** The next step when main has no commit: what `canon init` wrote must be committed first (BR-2012, BR-2032). */
 export function firstCommitStep(main: string): string {
-  return `commit what \`canon init\` wrote to ${main} first: git checkout ${main} && git add canon .claude && git commit -m "canon init"`;
+  return `commit what \`canon init\` wrote to ${main} first: git checkout ${main} && git add -A && git commit -m "canon init"`;
 }
 
 export function gitEnv(cwd: string, env: Readonly<Record<string, string>>, ...args: string[]): Result<string> {

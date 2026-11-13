@@ -1,5 +1,6 @@
+import { SKILL_DIRS, standingInstructions } from "../../kernel/agent.ts";
 import { restatementLine, type Restatement } from "../check/restatement/restatement.ts";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { realpathSync, existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { stripCode, type Corpus, type Doc, type Domain, type Rule } from "../documents/model.ts";
@@ -389,25 +390,31 @@ export interface StandingText {
   readonly skills: readonly { readonly path: string; readonly description: string; readonly shipped?: boolean }[];
 }
 
-export const SKILL_FILE = /^\.claude\/skills\/[^/]+\/SKILL\.md$/;
+export const SKILL_FILE = /^\.(?:claude|agents)\/skills\/[^/]+\/SKILL\.md$/;
 
 export function standingText(root: string, instructions: readonly string[]): StandingText {
   const shipped = shippedUnedited(root);
-  const files = instructions.filter((p) => existsSync(join(root, p))).map((path) => ({ path, text: readFileSync(join(root, path), "utf8") }));
-  const dir = join(root, ".claude", "skills");
+  const files = standingInstructions(instructions).filter((p) => existsSync(join(root, p))).map((path) => ({ path, text: readFileSync(join(root, path), "utf8") }));
   const skills: { path: string; description: string; shipped?: boolean }[] = [];
-  for (const name of existsSync(dir) ? readdirSync(dir).sort() : []) {
-    const path = `.claude/skills/${name}/SKILL.md`;
-    if (!existsSync(join(root, path))) continue;
-    const front = readFileSync(join(root, path), "utf8").match(/^---\n([\s\S]*?)\n---/);
-    let description: string;
-    try {
-      const meta = front ? (parse(front[1]!) as { description?: unknown } | null) : null;
-      description = typeof meta?.description === "string" ? meta.description : "(no description)";
-    } catch (e) {
-      description = `(front matter does not parse: ${(e as Error).message.split("\n")[0]})`;
+  const seen = new Set<string>();
+  for (const skillDir of Object.values(SKILL_DIRS)) {
+    const dir = join(root, skillDir);
+    for (const name of existsSync(dir) ? readdirSync(dir).sort() : []) {
+      const path = `${skillDir}/${name}/SKILL.md`;
+      if (!existsSync(join(root, path))) continue;
+      const physical = realpathSync(join(root, path));
+      if (seen.has(physical)) continue;
+      seen.add(physical);
+      const front = readFileSync(join(root, path), "utf8").match(/^---\n([\s\S]*?)\n---/);
+      let description: string;
+      try {
+        const meta = front ? (parse(front[1]!) as { description?: unknown } | null) : null;
+        description = typeof meta?.description === "string" ? meta.description : "(no description)";
+      } catch (e) {
+        description = `(front matter does not parse: ${(e as Error).message.split("\n")[0]})`;
+      }
+      skills.push({ path, description, ...(shipped.has(path) ? { shipped: true } : {}) });
     }
-    skills.push({ path, description, ...(shipped.has(path) ? { shipped: true } : {}) });
   }
   return { files, skills };
 }

@@ -4,6 +4,9 @@
 # Arguments are passed on to `bun test` (e.g. one test file, or --parallel=4 for the floor: half the cores, leaving the rest to sessions testing at the same time, C-290, C-301).
 set -eu
 
+# Tests supply their own host identity; the developer's Codex/Claude session must not leak into fixtures.
+unset CANON_ACTOR CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_PID CODEX_SESSION_ID CODEX_THREAD_ID
+
 # reason: bunfig.toml has no test timeout key, and setDefaultTimeout in a preload only covers the first file (C-247)
 TIMEOUT_MS=30000
 

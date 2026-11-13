@@ -1,6 +1,7 @@
+import { AGENT_ARG, selectedTargets } from "./targets.ts";
 import { defineCommand } from "citty";
 import { MODELINE } from "../invocation/reference/reference.ts";
-import { DEFAULT_REVIEW, REVIEW_NONE } from "../knowledge/review/config-keys.ts";
+import { DEFAULT_REVIEW, DEFAULT_CODEX_REVIEW, REVIEW_NONE } from "../knowledge/review/config-keys.ts";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
@@ -16,16 +17,17 @@ import { uninstall as uninstallProject } from "./uninstall.ts";
 
 const init = defineCommand({
   meta: { description: "Create the canon/ layout in this repository" },
-  args: { floor: { type: "string", description: "Command that must pass before anything lands, e.g. \"bun run typecheck && bun test\"" } },
+  args: { ...AGENT_ARG, floor: { type: "string", description: "Command that must pass before anything lands, e.g. \"bun run typecheck && bun test\"" } },
   run({ args }) {
     const root = must(git(process.cwd(), "rev-parse", "--show-toplevel"));
+    const targets = must(selectedTargets(root, args.agent));
     // The branch checked out now becomes main; it is only needed when init is about to write canon/config.yaml (BR-2032).
     const branch = existsSync(join(root, "canon/config.yaml")) ? undefined : currentBranch(root);
     // Skills first: a missing source (BR-2082) or an edited skill copy (BR-2081) refuses before anything else is written.
-    reportInstall(must(installAssets(root, must(skillsSource()), false, branch)));
+    reportInstall(must(installAssets(root, must(skillsSource()), false, branch, args.agent)));
     // reason: references already in the repository count as confirmed from main's commit now; with no commit yet there is none to name, and none is needed (BR-2032, BR-2424)
     const since = branch === undefined ? undefined : mainTip(root, branch);
-    const config = `${MODELINE}\nmain: ${JSON.stringify(branch ?? "main")}\nfloor: ${JSON.stringify(args.floor ?? "")}\n${TESTS_COMMENT}\ntests: []\n${REVIEW_COMMENT}\nreview: ${JSON.stringify(DEFAULT_REVIEW)}\n`;
+    const config = `${MODELINE}\nmain: ${JSON.stringify(branch ?? "main")}\nfloor: ${JSON.stringify(args.floor ?? "")}\n${TESTS_COMMENT}\ntests: []\n${REVIEW_COMMENT}\nreview: ${JSON.stringify(targets.length === 1 && targets[0] === "codex" ? DEFAULT_CODEX_REVIEW : DEFAULT_REVIEW)}\n`;
     const files: Record<string, string> = {
       "canon/product.md": "---\ntitle: 产品\n---\n# 产品\n\n## 目的\n\n## 使用者\n\n## 承诺\n\n## 不做的事\n",
       "canon/architecture.md": ARCHITECTURE_TEMPLATE,
@@ -72,24 +74,25 @@ function configuredMain(root: string): string | undefined {
   }
 }
 
-function reportInstall(r: InstallReport & { hook: boolean; guard: boolean; exclude: boolean }) {
+function reportInstall(r: InstallReport & { hook: boolean; codex?: boolean; guard: boolean; exclude: boolean }) {
   for (const f of r.written) say(`skill ${f}`);
   for (const f of r.removed) say(`removed skill file ${f}`);
   for (const f of r.kept) say(`kept skill ${f} (edited in this project; canon has no newer version)`);
   if (r.hook) say("hooks: .claude/settings.json brought up to date (canon brief at session start; entries canon withdrew removed)");
+  if (r.codex !== undefined) say("Codex: native skills, AGENTS.md and .codex/hooks.json installed; review and trust the hooks in Codex /hooks before they run");
   if (r.guard) say("git hook: main moves only through canon work land (reference-transaction; not tracked, nothing to commit)");
   if (r.exclude) say(`git exclude: ${WORKTREES_EXCLUDE} added to the repository's info/exclude (not tracked, nothing to commit)`);
-  const tracked = r.written.length + r.removed.length > 0 || r.hook;
+  const tracked = r.written.length + r.removed.length > 0 || r.hook || r.codex;
   say(tracked ? "canon project files installed; commit them with the project" : r.guard || r.exclude ? "canon project files installed" : "canon project files: up to date");
 }
 
 /** Installs canon's project files (skills, session hook) into this tree, as `canon init` does (D-9, D-10). */
 const install = defineCommand({
   meta: { description: "Install canon's project files (skills, session-start hook, the git hook that keeps main moving only through canon work land) into this tree; files edited here are not overwritten without --force" },
-  args: { force: { type: "boolean", description: "Overwrite skill files that were edited in this project" } },
+  args: { ...AGENT_ARG, force: { type: "boolean", description: "Overwrite skill files that were edited in this project" } },
   run({ args }) {
     const root = must(git(process.cwd(), "rev-parse", "--show-toplevel"));
-    reportInstall(must(installAssets(root, must(skillsSource()), Boolean(args.force))));
+    reportInstall(must(installAssets(root, must(skillsSource()), Boolean(args.force), undefined, args.agent)));
   },
 });
 
@@ -97,6 +100,7 @@ const install = defineCommand({
 const update = defineCommand({
   meta: { description: "Update canon's project files to this canon's version as its own landed change; --check only reports" },
   args: {
+    ...AGENT_ARG,
     check: { type: "boolean", description: "Only report what is out of date; exit 1 when something is" },
     force: { type: "boolean", description: "Overwrite skill files that were edited in this project" },
   },
@@ -104,14 +108,14 @@ const update = defineCommand({
     if (args.check) {
       // reason: --check only reads, so it does not open (and so create) the coordination database (BR-2084)
       const root = must(git(process.cwd(), "rev-parse", "--show-toplevel"));
-      const st = must(assetsStatus(root, must(skillsSource())));
+      const st = must(assetsStatus(root, must(skillsSource()), args.agent));
       if (st.current) return say(`canon project files: up to date (version ${st.version})`);
       say(`canon project files are out of date (version ${st.version}):`);
       for (const o of st.outdated) say(`  ${o}${st.edited.some((e) => o === `skill ${e}`) ? "  (edited in this project)" : ""}`);
       process.exit(EXIT.refused);
     }
     const ws = workspace();
-    const out = must(await updateProject(ws, must(skillsSource()), Boolean(args.force), ws.config.landTimeoutMs, say));
+    const out = must(await updateProject(ws, must(skillsSource()), Boolean(args.force), ws.config.landTimeoutMs, say, args.agent));
     if (out.kind === "current") return say(`canon project files: up to date (version ${out.version})`);
     if (out.kind === "local") {
       const what = [out.guard ? "git hook installed: main moves only through canon work land" : "", out.exclude ? `git exclude: ${WORKTREES_EXCLUDE} added to info/exclude` : ""].filter(Boolean).join("; ");
@@ -130,7 +134,7 @@ const update = defineCommand({
 
 /** Removes canon from the project (D-46): one landed change, then the local cleanup in each clone. */
 const uninstall = defineCommand({
-  meta: { description: "Remove canon from this project: lands one change deleting canon's skills, its .claude/settings.json entries and canon/config.yaml once no work is in flight, then removes the git hook, worktrees, coordination state and refs in this clone; in another clone after that change, only the local cleanup. canon/ documents and recovery refs stay unless asked" },
+  meta: { description: "Remove canon from this project: lands one change deleting canon's skills, its host hook entries and managed instruction block and canon/config.yaml once no work is in flight, then removes the git hook, worktrees, coordination state and refs in this clone; in another clone after that change, only the local cleanup. canon/ documents and recovery refs stay unless asked" },
   args: {
     force: { type: "boolean", description: "Also delete canon skill files that were edited in this project" },
     "purge-recovery": { type: "boolean", description: "Also delete refs/canon/archive (work canon work drop kept) and refs/canon/snapshots" },

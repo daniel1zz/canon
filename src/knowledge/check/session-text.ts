@@ -1,3 +1,4 @@
+import { agentSession, SKILL_DIRS } from "../../kernel/agent.ts";
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
@@ -18,14 +19,17 @@ const isLink = (p: string) => lstatSync(p).isSymbolicLink();
 /** The parts BR-2256 lists, in its order: root CLAUDE.md, the work guide canon brief prints, each skill description. */
 export function sessionText(root: string, guide: string): SessionTextPart[] {
   const parts: SessionTextPart[] = [];
-  const claude = join(root, "CLAUDE.md");
-  // reason: canon check never follows a symbolic link (BR-2186), so a linked CLAUDE.md is named but not read
-  if (existsLink(claude)) parts.push(isLink(claude) ? { label: "CLAUDE.md", kind: "instructions", bytes: 0, note: "symbolic link, not read" } : { label: "CLAUDE.md", kind: "instructions", bytes: bytes(readFileSync(claude, "utf8")) });
+  const runtime = agentSession()?.runtime ?? (existsLink(join(root, SKILL_DIRS.codex, ".canon-skills.json")) && !existsLink(join(root, SKILL_DIRS.claude, ".canon-skills.json")) ? "codex" : "claude");
+  const override = join(root, "AGENTS.override.md");
+  const instruction = runtime === "claude" ? "CLAUDE.md" : existsLink(override) && (isLink(override) || readFileSync(override, "utf8").trim() !== "") ? "AGENTS.override.md" : "AGENTS.md";
+  const path = join(root, instruction);
+  if (existsLink(path)) parts.push(isLink(path) ? { label: instruction, kind: "instructions", bytes: 0, note: "symbolic link, not read" } : { label: instruction, kind: "instructions", bytes: bytes(readFileSync(path, "utf8")) });
   parts.push({ label: "work guide", kind: "guide", bytes: bytes(guide) });
-  const dir = join(root, ".claude", "skills");
-  if (!existsSync(dir) || isLink(join(root, ".claude")) || isLink(dir)) return parts;
+  const skills = SKILL_DIRS[runtime];
+  const dir = join(root, skills);
+  if (!existsSync(dir) || isLink(join(root, skills.split("/")[0]!)) || isLink(dir)) return parts;
   for (const name of readdirSync(dir).sort()) {
-    const label = `.claude/skills/${name}/SKILL.md description`;
+    const label = `${skills}/${name}/SKILL.md description`;
     const skillDir = join(dir, name);
     const file = join(skillDir, "SKILL.md");
     if (isLink(skillDir) || (existsLink(file) && isLink(file))) {
@@ -75,5 +79,5 @@ export function budgetHint(parts: readonly SessionTextPart[], budget: number | u
   const sum = total(parts);
   if (budget === undefined || sum <= budget) return undefined;
   const of = (kind: SessionTextPart["kind"]) => total(parts.filter((p) => p.kind === kind));
-  return `hint session-text: ${sum} bytes loaded every session, over session_text_budget ${budget} (CLAUDE.md ${of("instructions")}, work guide ${of("guide")}, skill descriptions ${of("skill")}); canon check --sizes lists each part`;
+  return `hint session-text: ${sum} bytes loaded every session, over session_text_budget ${budget} (${parts.find((p) => p.kind === "instructions")?.label ?? "CLAUDE.md"} ${of("instructions")}, work guide ${of("guide")}, skill descriptions ${of("skill")}); canon check --sizes lists each part`;
 }

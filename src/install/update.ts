@@ -1,3 +1,6 @@
+import { SKILL_DIRS, type AgentRuntime } from "../kernel/agent.ts";
+import { selectedTargets, projectAssetPaths } from "./targets.ts";
+import { planCodex, applyCodex, type CodexPlan } from "./codex.ts";
 import { existsSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { openWorkspace, type Workspace } from "../work/workspace.ts";
@@ -89,7 +92,7 @@ function ensureLinksSince(root: string): Result<boolean> {
 /** The line git's info/exclude needs so Claude Code's subagent worktrees do not dirty the checkout (BR-2305). */
 export const WORKTREES_EXCLUDE = "/.claude/worktrees/";
 
-export function assetsStatus(root: string, source: string): Result<AssetsStatus> {
+function claudeAssetsStatus(root: string, source: string): Result<AssetsStatus> {
   const s = skillsStatus(root, source);
   if (!s.ok) return s;
   const h = hookStatus(root);
@@ -121,6 +124,33 @@ export function assetsStatus(root: string, source: string): Result<AssetsStatus>
   return ok({ version: s.value.version, current: outdated.length === 0, outdated, edited: s.value.edited, localOnly: s.value.outdated.length === 0 && hook.length === 0 && !missingOverview && links.length === 0 && local, guard: g.value.line.length > 0, exclude: x.value, architecture: missingOverview, linksSince: links.length > 0 });
 }
 
+/** Checks only Canon-selected targets; unrelated host directories never opt a project in. */
+export function assetsStatus(root: string, source: string, requested?: string): Result<AssetsStatus> {
+  const targets = selectedTargets(root, requested);
+  if (!targets.ok) return targets;
+  let base: AssetsStatus;
+  if (targets.value.includes("claude")) {
+    const legacy = claudeAssetsStatus(root, source);
+    if (!legacy.ok) return legacy;
+    base = legacy.value;
+  } else {
+    const g = guardLine(root);
+    if (!g.ok) return g;
+    const since = missingLinksSince(root);
+    if (!since.ok) return since;
+    const architecture = !existsSync(join(root, ARCHITECTURE_FILE));
+    const outdated = [...g.value.line, ...(architecture ? [`file ${ARCHITECTURE_FILE}: missing`] : []), ...(since.value ? ["config canon/config.yaml: links_since missing"] : [])];
+    base = { version: "", current: outdated.length === 0, outdated, edited: [], localOnly: g.value.line.length > 0 && !architecture && since.value === undefined, guard: g.value.line.length > 0, exclude: false, architecture, linksSince: since.value !== undefined };
+  }
+  if (!targets.value.includes("codex")) return ok(base);
+  const skills = skillsStatus(root, source, "codex");
+  if (!skills.ok) return skills;
+  const codex = planCodex(root);
+  if (!codex.ok) return codex;
+  const added = [...skills.value.outdated.map((p) => `skill ${SKILL_DIRS.codex}/${p}`), ...codex.value.outdated];
+  return ok({ ...base, version: skills.value.version, current: base.current && added.length === 0, outdated: [...base.outdated, ...added], edited: [...base.edited, ...skills.value.edited.map((p) => `${SKILL_DIRS.codex}/${p}`)], localOnly: base.localOnly && added.length === 0 });
+}
+
 /** The update-check line for the git guard (BR-2123, BR-2124). */
 function guardLine(root: string): Result<{ line: string[] }> {
   const config = readConfig(root);
@@ -143,36 +173,52 @@ export function updateNotice(st: AssetsStatus): string | undefined {
  * else's git hook (BR-2123, BR-2124), then the skills (symlinks and the manifest, BR-2083, before edited files, BR-2081),
  * then `.claude/settings.json` (BR-2087). Edited skill files are returned, not refused, so each caller words the refusal.
  */
-function preflight(root: string, source: string, force: boolean, mainBranch?: string): Result<{ main: string; skills: SkillsPlan; settings: Settings | undefined }> {
+function preflight(root: string, source: string, force: boolean, mainBranch?: string, requested?: string): Result<{ main: string; skills: { runtime: AgentRuntime; plan: SkillsPlan }[]; settings: Settings | undefined; codex: CodexPlan | undefined; claude: boolean }> {
+  const targets = selectedTargets(root, requested);
+  if (!targets.ok) return targets;
   const config = readConfig(root);
   if (!config.ok) return config;
   const main = mainBranch ?? config.value.main;
   const g = guardStatus(root, main);
   if (!g.ok) return g;
   if (g.value.state === "foreign") return foreignGuard(g.value.path);
-  const skills = planSkills(root, source, force);
-  if (!skills.ok) return skills;
-  const settings = planHook(root);
+  const skills: { runtime: AgentRuntime; plan: SkillsPlan }[] = [];
+  for (const runtime of targets.value) {
+    const p = planSkills(root, source, force, runtime);
+    if (!p.ok) return p;
+    skills.push({ runtime, plan: p.value });
+  }
+  const claude = targets.value.includes("claude");
+  const settings = claude ? planHook(root) : ok(undefined);
   if (!settings.ok) return settings;
-  return ok({ main, skills: skills.value, settings: settings.value });
+  const codex = targets.value.includes("codex") ? planCodex(root) : ok(undefined);
+  if (!codex.ok) return codex;
+  return ok({ main, skills, settings: settings.value, codex: codex.value, claude });
 }
 
-/**
- * Installs every asset into `root` (the current tree), only after every check passed. Used by `canon init`, `canon install`
- * and by `canon update` in its worktree. `mainBranch` is for `canon init` before it writes canon/config.yaml: the guard
- * then protects the branch init is about to write there, not the default (BR-2032).
- */
-export function installAssets(root: string, source: string, force: boolean, mainBranch?: string): Result<InstallReport & { hook: boolean; guard: boolean; exclude: boolean }> {
-  const p = preflight(root, source, force, mainBranch);
+function skillConflicts(plans: readonly { runtime: AgentRuntime; plan: SkillsPlan }[], rerun: string): Result<void> {
+  for (const { runtime, plan } of plans) if (plan.conflicts.length) return editedSkills(plan.conflicts, rerun, runtime);
+  return ok(undefined);
+}
+
+/** Installs only after every selected runtime has passed preflight. */
+export function installAssets(root: string, source: string, force: boolean, mainBranch?: string, requested?: string): Result<InstallReport & { hook: boolean; codex?: boolean; guard: boolean; exclude: boolean }> {
+  const p = preflight(root, source, force, mainBranch, requested);
   if (!p.ok) return p;
-  if (p.value.skills.conflicts.length > 0) return editedSkills(p.value.skills.conflicts, "run again with --force");
-  const skills = applySkills(p.value.skills);
-  const hook = writeHook(root, p.value.settings);
+  const conflicts = skillConflicts(p.value.skills, "run again with --force");
+  if (!conflicts.ok) return conflicts;
+  const skills: InstallReport = { written: [], unchanged: [], removed: [], kept: [] };
+  for (const { runtime, plan } of p.value.skills) {
+    const report = applySkills(plan);
+    for (const field of ["written", "unchanged", "removed", "kept"] as const) (skills[field] as string[]).push(...report[field].map((f) => runtime === "claude" ? f : `${SKILL_DIRS[runtime]}/${f}`));
+  }
+  const hook = p.value.claude && writeHook(root, p.value.settings);
+  const codex = p.value.codex ? applyCodex(root, p.value.codex) : false;
   const guard = ensureGuard(root, p.value.main);
   if (!guard.ok) return guard;
-  const exclude = ensureExcluded(root, WORKTREES_EXCLUDE);
+  const exclude = p.value.claude ? ensureExcluded(root, WORKTREES_EXCLUDE) : ok(false);
   if (!exclude.ok) return exclude;
-  return ok({ ...skills, hook, guard: guard.value, exclude: exclude.value });
+  return ok({ ...skills, hook, ...(p.value.codex ? { codex } : {}), guard: guard.value, exclude: exclude.value });
 }
 
 export type UpdateOutcome =
@@ -185,12 +231,12 @@ export type UpdateOutcome =
  * `canon update` (BR-2086): the update is its own change, landed through the normal path (queue, floor,
  * canon check, review), so the project's main only ever gets it the way it gets any other work.
  */
-export async function updateProject(ws: Workspace, source: string, force: boolean, timeoutMs: number, say: Say): Promise<Result<UpdateOutcome>> {
+export async function updateProject(ws: Workspace, source: string, force: boolean, timeoutMs: number, say: Say, requested?: string): Promise<Result<UpdateOutcome>> {
   // Someone else's git hook refuses before any other check, a broken settings.json included (BR-2124).
   const g = guardStatus(ws.root, ws.config.main);
   if (!g.ok) return g;
   if (g.value.state === "foreign") return foreignGuard(g.value.path);
-  const st = assetsStatus(ws.root, source);
+  const st = assetsStatus(ws.root, source, requested);
   if (!st.ok) return st;
   if (st.value.current) return ok({ kind: "current", version: st.value.version });
   if (st.value.localOnly) {
@@ -199,25 +245,26 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
       const guard = ensureGuard(ws.root, ws.config.main);
       if (!guard.ok) return guard;
     }
-    const exclude = ensureExcluded(ws.root, WORKTREES_EXCLUDE);
+    const exclude = st.value.exclude ? ensureExcluded(ws.root, WORKTREES_EXCLUDE) : ok(false);
     if (!exclude.ok) return exclude;
     return ok({ kind: "local", version: st.value.version, guard: st.value.guard, exclude: st.value.exclude });
   }
   // Every refusal an install can make is made here, before a change or worktree exists (BR-2086, BR-2083).
-  const p = preflight(ws.root, source, force);
+  const p = preflight(ws.root, source, force, undefined, requested);
   if (!p.ok) return p;
-  if (p.value.skills.conflicts.length > 0) return editedSkills(p.value.skills.conflicts, "run `canon update --force`");
+  const conflicts = skillConflicts(p.value.skills, "run `canon update --force`");
+  if (!conflicts.ok) return conflicts;
   const started = startChore(ws, { title: `更新 canon 装进项目的文件到版本 ${st.value.version}` }, say);
   if (!started.ok) return started;
   const wt = started.value.worktree;
-  const installed = installAssets(wt, source, force);
+  const installed = installAssets(wt, source, force, undefined, requested);
   if (!installed.ok) return installed;
   const overview = ensureArchitecture(wt);
   // reason: main's commit when the change starts, read in its worktree, is the start of suspect references (BR-2452)
   const since = ensureLinksSince(wt);
   if (!since.ok) return since;
 
-  for (const args of [["add", "-A", ".claude", ...(overview ? [ARCHITECTURE_FILE] : []), ...(since.value ? ["canon/config.yaml"] : [])], ["commit", "-q", "-m", `Update canon project files to ${st.value.version} (${started.value.change})\n\n${st.value.outdated.map((o) => `- ${o}`).join("\n")}`]]) {
+  for (const args of [["add", "-A", "--", ...projectAssetPaths(wt), ...(overview ? [ARCHITECTURE_FILE] : []), ...(since.value ? ["canon/config.yaml"] : [])], ["commit", "-q", "-m", `Update canon project files to ${st.value.version} (${started.value.change})\n\n${st.value.outdated.map((o) => `- ${o}`).join("\n")}`]]) {
     const r = git(wt, ...args);
     if (!r.ok) return r;
   }

@@ -1,18 +1,22 @@
+import { effectiveAgentSession } from "../agent-session.ts";
+import { readRuntime } from "../../kernel/agent.ts";
 import { readFileSync, realpathSync } from "node:fs";
 import { defineCommand } from "citty";
-import { entry, EXIT, fail, json, say, type DomainCommands } from "../../invocation/command.ts";
+import { entry, EXIT, fail, json, must, RUNTIME_ARG, say, type DomainCommands } from "../../invocation/command.ts";
 import { git } from "../../kernel/git.ts";
 import { changedFiles, claimedWorktrees, leftOut, snapshotKey, snapshots, takeSnapshot } from "./snapshot.ts";
 
 /** `canon snapshot take` (the PreToolUse hook, BR-2182) and `canon snapshot list` (BR-2184). */
 
 const take = defineCommand({
-  meta: { description: "Record this worktree's uncommitted work as a snapshot (run by the hook before each Bash call); --hook reads the cwd from Claude Code's hook input on stdin" },
-  args: { hook: { type: "boolean", description: "Read Claude Code's PreToolUse input from stdin and snapshot its cwd" } },
+  meta: { description: "Record this worktree's uncommitted work as a snapshot (run by the hook before each Bash call); --hook reads the cwd from the host's hook input on stdin" },
+  args: { ...RUNTIME_ARG, hook: { type: "boolean", description: "Read the host's PreToolUse input from stdin and snapshot its cwd" } },
   async run({ args }) {
     let cwd = process.cwd();
-    let session = process.env["CLAUDE_CODE_SESSION_ID"] ?? "";
-    let agentId: string | undefined;
+    const runtime = must(readRuntime(args.runtime));
+    const context = must(effectiveAgentSession());
+    let session = runtime === "claude" ? process.env["CLAUDE_CODE_SESSION_ID"]?.trim() || "" : context?.runtime === runtime ? context.id : "";
+    let agentId: string | undefined = runtime === "codex" ? context?.child : undefined;
     if (args.hook) {
       // reason: the Bash call may run in another directory than the hook process; the input names it (BR-2182)
       const input = (() => {
@@ -31,7 +35,7 @@ const take = defineCommand({
     // reason: a claims table that cannot be read must not cost the cwd snapshot the hook always took; the error is reported after the snapshots (BR-2182, P4)
     let claimsError: Parameters<typeof fail>[0] | undefined;
     if (args.hook) {
-      const claimed = claimedWorktrees(cwd, session, agentId);
+      const claimed = claimedWorktrees(cwd, session, agentId, runtime, runtime === "codex" ? process.env["CANON_ACTOR"]?.trim() : undefined);
       if (!claimed.ok) claimsError = claimed.error;
       const real = (p: string) => {
         try {

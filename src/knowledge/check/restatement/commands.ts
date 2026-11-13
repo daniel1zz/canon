@@ -1,6 +1,8 @@
-import { readFileSync } from "node:fs";
+import { readRuntime, type AgentRuntime } from "../../../kernel/agent.ts";
+import { resolve } from "node:path";
+import { existsSync, readFileSync } from "node:fs";
 import { defineCommand } from "citty";
-import { corpusOf, entry, EXIT, fail, json, say, workspace, type DomainCommands } from "../../../invocation/command.ts";
+import { corpusOf, entry, EXIT, fail, json, must, RUNTIME_ARG, say, workspace, type DomainCommands } from "../../../invocation/command.ts";
 import { corpusRestatements, restatementLine, type Restatement } from "./restatement.ts";
 import { HOOK_LIMIT, relatedTo, reasons, type Related } from "../../query/related.ts";
 import { editedDoc, editedRestatements } from "./work.ts";
@@ -25,36 +27,42 @@ export function relatedHookContext(id: string, related: readonly Related[]): str
 }
 
 /** Claude Code's PostToolUse input: the edited file's path, or undefined when the input names none. */
-function editedFile(): string | undefined {
+function editedFiles(runtime: AgentRuntime): string[] {
   try {
-    const input = JSON.parse(readFileSync(0, "utf8")) as { tool_input?: { file_path?: unknown } };
-    const file = input.tool_input?.file_path;
-    return typeof file === "string" && file !== "" ? file : undefined;
+    const input = JSON.parse(readFileSync(0, "utf8")) as { tool_input?: { file_path?: unknown; command?: unknown } };
+    if (runtime === "claude") {
+      const file = input.tool_input?.file_path;
+      return typeof file === "string" && file !== "" ? [file] : [];
+    }
+    const patch = input.tool_input?.command;
+    if (typeof patch !== "string") return [];
+    return [...new Set([...patch.matchAll(/^\*\*\* (?:Add File|Update File|Move to): (.+)\r?$/gm)].map((m) => resolve(m[1]!.replace(/\r$/, ""))))].filter((file) => existsSync(file));
   } catch {
-    return undefined;
+    return [];
   }
 }
 
 const restatements = defineCommand({
   meta: { description: "List the sentences in rules and decisions that restate another rule's behaviour instead of naming it; --hook checks the file a Write or Edit just changed and lists the documents most related to it" },
   args: {
+    ...RUNTIME_ARG,
     json: { type: "boolean" },
     hook: { type: "boolean", description: "Read Claude Code's PostToolUse input from stdin and check only the new lines of the edited rule or decision" },
   },
   run({ args }) {
+    const runtime = must(readRuntime(args.runtime));
     if (args.hook) {
-      const file = editedFile();
-      if (file === undefined) return;
-      const edited = editedDoc(file);
-      if (!edited.ok) fail(edited.error);
-      if (edited.value === undefined || (edited.value.doc.kind !== "rule" && edited.value.doc.kind !== "decision")) return;
-      const found = editedRestatements(edited.value);
-      if (!found.ok) fail(found.error);
-      const related = relatedTo(edited.value.corpus, edited.value.doc, HOOK_LIMIT);
-      const parts = [...(found.value.length > 0 ? [hookContext(found.value)] : []), ...(related.length > 0 ? [relatedHookContext(edited.value.doc.id, related)] : [])];
-      if (parts.length > 0) {
-        process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: parts.join("\n\n") } })}\n`);
+      const parts: string[] = [];
+      for (const file of editedFiles(runtime)) {
+        const edited = editedDoc(file);
+        if (!edited.ok) fail(edited.error);
+        if (edited.value === undefined || (edited.value.doc.kind !== "rule" && edited.value.doc.kind !== "decision")) continue;
+        const found = editedRestatements(edited.value);
+        if (!found.ok) fail(found.error);
+        const related = relatedTo(edited.value.corpus, edited.value.doc, HOOK_LIMIT);
+        parts.push(...(found.value.length > 0 ? [hookContext(found.value)] : []), ...(related.length > 0 ? [relatedHookContext(edited.value.doc.id, related)] : []));
       }
+      if (parts.length > 0) process.stdout.write(`${JSON.stringify({ hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: parts.join("\n\n") } })}\n`);
       return;
     }
     const ws = workspace();

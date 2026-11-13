@@ -9,14 +9,14 @@ title: 架构总览
 
 ## 上下文
 
-- **使用者**：在项目里干活的 AI 会话（Claude Code），常常几个同时在跑；负责方向的人，只回答 `canon human` 里的问题。
+- **使用者**：在项目里干活的 AI 会话（Claude Code、Codex），常常几个同时在跑；负责方向的人，只回答 `canon human` 里的问题。
 - **git**：一切的底座。main 是一个分支，每个变更一个 worktree 和分支；canon 的协调数据放在 git 公共目录里。
-- **Claude Code**：会话在它里面运行。canon 把 hook 和 skill 装进项目的 `.claude/`；读它的提问记录来佐证转述的回答；`canon usage` 只读它的会话记录。
-- **`claude -p`**：非交互的 Claude，用于合入后的规则评审和重复评审、合入时的措辞判断、`canon finding reconcile` 的合并评审（BR-2461），命令由 `canon/config.yaml` 的 `review` 配置；合入后的代码评审也是项目自己配的；canon 仓库发布前的发布评审用同一个 `review` 命令（BR-2411）。
+- **Claude Code、Codex**：会话运行在宿主中。按明确目标将同一份 skill 分发到 `.claude/skills` 或 `.agents/skills`，合并宿主的 hook 和 Codex 原生指令入口。运行时边界归一化会话、子线程和工具事件，共用协调与问答佐证流程；`canon usage` 仍只读 Claude 的会话记录（D-101）。
+- **项目配置的 reviewer**：新建项目按明确的安装目标选初始评审命令，已有配置不自动更换；用于合入后的规则评审和重复评审、合入时的措辞判断、canon finding reconcile 的合并评审（BR-2461），命令由 `canon/config.yaml` 的 `review` 配置；合入后的代码评审也是项目自己配的；canon 仓库发布前的发布评审用同一个 `review` 命令（BR-2411）。
 - **GitHub**：`canon issues` 列出开着的 issue（`src/work/issues`，只读，关闭用 `gh`）；canon 仓库的发布评审拦截时新建或评论一个 `canon-review` issue（BR-2411）；决策里引用的网址在合入时被抓取核对；`remote` 指向它时合入后把 main 推上去。
 - **项目自己的命令**：floor、类型检查、测试、选测试的命令（`test_select_command`）、挑选相关文档的命令（`related_pick_command`，可选，通常是一个便宜模型；只有 `canon context <编号>` 和 `canon work review` 运行它，编辑 hook、`canon check` 和合入不运行，BR-2443）、`setup`、生命周期 hook，由 `canon/config.yaml` 配置，canon 只运行它们、看退出码；测试命令把 JUnit XML 报告写到 `{report}`，canon 读报告里有哪些测试、跑没跑，不认语言（D-64）。
 
-决策：D-1、D-2、D-9、D-45、D-51、D-64。
+决策：D-1、D-2、D-9、D-45、D-51、D-64、D-101。
 
 ## 容器：canon 做的
 
@@ -53,10 +53,11 @@ title: 架构总览
 - 决策：D-1、D-12、D-14、D-15、D-32、D-61、D-64、D-65、D-77、D-84、D-90、D-95、D-96、D-98。
 
 **装进项目的 hook、skill 和 git 守卫**
-- 职责：Claude Code hook（会话开始跑 `canon brief`；每次 Bash 前快照、检查 `canon work` 和 `canon chore` 的认领命令带不带 `--as`，子 agent 的 `take` 和 `unstall` 一律拒绝（`canon work check-as`，只拒绝、不改写，BR-2340）；提问工具之后记录回答；Write、Edit 或 MultiEdit 之后提示改动的规则或决策在新行里复述了别的规则，并列出和它最相关的几份文档，`canon restatements --hook`，不调模型，D-84、D-90）、`.claude/skills/canon-*`、git 的 `reference-transaction` hook（main 只能由共享合入流水线移动，`canon work land` 和 `canon chore land` 跟随的是同一个后台合入；新建文档的命令也问 `githook.ts` 当前签出是不是受守卫的 main，是就拒绝，BR-2409）。
-- 数据：项目的 `.claude/settings.json`、`.claude/skills/`、git hook 目录里的守卫文件；skill 的来源是 canon 自己仓库的 `.claude/skills`；编译好的 `dist/canon` 先用和它一起发布的 `dist/skills`，npm 包用包里的，`CANON_SKILLS_SOURCE` 可以另指（BR-2082、BR-2412）。`canon init` 和 `canon update` 还写只有标题的 `canon/architecture.md`（已有的不覆盖），以及 `canon/config.yaml` 里缺少的 `links_since`（main 当时的提交，已有的不改，BR-2032、BR-2452）。
+
+- 职责：Claude Code 和 Codex 的原生 hook（会话开始跑 `canon brief`；每次 Bash 前快照、检查 `canon work` 和 `canon chore` 的认领命令带不带 `--as`，子 agent 的 `take` 和 `unstall` 一律拒绝（`canon work check-as`，只拒绝、不改写，BR-2340）；提问工具之后记录回答；Write、Edit 或 MultiEdit 之后提示改动的规则或决策在新行里复述了别的规则，并列出和它最相关的几份文档，`canon restatements --hook`，不调模型，D-84、D-90）、两端的 canon 技能入口、git 的 `reference-transaction` hook（main 只能由共享合入流水线移动，`canon work land` 和 `canon chore land` 跟随的是同一个后台合入；新建文档的命令也问 `githook.ts` 当前签出是不是受守卫的 main，是就拒绝，BR-2409）。
+- 数据：Claude 的 `.claude/settings.json`、`.claude/skills/`；Codex 的 `.codex/hooks.json`、`.agents/skills/` 及有效根 AGENTS 文件的管理段；git hook 目录里的守卫文件。canon 自己仓库的 .agents/skills 是随源码提交的源头链接，不由安装器创建；Codex 的线程亲缘存在共享事件表（D-101）。skill 的来源是 canon 自己仓库的 `.claude/skills`；编译好的 `dist/canon` 先用和它一起发布的 `dist/skills`，npm 包用包里的，`CANON_SKILLS_SOURCE` 可以另指（BR-2082、BR-2412）。`canon init` 和 `canon update` 还写只有标题的 `canon/architecture.md`（已有的不覆盖），以及 `canon/config.yaml` 里缺少的 `links_since`（main 当时的提交，已有的不改，BR-2032、BR-2452）。
 - 代码：`src/install`（`init`、`install`、`update`、`uninstall`、`githook.ts`）。
-- 决策：D-9、D-10、D-16、D-36、D-46、D-53、D-62、D-65、D-84。
+- 决策：D-9、D-10、D-16、D-36、D-46、D-53、D-62、D-65、D-84、D-101。
 
 **后台 floor watch（`floor_timing: after` 时）**
 - 职责：合入后在 git 公共目录下的临时 worktree 里，对 main 的最新提交按批跑 floor；通过就移动 `refs/canon/green` 并运行 `after_green`；没通过就记下，由下一个会话 `canon work start --fix-main` 向前修。

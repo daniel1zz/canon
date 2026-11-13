@@ -1,3 +1,4 @@
+import { sessionActor, type AgentRuntime } from "../../kernel/agent.ts";
 import { Database } from "bun:sqlite";
 import { copyFileSync, existsSync, mkdtempSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -175,10 +176,10 @@ export function leftOut(root: string, s: Snapshot): string | undefined {
  * `git -C`, `pushd`, subshells and variables all count. The table is opened read-only and no claim is judged
  * (judging writes events), because this runs before every Bash call.
  */
-export function claimedWorktrees(cwd: string, sessionId: string, agentId?: string): Result<string[]> {
-  const session = sessionId.trim().slice(0, 8);
-  if (session === "") return ok([]);
-  const actor = agentId === undefined || agentId === "" ? `agent:${session}` : `agent:${session}:${agentId}`;
+export function claimedWorktrees(cwd: string, sessionId: string, agentId?: string, runtime: AgentRuntime = "claude", actorOverride?: string): Result<string[]> {
+  const session = sessionId.trim();
+  if (session === "" && !actorOverride) return ok([]);
+  const actor = actorOverride || sessionActor(runtime, session, agentId);
   const path = CoordDb.pathFor(cwd);
   if (!path.ok) return ok([]); // not a git repository: nothing is claimed
   if (!existsSync(path.value)) return ok([]);

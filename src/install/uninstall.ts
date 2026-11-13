@@ -1,3 +1,6 @@
+import { SKILL_DIRS } from "../kernel/agent.ts";
+import { selectedTargets, projectAssetPaths } from "./targets.ts";
+import { planCodex, applyCodex } from "./codex.ts";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -156,13 +159,17 @@ async function removeFromMain(root: string, config: Config, opts: UninstallOptio
   if (busy.value.length > 0) {
     return err("conflict", `work is still in flight; land it, or archive it with \`canon work drop <C-n>\`, then run canon uninstall again:\n${busy.value.map((l) => `  ${l}`).join("\n")}`);
   }
-  const skills = planUnskills(root, opts.force);
-  if (!skills.ok) return skills;
-  if (skills.value.edited.length > 0 && !opts.force) {
-    return err("conflict", `these canon skill files were edited in this project and would be deleted:\n${skills.value.edited.map((c) => `  .claude/skills/${c}`).join("\n")}\nKeep a copy elsewhere, or run canon uninstall --force to delete them too.`);
+  const selected = selectedTargets(root);
+  if (!selected.ok) return selected;
+  for (const runtime of selected.value) {
+    const skills = planUnskills(root, opts.force, runtime);
+    if (!skills.ok) return skills;
+    if (skills.value.edited.length > 0 && !opts.force) return err("conflict", `these canon skill files were edited in this project and would be deleted:\n${skills.value.edited.map((c) => `  ${SKILL_DIRS[runtime]}/${c}`).join("\n")}\nKeep a copy elsewhere, or run canon uninstall --force to delete them too.`);
   }
-  const settings = planUnhook(root);
+  const settings = selected.value.includes("claude") ? planUnhook(root) : ok(undefined);
   if (!settings.ok) return settings;
+  const codex = selected.value.includes("codex") ? planCodex(root, true) : ok(undefined);
+  if (!codex.ok) return codex;
   if (ws.config.remote) {
     const synced = sync(ws, say);
     if (!synced.ok) return synced;
@@ -176,17 +183,29 @@ async function removeFromMain(root: string, config: Config, opts: UninstallOptio
   // reason: opened before canon/config.yaml is deleted, so the landing runs with the floor and review it had (BR-2278)
   const lw = openWorkspace(wt);
   if (!lw.ok) return lw;
-  const wtSkills = planUnskills(wt, opts.force);
-  if (!wtSkills.ok) return wtSkills;
-  const removed = applyUnskills(wtSkills.value);
-  const wtSettings = planUnhook(wt);
-  if (!wtSettings.ok) return wtSettings;
-  writeUnhook(wt, wtSettings.value);
+  const removed: string[] = [];
+  for (const runtime of selected.value) {
+    const wtSkills = planUnskills(wt, opts.force, runtime);
+    if (!wtSkills.ok) return wtSkills;
+    removed.push(...applyUnskills(wtSkills.value));
+  }
+  if (selected.value.includes("claude")) {
+    const wtSettings = planUnhook(wt);
+    if (!wtSettings.ok) return wtSettings;
+    writeUnhook(wt, wtSettings.value);
+  }
+  if (selected.value.includes("codex")) {
+    const wtCodex = planCodex(wt, true);
+    if (!wtCodex.ok) return wtCodex;
+    applyCodex(wt, wtCodex.value);
+  }
   rmSync(join(wt, CONFIG));
-  const claudeDir = join(wt, ".claude");
-  if (existsSync(claudeDir) && readdirSync(claudeDir).length === 0) rmSync(claudeDir, { recursive: true });
+  for (const dir of [".claude", ".agents", ".codex"]) {
+    const full = join(wt, dir);
+    if (existsSync(full) && readdirSync(full).length === 0) rmSync(full, { recursive: true });
+  }
 
-  for (const args of [["add", "-A", "--", ".claude", "canon"], ["commit", "-q", "-m", `Uninstall canon (${started.value.change})`]]) {
+  for (const args of [["add", "-A", "--", ...projectAssetPaths(wt), "canon"], ["commit", "-q", "-m", `Uninstall canon (${started.value.change})`]]) {
     const r = git(wt, ...args);
     if (!r.ok) return r;
   }
@@ -199,7 +218,7 @@ async function removeFromMain(root: string, config: Config, opts: UninstallOptio
   say(`uninstall landed as ${started.value.change} (${out.sha.slice(0, 9)})`);
   // reason: the landing's own push reads the remote from main's config, which this commit just removed (BR-2278)
   pushTo(ws.primary, ws.config, say);
-  say('kept worktree.baseRef "head" in .claude/settings.json: canon does not know what was there before; remove it yourself if you do not want it');
+  if (selected.value.includes("claude")) say('kept worktree.baseRef "head" in .claude/settings.json: canon does not know what was there before; remove it yourself if you do not want it');
   return ok({ kind: "done" });
 }
 

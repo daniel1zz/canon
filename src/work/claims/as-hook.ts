@@ -1,3 +1,5 @@
+import { effectiveAgentSession } from "../agent-session.ts";
+import { agentSession, type AgentRuntime } from "../../kernel/agent.ts";
 import { openWorkspace } from "../workspace.ts";
 import { checkCommand } from "./as-check.ts";
 
@@ -7,7 +9,7 @@ import { checkCommand } from "./as-check.ts";
  * `allow`. A call it cannot check goes through with a `hook.skip` event (BR-2341); with only a systemMessage when
  * the event cannot be written either.
  */
-export function runAsCheck(raw: string, fallbackCwd: string): string {
+export function runAsCheck(raw: string, fallbackCwd: string, runtime: AgentRuntime = agentSession()?.runtime ?? "claude"): string {
   let input: Record<string, unknown> | undefined;
   try {
     const v = JSON.parse(raw) as unknown;
@@ -21,7 +23,8 @@ export function runAsCheck(raw: string, fallbackCwd: string): string {
   if (typeof command !== "string") return skip("bad-input", "", cwd, undefined);
   // reason: almost every Bash call has no `canon` in it; those pass without reading anything else, so the hook costs one process start (D-62)
   if (!command.includes("canon")) return "";
-  const agentId = typeof input?.["agent_id"] === "string" && input["agent_id"] !== "" ? input["agent_id"] : undefined;
+  const context = runtime === "codex" ? effectiveAgentSession(process.env, cwd) : undefined;
+  const agentId = typeof input?.["agent_id"] === "string" && input["agent_id"] !== "" ? input["agent_id"] : context?.ok ? context.value?.child : undefined;
   const v = checkCommand(command, agentId);
   if (v.kind === "deny") return `${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: v.reason } })}\n`;
   if (v.kind === "skip") return skip(v.reason, v.sub, cwd, agentId);

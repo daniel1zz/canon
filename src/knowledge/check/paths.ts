@@ -1,3 +1,4 @@
+import { ROOT_INSTRUCTIONS } from "../../kernel/agent.ts";
 import { existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, join } from "node:path";
 import { fencedLines as inFence, type Corpus } from "../documents/model.ts";
@@ -17,7 +18,7 @@ export interface PathFinding {
 }
 
 /** Root files every session reads; checked whole (BR-2171). */
-export const ROOT_DOCS = ["CLAUDE.md", "README.md"] as const;
+export const ROOT_DOCS = [...ROOT_INSTRUCTIONS, "README.md"] as const;
 
 const EXT = /^[A-Za-z0-9_][\w.-]*\.(?:ts|tsx|js|jsx|mjs|cjs|md|yaml|yml|json|sh|toml|lock|txt)$/;
 const NOT_A_PATH = /[\s<>*?{}$…|]|\b[A-Z]+-n\b|:\/\//;

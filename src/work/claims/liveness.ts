@@ -3,6 +3,9 @@
  * another process never passes for the original. The probes read the process table through `ps`, which macOS and
  * Linux both ship.
  */
+import { basename } from "node:path";
+import { agentSession } from "../../kernel/agent.ts";
+
 export interface Proc {
   readonly pid: number;
   /** `ps -o lstart` of the process, in the C locale and UTC. */
@@ -57,11 +60,25 @@ export function selfProcess(): Proc | undefined {
 }
 
 /**
- * The Claude Code process this command runs under, when there is one: CLAUDE_PID, believed only when it is an
+ * The host process this command runs under: Codex uses its nearest codex ancestor; Claude uses CLAUDE_PID, believed only when it is an
  * ancestor of this process (an inherited, stale value from another session is ignored). Every agent of one Claude
  * Code session, subagents included, runs under the same process, so this names the session, not the agent (D-11).
  */
 export function sessionProcess(env: Record<string, string | undefined> = process.env): Proc | undefined {
+  if (agentSession(env)?.runtime === "codex") {
+    const r = ps(["-axo", "pid=,ppid=,comm="]);
+    if (!r || r.code !== 0) return undefined;
+    const table = new Map<number, { parent: number; command: string }>();
+    for (const line of r.out.split("\n")) {
+      const row = /^\s*(\d+)\s+(\d+)\s+(.+)$/.exec(line);
+      if (row) table.set(Number(row[1]), { parent: Number(row[2]), command: row[3]!.trim() });
+    }
+    for (let pid = table.get(process.pid)?.parent, i = 0; pid !== undefined && pid > 1 && i < 128; pid = table.get(pid)?.parent, i++) {
+      const row = table.get(pid);
+      if (row && basename(row.command) === "codex") return processOf(pid);
+    }
+    return undefined;
+  }
   if (env["CLAUDECODE"] !== "1") return undefined;
   const claimed = Number(env["CLAUDE_PID"]);
   if (!Number.isInteger(claimed) || claimed <= 1) return undefined;
