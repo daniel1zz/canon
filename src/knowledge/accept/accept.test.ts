@@ -96,6 +96,38 @@ describe("canon accept (BR-2462)", () => {
     expect(done.ok && done.value.reasons).toEqual([]);
   });
 
+  test("BR-2462: a review covers every commit of its landing, and a landing that changed only links records needs none", async () => {
+    const root = fixture();
+    await reviewLandings(root);
+    const s = startNew(root, "two commits");
+    writeFileSync(join(s.worktree, "canon/rules/billing/BR-2.md"), rule(2, " After BR-1."));
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "add BR-2");
+    writeFileSync(join(s.worktree, "canon/rules/billing/BR-1.md"), rule(1, " Only overseas."));
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "narrow BR-1");
+    const out = await land(ws(s.worktree), FAST, quiet);
+    if (out.kind !== "landed") throw new Error(`landing failed: ${JSON.stringify(out)}`);
+    await reviewLandings(root);
+    const both = await run(root);
+    if (!both.ok) throw new Error(both.error.message);
+    expect(both.value.reasons.filter((x) => x.includes("no review after its landing") || x.includes("failed"))).toEqual([]);
+    const db = ws(root).db;
+    const rows = () => db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM landed_reviews").get()!.n;
+    const before = rows();
+    const c = startNew(root, "links only");
+    const text = rule(2, " After BR-1.").replace("business: x\n", "business: x\nlinks:\n  BR-1: 0123456789abcdef\n");
+    writeFileSync(join(c.worktree, "canon/rules/billing/BR-2.md"), text);
+    sh(c.worktree, "add", "-A");
+    sh(c.worktree, "commit", "-qm", "confirm");
+    const linked = await land(ws(c.worktree), FAST, quiet);
+    if (linked.kind !== "landed") throw new Error(`landing failed: ${JSON.stringify(linked)}`);
+    expect(rows()).toBe(before);
+    const after = await run(root);
+    if (!after.ok) throw new Error(after.error.message);
+    expect(after.value.reasons.filter((x) => x.includes("no review after its landing"))).toEqual([]);
+  });
+
   test("BR-2462: with floor_timing after, an untested tip runs the floor at once and is accepted when it passes", async () => {
     const root = fixture();
     const first = sh(root, "rev-parse", "HEAD~1");

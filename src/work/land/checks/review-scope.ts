@@ -36,7 +36,12 @@ export interface ReviewScope {
   readonly restatements: readonly Restatement[];
 }
 
-export function reviewScope(wt: string, base: string, head: string, corpus: Corpus): ReviewScope {
+/**
+ * Which files under canon/rules, canon/decisions and canon/releases a change between `base` and `head` adds, edits or deletes
+ * for the review: files only moved with identical content and files whose only change is their `links` records are left out
+ * (BR-2009). `canon accept` asks it per landed commit (BR-2462).
+ */
+export function reviewEntries(wt: string, base: string, head: string): { entries: { status: string; path: string }[]; renamed: string[]; linksOnly: string[] } {
   // core.quotePath=false: git otherwise prints non-ASCII paths quoted and octal-escaped, which match no document.
   // A file only moved, with identical content, is neither changed nor deleted: moving 74 rules into
   // subdomains must not re-review all of them (BR-2009). git pairs exact renames; the blobs are compared too.
@@ -60,6 +65,11 @@ export function reviewScope(wt: string, base: string, head: string, corpus: Corp
     }
   }
   linksOnly.reverse();
+  return { entries, renamed, linksOnly };
+}
+
+export function reviewScope(wt: string, base: string, head: string, corpus: Corpus): ReviewScope {
+  const { entries, renamed, linksOnly } = reviewEntries(wt, base, head);
   const live = new Set(entries.filter((e) => e.status !== "D").map((e) => e.path));
   const changedDocs = corpus.docs.filter((d) => live.has(d.path));
   const deleted: DeletedDoc[] = entries

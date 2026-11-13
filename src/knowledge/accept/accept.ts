@@ -7,6 +7,7 @@ import { testFilesFor } from "../check/tests.ts";
 import { check } from "../check/check.ts";
 import type { ReadResult } from "../documents/read.ts";
 import { linksOf } from "../links/start.ts";
+import { reviewEntries } from "../../work/land/checks/review-scope.ts";
 import { redMain, fixLandedIn } from "../../work/watch/redmain.ts";
 import { GREEN_REF, liveWatcher, tested, timingOnMain, watch } from "../../work/watch/watch.ts";
 
@@ -55,7 +56,11 @@ function corpusInput(ws: Workspace, read: ReadResult): Result<Parameters<typeof 
   return ok({ root: ws.root, ...read, testFiles: testFiles.value, reports: reports.value, branchChanges: branchChanges.value, backlogBase: backlogBase.value, architecture: architecture.value });
 }
 
-/** Every review row in (base..commit] not done, and every doc-touching commit in the range without a row (BR-2462). */
+/**
+ * Every review row in (base..commit] not done, and every commit in the range with something to review that no row covers
+ * (BR-2462). A row covers its whole landing, `base..head`: a landing can put several commits on main and the row names only
+ * the last. A commit no row covers needs none when it changes nothing the review reads (only moves or `links` records, BR-2009).
+ */
 function reviewReasons(ws: Workspace, base: string | undefined, commit: string): Result<{ reasons: string[]; waiting: string[] }> {
   const reasons: string[] = [];
   const waiting: string[] = [];
@@ -66,24 +71,36 @@ function reviewReasons(ws: Workspace, base: string | undefined, commit: string):
     if (!toCommit.ok) return false;
     return !git(ws.root, "merge-base", "--is-ancestor", sha, base).ok;
   };
-  const rows = ws.db.db.query<{ id: number; change: string | null; head: string; state: string }, []>("SELECT id, change, head, state FROM landed_reviews").all();
-  const covered = new Set<string>();
+  const rows = ws.db.db.query<{ id: number; change: string | null; base: string; head: string; state: string }, []>("SELECT id, change, base, head, state FROM landed_reviews ORDER BY id").all();
+  const landing = (r: { base: string; head: string }): Result<string[]> => {
+    const l = git(ws.root, "rev-list", `${r.base}..${r.head}`);
+    return l.ok ? ok(l.value.split("\n").filter((s) => s !== "")) : l;
+  };
+  const done = new Set<string>();
   for (const r of rows) {
     if (!inRange(r.head)) continue;
     // reason: a later done review of the same head covers an earlier failed one (canon work review-landed --again writes a new row)
-    if (r.state === "done") covered.add(r.head);
+    if (r.state === "done") done.add(r.head);
   }
+  const covered = new Set<string>();
+  const said = new Set<string>();
   for (const r of rows) {
-    if (!inRange(r.head) || covered.has(r.head)) continue;
+    if (!inRange(r.head)) continue;
+    const shas = landing(r);
+    if (!shas.ok) return shas;
+    for (const s of shas.value) covered.add(s);
+    if (done.has(r.head) || said.has(r.head)) continue;
+    said.add(r.head);
     if (r.state === "failed") reasons.push(`the review after the landing of ${r.change ?? r.head.slice(0, 9)} failed: canon work review-landed --again ${r.change ?? "<C-n>"}`);
     else if (r.state === "queued" || r.state === "running") waiting.push(`the review after the landing of ${r.change ?? r.head.slice(0, 9)} is still ${r.state}`);
-    covered.add(r.head);
   }
   const listed = git(ws.root, "rev-list", `${base}..${commit}`, "--", "canon/rules", "canon/decisions", "canon/releases");
   if (!listed.ok) return listed;
   for (const sha of listed.value.split("\n").filter((s) => s !== "")) {
     if (covered.has(sha)) continue;
-    if (rows.some((r) => r.head === sha)) continue;
+    const parent = git(ws.root, "rev-parse", "--verify", "--quiet", `${sha}^`);
+    if (!parent.ok) return err("io", `cannot resolve the parent of ${sha.slice(0, 9)}: ${parent.error.message}`);
+    if (reviewEntries(ws.root, parent.value, sha).entries.length === 0) continue;
     reasons.push(`${sha.slice(0, 9)} changed canon/rules, canon/decisions or canon/releases but no review after its landing is recorded (landed without a \`review\` command? see review.skip): canon work review-landed --again <C-n>`);
   }
   return ok({ reasons, waiting });
