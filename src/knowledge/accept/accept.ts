@@ -127,7 +127,7 @@ export async function accept(ws: Workspace, say: Say, corpusRead: ReadResult): P
   reasons.push(...reviews.value.reasons);
   waiting.push(...reviews.value.waiting);
 
-  if (reasons.length === 0 && timingOnMain(ws) === "after" && !tested(ws.db, commit.value)) {
+  if (reasons.length === 0 && waiting.length === 0 && timingOnMain(ws) === "after" && !tested(ws.db, commit.value)) {
     const red = redMain(ws.db);
     if (red && !fixLandedIn(ws, red.sha)) reasons.push(`main has an unfixed floor failure at ${red.sha.slice(0, 9)} (log: ${red.log})`);
     else if (liveWatcher(ws.db)) waiting.push(`the background floor is testing main; run canon accept again when it finishes (canon work status shows it)`);
