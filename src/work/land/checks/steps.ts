@@ -120,6 +120,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   const scope = reviewScope(wt, base.value, head.value, read.corpus);
   const { entries } = scope;
   if (scope.renamed.length > 0) say(`review: ${scope.renamed.length} file(s) only moved, not reviewed`);
+  if (scope.linksOnly.length > 0) say(`review: ${scope.linksOnly.length} file(s) only re-recorded references, not reviewed`);
   // Sources new to main are checked once, here, on the tree that becomes main (BR-2111).
   const sourceFailures = await checkSources(wt, base.value, entries, read.corpus.docs, opts.fetcher ?? httpFetch);
   if (sourceFailures.length > 0) return refuse("source", `decision sources do not hold:\n${sourceFailures.map((f) => `  - ${f}`).join("\n")}`);

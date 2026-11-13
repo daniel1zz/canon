@@ -9,6 +9,7 @@ import { duplicatePrompt, SKILL_FILE, standingText, type AddedLines, type Delete
 import { addedLines, restatementIndex, restatementsIn, type Restatement } from "../../../knowledge/check/restatement/restatement.ts";
 import { textAt } from "../../../knowledge/check/restatement/work.ts";
 import { reviewKeys } from "../../../knowledge/review/config-keys.ts";
+import { parseDocFile } from "../../../knowledge/documents/docfile.ts";
 import { shippedUnedited } from "../../../install/install.ts";
 
 /**
@@ -21,6 +22,8 @@ export interface ReviewScope {
   readonly entries: readonly { status: string; path: string }[];
   /** Files only moved with identical content: not reviewed. */
   readonly renamed: readonly string[];
+  /** Files whose only change is the `links` reference records (BR-2425): not reviewed (BR-2009). */
+  readonly linksOnly: readonly string[];
   readonly changedDocs: readonly Doc[];
   readonly deleted: readonly DeletedDoc[];
   readonly readmes: readonly string[];
@@ -46,6 +49,17 @@ export function reviewScope(wt: string, base: string, head: string, corpus: Corp
     else if (sameBlob(wt, `${base}:${from}`, `${head}:${to}`)) renamed.push(`${from} → ${to}`);
     else entries.push({ status: "D", path: from }, { status: "A", path: to });
   }
+  // reason: a reference record (`links`, BR-2425) is machine-written and checked by canon check, not judged by the rule
+  // review; re-recording hundreds of confirmations must not re-review every touched document, like a pure move (BR-2009)
+  const linksOnly: string[] = [];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]!;
+    if (e.status === "M" && linksOnlyEdit(wt, base, head, e.path)) {
+      linksOnly.push(e.path);
+      entries.splice(i, 1);
+    }
+  }
+  linksOnly.reverse();
   const live = new Set(entries.filter((e) => e.status !== "D").map((e) => e.path));
   const changedDocs = corpus.docs.filter((d) => live.has(d.path));
   const deleted: DeletedDoc[] = entries
@@ -75,7 +89,7 @@ export function reviewScope(wt: string, base: string, head: string, corpus: Corp
     }
     restatements.push(...restatementsIn(index, d, now, lines));
   }
-  return { entries, renamed, changedDocs, deleted, readmes, deletedReadmes, reviewed, added, restatements };
+  return { entries, renamed, linksOnly, changedDocs, deleted, readmes, deletedReadmes, reviewed, added, restatements };
 }
 
 /**
@@ -145,6 +159,20 @@ export function reviewSettingsOn(wt: string, rev: string): Result<ReviewSettings
 }
 
 /** Whether two `<rev>:<path>` objects are the same blob, i.e. the same bytes. */
+
+/** True when `path` at `base` and `head` differ only in the front-matter `links` records: body and every other key equal. */
+function linksOnlyEdit(wt: string, base: string, head: string, path: string): boolean {
+  if (!path.endsWith(".md") || path.endsWith("/README.md")) return false;
+  const a = git(wt, "show", `${base}:${path}`);
+  const b = git(wt, "show", `${head}:${path}`);
+  if (!a.ok || !b.ok) return false;
+  const pa = parseDocFile(a.value, path);
+  const pb = parseDocFile(b.value, path);
+  if (!pa.ok || !pb.ok || pa.value.body !== pb.value.body) return false;
+  const rest = (x: Record<string, unknown>) => JSON.stringify(Object.entries(x).filter(([k]) => k !== "links").sort((l, r) => (l[0] < r[0] ? -1 : 1)));
+  return rest(pa.value.meta) === rest(pb.value.meta);
+}
+
 function sameBlob(wt: string, a: string, b: string): boolean {
   const x = git(wt, "rev-parse", a);
   const y = git(wt, "rev-parse", b);
