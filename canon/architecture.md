@@ -12,7 +12,7 @@ title: 架构总览
 - **使用者**：在项目里干活的 AI 会话（Claude Code），常常几个同时在跑；负责方向的人，只回答 `canon human` 里的问题。
 - **git**：一切的底座。main 是一个分支，每个变更一个 worktree 和分支；canon 的协调数据放在 git 公共目录里。
 - **Claude Code**：会话在它里面运行。canon 把 hook 和 skill 装进项目的 `.claude/`；读它的提问记录来佐证转述的回答；`canon usage` 只读它的会话记录。
-- **`claude -p`**：非交互的 Claude，用于合入后的规则评审和重复评审、合入时的措辞判断，命令由 `canon/config.yaml` 的 `review` 配置；合入后的代码评审也是项目自己配的；canon 仓库发布前的发布评审用同一个 `review` 命令（BR-2411）。
+- **`claude -p`**：非交互的 Claude，用于合入后的规则评审和重复评审、合入时的措辞判断、`canon finding reconcile` 的合并评审（BR-2461），命令由 `canon/config.yaml` 的 `review` 配置；合入后的代码评审也是项目自己配的；canon 仓库发布前的发布评审用同一个 `review` 命令（BR-2411）。
 - **GitHub**：`canon issues` 列出开着的 issue（`src/work/issues`，只读，关闭用 `gh`）；canon 仓库的发布评审拦截时新建或评论一个 `canon-review` issue（BR-2411）；决策里引用的网址在合入时被抓取核对；`remote` 指向它时合入后把 main 推上去。
 - **项目自己的命令**：floor、类型检查、测试、选测试的命令（`test_select_command`）、挑选相关文档的命令（`related_pick_command`，可选，通常是一个便宜模型；只有 `canon context <编号>` 和 `canon work review` 运行它，编辑 hook、`canon check` 和合入不运行，BR-2443）、`setup`、生命周期 hook，由 `canon/config.yaml` 配置，canon 只运行它们、看退出码；测试命令把 JUnit XML 报告写到 `{report}`，canon 读报告里有哪些测试、跑没跑，不认语言（D-64）。
 
@@ -27,7 +27,7 @@ title: 架构总览
 - 决策：D-2、D-3、D-4、D-15、D-28、D-63。
 
 **协调数据库 `state.db`**
-- 职责：多个会话同时工作时的共享状态：认领、合入队列、负责人标的优先合入（`canon backlog urgent`）、交接记录、留给人的问题、编号、端口、事件表（每次写入和拒绝）、后台部件的登记、排队的合入后评审（`landed_reviews`）、未处理的评审意见（`review_findings`，见合入后的命令和评审）、挑选命令回答的缓存（`related_picks`，BR-2444）。
+- 职责：多个会话同时工作时的共享状态：认领、合入队列、负责人标的优先合入（`canon backlog urgent`）、交接记录、留给人的问题、编号、端口、事件表（每次写入和拒绝）、后台部件的登记、排队的合入后评审（`landed_reviews`）、未处理的评审意见（`review_findings`，含 reconcile 互记的 `question` 列，见合入后的命令和评审）、挑选命令回答的缓存（`related_picks`，BR-2444）。
 - 数据：`<git 公共目录>/canon/state.db`（SQLite），本机所有 worktree 共用，不提交、不跨机器。知识（规则、决策）不放这里。
 - 代码：`src/work`（`db.ts`、`workspace.ts`），各子领域读写自己的表；`src/work/humans`（留给人的问题）、`src/work/stats`（从事件表算统计，`canon stats`、`canon events`、`canon usage`）。
 - 决策：D-6、D-11、D-18、D-33、D-41、D-45、D-47、D-73。
@@ -68,7 +68,7 @@ title: 架构总览
 - 职责：合入后在主 checkout 里后台运行配置的 `after_land` 命令，记下日志和退出码；运行和记录配置的生命周期 hook、每个变更的端口 `CANON_PORT`；合入后的规则评审和重复评审：合入把要评审的合入排进 `landed_reviews`，并在没有活着的评审进程时启动后台的 `canon work review-landed`，它一次运行一个、按排队顺序，在合入前 main 的提交上的临时 worktree 里调用 `review` 命令（拆成几次调用时同时运行，D-83；同样的提示通过过就沿用，同一变更的改动文档和上次通过时一样就只对之后合入 main 的文档做小评审，D-70、D-81），拦截意见全部记进 `review_findings`，日志逐条列出、交给主 agent 用 `canon finding close` 当场处理（BR-2441、BR-2442、D-89、D-99）；方向相反的两条意见由主会话用 `canon finding reconcile` 交给评审求两边都满足的写法，给不出时记成留给人的问题并和意见互记（BR-2461、D-103）；改动文档放不进一次调用时按文档分成几部分评审（BR-2448）；失败或没排上的评审用 `canon work review-landed --again <C-n>` 重新排（BR-2449）；`canon work after-land` 报告同一次合入的后台命令和评审。合入后的代码评审怎么跑由项目配。重复评审不评审 canon 装进项目、项目没改过的 skill 文件，所以 `canon update` 的合入不做重复评审（BR-2410）。规则评审的 `restatement` 标准针对新写的行，提示里附上这次新增或改动的行和文字判定找到的候选；小评审只附新增或改动的行（BR-2405、D-84）。规则评审还拦截这次往某个领域的业务清单里新加、却和这个领域已有业务说的是同一件事的业务（BR-2447、D-98）。
 - 数据：`refs/canon/code-reviewed`，后台命令的日志和退出码（事件表）；排队的合入后评审在 `state.db` 的 `landed_reviews` 表里，运行它们的唯一进程登记在 `landed_reviewer`，每次评审的日志在协调数据库目录的 `logs/` 下；未处理的评审意见在 `review_findings` 表里，一个身份同时最多一行，挂在点名的每份文档上，关闭时记下方式和关闭它的事件（合入、判定或 `finding.close`；更早的有复问）；不拦截的建议不在这张表里，从合入后评审的事件读（更早的从 `land.ok` 读，D-21、D-97）。
 - 代码：`src/work/hooks`（`after-land.ts` 汇总后台命令和评审）、`src/knowledge/review`（`landed-queue.ts` 是评审的队列和后台进程，`landed.ts` 跑一次合入后评审）；未处理的评审意见在 `src/knowledge/review/findings`，`canon context`、`canon brief` 显示它们，合入、`canon finding close`（BR-2453）和 `canon verdict record` 关闭它们。
-- 决策：D-2、D-19、D-21、D-51、D-59、D-84、D-89、D-97、D-98、D-99。
+- 决策：D-2、D-19、D-21、D-51、D-59、D-84、D-89、D-97、D-98、D-99、D-103。
 
 ## 容器：本项目配的
 
