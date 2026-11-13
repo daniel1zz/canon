@@ -47,7 +47,6 @@ describe("canon finding reconcile (BR-2461)", () => {
     expect(prompt).toContain("「三天」矛盾");
     expect(prompt).toContain("Document BR-1");
     expect(prompt).toContain("Rule 2.");
-    expect(readFileSync(join(root, "kind.txt"), "utf8")).toBe("reconcile");
     const ev = db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'finding.reconcile'").get()!;
     expect(JSON.parse(ev.detail)).toEqual({ findings: [a, b], opposed: false, reason: "two different sentences" });
     expect([questionOf(db, a), questionOf(db, b)]).toEqual([null, null]);
@@ -93,6 +92,13 @@ describe("canon finding reconcile (BR-2461)", () => {
     const none = await reconcileFindings(db, input(a, b));
     expect(!none.ok && [none.error.code, none.error.message.includes("review")]).toEqual(["io", true]);
     rmSync(join(root, "answer.json"), { force: true });
+  });
+
+  test("BR-2366: canon finding reconcile runs the review command with CANON_REVIEW_KIND reconcile", async () => {
+    const { root, db, a, b, answer, input } = fixture();
+    answer({ opposed: false, reason: "compatible" });
+    expect((await reconcileFindings(db, input(a, b))).ok).toBe(true);
+    expect(readFileSync(join(root, "kind.txt"), "utf8")).toBe("reconcile");
   });
 
   test("BR-2461: recording a finding whose documents equal an open finding's names the reconcile pair", () => {
