@@ -153,5 +153,10 @@ describe("what canon rule new shows before it creates the file", () => {
     const neither = canon(change.worktree, "rule", "new", "--domain", "nowhere", "--title", "");
     expect(neither.code).toBe(2);
     expect(neither.out).not.toContain("businesses of");
+    // BR-2432: without --domain it is a usage error: nothing listed, no file created
+    const bare = canon(change.worktree, "rule", "new", "--title", "x");
+    expect(bare.code).toBe(2);
+    expect(bare.out).not.toContain("businesses of");
+    expect(readdirSync(join(change.worktree, "canon/rules/billing")).length).toBe(before);
   });
 });
