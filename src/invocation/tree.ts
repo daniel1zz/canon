@@ -2,6 +2,7 @@ import { defineCommand } from "citty";
 import { assemble } from "./command.ts";
 import { installCommands } from "../install/commands.ts";
 import { referenceCommands } from "./reference/commands.ts";
+import { acceptCommands } from "../knowledge/accept/commands.ts";
 import { checkCommands } from "../knowledge/check/commands.ts";
 import { restatementCommands } from "../knowledge/check/restatement/commands.ts";
 import { documentCommands } from "../knowledge/documents/commands.ts";
@@ -38,7 +39,8 @@ export const main = defineCommand({
     installCommands,
     hooksCommands,
     referenceCommands,
-    checkCommands,
+    acceptCommands,
+  checkCommands,
     restatementCommands,
     documentCommands,
     queryCommands,
