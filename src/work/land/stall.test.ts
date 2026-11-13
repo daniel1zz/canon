@@ -104,4 +104,10 @@ describe("canon work unstall (BR-2455)", () => {
     const again = await land(ws(t.s.worktree, SUB), FAST, quiet);
     expect(again.kind === "refused" && again.reason).toBe("dirty");
   }, 60_000);
+
+  test("BR-2455: a chore identity is a valid work identity, not a usage error", () => {
+    const t = started(SUB);
+    const unknown = canon(t.root, MAIN_SESSION, "work", "unstall", "chore-7a4d2f1e-9b3c-4d5e-8f6a-0b1c2d3e4f5a", "--reason", "x");
+    expect(unknown.code).toBe(3);
+  }, 30_000);
 });

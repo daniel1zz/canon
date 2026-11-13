@@ -74,7 +74,7 @@ title: 架构总览
 
 canon 这个仓库在 `canon/config.yaml` 里配了下面这些，是项目配置，不是 canon 的部件：
 
-- **`dist/canon` 和 `dist/skills`**：只在主 checkout 里，PATH 上的 canon 指向 `dist/canon`，它装进项目的 skill 来自 `dist/skills`（指向 `skills-<提交>` 的符号链接）。`after_green` 运行 `scripts/release.ts`：先把测过的提交里所有 `canon-*` 的 SKILL.md 和工作说明放在一起做一次重复评审（同样的文字只评审一次），通过才从这个提交编译二进制、复制 skill、切换链接；拦截时什么也不发布，提一个 `canon-review` issue，退出码 1。不从没测过的 main 构建（D-31、D-91、BR-2411、BR-2412）。
+- **`dist/canon` 和 `dist/skills`**：只在主 checkout 里，PATH 上的 canon 指向 `dist/canon`，它装进项目的 skill 来自 `dist/skills`（指向 `skills-<提交>` 的符号链接）。`after_green` 运行 `scripts/release.ts`：先把测过的提交里所有 `canon-*` 的 SKILL.md 和工作说明放在一起做一次重复评审（同样的文字只评审一次），通过才从这个提交编译二进制、复制 skill、切换链接；编译可以和别的发布并行，检查当前版本、放置、切换和清理在 `<git 公共目录>/canon/publish.lock` 的互斥段里做，段内重读当前版本（BR-2412）；拦截时什么也不发布，提一个 `canon-review` issue，退出码 1。不从没测过的 main 构建（D-31、D-91、BR-2411、BR-2412）。
 - **`scripts/review-claude.sh`**：`review` 配的命令，用 `claude -p` 做规则评审，也用于发布评审（`CANON_REVIEW_KIND=release`）。
 - **`scripts/code-review.ts`**：`after_land` 配的命令，攒批后让 `claude -p` 评审合入的代码，只找安全和并发问题，发现的提成 GitHub issue；没到点时在后台留一个等待进程（`--wait`，协调数据库的 `code_review_waiter` 保证只有一个），到点评审后退出（D-59、D-68）。
 - **floor**：类型检查加 `scripts/test.sh`；`floor_timing: after`、`land_batch_max: 4`。
