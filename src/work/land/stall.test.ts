@@ -109,5 +109,6 @@ describe("canon work unstall (BR-2455)", () => {
     const t = started(SUB);
     const unknown = canon(t.root, MAIN_SESSION, "work", "unstall", "chore-7a4d2f1e-9b3c-4d5e-8f6a-0b1c2d3e4f5a", "--reason", "x");
     expect(unknown.code).toBe(3);
+    expect(canon(t.root, MAIN_SESSION, "work", "unstall", "chore-abc", "--reason", "x").code).toBe(2);
   }, 30_000);
 });
