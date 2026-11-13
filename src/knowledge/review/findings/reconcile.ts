@@ -111,6 +111,14 @@ export async function reconcileFindings(db: CoordDb, input: ReconcileInput): Pro
     return ok({ kind: "wording", wording, reason });
   }
   const tx = db.db.transaction((): Result<Reconciled> => {
+    // reason: the review call above takes minutes; another session may have closed a finding or recorded a verdict question meanwhile (#202, BR-2461)
+    for (const r of [ra, rb]) {
+      const now = db.db.query<{ question: number | null; closed_at: string | null }, [number]>("SELECT question, closed_at FROM review_findings WHERE id = ?").get(r.id);
+      if (!now) return err("not_found", `review finding #${r.id} disappeared while the review ran`);
+      if (now.closed_at !== null) return err("conflict", `finding #${r.id} was closed while the review ran; nothing recorded`);
+      if (now.question !== null && db.db.query<{ answer: string | null }, [number]>("SELECT answer FROM questions WHERE id = ?").get(now.question)?.answer === null)
+        return err("conflict", `finding #${r.id} already awaits the owner's verdict: question #${now.question} was recorded while the review ran`);
+    }
     const question = ask(
       db,
       input.actor,

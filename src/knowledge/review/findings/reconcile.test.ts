@@ -94,6 +94,28 @@ describe("canon finding reconcile (BR-2461)", () => {
     rmSync(join(root, "answer.json"), { force: true });
   });
 
+  test("BR-2461: a question recorded by another session while the review runs is not duplicated", async () => {
+    // reason: the reviewer itself mutates the db mid-call, standing in for the concurrent session (#202)
+    const { root, db, a, b, input } = fixture(`"tee prompt.txt > /dev/null; bun mid.ts; cat answer.json"`);
+    writeFileSync(
+      join(root, "mid.ts"),
+      [
+        'import { Database } from "bun:sqlite";',
+        `const db = new Database(${JSON.stringify(db.db.filename)});`,
+        'db.exec("PRAGMA busy_timeout = 5000;");',
+        `db.query("INSERT INTO questions(subject, asked_by, question, options, multi, asked_at) VALUES (NULL, 'agent:other', 'which way?', '[]', 0, '2026-01-01')").run();`,
+        'const q = (db.query("SELECT MAX(id) AS id FROM questions").get() as { id: number }).id;',
+        `db.query("UPDATE review_findings SET question = ? WHERE id IN (${a}, ${b})").run(q);`,
+        "db.close();",
+      ].join("\n"),
+    );
+    writeFileSync(join(root, "answer.json"), JSON.stringify({ opposed: true, reason: "no wording" }));
+    const r = await reconcileFindings(db, input(a, b));
+    expect(!r.ok && r.error.code).toBe("conflict");
+    expect(db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM questions").get()!.n).toBe(1);
+    expect(db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'finding.reconcile'").get()!.n).toBe(0);
+  });
+
   test("BR-2366: canon finding reconcile runs the review command with CANON_REVIEW_KIND reconcile", async () => {
     const { root, db, a, b, answer, input } = fixture();
     answer({ opposed: false, reason: "compatible" });
