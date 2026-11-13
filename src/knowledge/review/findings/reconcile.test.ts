@@ -116,6 +116,16 @@ describe("canon finding reconcile (BR-2461)", () => {
     expect(db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'finding.reconcile'").get()!.n).toBe(0);
   });
 
+  test("BR-2461: a finding already closed when the command starts does not trip the transaction re-check", async () => {
+    const { root, db, a, b, answer, input } = fixture();
+    db.db.query("UPDATE review_findings SET closed_at = ?, closed_how = 'fixed' WHERE id = ?").run("2026-01-01", a);
+    answer({ opposed: true, reason: "no wording" });
+    const r = await reconcileFindings(db, input(a, b));
+    if (!r.ok || r.value.kind !== "question") throw new Error(`expected a question, got ${JSON.stringify(r)}`);
+    expect(db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM questions").get()!.n).toBe(1);
+    expect(db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'finding.reconcile'").get()!.n).toBe(1);
+  });
+
   test("BR-2366: canon finding reconcile runs the review command with CANON_REVIEW_KIND reconcile", async () => {
     const { root, db, a, b, answer, input } = fixture();
     answer({ opposed: false, reason: "compatible" });
