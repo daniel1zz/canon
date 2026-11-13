@@ -1,3 +1,6 @@
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
+import { linksOnlyText } from "../links/links-only.ts";
 import { git } from "../../kernel/git.ts";
 import { isPlaceholderLine, section } from "../documents/templates.ts";
 import type { Corpus, Domain, Rule } from "../documents/model.ts";
@@ -51,6 +54,12 @@ function workRuleFiles(root: string, base: string): ReadonlySet<string> {
   for (const call of [git(root, "diff", "--name-only", base, "--", "canon/rules"), git(root, "ls-files", "--others", "--exclude-standard", "--", "canon/rules")]) {
     if (!call.ok) continue;
     for (const line of call.value.split("\n")) if (line.trim() !== "") out.add(line.trim());
+  }
+  // reason: a rule whose only change is its `links` records was confirmed, not edited: it is not migrated by that (BR-2431, D-106)
+  for (const path of [...out]) {
+    const was = git(root, "show", `${base}:${path}`);
+    if (!was.ok || !existsSync(join(root, path))) continue;
+    if (linksOnlyText(path, was.value, readFileSync(join(root, path), "utf8"))) out.delete(path);
   }
   return out;
 }

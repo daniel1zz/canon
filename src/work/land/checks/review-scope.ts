@@ -9,7 +9,7 @@ import { duplicatePrompt, SKILL_FILE, standingText, type AddedLines, type Delete
 import { addedLines, restatementIndex, restatementsIn, type Restatement } from "../../../knowledge/check/restatement/restatement.ts";
 import { textAt } from "../../../knowledge/check/restatement/work.ts";
 import { reviewKeys } from "../../../knowledge/review/config-keys.ts";
-import { parseDocFile } from "../../../knowledge/documents/docfile.ts";
+import { linksOnlyText } from "../../../knowledge/links/links-only.ts";
 import { shippedUnedited } from "../../../install/install.ts";
 
 /**
@@ -170,17 +170,12 @@ export function reviewSettingsOn(wt: string, rev: string): Result<ReviewSettings
 
 /** Whether two `<rev>:<path>` objects are the same blob, i.e. the same bytes. */
 
-/** True when `path` at `base` and `head` differ only in the front-matter `links` records: body and every other key equal. */
+/** True when `path` at `base` and `head` differ only in the front-matter `links` records (BR-2009). */
 function linksOnlyEdit(wt: string, base: string, head: string, path: string): boolean {
   if (!path.endsWith(".md") || path.endsWith("/README.md")) return false;
   const a = git(wt, "show", `${base}:${path}`);
   const b = git(wt, "show", `${head}:${path}`);
-  if (!a.ok || !b.ok) return false;
-  const pa = parseDocFile(a.value, path);
-  const pb = parseDocFile(b.value, path);
-  if (!pa.ok || !pb.ok || pa.value.body !== pb.value.body) return false;
-  const rest = (x: Record<string, unknown>) => JSON.stringify(Object.entries(x).filter(([k]) => k !== "links").sort((l, r) => (l[0] < r[0] ? -1 : 1)));
-  return rest(pa.value.meta) === rest(pb.value.meta);
+  return a.ok && b.ok && linksOnlyText(path, a.value, b.value);
 }
 
 function sameBlob(wt: string, a: string, b: string): boolean {

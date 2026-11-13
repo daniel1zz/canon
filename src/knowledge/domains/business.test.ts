@@ -93,6 +93,18 @@ describe("canon check on the business of a rule this work touched", () => {
     expect(noSection.out + noSection.err).toContain("canon/rules/shipping/README.md has no ## 业务 section yet");
   });
 
+  test("BR-2431: a rule whose only change is its links records is not reported; a body edit with it is", () => {
+    const root = fixture();
+    const change = startNew(root, "复核引用");
+    const linked = rule(10).replace("untested:", "links:\n  BR-9: 0123456789abcdef\nuntested:");
+    put(change.worktree, { "canon/rules/billing/BR-10.md": linked });
+    const only = canon(change.worktree, "check");
+    expect(only.out + only.err).not.toContain("BR-10 has no `business`");
+    put(change.worktree, { "canon/rules/billing/BR-10.md": linked.replace("x。", "x，改过。") });
+    const edited = canon(change.worktree, "check");
+    expect(edited.out + edited.err).toContain("BR-10 has no `business`");
+  });
+
   test("BR-2431: a rule this work did not touch is never reported, so nothing has to be migrated", () => {
     const root = fixture();
     const change = startNew(root, "不碰规则");
