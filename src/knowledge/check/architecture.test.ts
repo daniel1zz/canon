@@ -208,6 +208,17 @@ describe("a new link to a decision the overview names needs the overview looked 
     expect(unreviewed(root)).toBe(false);
   });
 
+  test("BR-2354: a commit message of this work saying the overview is not affected satisfies it, as a chore has no change file", () => {
+    const root = fixture();
+    sh(root, "checkout", "-qb", "chore/x");
+    amend(root);
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "chore: amend\n\n总览不受影响：<原因>");
+    expect(unreviewed(root)).toBe(true);
+    sh(root, "commit", "-q", "--allow-empty", "-m", "chore: note\n\n总览不受影响：总览点名的那句没有被这次修改改变");
+    expect(unreviewed(root)).toBe(false);
+  });
+
   test("BR-2354: a proposed superseding decision counts too", () => {
     const root = fixture();
     put(root, { [`canon/decisions/${id("D", 9)}.md`]: decision(9, "proposed", `supersedes: ${id("D", 5)}\n`) });

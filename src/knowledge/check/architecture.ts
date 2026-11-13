@@ -131,6 +131,13 @@ function touchedChangeTexts(root: string, since: string | undefined, dir: string
   return files.filter((f) => existsSync(join(root, f))).map((f) => readFileSync(join(root, f), "utf8"));
 }
 
+/** The messages of the commits this work made since `since`; none without a base. */
+function workMessages(root: string, since: string | undefined): string[] {
+  if (since === undefined) return [];
+  const log = git(root, "log", "--format=%B%x00", `${since}..HEAD`);
+  return log.ok ? log.value.split("\0") : [];
+}
+
 /** The line a change file writes to say the overview is not affected, with a real reason after the colon (D-65 A5). */
 const UNAFFECTED = /^\s*(?:[-*]\s*)?总览不受影响[：:]\s*(\S.*?)\s*$/gm;
 const hasUnaffectedLine = (text: string): boolean => [...text.matchAll(UNAFFECTED)].some((m) => !/^<.*>$/.test(m[1]!));
@@ -182,7 +189,8 @@ export function architectureFindings(input: ArchitectureInput): ArchitectureFind
   }
   if (fresh.length > 0 && !overviewEdited(root, text!, since)) {
     const changeDir = corpus.types.find((t) => t.name === "change");
-    const said = touchedChangeTexts(root, since, `canon/${changeDir?.dir ?? "changes"}`).some(hasUnaffectedLine);
+    // reason: a chore has no change file, so the work's own commit messages may carry the line too (BR-2354, #203)
+    const said = [...touchedChangeTexts(root, since, `canon/${changeDir?.dir ?? "changes"}`), ...workMessages(root, since)].some(hasUnaffectedLine);
     if (!said) {
       for (const { by, target } of fresh) {
         const how = by.supersedes.includes(target) ? "supersedes" : "amends";
