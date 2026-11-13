@@ -210,12 +210,14 @@ describe("canon release ship: what must be passed", () => {
 });
 
 describe("canon release ship: shipping and the landing gate", () => {
-  test("BR-2334 BR-2331: with the relayed yes recorded by the question tool it lands R-1 shipped at main's commit, tags it, and canon check passes", () => {
+  test("BR-2334 BR-2332 BR-2331: with the relayed yes recorded by the question tool it lands R-1 shipped at main's commit, tags it, and canon check passes", () => {
     const root = fixture();
     const sha = sh(root, "rev-parse", "main").trim();
     ask(root, question(1), "yes");
     const r = agent(root, "release", "ship", R(1), "--timeout", "5");
     expect([r.code, r.out.includes(`shipped ${R(1)} at ${sha.slice(0, 9)}`)]).toEqual([0, true]);
+    expect(r.out).toMatch(/in chore-[0-9a-f-]+, landed/); // the ship is a chore: no Change document, no C number (BR-2334)
+    expect(sh(root, "ls-tree", "--name-only", "main", "canon/changes/")).not.toMatch(/发布/);
     const doc = readFileSync(join(root, `canon/releases/${R(1)}.md`), "utf8");
     expect(doc).toContain("status: shipped");
     expect(doc).toContain(`shipped_at: ${sha}`);
@@ -245,6 +247,7 @@ describe("canon release ship: shipping and the landing gate", () => {
     ask(root, question(1), "yes");
     const r = agent(root, "release", "ship", R(1), "--timeout", "5");
     expect(r.code).toBe(1);
+    expect(r.err).toContain("chore-"); // the refused ship names its chore and keeps it for the retry (BR-2334)
     expect(sh(root, "show", `main:canon/releases/${R(1)}.md`)).not.toContain("status: shipped");
     expect(Bun.spawnSync(["git", "rev-parse", "--verify", "--quiet", `refs/tags/release/${R(1)}`], { cwd: root }).exitCode).not.toBe(0);
   });
@@ -314,7 +317,7 @@ describe("canon release ship: conditions checked again when the change lands", (
     sh(root, "commit", "-qm", "floor fails");
     ask(root, question(1), "yes");
     expect(agent(root, "release", "ship", R(1), "--timeout", "5").code).toBe(1);
-    const block = sh(root, "worktree", "list", "--porcelain").split("\n\n").find((b) => b.includes("branch refs/heads/change/"))!;
+    const block = sh(root, "worktree", "list", "--porcelain").split("\n\n").find((b) => b.includes("branch refs/heads/chore/"))!;
     const worktree = block.split("\n")[0]!.slice("worktree ".length);
     sh(root, "rm", "-q", "FAIL");
     sh(root, "commit", "-qm", "floor repaired");
@@ -378,6 +381,7 @@ describe("canon release ship: conditions checked again when the change lands", (
     const { root, worktree } = stuckShip();
     const r = land(worktree);
     expect([r.code, shipped(root)]).toEqual([0, true]);
+    expect(r.out).toContain("completed"); // the retried ship is a chore: completing it releases the claim, no Change closes (BR-2335, BR-2458)
   });
 });
 

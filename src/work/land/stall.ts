@@ -1,4 +1,5 @@
 import type { CoordDb } from "../db.ts";
+import { isChore, normalizeSubject } from "../session/subject.ts";
 
 /**
  * A subagent's change refused three times in a row stops and goes to the main agent (BR-2454, D-99); the main session or a
@@ -52,7 +53,8 @@ export type Unstall = { ok: true; refusals: number } | { ok: false; code: "inval
 
 /** `canon work unstall` (BR-2455): the checks in the rule's order, then the `land.unstall` event that resets the count. */
 export function unstall(db: CoordDb, actor: string, change: string, reason: string): Unstall {
-  if (!/^C-\d+$/.test(change)) return { ok: false, code: "invalid", message: `the change must be C-<number>, got ${JSON.stringify(change)}` };
+  change = normalizeSubject(change);
+  if (!/^C-\d+$/.test(change) && !isChore(change)) return { ok: false, code: "invalid", message: `the change must be C-<number>, got ${JSON.stringify(change)}` };
   const why = reason.trim();
   if (why === "") return { ok: false, code: "invalid", message: "--reason is required: say what the main agent did about the refusals" };
   if (isSubagent(actor)) return { ok: false, code: "refused", message: `${actor} is a subagent: only the main session or a person lets a stopped change land again (BR-2455)` };

@@ -115,7 +115,7 @@ describe("finding and applying updates", () => {
     commitOnMain(root, "no overview");
     git(root, "reset", "-q", "--hard", "main");
     const r = canon(root, env, "update");
-    expect(r.out + r.err).toMatch(/updated to \w+ in C-\d+, landed/);
+    expect(r.out + r.err).toMatch(/updated to \w+ in chore-[0-9a-f-]+, landed/);
     expect(r.code).toBe(0);
     // the update lands through the normal steps; nothing in it needs a review here, so no review after landing is queued (BR-2441)
     expect(r.out + r.err).not.toContain("reviewed after the landing");
@@ -155,7 +155,7 @@ describe("finding and applying updates", () => {
     expect(readFileSync(join(root, "canon/config.yaml"), "utf8")).toBe(mine); // --check writes nothing
     const tip = git(root, "rev-parse", "main");
     const r = canon(root, env, "update");
-    expect([r.code, r.out + r.err]).toEqual([0, expect.stringMatching(/updated to \w+ in C-\d+, landed/)]);
+    expect([r.code, r.out + r.err]).toEqual([0, expect.stringMatching(/updated to \w+ in chore-[0-9a-f-]+, landed/)]);
     const landed = git(root, "show", "main:canon/config.yaml");
     expect(landed.startsWith(mine)).toBe(true);
     expect(landed.endsWith(`\nlinks_since: "${tip}"`)).toBe(true);
@@ -211,13 +211,13 @@ describe("finding and applying updates", () => {
     const version = canon(root, env, "update", "--check").out.match(/version (\w+)/)![1];
     const r = canon(root, env, "update");
     expect(r.code).toBe(0);
-    const change = r.out.match(/in (C-\d+), landed/)![1]!;
+    const change = r.out.match(/in (chore-[0-9a-f-]+), landed/)![1]!;
     expect(git(root, "log", "--format=%s", "main")).toContain(`Update canon project files to ${version} (${change})`);
-    const file = git(root, "ls-tree", "--name-only", "main", "canon/changes/").split("\n").find((f) => f.includes(change))!;
-    const text = git(root, "show", `main:${file}`);
-    expect(text).toContain(`title: 更新 canon 装进项目的文件到版本 ${version}`);
-    expect(text).toContain("## 为什么\n\n项目里 canon 装的文件（skill、会话开始时的 hook）落后于当前的 canon，按负责人的要求更新。");
-    expect(text).toContain("## 要改什么\n\n- skill canon-a/SKILL.md\n- hook: canon brief at session start (.claude/settings.json)\n- hook: canon snapshot take before each Bash call (.claude/settings.json)\n- hook: canon work check-as before each Bash call (.claude/settings.json)\n- hook: canon human record after each answer to the question tool (.claude/settings.json)\n- hook: canon restatements --hook after each Write or Edit (.claude/settings.json)\n- setting: worktree.baseRef \"head\", so subagent worktrees start from local HEAD (.claude/settings.json)\n\n## 教训\n\n无。\n\n## 任务\n\n- [x] 由 `canon update` 安装并合入");
+    expect(git(root, "ls-tree", "--name-only", "main", "canon/changes/")).toBe("");
+    const text = git(root, "log", "-1", "--format=%B", "main");
+    expect(text).toContain(`Update canon project files to ${version} (${change})`);
+    expect(text).toContain("- skill canon-a/SKILL.md\n- hook: canon brief at session start (.claude/settings.json)");
+    expect(text).toContain('- setting: worktree.baseRef "head"');
   });
 
   test("BR-2086: update lands as its own change through the normal landing, and is a no-op when current", () => {
@@ -225,11 +225,12 @@ describe("finding and applying updates", () => {
     writeFileSync(join(src, "canon-a/SKILL.md"), "a v2\n");
     const r = canon(root, env, "update");
     expect(r.code).toBe(0);
-    expect(r.out).toMatch(/updated to \w+ in C-\d+, landed/);
+    expect(r.out).toMatch(/updated to \w+ in chore-[0-9a-f-]+, landed/);
     expect(r.out).toContain("canon now reads JUnit test reports (D-64)"); // what a project must have in canon/config.yaml (BR-2086)
     expect(r.out).toContain("bun test {file} --reporter=junit --reporter-outfile={report}");
     expect(git(root, "show", "main:.claude/skills/canon-a/SKILL.md")).toBe("a v2");
-    expect(git(root, "log", "-1", "--format=%s", "main")).toMatch(/^canon: close C-\d+$/);
+    expect(git(root, "log", "-1", "--format=%s", "main")).toMatch(/^Update canon project files to \w+ \(chore-[0-9a-f-]+\)$/);
+    expect(git(root, "ls-tree", "--name-only", "main", "canon/changes/")).toBe("");
     expect(canon(root, env, "update", "--check").code).toBe(0);
     expect(canon(root, env, "update").out).toContain("up to date");
   });
@@ -252,9 +253,9 @@ describe("finding and applying updates", () => {
     commitOnMain(refused.root, "a floor that fails");
     writeFileSync(join(refused.src, "canon-a/SKILL.md"), "a v2\n");
     const r = canon(refused.root, refused.env, "update");
-    expect([r.code, r.err]).toEqual([1, expect.stringMatching(/the update C-\d+ did not land: floor/)]);
-    const change = r.err.match(/C-\d+/)![0];
-    expect(git(refused.root, "branch", "--list", `change/${change}`)).toContain(`change/${change}`);
+    expect([r.code, r.err]).toEqual([1, expect.stringMatching(/the update chore-[0-9a-f-]+ did not land: floor/)]);
+    const change = r.err.match(/chore-[0-9a-f-]+/)![0];
+    expect(git(refused.root, "branch", "--list", `chore/${change.slice(6)}*`)).toContain(`chore/${change.slice(6)}`);
     expect(existsSync(join(refused.root, "..", `${refused.root.split("/").pop()}.worktrees`, change))).toBe(true);
 
     const queued = project();
@@ -266,7 +267,7 @@ describe("finding and applying updates", () => {
     expect(tryTurn(db.value, enqueue(db.value, "/elsewhere", "C-99", "agent:b")).mine).toBe(true); // someone else is landing
     writeFileSync(join(queued.src, "canon-a/SKILL.md"), "a v2\n");
     const t = canon(queued.root, queued.env, "update");
-    expect([t.code, t.err]).toEqual([75, expect.stringContaining("landing(s) ahead; run `canon work land --finish`")]);
+    expect([t.code, t.err]).toEqual([75, expect.stringContaining("landing(s) ahead; run `canon chore land`")]);
   });
 
   test("BR-2086: an update that would overwrite a file edited here is refused before any change is opened", () => {

@@ -1,8 +1,10 @@
-import { userInfo } from "node:os";
+import { userInfo, tmpdir } from "node:os";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { CoordDb } from "./db.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { readConfig, type Config } from "../invocation/config.ts";
-import { listWorktreesLocked, toplevel } from "../kernel/git.ts";
+import { git, listWorktreesLocked, toplevel } from "../kernel/git.ts";
 
 /**
  * Everything a command needs: which worktree it runs in, where the primary checkout is, the shared
@@ -50,7 +52,7 @@ export function openWorkspace(cwd: string, as?: string): Result<Workspace> {
   // reason: a bad --as is refused before the coordination DB is opened, so nothing is written (BR-2023)
   const actor = currentActor(process.env, as);
   if (!actor.ok) return actor;
-  const config = readConfig(root.value);
+  const config = readWorkConfig(root.value);
   if (!config.ok) return config;
   const dbPath = CoordDb.pathFor(root.value);
   if (!dbPath.ok) return dbPath;
@@ -62,6 +64,33 @@ export function openWorkspace(cwd: string, as?: string): Result<Workspace> {
   const primary = wts.value[0]?.path;
   if (!primary) return err("io", "git reports no worktrees");
   return ok({ root: root.value, primary, db: db.value, config: config.value, actor: actor.value });
+}
+
+export function readWorkConfig(root: string): Result<Config> {
+  if (existsSync(join(root, "canon/config.yaml"))) return readConfig(root);
+  const branch = git(root, "symbolic-ref", "--quiet", "--short", "HEAD");
+  if (!branch.ok || !branch.value.startsWith("chore/")) return readConfig(root);
+  // reason: BR-2278 — the old blob identifies main; only main's current configuration selects the retry gates.
+  const seed = configFromHistory(root, "HEAD");
+  if (!seed.ok) return seed;
+  return configFromHistory(root, `refs/heads/${seed.value.main}`);
+}
+
+function configFromHistory(root: string, ref: string): Result<Config> {
+  let text = git(root, "show", `${ref}:canon/config.yaml`);
+  if (!text.ok) {
+    const deleted = git(root, "log", "-1", "--format=%H", "--diff-filter=D", ref, "--", "canon/config.yaml");
+    if (!deleted.ok) return deleted;
+    if (deleted.value === "") return err("io", `${ref}: cannot recover canon/config.yaml; no configuration deletion is recorded`);
+    text = git(root, "show", `${deleted.value}^:canon/config.yaml`);
+    if (!text.ok) return text;
+  }
+  const dir = mkdtempSync(join(tmpdir(), "canon-main-config-"));
+  try {
+    mkdirSync(join(dir, "canon"));
+    writeFileSync(join(dir, "canon/config.yaml"), text.value);
+    return readConfig(dir);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
 }
 
 /** Where a command prints progress for the agent or person running it. */

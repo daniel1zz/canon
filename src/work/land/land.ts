@@ -1,10 +1,11 @@
 import { existsSync } from "node:fs";
 import type { Say, Workspace } from "../workspace.ts";
 import { type Finding } from "../../knowledge/check/check.ts";
-import { bindToLander, keepClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
+import { bindToLander, claimOfWorktree, keepClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
 import { batchRefusal, enter, failKeepingPlace, failIfActive, finishEntry, heartbeat, holdsTurn, keptUntil, settleLocked, tryTurn } from "./queue/queue.ts";
 import { selfProcess, sessionProcess } from "../claims/liveness.ts";
 import { noticeOverlaps } from "../session/overlap.ts";
+import { choreIn, isChore } from "../session/subject.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { setMeta } from "../../knowledge/documents/write.ts";
@@ -52,15 +53,37 @@ export async function land(ws: Workspace, opts: LandOptions, say: Say): Promise<
 async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<LandOutcome> {
   const wt = ws.root;
   const main = ws.config.main;
+  const identity = choreIn(ws);
+  if (!identity.ok) return { kind: "refused", reason: identity.error.code === "conflict" ? "claimed" : "environment", message: identity.error.message };
+  const initial = claimOfWorktree(ws.db, wt);
+  if ((identity.value && initial && initial.subject !== identity.value) || (isChore(initial?.subject) && initial?.subject !== identity.value)) {
+    return { kind: "refused", reason: "claimed", message: "worktree and claim identity disagree; resume the matching chore before landing" };
+  }
+  if (identity.value) {
+    opts = { ...opts, finish: true };
+    if (!initial) {
+      const tip = git(wt, "rev-parse", "HEAD");
+      const prior = ws.db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = 'land.ok' AND subject = ? ORDER BY id DESC LIMIT 1").get(identity.value);
+      const clean = isClean(wt);
+      if (tip.ok && prior && (JSON.parse(prior.detail) as { sha?: string }).sha === tip.value && clean.ok && clean.value && git(wt, "merge-base", "--is-ancestor", tip.value, main).ok) {
+        return finishLanding(ws, opts, say, { entry: 0, subject: identity.value, sha: tip.value });
+      }
+    }
+  }
   const renewed = renewClaim(ws.db, wt, ws.actor, ws.config.claimLeaseMs, sessionProcess());
   // reason: another session's live claim is a claim conflict (recorded as claim.refuse, exit 5), not a landing check (BR-2104).
   if (!renewed.ok) return { kind: "refused", reason: "claimed", message: renewed.error.message };
   const claim = renewed.value;
-  const subject = claim?.subject ?? null;
+  const subject = claim?.subject ?? identity.value ?? null;
   // A previous landing from this worktree that was killed leaves no event; it is said and cleaned up first (BR-2309, D-58).
   const recovered = settleInterrupted(ws, say);
   // The previous landing reached main and was killed before it recorded that: it is recorded now, and nothing lands again (BR-2309).
   if (recovered) return finishLanding(ws, opts, say, { entry: 0, subject, sha: recovered.sha });
+  if (identity.value && !claim) {
+    const message = `${identity.value} has no claim; resume it with canon chore start ${identity.value}`;
+    ws.db.event(ws.actor, "land.refuse", identity.value, { reason: "no-claim", message });
+    return { kind: "refused", reason: "no-claim", message };
+  }
   // A subagent's change refused three times in a row goes to the main agent before anything else runs (BR-2454, D-99).
   const stop = stalled(ws.db, ws.actor, subject);
   if (stop) {
@@ -146,6 +169,7 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
       if (!subject) return early("no-claim", "--finish needs a claimed change; this worktree holds none");
       const corpus = readCorpus(wt, ws.config.types, ws.config).corpus;
       const doc = findDoc(corpus, subject);
+      if (!isChore(subject) && doc?.kind !== "change") return early("check", `${subject}: its Change document is missing; this is not a chore`);
       if (doc?.kind === "change" && doc.status === "open") {
         // reason: lessons are known when the work ends, so closing is where they are required; old closed changes stay valid (BR-2161, D-24)
         if (!hasLessons(doc.body)) return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);

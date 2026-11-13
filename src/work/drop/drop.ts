@@ -10,6 +10,7 @@ import { GENERATED_DIR } from "../../invocation/reference/reference.ts";
 import { processesIn } from "../../kernel/process.ts";
 import { clearFixChange } from "../watch/redmain.ts";
 import { describeOccupants, worktreesDir } from "../session/session.ts";
+import { choreOffMain, isChore, normalizeSubject, subjectBranch } from "../session/subject.ts";
 
 /**
  * Dropping a change's work in flight (C-8): its worktree, its branch, its claim and its handoff. This is the
@@ -36,7 +37,7 @@ interface Target {
 }
 
 /** Whether a branch name is one of this change's branches: `change/C-n` or `change/C-n-<slug>`. */
-const ofChange = (branch: string | undefined, change: string) => branch === `change/${change}` || branch?.startsWith(`change/${change}-`) === true;
+const ofChange = subjectBranch;
 
 /**
  * Finds what there is to drop. Usage errors (exit 2) and a change with nothing to drop (exit 3) are not boundary
@@ -60,6 +61,11 @@ function locate(ws: Workspace, change: string): Result<Target> {
   if (worktree) {
     const b = git(worktree, "rev-parse", "--abbrev-ref", "HEAD");
     if (b.ok && b.value !== "HEAD") branch = b.value;
+  }
+  if (!branch && isChore(change)) {
+    const resolved = choreOffMain(ws, change);
+    if (!resolved.ok) return resolved;
+    branch = resolved.value?.branch ?? null;
   }
   if (!branch) {
     const list = git(ws.primary, "for-each-ref", "--format=%(refname:short)", `refs/heads/change/${change}`, `refs/heads/change/${change}-*`);
@@ -171,7 +177,7 @@ function archive(ws: Workspace, t: Target, ignored: readonly string[]): Result<{
 export type DropRefusal = "claimed" | "in-use" | "no-process-list" | "git" | "archive" | "remove";
 
 export function drop(ws: Workspace, change: string, say: (line: string) => void): Result<Dropped> {
-  const located = locate(ws, change.toUpperCase());
+  const located = locate(ws, normalizeSubject(change));
   if (!located.ok) return located;
   const t = located.value;
   if (t.worktree && ws.root === t.worktree) return err("invalid", `you are in ${t.worktree}; run \`canon work drop ${t.change}\` from another checkout`);

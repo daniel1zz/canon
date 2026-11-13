@@ -1,7 +1,7 @@
 import { git } from "../../../kernel/git.ts";
 import type { Say, Workspace } from "../../workspace.ts";
 import { changeIdsOnBranches } from "../../session/inflight.ts";
-import { readConfig } from "../../../invocation/config.ts";
+import { readWorkConfig } from "../../workspace.ts";
 import { backlogNotes, check, noteLine, staleReportNotes, type Finding } from "../../../knowledge/check/check.ts";
 import { reportsFor } from "../../verify/changes.ts";
 import { backlogAt } from "../../../knowledge/documents/backlog.ts";
@@ -84,7 +84,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   if (!testsFound.ok) return refuse("check", testsFound.error.message);
   const tests = testsFound.value;
   // reason: the config of the tree that is landing decides which commands and tests apply to it (BR-2005)
-  const landing = readConfig(wt);
+  const landing = readWorkConfig(wt);
   if (!landing.ok) return refuse("check", `canon check: cannot read canon/config.yaml of the landing tree: ${landing.error.message}`);
   const onBranches = changeIdsOnBranches(ws);
   if (!onBranches.ok) return refuse("environment", onBranches.error.message);

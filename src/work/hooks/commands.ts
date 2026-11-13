@@ -2,6 +2,7 @@ import { defineCommand } from "citty";
 import { entry, EXIT, fail, json, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { describeAttempt, openAttempts } from "../land/queue/interrupted.ts";
 import { AFTER_LAND_WAIT_MS } from "./hooks.ts";
+import { isChore, normalizeSubject } from "../session/subject.ts";
 import { afterLandState, readAfterLand, renderAfterLandAll, waitAfterLand } from "./after-land.ts";
 
 /** `canon work after-land`: the background after_land commands of a landing (BR-2166). */
@@ -19,7 +20,7 @@ const afterLand = defineCommand({
     if (minutes !== undefined && (!Number.isFinite(minutes) || minutes <= 0)) fail({ code: "invalid", message: `--timeout must be a positive number of minutes, got ${JSON.stringify(args.timeout)}` });
     if (minutes !== undefined && !args.wait) fail({ code: "invalid", message: "--timeout only applies with --wait" });
     const ws = workspace();
-    const change = typeof args.change === "string" && args.change ? args.change : undefined;
+    const change = typeof args.change === "string" && args.change ? normalizeSubject(args.change) : undefined;
     const timeoutMs = minutes === undefined ? AFTER_LAND_WAIT_MS : minutes * 60_000;
     const r = args.wait ? await waitAfterLand(ws, change, timeoutMs) : readAfterLand(ws, change);
     if (!r.batch && !r.review) {
@@ -29,7 +30,8 @@ const afterLand = defineCommand({
       fail({ code: "not_found", message: [base, ...unfinished.flatMap(describeAttempt)].join("\n") });
     }
     const st = afterLandState(r);
-    if (args.json) json({ ...(r.batch ?? { change: r.review?.change ?? null, commands: [] }), state: st, landedReview: r.review ? { state: r.review.state, log: r.review.log, lines: r.review.lines } : null });
+    const subject = r.batch?.change ?? r.review?.change ?? null;
+    if (args.json) json({ ...(r.batch ?? { change: subject, commands: [] }), subject, workKind: subject === null ? null : isChore(subject) ? "chore" : "change", state: st, landedReview: r.review ? { state: r.review.state, log: r.review.log, lines: r.review.lines } : null });
     else {
       say(renderAfterLandAll(r));
       if (args.wait && st === "running") say(`still running after ${timeoutMs / 60_000} min; run canon work after-land --wait again`);

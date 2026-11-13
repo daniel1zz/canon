@@ -1,8 +1,10 @@
 import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { choreOffMain, isChore, normalizeSubject, branchSubject } from "./subject.ts";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { Say, Workspace } from "../workspace.ts";
-import { deletionOf, holdClaim, liveClaims, unholdClaim, releaseClaim, releaseOwnClaim, renewClaim, takeClaim } from "../claims/claims.ts";
+import { claimOfWorktree, deletionOf, holdClaim, liveClaims, unholdClaim, releaseClaim, releaseOwnClaim, renewClaim, takeClaim } from "../claims/claims.ts";
 import { writeHandoff } from "./handoffs.ts";
 import { sessionProcess } from "../claims/liveness.ts";
 import { runHooksSync } from "../hooks/hooks.ts";
@@ -37,6 +39,8 @@ export function worktreesDir(ws: Workspace): string {
 
 export interface Started {
   readonly change: string;
+  readonly subject: string;
+  readonly workKind: "change" | "chore";
   readonly worktree: string;
   readonly branch: string;
   readonly created: boolean;
@@ -93,14 +97,51 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   const branch = existing?.branch ?? (slug ? `change/${changeId}-${slug}` : `change/${changeId}`).slice(0, 80);
   const path = existing?.worktree ?? join(worktreesDir(ws), changeId);
 
+  return startWorkspace(ws, { subject: changeId, branch, path, existing: existing !== undefined, ...(fresh && "title" in target ? { document: target } : {}) }, say);
+}
+
+/** Start or resume document-free work, sharing the same ownership and setup path (BR-2457). */
+export function startChore(ws: Workspace, target: { title: string } | { subject: string }, say: Say): Result<Started> {
+  if (mainIsUnborn(ws.primary, ws.config.main)) return err("io", `${ws.config.main} has no commit yet: ${firstCommitStep(ws.config.main)}`);
+  if ("title" in target && target.title.trim() === "") return err("invalid", "a chore needs a non-empty title");
+  const subject = "subject" in target ? normalizeSubject(target.subject) : `chore-${randomUUID()}`;
+  const existing = "subject" in target ? choreOffMain(ws, subject) : ok(undefined);
+  if (!existing.ok) return existing;
+  if ("subject" in target && !existing.value) return err("not_found", `${subject} has no chore branch`);
+  const title = "title" in target ? target.title.trim() : undefined;
+  const slug = title ? slugify(title).slice(0, 60) : "";
+  const branch = existing.value?.branch ?? `chore/${subject.slice(6)}${slug ? `-${slug}` : ""}`;
+  const path = existing.value?.worktree ?? join(worktreesDir(ws), subject);
+  const out = startWorkspace(ws, { subject, branch, path, existing: existing.value !== undefined }, say);
+  if (out.ok) {
+    if (title) ws.db.event(ws.actor, "chore.start", subject, { title, branch });
+    else {
+      const recorded = ws.db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = 'chore.start' AND subject = ? ORDER BY id LIMIT 1").get(subject);
+      if (!recorded) say(`${subject}: full title unavailable; branch slug: ${existing.value!.slug}`);
+    }
+  }
+  return out;
+}
+
+function startWorkspace(ws: Workspace, input: { subject: string; branch: string; path: string; existing: boolean; document?: { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] } } }, say: Say): Result<Started> {
+  const { subject: changeId, branch, path, document: target } = input;
+  const main = ws.config.main;
+  if (isChore(changeId)) {
+    const current = claimOfWorktree(ws.db, path);
+    if (current && current.subject !== changeId) return err("conflict", `${changeId}: worktree identity disagrees with claim ${current.subject}; nothing was changed`);
+    if (existsSync(path)) {
+      const actual = git(path, "symbolic-ref", "--quiet", "--short", "HEAD");
+      if (!actual.ok || actual.value !== branch) return err("conflict", `${changeId}: worktree identity disagrees with branch ${branch}; nothing was changed`);
+    }
+  }
   const claim = takeClaim(ws.db, changeId, path, ws.actor, ws.config.claimLeaseMs, sessionProcess());
   if (!claim.ok) return claim;
   // reason: the branch was read before the claim; a drop that held the claim meanwhile may have deleted it.
   // Seen after the claim, the branch is as a finished or not-yet-started drop leaves it (BR-2136, issue #20).
-  if (existing && !git(ws.primary, "rev-parse", "--verify", "--quiet", `refs/heads/${existing.branch}`).ok) {
+  if (input.existing && !git(ws.primary, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`).ok) {
     releaseOwnClaim(ws.db, changeId, path, ws.actor);
-    ws.db.event(ws.actor, "start.refuse", changeId, { reason: "gone", branch: existing.branch });
-    return err("not_found", `${changeId} was removed while starting: its branch ${existing.branch} no longer exists`);
+    ws.db.event(ws.actor, "start.refuse", changeId, { reason: "gone", branch });
+    return err("not_found", `${changeId} was removed while starting: its branch ${branch} no longer exists`);
   }
 
   let created = false;
@@ -136,7 +177,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     }
   }
 
-  if (fresh && "title" in target) {
+  if (target !== undefined) {
     const corpus = readCorpus(path, ws.config.types, ws.config).corpus;
     const made = createDoc(path, corpus, ws.db, ws.actor, { kind: "change", title: target.title, rules: target.rules ?? [], ...(target.plan ? { plan: target.plan } : {}), id: changeId }, ws.config.templates);
     const commit = (file: string): Result<unknown> => {
@@ -161,7 +202,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   for (const line of flying.lines) say(line);
   // after_start never changes the result (BR-2056): the worktree and claim stand whatever it exits with.
   runHooksSync({ db: ws.db, actor: ws.actor, event: "after_start", change: changeId, cwd: path, env: { CANON_BRANCH: branch }, port: portLookup }, ws.config.hooks.after_start, say);
-  return ok({ change: changeId, worktree: path, branch, created });
+  return ok({ change: changeId, subject: changeId, workKind: isChore(changeId) ? "chore" : "change", worktree: path, branch, created });
 }
 
 /** Undoes a start whose worktree was created a moment ago and holds nothing but the checkout, so a retry starts clean (BR-2029). */
@@ -277,12 +318,19 @@ export function clean(ws: Workspace, say: Say, only?: readonly string[]): Result
   if (only !== undefined && only.length > 0) {
     // reason: ids are matched as `canon work start` matches them, whatever their case; messages keep the name as typed (BR-2152, issue #54)
     const typed = new Map<string, string>();
-    for (const name of only) if (!typed.has(name.toUpperCase())) typed.set(name.toUpperCase(), name);
+    for (const name of only) if (!typed.has(normalizeSubject(name))) typed.set(normalizeSubject(name), name);
     named = new Set(typed.keys());
     const withWorktree = new Set(ours.map((w) => basename(w.path)));
     let onMain: Corpus | undefined;
     for (const id of named) {
       if (withWorktree.has(id)) continue;
+      if (isChore(id)) {
+        const off = choreOffMain(ws, id);
+        if (!off.ok) return off;
+        if (!off.value) return err("not_found", `${typed.get(id)} has no chore branch: nothing was removed`);
+        kept.push(`${id}: no worktree`);
+        continue;
+      }
       if (!onMain) {
         const c = mainCorpus(ws);
         if (!c.ok) return c;
@@ -366,6 +414,11 @@ export function keepReason(ws: Workspace, w: WorktreeInfo, held: ReadonlySet<str
   if (held.has(w.path)) return "claimed";
   const c = isClean(w.path);
   if (!c.ok || !c.value) return "uncommitted changes";
+  const subject = branchSubject(w.branch);
+  if (isChore(subject)) {
+    const completed = ws.db.db.query("SELECT 1 FROM events WHERE subject = ? AND kind = 'land.ok' LIMIT 1").get(subject!);
+    if (!completed) return "chore has not completed a landing";
+  }
   const ahead = git(ws.primary, "rev-list", "--count", `${ws.config.main}..${w.head}`);
   if (!ahead.ok || ahead.value !== "0") return `${ahead.ok ? ahead.value : "?"} commit(s) not on ${ws.config.main}`;
   // `git status` and `git worktree remove` both ignore git-ignored files, so a `.env` would vanish silently.

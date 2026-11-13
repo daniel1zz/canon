@@ -35,7 +35,7 @@ function orphanWorktree(root: string): { path: string; branch: string } {
 }
 
 describe("canon work status", () => {
-  test("BR-2192: status lists claims, queue, handoffs and the question count, and --json gives the same lists", () => {
+  test("BR-2192: status lists unfinished chores, claims, queue, handoffs and the question count, and --json gives the same lists", () => {
     const root = project();
     const empty = canon(root, "work", "status");
     expect([empty.code, empty.out]).toEqual([0, "Claims:\nLanding queue:\nLandings with no result yet:\nHandoffs:\nQuestions waiting for a human: 0\n"]);
@@ -51,7 +51,8 @@ describe("canon work status", () => {
     expect(text[5]).toMatch(new RegExp(`^  ${s.change}\\s+next: land it  \\(agent:a, \\S+\\)$`));
     expect(text[6]).toBe("Questions waiting for a human: 1");
     const data = JSON.parse(canon(root, "work", "status", "--json").out);
-    expect(Object.keys(data)).toEqual(["claims", "queue", "landings", "resolving", "handoffs", "questions", "urgent"]);
+    expect(Object.keys(data)).toEqual(["chores", "claims", "queue", "landings", "resolving", "handoffs", "questions", "urgent"]);
+    expect(data.chores).toEqual([]); // a chore shows here only until it completes a landing (BR-2192, BR-2457)
     expect(data.claims.map((c: { subject: string }) => c.subject)).toEqual([s.change]);
     expect(data.handoffs.map((h: { next: string }) => h.next)).toEqual(["land it"]);
     expect(data.questions.length).toBe(1);

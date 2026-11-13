@@ -10,9 +10,10 @@ import { CoordDb } from "../work/db.ts";
 import { liveClaims } from "../work/claims/claims.ts";
 import { land } from "../work/land/land.ts";
 import { sync } from "../work/remote/remote.ts";
-import { clean, keepReason, start, worktreesDir } from "../work/session/session.ts";
+import { clean, keepReason, startChore, worktreesDir } from "../work/session/session.ts";
 import { liveWatcher } from "../work/watch/watch.ts";
 import { currentActor, openWorkspace, type Say, type Workspace } from "../work/workspace.ts";
+import { branchSubject, isChore } from "../work/session/subject.ts";
 import { hooksDir, removeGuard } from "./githook.ts";
 import { planUnhook, writeUnhook } from "./hook.ts";
 import { applyUnskills, planUnskills } from "./install.ts";
@@ -58,10 +59,15 @@ export function inFlight(ws: Workspace): Result<string[]> {
     const why = keepReason(ws, w, new Set());
     if (why) out.push(`${basename(w.path)}: ${why} (${w.path})`);
   }
-  const branches = git(ws.primary, "for-each-ref", "--format=%(refname:short)", "refs/heads/change/");
+  const branches = git(ws.primary, "for-each-ref", "--format=%(refname:short)", "refs/heads/change/", "refs/heads/chore/");
   if (!branches.ok) return branches;
   for (const b of branches.value.split("\n").filter(Boolean)) {
     if (withWorktree.has(b)) continue;
+    const subject = branchSubject(b);
+    if (isChore(subject) && !ws.db.db.query("SELECT 1 FROM events WHERE subject = ? AND kind = 'land.ok' LIMIT 1").get(subject!)) {
+      out.push(`${b}: chore has not completed a landing`);
+      continue;
+    }
     const ahead = git(ws.primary, "rev-list", "--count", `${ws.config.main}..refs/heads/${b}`);
     if (!ahead.ok || ahead.value !== "0") out.push(`${b}: ${ahead.ok ? ahead.value : "?"} commit(s) not on ${ws.config.main}`);
   }
@@ -164,7 +170,7 @@ async function removeFromMain(root: string, config: Config, opts: UninstallOptio
     if (!onMain(root, ws.config.main, CONFIG)) return ok({ kind: "done" });
   }
 
-  const started = start(ws, { title: "卸载 canon" }, say);
+  const started = startChore(ws, { title: "卸载 canon" }, say);
   if (!started.ok) return started;
   const wt = started.value.worktree;
   // reason: opened before canon/config.yaml is deleted, so the landing runs with the floor and review it had (BR-2278)
@@ -180,24 +186,15 @@ async function removeFromMain(root: string, config: Config, opts: UninstallOptio
   const claudeDir = join(wt, ".claude");
   if (existsSync(claudeDir) && readdirSync(claudeDir).length === 0) rmSync(claudeDir, { recursive: true });
 
-  const changeDir = join(wt, "canon", "changes");
-  const file = readdirSync(changeDir).find((f) => f === `${started.value.change}.md` || f.startsWith(`${started.value.change}-`))!;
-  const text = readFileSync(join(changeDir, file), "utf8");
-  const head = text.slice(0, text.indexOf("---\n", 4) + 4);
-  const settingsLine = wtSettings.value === undefined ? [] : [wtSettings.value === null ? "- `.claude/settings.json`（只剩 canon 的条目，整个删掉）" : "- `.claude/settings.json` 里 canon 的条目"];
-  writeFileSync(
-    join(changeDir, file),
-    `${head}\n## 为什么\n\n负责人要求把 canon 从这个项目里移除（\`canon uninstall\`）。\n\n## 要改什么\n\n删掉 canon 装进项目的文件和 \`canon/config.yaml\`；\`canon/\` 下其余文档保留。\n\n- ${removed.length} 个 canon skill 文件和清单 \`.claude/skills/.canon-skills.json\`\n${settingsLine.map((l) => `${l}\n`).join("")}- \`canon/config.yaml\`\n\n## 教训\n\n无。\n\n## 任务\n\n- [x] 由 \`canon uninstall\` 删除并合入\n`,
-  );
   for (const args of [["add", "-A", "--", ".claude", "canon"], ["commit", "-q", "-m", `Uninstall canon (${started.value.change})`]]) {
     const r = git(wt, ...args);
     if (!r.ok) return r;
   }
   const out = await land(lw.value, { finish: true, timeoutMs: opts.timeoutMs ?? ws.config.landTimeoutMs }, say);
-  if (out.kind === "timeout") return ok({ kind: "timeout", message: `still ${out.ahead} landing(s) ahead; run \`canon work land --finish\` in ${wt}, then canon uninstall again` });
+  if (out.kind === "timeout") return ok({ kind: "timeout", message: `still ${out.ahead} landing(s) ahead; run \`canon chore land\` in ${wt}, then canon uninstall again` });
   if (out.kind === "refused") {
     const findings = out.findings ? `\n${out.findings.map((x) => `  ${x.rule} ${x.path}: ${x.message}`).join("\n")}` : "";
-    return ok({ kind: "refused", message: `the uninstall ${started.value.change} did not land (${out.reason}): ${out.message}${findings}\nFix it in ${wt}, run \`canon work land --finish\` there, then canon uninstall again; nothing outside the tree was removed` });
+    return ok({ kind: "refused", message: `the uninstall ${started.value.change} did not land (${out.reason}): ${out.message}${findings}\nFix it in ${wt}, run \`canon chore land\` there, then canon uninstall again; nothing outside the tree was removed` });
   }
   say(`uninstall landed as ${started.value.change} (${out.sha.slice(0, 9)})`);
   // reason: the landing's own push reads the remote from main's config, which this commit just removed (BR-2278)
@@ -253,9 +250,14 @@ function cleanUp(root: string, config: Config | undefined, opts: UninstallOption
     kept.push(...c.value.kept);
     const dir = worktreesDir(ws);
     if (existsSync(dir) && readdirSync(dir).length === 0) rmSync(dir, { recursive: true });
-    const branches = git(primary, "for-each-ref", "--format=%(refname:short)", "refs/heads/change/");
+    const branches = git(primary, "for-each-ref", "--format=%(refname:short)", "refs/heads/change/", "refs/heads/chore/");
     for (const b of branches.ok ? branches.value.split("\n").filter(Boolean) : []) {
       if (wts.value.some((w) => w.branch === b)) continue;
+      const subject = branchSubject(b);
+      if (isChore(subject) && !db.db.query("SELECT 1 FROM events WHERE subject = ? AND kind = 'land.ok' LIMIT 1").get(subject!)) {
+        kept.push(`${b}: chore has not completed a landing`);
+        continue;
+      }
       const tip = git(primary, "rev-parse", "--verify", `refs/heads/${b}`);
       if (!tip.ok) continue;
       if (!git(primary, "merge-base", "--is-ancestor", tip.value, main).ok) {

@@ -4,6 +4,7 @@ import { readFileSync } from "node:fs";
 import { runAsCheck } from "./as-hook.ts";
 import { handOverClaim } from "./claims.ts";
 import { sessionProcess } from "./liveness.ts";
+import { normalizeSubject } from "../session/subject.ts";
 
 /** `canon work take`: the main session takes back a claim its subagent held (BR-2336, D-62). */
 
@@ -21,7 +22,7 @@ const takeCmd = defineCommand({
     if (!/^[A-Za-z0-9_-]+$/.test(from)) fail({ code: "invalid", message: `--from ${JSON.stringify(from)}: an agent id is letters, digits, - and _ only` });
     const ws = workspace();
     if (!/^agent:[^:]+$/.test(ws.actor)) fail({ code: "invalid", message: `\`canon work take\` runs in the main session of a Claude Code conversation (actor agent:<session>), not as ${ws.actor}` });
-    const change = String(args.change).toUpperCase();
+    const change = normalizeSubject(String(args.change));
     const r = handOverClaim(ws.db, change, ws.actor, from, ws.config.claimLeaseMs, sessionProcess());
     if (!r.ok) fail(r.error);
     say(`${change}: claim taken over from subagent ${from}; it is now held by ${ws.actor} in ${r.value.holder}`);

@@ -1,6 +1,7 @@
 import { closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { CoordDb } from "../db.ts";
+import { isChore } from "../session/subject.ts";
 import type { HookEvent } from "./config-keys.ts";
 import type { PortLookup } from "./ports.ts";
 
@@ -34,7 +35,9 @@ function envFor(ctx: HookContext, port: number | undefined): Record<string, stri
   return {
     ...(process.env as Record<string, string>),
     CANON_EVENT: ctx.event,
-    CANON_CHANGE: ctx.change ?? "",
+    CANON_CHANGE: isChore(ctx.change) ? "" : ctx.change ?? "",
+    CANON_SUBJECT: ctx.change ?? "",
+    CANON_KIND: ctx.change === null ? "" : isChore(ctx.change) ? "chore" : "change",
     CANON_ACTOR: ctx.actor,
     CANON_WORKTREE: ctx.cwd,
     CANON_PORT: port === undefined ? "" : String(port),

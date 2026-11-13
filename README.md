@@ -7,7 +7,7 @@ Several Claude Code sessions working on one repository at once lose track of eac
 - **The current truth is in one place.** `canon/rules/` says how the product must behave, and whether each rule is planned, passed, or changed and waiting to be run again.
 - **Every important decision says why.** `canon/decisions/` records the choice and the options that were rejected.
 - **New sessions pick up where others stopped.** `canon brief` runs when a session starts and tells it how to work here and what is in flight.
-- **Concurrent work stays safe.** Each piece of work is a change in its own git worktree. Changes are claimed, landed through a queue and tested, so work is not lost and `main` is not broken.
+- **Concurrent work stays safe.** Each work item has its own git worktree and claim. Business changes and document-free chores share the landing queue and checks, so work is not lost and `main` is not broken.
 - **Documents do not lie.** `canon check` keeps documents and code consistent: no broken references, and every active rule is named by a test.
 - **People only make the decisions left to them.** Direction and reserved questions go to `canon human`; nothing else waits for a person.
 
@@ -40,6 +40,10 @@ canon work start --title "what this change does"   # a new change in its own wor
 canon work test                                     # run the tests related to the change
 canon work land --finish                            # land it on main through the queue
 ```
+
+For non-business maintenance, use `canon chore start "update tools"`, then `canon chore land` in the printed worktree. Chores do not create a Change document or consume a C number. The other `canon work` commands apply to both kinds of work. `update`, `uninstall` and `release ship` create chores automatically.
+
+Before first using chores, stop old landing processes and drain their queue; all participating sessions must use a version that understands chores. Finish or archive chores before downgrading.
 
 Fill in `canon/product.md` (what the product is for) and `canon/architecture.md` (its parts) first; every session reads them.
 

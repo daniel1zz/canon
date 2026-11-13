@@ -1,10 +1,8 @@
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
 import { git } from "../../kernel/git.ts";
 import { ok, type Result } from "../../kernel/result.ts";
 import { executionStates } from "../../work/execution/state.ts";
 import { land } from "../../work/land/land.ts";
-import { corpusOf, start } from "../../work/session/session.ts";
+import { corpusOf, startChore } from "../../work/session/session.ts";
 import { openWorkspace, type Say, type Workspace } from "../../work/workspace.ts";
 import { findDoc } from "../query/query.ts";
 import type { Release } from "../documents/model.ts";
@@ -38,20 +36,12 @@ export async function shipRelease(ws: Workspace, id: string, timeoutMs: number, 
   const confirmed = ownerConfirmation(ws.db, doc.id);
   if (!confirmed.ok) return refuse("refused", confirmed.message);
 
-  const started = start(ws, { title: `发布 ${doc.id}：${doc.title}` }, say);
+  const started = startChore(ws, { title: `发布 ${doc.id}：${doc.title}` }, say);
   if (!started.ok) return started;
   const wt = started.value.worktree;
   const change = started.value.change;
   const patched = setMeta(wt, doc as Release, { status: "shipped", shipped_at: sha.value });
   if (!patched.ok) return patched;
-  const changeDir = join(wt, "canon", "changes");
-  const file = readdirSync(changeDir).find((f) => f === `${change}.md` || f.startsWith(`${change}-`))!;
-  const text = readFileSync(join(changeDir, file), "utf8");
-  const head = text.slice(0, text.indexOf("---\n", 4) + 4);
-  writeFileSync(
-    join(changeDir, file),
-    `${head}\n## 为什么\n\n负责人确认发布 ${doc.id}（问题 #${confirmed.question}）：标着它的规则全部已通过。\n\n## 要改什么\n\n- ${doc.path}：\`status: shipped\`、\`shipped_at: ${sha.value}\`（发布时 main 的提交）。\n\n## 教训\n\n无。\n\n## 任务\n\n- [x] 由 \`canon release ship\` 写入并合入\n`,
-  );
   // reason: the landing refuses a release that becomes shipped without this event, so a hand-written `status: shipped` cannot land (BR-2332)
   ws.db.event(ws.actor, "release.ship", change, { release: doc.id, shipped_at: sha.value, question: confirmed.question });
   for (const args of [["add", "-A", "canon"], ["commit", "-q", "-m", `Ship ${doc.id} at ${sha.value.slice(0, 9)} (${change})`]]) {
@@ -63,7 +53,7 @@ export async function shipRelease(ws: Workspace, id: string, timeoutMs: number, 
   const out = await land(lw.value, { finish: true, timeoutMs }, say);
   if (out.kind !== "landed") {
     const findings = out.kind === "refused" && out.findings ? `\n${out.findings.map((x) => `  ${x.rule} ${x.path}: ${x.message}`).join("\n")}` : "";
-    const message = out.kind === "timeout" ? `still ${out.ahead} landing(s) ahead; run \`canon work land --finish\` in ${wt}` : `${out.reason}: ${out.message}${findings}`;
+    const message = out.kind === "timeout" ? `still ${out.ahead} landing(s) ahead; run \`canon chore land\` in ${wt}` : `${out.reason}: ${out.message}${findings}`;
     return ok({ kind: "not-landed", change, timeout: out.kind === "timeout", message });
   }
   const tag = `release/${doc.id}`;

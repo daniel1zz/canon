@@ -59,12 +59,17 @@ export type BatchOutcome =
  */
 export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: { entry: number; subject: string | null; branch: string; running: Running; base: string; head: string; before: string }): Promise<BatchOutcome | undefined> {
   const main = ws.config.main;
+  const deletesConfig = (cwd: string, head: string) => {
+    const d = git(cwd, "diff", "--name-only", "--diff-filter=D", t.base, head, "--", "canon/config.yaml");
+    return !d.ok || d.value !== "";
+  };
+  if (deletesConfig(ws.root, t.head)) return undefined;
   const members: { id: number; subject: string | null; worktree: string; branch: string; joined: string }[] = [];
   for (const c of batchCandidates(ws.db, t.entry, ws.config.landBatchMax - 1, ws.config.landerStaleMs, priorityNow(ws))) {
     const head = git(c.worktree, "rev-parse", "HEAD");
     const branch = git(c.worktree, "rev-parse", "--abbrev-ref", "HEAD");
     const clean = isClean(c.worktree);
-    if (!head.ok || !branch.ok || !clean.ok || !clean.value) break;
+    if (!head.ok || !branch.ok || !clean.ok || !clean.value || deletesConfig(c.worktree, head.value)) break;
     if (!joinBatch(ws.db, t.entry, c.id, head.value)) break;
     members.push({ id: c.id, subject: c.subject, worktree: c.worktree, branch: branch.value, joined: head.value });
   }

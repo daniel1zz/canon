@@ -18,7 +18,7 @@ const WITH_OPTIONS = new Set(["env", "command", "time", "sudo", "exec", "nohup",
 /** Commands that run a command line or another command given to them as text: what they run is not read here. */
 const WRAPPERS = new Set(["sh", "bash", "zsh", "dash", "ksh", "eval", "xargs", "source", ".", "timeout", "watch", "parallel", "find", "setsid", "stdbuf", "flock", "caffeinate", "ssh", "su"]);
 const ASSIGNMENT = /^[A-Za-z_][A-Za-z0-9_]*=/;
-const CANON_WORK = /\bcanon\s+work\b/;
+const CANON_WORK = /\bcanon\s+(?:work|chore)\b/;
 
 const isCanon = (t: string) => t === "canon" || t.endsWith("/canon");
 
@@ -82,7 +82,7 @@ function claimCommandOf(seg: Segment): Found | "unparsable" | undefined {
     const wraps = WRAPPERS.has(head.text) && (CANON_WORK.test(text) || adjacent(words, k));
     return opaque || wraps ? "unparsable" : undefined;
   }
-  if (words[k + 1]?.text !== "work" || words[k + 1]!.quoted) return opaque ? "unparsable" : undefined;
+  if (!["work", "chore"].includes(words[k + 1]?.text ?? "") || words[k + 1]!.quoted) return opaque ? "unparsable" : undefined;
   const sub = words[k + 2];
   if (!sub) return undefined;
   if (sub.expands || sub.quoted) return "unparsable";
@@ -100,11 +100,11 @@ function claimCommandOf(seg: Segment): Found | "unparsable" | undefined {
 
 /** Whether the words from k on have `canon work` as two neighbouring words (`xargs canon work land`). */
 function adjacent(words: readonly { text: string }[], k: number): boolean {
-  for (let i = k; i + 1 < words.length; i++) if (isCanon(words[i]!.text) && words[i + 1]!.text === "work") return true;
+  for (let i = k; i + 1 < words.length; i++) if (isCanon(words[i]!.text) && ["work", "chore"].includes(words[i + 1]!.text)) return true;
   return false;
 }
 
 function firstWordAfterCanonWork(seg: Segment): string {
   const text = [...seg.words.map((w) => w.text), ...seg.heredocs].join(" ");
-  return /\bcanon\s+work\s+([A-Za-z0-9_-]+)/.exec(text)?.[1] ?? "";
+  return /\bcanon\s+(?:work|chore)\s+([A-Za-z0-9_-]+)/.exec(text)?.[1] ?? "";
 }

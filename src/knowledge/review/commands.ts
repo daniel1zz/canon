@@ -1,4 +1,5 @@
 import { defineCommand } from "citty";
+import { isChore, normalizeSubject } from "../../work/session/subject.ts";
 import { AS_ARG, entry, EXIT, fail, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { previewReview } from "./preview.ts";
@@ -60,8 +61,8 @@ const reviewLanded = defineCommand({
   args: { again: { type: "string", description: "Change id: queue the review after its latest landing again (only when that review failed or was never queued) and start the reviewer" } },
   async run({ args }) {
     if (args.again !== undefined) {
-      const change = String(args.again).trim();
-      if (!/^C-\d+$/.test(change)) {
+      const change = normalizeSubject(String(args.again).trim());
+      if (!/^C-\d+$/.test(change) && !isChore(change)) {
         console.error(`canon: --again takes a change id (C-n), got ${JSON.stringify(args.again)}`);
         process.exit(EXIT.usage);
       }

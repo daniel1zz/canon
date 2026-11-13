@@ -15,7 +15,7 @@ export interface LandOptions {
 }
 
 export type LandOutcome =
-  | { readonly kind: "landed"; readonly sha: string; readonly change: string | null; readonly finished: boolean }
+  | { readonly kind: "landed"; readonly sha: string; readonly change: string | null; readonly subject?: string | null; readonly workKind?: "change" | "chore"; readonly finished: boolean }
   | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "config" | "config-key" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "lost-turn" | "no-floor" | "no-claim" | "lessons" | "on-main" | "environment" | "evidence" | "activate" | "rule-changed" | "passes" | "release" | "stalled"; readonly message: string; readonly findings?: readonly Finding[] }
   | { readonly kind: "timeout"; readonly ahead: number; /** Until when the entry keeps its place (BR-2368); absent when `land_keep_place_minutes` is 0. */ readonly keepsPlaceUntil?: string };
 

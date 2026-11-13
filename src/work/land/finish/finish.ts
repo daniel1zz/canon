@@ -1,8 +1,9 @@
 import type { Say, Workspace } from "../../workspace.ts";
+import { isChore } from "../../session/subject.ts";
 import { logFile, runHooksInBackground } from "../../hooks/hooks.ts";
 import { changePort } from "../../hooks/ports.ts";
 import { git, gitEnv, isClean, listWorktreesLocked, moveBranch } from "../../../kernel/git.ts";
-import { releaseOwnClaim } from "../../claims/claims.ts";
+import { claimOfWorktree, releaseOwnClaim } from "../../claims/claims.ts";
 import { dropHandoff } from "../../session/handoffs.ts";
 import type { LandOptions, LandOutcome } from "../outcome.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
@@ -108,11 +109,11 @@ export function finishLanding(ws: Workspace, opts: LandOptions, say: Say, l: { e
   if (opts.finish && l.subject) {
     // Another session that took the change over meanwhile keeps its claim and its handoff (BR-2108).
     if (releaseOwnClaim(ws.db, l.subject, ws.root, ws.actor)) dropHandoff(ws.db, l.subject);
-    else say(`${l.subject} is claimed by another session now; its claim and handoff were left as they are`);
+    else if (claimOfWorktree(ws.db, ws.root)) say(`${l.subject} is claimed by another session now; its claim and handoff were left as they are`);
     finished = true;
-    say(`${l.subject} closed; remove the worktree with \`canon work clean ${l.subject}\` once you have left it`);
+    say(`${l.subject} ${isChore(l.subject) ? "completed" : "closed"}; remove the worktree with \`canon work clean ${l.subject}\` once you have left it`);
   }
-  return { kind: "landed", sha: l.sha, change: l.subject, finished };
+  return { kind: "landed", sha: l.sha, change: l.subject, subject: l.subject, ...(l.subject ? { workKind: isChore(l.subject) ? "chore" as const : "change" as const } : {}), finished };
 }
 
 /**

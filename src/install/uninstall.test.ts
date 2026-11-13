@@ -56,7 +56,8 @@ describe("canon uninstall", () => {
     expect(onMain(root, ".claude/skills")).toBe(false);
     expect(onMain(root, "canon/notes-kept.md")).toBe(true);
     expect(JSON.parse(git(root, "show", "main:.claude/settings.json"))).toEqual({ worktree: { baseRef: "head" } });
-    expect(git(root, "log", "--format=%s", "main")).toContain("Uninstall canon (C-1)");
+    expect(git(root, "log", "--format=%s", "main")).toMatch(/Uninstall canon \(chore-[0-9a-f-]+\)/);
+    expect(git(root, "ls-tree", "--name-only", "main", "canon/changes/")).toBe("");
     expect(r.out).toContain('kept worktree.baseRef "head"');
     // the landing's own push cannot read the remote any more; uninstall pushes it
     expect(git(remote, "rev-parse", "main")).toBe(git(root, "rev-parse", "main"));

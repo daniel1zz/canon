@@ -22,7 +22,8 @@ import { openWorkspace, type Workspace } from "../workspace.ts";
 import { handoffs } from "./handoffs.ts";
 import { listedChanges, marksOf } from "./inflight.ts";
 import { overlapsOf } from "./overlap.ts";
-import { clean, LESSON_REMINDER, mainCorpus, start, stop } from "./session.ts";
+import { clean, LESSON_REMINDER, mainCorpus, start, startChore, stop } from "./session.ts";
+import { choreIn, choresInFlight, isChore } from "./subject.ts";
 import { redMainNotice, startFixMain } from "../watch/redmain.ts";
 import { ensureWatcher, untestedNotice } from "../watch/watch.ts";
 import { startTrailingReview, unreviewedNotice } from "../../knowledge/review/code-review-batch.ts";
@@ -62,6 +63,16 @@ const startCmd = defineCommand({
   },
 });
 
+const choreStartCmd = defineCommand({
+  meta: { description: "Start a chore by title, or resume its chore identity; no Change document or C number" },
+  args: { target: { type: "positional", required: true }, ...AS_ARG },
+  run({ args }) {
+    const target = String(args.target);
+    const started = must(startChore(workspace(args.as), isChore(target) ? { subject: target } : { title: target }, say));
+    say(`cd ${started.worktree}`);
+  },
+});
+
 const stopCmd = defineCommand({
   meta: { description: "Hand off: record the next step for whoever continues this change" },
   args: { next: { type: "string", required: true }, note: { type: "string" }, release: { type: "boolean", description: "Release the claim too" }, ...AS_ARG },
@@ -69,7 +80,7 @@ const stopCmd = defineCommand({
     const ws = workspace(args.as);
     const subject = must(stop(ws, String(args.next), typeof args.note === "string" ? args.note : undefined, Boolean(args.release), say));
     say(`${subject}: handoff recorded${args.release ? ", claim released" : ""}`);
-    say(LESSON_REMINDER);
+    if (!isChore(subject)) say(LESSON_REMINDER);
   },
 });
 
@@ -81,9 +92,11 @@ const status = defineCommand({
     const gone = goneLanders(ws.db);
     const untested = untestedNotice(ws);
     const unreviewed = unreviewedNotice(ws);
-    const data = { ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending"), urgent: marks(ws.db) };
+    const chores = must(choresInFlight(ws));
+    const data = { chores, ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending"), urgent: marks(ws.db) };
     if (args.json) return json(data);
     for (const line of [...untested, ...unreviewed]) say(line);
+    if (chores.length) say(`Unfinished chores: ${chores.map((c) => `${c.subject} (${c.branch})`).join(", ")}`);
     say("Claims:");
     // Every row is listed; one that no longer binds is marked, judged as `canon work start` judges it (BR-2192, BR-2100).
     for (const c of data.claims) say(`  ${c.subject.padEnd(8)} ${c.actor}  ${c.holder}  until ${c.expires_at}${STALE[c.state]}`);
@@ -159,7 +172,11 @@ const brief = defineCommand({
 
 /** What `canon brief` says after the guide: in a claimed worktree only its own change; elsewhere the handoffs and questions; then the update notice. */
 function briefState(ws: Workspace): Result<void> {
-  const mine = claimOfWorktree(ws.db, ws.root);
+  const claimed = claimOfWorktree(ws.db, ws.root);
+  const chore = choreIn(ws);
+  if (!chore.ok) return chore;
+  if (claimed && chore.value && claimed.subject !== chore.value) return err("conflict", "worktree and claim identity disagree");
+  const mine = claimed ?? (chore.value ? { subject: chore.value } : undefined);
   const hs = handoffs(ws.db);
   // A failing main comes first, in every worktree (BR-2220); then the background floor starts if main's latest commit needs it (BR-2219).
   for (const line of redMainNotice(ws.db, mine?.subject)) say(line);
@@ -168,7 +185,9 @@ function briefState(ws: Workspace): Result<void> {
   // The last batch of a burst has no later landing to review it (BR-2316).
   startTrailingReview(ws, say);
   if (mine) {
-    say(`You are in ${mine.subject} (${ws.root}). Read it: canon show ${mine.subject}; context: canon context ${mine.subject}`);
+    say(isChore(mine.subject)
+      ? `You are in chore ${mine.subject} (${ws.root}); its record is its commits. Land with canon chore land.`
+      : `You are in ${mine.subject} (${ws.root}). Read it: canon show ${mine.subject}; context: canon context ${mine.subject}`);
     const h = hs.find((x) => x.subject === mine.subject);
     if (h) say(`Handoff from ${h.actor} at ${h.updated_at}: next — ${h.next}${h.note ? `\n${h.note}` : ""}`);
     // The last landing from this worktree, when it was killed before it recorded a result (BR-2310).
@@ -191,6 +210,9 @@ function briefState(ws: Workspace): Result<void> {
     // Commits on main the remote lacks, counted locally; like the handoffs, only where no change is claimed (BR-2261, BR-2024).
     for (const line of unpushedNotice(ws)) say(line);
     if (hs.length) say(`Unfinished changes with handoffs: ${hs.map((h) => h.subject).join(", ")} (canon work status)`);
+    const chores = choresInFlight(ws);
+    if (!chores.ok) say(`Cannot list unfinished chores: ${chores.error.message}`);
+    else if (chores.value.length) say(`Unfinished chores (resume with canon chore start <identity>): ${chores.value.map((c) => c.subject).join(", ")}`);
     const pending = questions(ws.db, "pending").length;
     if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
     // Open review findings project-wide, counted (BR-2437).
@@ -238,6 +260,7 @@ export const sessionCommands: DomainCommands = {
   commands: [
     entry("brief", 20, brief),
     entry("start", 10, startCmd, "work"),
+    entry("start", 10, choreStartCmd, "chore"),
     entry("stop", 40, stopCmd, "work"),
     entry("status", 50, status, "work"),
     entry("clean", 80, cleanCmd, "work"),

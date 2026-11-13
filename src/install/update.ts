@@ -5,7 +5,7 @@ import { err, ok, type Result } from "../kernel/result.ts";
 import { git } from "../kernel/git.ts";
 import { ensureExcluded, excludeMissing } from "../kernel/exclude.ts";
 import { land } from "../work/land/land.ts";
-import { start } from "../work/session/session.ts";
+import { startChore } from "../work/session/session.ts";
 import { type Say } from "../work/workspace.ts";
 import { hookStatus, planHook, writeHook, type Settings } from "./hook.ts";
 import { ensureGuard, foreignGuard, guardStatus } from "./githook.ts";
@@ -207,7 +207,7 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
   const p = preflight(ws.root, source, force);
   if (!p.ok) return p;
   if (p.value.skills.conflicts.length > 0) return editedSkills(p.value.skills.conflicts, "run `canon update --force`");
-  const started = start(ws, { title: `更新 canon 装进项目的文件到版本 ${st.value.version}` }, say);
+  const started = startChore(ws, { title: `更新 canon 装进项目的文件到版本 ${st.value.version}` }, say);
   if (!started.ok) return started;
   const wt = started.value.worktree;
   const installed = installAssets(wt, source, force);
@@ -217,15 +217,7 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
   const since = ensureLinksSince(wt);
   if (!since.ok) return since;
 
-  const changeDir = join(wt, "canon", "changes");
-  const file = readdirSync(changeDir).find((f) => f === `${started.value.change}.md` || f.startsWith(`${started.value.change}-`))!;
-  const text = readFileSync(join(changeDir, file), "utf8");
-  const head = text.slice(0, text.indexOf("---\n", 4) + 4);
-  writeFileSync(
-    join(changeDir, file),
-    `${head}\n## 为什么\n\n项目里 canon 装的文件（skill、会话开始时的 hook）落后于当前的 canon，按负责人的要求更新。\n\n## 要改什么\n\n${st.value.outdated.map((o) => `- ${o}`).join("\n")}\n\n## 教训\n\n无。\n\n## 任务\n\n- [x] 由 \`canon update\` 安装并合入\n`,
-  );
-  for (const args of [["add", "-A", ".claude", "canon/changes", ...(overview ? [ARCHITECTURE_FILE] : []), ...(since.value ? ["canon/config.yaml"] : [])], ["commit", "-q", "-m", `Update canon project files to ${st.value.version} (${started.value.change})`]]) {
+  for (const args of [["add", "-A", ".claude", ...(overview ? [ARCHITECTURE_FILE] : []), ...(since.value ? ["canon/config.yaml"] : [])], ["commit", "-q", "-m", `Update canon project files to ${st.value.version} (${started.value.change})\n\n${st.value.outdated.map((o) => `- ${o}`).join("\n")}`]]) {
     const r = git(wt, ...args);
     if (!r.ok) return r;
   }
@@ -234,6 +226,6 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
   const out = await land(lw.value, { finish: true, timeoutMs }, say);
   if (out.kind === "landed") return ok({ kind: "landed", version: st.value.version, change: started.value.change, sha: out.sha });
   const findings = out.kind === "refused" && out.findings ? `\n${out.findings.map((x) => `  ${x.rule} ${x.path}: ${x.message}`).join("\n")}` : "";
-  const message = out.kind === "timeout" ? `still ${out.ahead} landing(s) ahead; run \`canon work land --finish\` in ${wt}` : `${out.reason}: ${out.message}${findings}`;
+  const message = out.kind === "timeout" ? `still ${out.ahead} landing(s) ahead; run \`canon chore land\` in ${wt}` : `${out.reason}: ${out.message}${findings}`;
   return ok({ kind: out.kind, change: started.value.change, message });
 }
