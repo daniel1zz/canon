@@ -5,7 +5,7 @@ description: "Use when dispatching several subagents to work at the same time in
 
 # Parallel subagents (canon)
 
-Several agents can work on one canon project at once: each holds its own change in its own worktree, and landings take turns. That keeps work from being lost, but it does not make landings faster. Split only when the gain is real, brief every subagent the same way, and judge the outcome as section 5 says.
+Several agents can work on one canon project at once, and landings take turns. That keeps work from being lost, but it does not make landings faster. Split only when the gain is real, brief every subagent the same way, and judge the outcome as section 5 says.
 
 ## 1. Split or not
 
