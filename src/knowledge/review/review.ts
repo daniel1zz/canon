@@ -83,8 +83,10 @@ export const NO_VERDICT = "Do not give a verdict: canon derives it from the keys
 
 /** What each blocking criterion means, as the review prompt states it; the verifier is shown the same words (BR-2367, BR-2442). */
 export const CRITERION_TEXT: Readonly<Record<string, string>> = {
-  contradiction: "`contradiction`: a rule that contradicts another active rule (in any domain: see the rule index) or an accepted decision.",
-  untestable: "`untestable`: a rule a test cannot decide (vague, no boundary, examples that do not pin the boundary).",
+  // reason: a contradiction must be shown, not felt: two passages and one input they answer differently; else a fix only rewords (D-115)
+  contradiction: "`contradiction`: a rule that contradicts another active rule (in any domain: see the rule index) or an accepted decision: for one input or state the two give different results. Quote both passages and name that input and the two results; a tension you cannot show that way is a `note`.",
+  // reason: an experience goal accepted by a person is not untestable; asking to drop it made agents cut the owner's goals (D-115)
+  untestable: "`untestable`: a rule a test cannot decide (vague, no boundary, examples that do not pin the boundary) and that says no other way to decide it. A rule with `untested:` whose `## 验收` says how a person accepts it (a goal such as feel, look or being worth sharing) is not untestable. Never ask to delete, narrow or widen a goal or commitment to make it testable: ask for a boundary or a way to accept it.",
   "no-rejected-options": "`no-rejected-options`: a decision without the options it rejected.",
   release: "`release`: a release is a version's PRD; the rules whose front matter says `release: R-n` are its behaviour. A rule tagged with a release that does something that release's 不做 excludes or lies outside its 范围; a release whose 不做 contradicts its own 范围 or a rule tagged with it. Only a rule or release changed in this landing can be blocked for it.",
   amends: "`amends`: a changed decision that replaces only part of an accepted decision must list it in `amends:` (one that replaces a whole decision uses `supersedes:`); a decision that says it changes part of another decision without listing it in `amends:`.",

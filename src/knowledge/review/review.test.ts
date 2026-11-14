@@ -242,3 +242,21 @@ describe("duplicate review prompt", () => {
     expect(prompt).toContain("# CLAUDE.md (instruction file, loaded whole)\n\n# Project\n");
   });
 });
+
+describe("what the rule review prompt asks of untestable and contradiction (D-115)", () => {
+  const prompt = () => {
+    const { root, corpus } = corpusOf(files);
+    return reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 4)), {});
+  };
+
+  test("BR-2473: untestable leaves a goal a person accepts under ## 验收 alone and never asks to drop, narrow or widen a goal to make it testable", () => {
+    const p = prompt();
+    expect(p).toContain("A rule with `untested:` whose `## 验收` says how a person accepts it (a goal such as feel, look or being worth sharing) is not untestable.");
+    expect(p).toContain("Never ask to delete, narrow or widen a goal or commitment to make it testable: ask for a boundary or a way to accept it.");
+  });
+
+  test("BR-2474: a contradiction quotes both passages and names one input the two answer differently; one that cannot be shown so is a note", () => {
+    const p = prompt();
+    expect(p).toContain("for one input or state the two give different results. Quote both passages and name that input and the two results; a tension you cannot show that way is a `note`.");
+  });
+});
