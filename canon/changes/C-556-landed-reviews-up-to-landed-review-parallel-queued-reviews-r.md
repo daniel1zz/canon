@@ -3,10 +3,13 @@ id: C-556
 title: "Landed reviews: up to landed_review_parallel queued reviews run at once,
   sharing one call budget; reviews of overlapping documents keep queue order
   (#220)"
-status: open
+status: done
 rules:
   - BR-2487
   - BR-2441
+passes:
+  BR-2441: c42c9331b02c65a6 test
+  BR-2487: 115429bb6a669ccb test
 ---
 
 ## 为什么
