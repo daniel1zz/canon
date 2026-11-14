@@ -90,13 +90,14 @@ describe("the queue of reviews after landing (BR-2441)", () => {
     expect(b!.base).toBe(a!.head);
   });
 
-  test("BR-2487: with landed_review_parallel 2 and review_parallel 2, two reviews of different documents run at the same time", async () => {
+  test("BR-2487, BR-2441: with landed_review_parallel 2 and review_parallel 2, two reviews of different documents run at the same time, and the reviewer ends once neither is queued or running", async () => {
     const { root, seen } = queueProject("landed_review_parallel: 2\nreview_parallel: 2\n");
     for (const n of [1, 2]) expect((await land(ws(ruleChange(root, n).worktree), FAST, quiet)).kind).toBe("landed");
     const r = await runLandedReviews(ws(root), quiet, undefined);
     expect(r.ok && r.value).toBe(2);
     expect(seen()).toContain("overlap");
     expect(jobs(root).map((j) => j.state)).toEqual(["done", "done"]);
+    expect(ws(root).db.db.query("SELECT 1 FROM landed_reviewer").get()).toBeNull();
   });
 
   test("BR-2487: reviews running at once share review_parallel: with it at 1 their calls never run at the same time", async () => {
