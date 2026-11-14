@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from 
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { git } from "../../kernel/git.ts";
-import { codeReview, type Env } from "./code-review.ts";
+import { DEFAULT_CODE_REVIEW_AI, codeReview, type Env } from "./code-review.ts";
 
 function sh(cwd: string, ...args: string[]) {
   const r = git(cwd, ...args);
@@ -299,5 +299,11 @@ describe("post-land code review", () => {
     expect(r.ok).toBe(true);
     expect(named.calls().some((c) => c.includes("--search"))).toBe(false);
     expect(named.calls().some((c) => c[1] === "comment" && c[2] === "12")).toBe(true);
+  });
+
+  test("BR-2070: with CANON_CODE_REVIEW_AI unset the review command is claude -p with no tools, which the script uses", () => {
+    expect(DEFAULT_CODE_REVIEW_AI).toBe("claude -p --tools '' --output-format text");
+    const script = readFileSync(join(import.meta.dir, "..", "..", "..", "scripts", "code-review.ts"), "utf8");
+    expect(script).toContain('process.env["CANON_CODE_REVIEW_AI"] || DEFAULT_CODE_REVIEW_AI');
   });
 });

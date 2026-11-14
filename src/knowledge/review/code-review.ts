@@ -110,6 +110,9 @@ export function parseFindings(text: string, say: (line: string) => void): Result
   return ok(out);
 }
 
+/** The code review command when CANON_CODE_REVIEW_AI is not set (BR-2070): no tools, so the reviewer prints its answer (D-120). */
+export const DEFAULT_CODE_REVIEW_AI = "claude -p --tools '' --output-format text";
+
 export function run(cmd: string, args: readonly string[], cwd: string, stdin?: string): Result<string> {
   const r = Bun.spawnSync(["sh", "-c", `${cmd} "$@"`, "sh", ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: new Blob([stdin ?? ""]) });
   if (r.exitCode !== 0) return err("io", `${cmd} ${args.join(" ")} exited ${r.exitCode}: ${r.stderr.toString().trim().slice(0, 300)}`);
