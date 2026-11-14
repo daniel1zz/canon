@@ -1,6 +1,6 @@
 ---
 name: canon-diagnose
-description: "Use when the user says 'diagnose this' / 'debug this', reports a bug, says something is broken, throwing, failing or flaky, or describes a performance regression. Triggers: 'bug', 'broken', 'failing test', 'why does', '排查', '为什么报错', '修这个 bug'."
+description: "Use when the user says 'diagnose this' / 'debug this', reports a bug, says something is broken, throwing, failing or flaky, or describes a performance regression. Triggers: 'failing test', 'why does', '排查', '为什么报错', '修这个 bug'."
 ---
 
 # Diagnose (canon)

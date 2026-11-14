@@ -1,6 +1,6 @@
 ---
 name: canon-design
-description: "Use when deciding how something should be structured: designing a new architecture, API, data model, system (scale, reliability) or module boundary, or judging whether an existing structure, model, layout or process is the right design and how it should change ('is this the best design', 'evaluate our X', 'should we reorganise'). Also whenever choosing between real alternatives. Triggers: 'design this', 'architecture', 'API design', 'data model', 'schema', 'is this the best', 'evaluate the design', '设计一下', '架构', '方案对比', '是不是最佳', '评估一下', '该怎么改'. NOT for visual UI design or a defect-only audit."
+description: "Use when deciding how something should be structured: designing a new architecture, API, data model, system (scale, reliability) or module boundary, or judging whether an existing structure, model, layout or process is the right design and how it should change. Also whenever choosing between real alternatives. Triggers: 'design this', 'architecture', 'schema', 'evaluate the design', '设计一下', '架构', '方案对比', '是不是最佳', '评估一下', '该怎么改'. NOT for visual UI design or a defect-only audit."
 ---
 
 # Design (canon)

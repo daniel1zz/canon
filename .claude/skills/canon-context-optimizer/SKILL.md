@@ -1,6 +1,6 @@
 ---
 name: canon-context-optimizer
-description: "Use when shortening always-loaded or often-loaded instructions without losing a rule: CLAUDE.md, a skill, a rule-review or other agent prompt is too long, exceeds a token budget, or overflows the context. Triggers: 'compress prompts', 'reduce context size', 'optimize tokens', 'context too large', 'CLAUDE.md too long', '压缩上下文', 'CLAUDE.md 太长', '精简 prompt'."
+description: "Use when shortening always-loaded or often-loaded instructions without losing a rule: CLAUDE.md, a skill, a rule-review or other agent prompt is too long, exceeds a token budget, or overflows the context. Triggers: 'compress prompts', 'reduce context size', 'optimize tokens', 'CLAUDE.md too long', '压缩上下文', 'CLAUDE.md 太长', '精简 prompt'."
 ---
 
 # Context Optimizer (canon)

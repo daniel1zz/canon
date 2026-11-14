@@ -1,6 +1,6 @@
 ---
 name: canon-test
-description: "Use when writing, adding or reviewing automated tests, building a feature or fixing a bug test-first, or asking whether a green suite actually proves anything. Triggers: 'write tests', 'add tests', 'test this', 'regression test', 'TDD', 'red-green', 'is this test any good', 'mock this', 'flaky test', '写测试', '补测试', '测试驱动', '这个测试靠谱吗'. NOT for accepting a finished feature end to end (use canon-uat) or for hunting down a known bug (use canon-diagnose)."
+description: "Use when writing, adding or reviewing automated tests, building a feature or fixing a bug test-first, or asking whether a green suite actually proves anything. Triggers: 'write tests', 'test this', 'regression test', 'TDD', 'is this test any good', 'mock this', 'flaky test', '写测试', '补测试', '测试驱动', '这个测试靠谱吗'. NOT for accepting a finished feature end to end (use canon-uat) or for hunting down a known bug (use canon-diagnose)."
 ---
 
 # Test (canon)

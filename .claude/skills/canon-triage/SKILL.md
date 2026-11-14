@@ -1,6 +1,6 @@
 ---
 name: canon-triage
-description: "Use when triaging open GitHub issues, especially the ones canon's post-land code review files with the canon-review label, or when an issue or a large piece of work has to become canon changes. Triggers: 'triage', 'triage issues', 'review issues', 'canon-review', 'what's open', 'break this into issues', '处理 issue', '分拣 issue', '看看 issue', '拆成变更'. NOT for debugging one known bug (use canon-diagnose)."
+description: "Use when triaging open GitHub issues, especially the ones canon's post-land code review files with the canon-review label, or when an issue or a large piece of work has to become canon changes. Triggers: 'triage', 'review issues', 'canon-review', 'what's open', 'break this into issues', '处理 issue', '分拣 issue', '看看 issue', '拆成变更'. NOT for debugging one known bug (use canon-diagnose)."
 ---
 
 # Triage (canon)

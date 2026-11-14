@@ -1,6 +1,6 @@
 ---
 name: canon-parallel
-description: "Use when dispatching several subagents to work at the same time in a canon project, or deciding whether a batch of tasks should be split across concurrent agents at all. Triggers: 'parallel agents', 'concurrent subagents', 'dispatch subagents', 'fan out', 'split this across agents', 'run these in parallel', 'spawn agents for each task', '并行', '并发', '派子 agent', '分给几个 agent', '同时做这几件事'. NOT for doing one change yourself."
+description: "Use when dispatching several subagents to work at the same time in a canon project, or deciding whether a batch of tasks should be split across concurrent agents at all. Triggers: 'parallel agents', 'fan out', 'split this across agents', 'run these in parallel', '并行', '并发', '派子 agent', '同时做这几件事'. NOT for doing one change yourself."
 ---
 
 # Parallel subagents (canon)
