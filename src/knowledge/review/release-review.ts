@@ -1,9 +1,11 @@
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync } from "node:fs";
 import { join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { DUPLICATE_CRITERIA, NO_VERDICT, runReviews, type ReviewLimits, type ReviewVerdict } from "./review.ts";
+import { git } from "../../kernel/git.ts";
+import { DUPLICATE_CRITERIA, NO_VERDICT, parseAnswer, runReviews, type AnswerParser, type ReviewLimits, type ReviewVerdict } from "./review.ts";
 import { run, LABEL } from "./code-review.ts";
+import { addedLines } from "../check/restatement/restatement.ts";
 
 /**
  * The release check of canon's own repository (BR-2411, D-91): before a build is published, the standing text canon ships to
@@ -15,6 +17,19 @@ export interface ShippedText {
   readonly path: string;
   readonly text: string;
 }
+
+/**
+ * What the last release shipped (D-107): its commit, each skill's text there (absent: the skill is new) and the workflow guide
+ * it recorded (absent: the whole guide counts as changed).
+ */
+export interface Baseline {
+  readonly commit: string;
+  readonly texts: ReadonlyMap<string, string>;
+  readonly guide?: string | undefined;
+}
+
+/** The name a finding uses for the workflow guide in its `places`. */
+export const GUIDE_PLACE = "guide";
 
 const PREFIX = "canon-";
 
@@ -29,9 +44,39 @@ export function shippedTexts(root: string): ShippedText[] {
   return out;
 }
 
+/**
+ * The last release as the baseline (D-107): the commit `<primary>/dist/skills` links to (BR-2412), each shipped skill's text
+ * there, and the guide that release recorded (`guideOf`). Absent when nothing was released; an error when the linked commit
+ * cannot be read, never a silent full review.
+ */
+export function loadBaseline(cwd: string, primary: string, texts: readonly ShippedText[], guideOf: (commit: string) => string | undefined): Result<Baseline | undefined> {
+  const link = join(primary, "dist", "skills");
+  let target: string;
+  try {
+    if (!lstatSync(link).isSymbolicLink()) return err("io", `${link} is not a symbolic link (BR-2412), so the last release is unknown`);
+    target = readlinkSync(link);
+  } catch {
+    return ok(undefined);
+  }
+  const m = /^skills-([0-9a-f]{40})$/.exec(target);
+  if (!m) return err("io", `${link} points to ${target}, not skills-<commit> (BR-2412), so the last release is unknown`);
+  const commit = m[1]!;
+  const there = git(cwd, "cat-file", "-e", `${commit}^{commit}`);
+  if (!there.ok) return err("io", `the last release ${commit.slice(0, 9)} (${link}) is not in this repository: ${there.error.message}`);
+  const old = new Map<string, string>();
+  for (const t of texts) {
+    // reason: a skill the release did not have is new, all of its lines changed; `git show` fails only for that once the commit exists
+    const r = Bun.spawnSync(["git", "show", `${commit}:${t.path}`], { cwd, stdout: "pipe", stderr: "pipe" });
+    if (r.exitCode === 0) old.set(t.path, r.stdout.toString());
+  }
+  return ok({ commit, texts: old, guide: guideOf(commit) });
+}
+
 /** What identifies one set of shipped texts: the same texts and guide always give the same hash. */
-export function releaseHash(texts: readonly ShippedText[], guide: string): string {
+export function releaseHash(texts: readonly ShippedText[], guide: string, baseline?: string): string {
   const h = createHash("sha256");
+  // reason: which findings block depends on the baseline as well as the texts, so a verdict is reused only with the same one (D-107)
+  if (baseline !== undefined) h.update(`baseline\0${baseline}\0`);
   h.update(`guide\0${guide}\0`);
   for (const t of texts) h.update(`${t.path}\0${t.text}\0`);
   return h.digest("hex");
@@ -46,13 +91,30 @@ function header(): string[] {
     "Block any requirement (an instruction, a condition or a qualifier) stated in two of the texts below, or twice in one of them, in any wording or language.",
     "Do not block for: a one-line pointer to where a requirement is stated; a skill-specific qualifier added to a general requirement stated elsewhere; facts or descriptions that are not requirements; wording, style or formatting.",
     "Each finding names both places (file and sentence) and which one to keep.",
+    // reason: canon, not the reviewer, decides whether a duplicate touches text changed since the last release, from the quotes (D-107)
+    `A \`duplication\` finding also lists every place it names under \`places\`: the file path as given in its heading (\`${GUIDE_PLACE}\` for the workflow guide) and a quote copied exactly from that text, one sentence or less. A duplicate lying entirely in lines that are not listed under its text's \"Lines added or changed since the last release\" was already shipped and does not block; canon reads that from the quotes, so quote the duplicated words themselves.`,
     "Write the findings in English.",
     `\`duplication\` is the only blocking criterion: a finding that matches it is given with the key \`duplication\`; every other remark is given with the key \`note\`, which never blocks. ${NO_VERDICT}`,
-    `Answer with JSON only: {"findings":[{"criterion":${DUPLICATE_CRITERIA.map((c) => `"${c}"`).join("|")}|"note","text":"<one sentence>"}]}`,
+    `Answer with JSON only: {"findings":[{"criterion":${DUPLICATE_CRITERIA.map((c) => `"${c}"`).join("|")}|"note","text":"<one sentence>","places":[{"file":"<path or ${GUIDE_PLACE}>","quote":"<exact words>"}]}]}`,
   ];
 }
 
-const textBlock = (t: ShippedText): string => `# ${t.path} (shipped by canon, full text)\n\n${t.text.trim()}\n`;
+/** The lines of `text` (1-based) added or changed since the baseline; every line when the baseline does not have it (D-107). */
+export function changedSince(text: string, before: string | undefined): Set<number> {
+  return addedLines(text, before);
+}
+
+function changedList(name: string, text: string, before: string | undefined, baseline: Baseline | undefined): string {
+  const head = `Lines added or changed since the last release in ${name}`;
+  if (before === undefined) return `${head}: all of them (${baseline ? `not in the release ${baseline.commit.slice(0, 9)}` : "there is no earlier release"}).\n`;
+  const lines = text.split("\n");
+  const changed = [...changedSince(text, before)].filter((n) => lines[n - 1]!.trim() !== "");
+  if (changed.length === 0) return `${head}: none.\n`;
+  return `${head} (line number, then the line):\n${changed.map((n) => `${n}: ${lines[n - 1]}`).join("\n")}\n`;
+}
+
+const textBlock = (t: ShippedText, baseline: Baseline | undefined): string =>
+  `# ${t.path} (shipped by canon, full text)\n\n${t.text}${t.text.endsWith("\n") ? "" : "\n"}\n${changedList(t.path, t.text, baseline?.texts.get(t.path), baseline)}`;
 
 /**
  * The prompts of the release check (BR-2411). All in one call when it fits `budgetBytes`; otherwise the skills are packed into
@@ -60,14 +122,15 @@ const textBlock = (t: ShippedText): string => `# ${t.path} (shipped by canon, fu
  * call per pair of chunks, so every two skills meet in at least one call. Refused, with the sizes, when the largest skill is
  * over that half.
  */
-export function releasePrompts(texts: readonly ShippedText[], guide: string, budgetBytes: number): Result<readonly string[]> {
-  const guideBlock = `# canon brief workflow guide (shipped by canon, printed at the start of every session)\n\n${guide.trim()}\n`;
-  const whole = [...header(), "", guideBlock, ...texts.map(textBlock)].join("\n");
+export function releasePrompts(texts: readonly ShippedText[], guide: string, budgetBytes: number, baseline?: Baseline): Result<readonly string[]> {
+  const guideBlock = `# ${GUIDE_PLACE}: canon brief workflow guide (shipped by canon, printed at the start of every session)\n\n${guide}${guide.endsWith("\n") ? "" : "\n"}\n${changedList(GUIDE_PLACE, guide, baseline?.guide, baseline)}`;
+  const block = (t: ShippedText) => textBlock(t, baseline);
+  const whole = [...header(), "", guideBlock, ...texts.map(block)].join("\n");
   if (bytes(whole) <= budgetBytes) return ok([whole]);
   // reason: the split note grows with the number of calls; reserve its longest form so no call goes over the budget (BR-2359)
   const note = (i: number, n: number) => `This is call ${i} of ${n}: it holds the guide and some of the skills; the other calls hold the rest. Judge only duplication among the texts in this call.`;
   const fixed = bytes([...header(), note(9999, 9999), "", guideBlock].join("\n")) + 2;
-  const blocks = texts.map(textBlock);
+  const blocks = texts.map(block);
   // reason: a chunk holds at most half of what is left after the fixed part, so a skill over that half fits in no chunk (BR-2411)
   const largest = Math.max(...blocks.map((b) => bytes(b) + 1));
   const need = fixed + 2 * largest;
@@ -92,6 +155,73 @@ export function releasePrompts(texts: readonly ShippedText[], guide: string, bud
   return ok(pairs.map(([i, j], k) => [...header(), note(k + 1, pairs.length), "", guideBlock, ...chunks[i]!, ...(i === j ? [] : chunks[j]!)].join("\n")));
 }
 
+/** `text` with every run of whitespace made one space, and for each character of the result where it came from in `text`. */
+function squeeze(text: string): { flat: string; from: number[] } {
+  let flat = "";
+  const from: number[] = [];
+  for (let i = 0; i < text.length; i++) {
+    if (/\s/.test(text[i]!)) {
+      if (flat.endsWith(" ") || flat === "") continue;
+      flat += " ";
+    } else flat += text[i]!;
+    from.push(i);
+  }
+  return { flat, from };
+}
+
+/**
+ * Whether `quote` is found in `text` and every place it is found lies in lines not in `changed` (D-107). Whitespace is
+ * compared as one space, since a reviewer copies a sentence that wraps across lines; a quote not found is not old.
+ */
+export function quoteIsOld(text: string, quote: string, changed: ReadonlySet<number>): boolean {
+  const q = quote.trim().replace(/\s+/g, " ");
+  if (q === "") return false;
+  const { flat, from } = squeeze(text);
+  const lineOf = (offset: number): number => text.slice(0, offset).split("\n").length;
+  let found = false;
+  for (let at = flat.indexOf(q); at !== -1; at = flat.indexOf(q, at + 1)) {
+    found = true;
+    for (let n = lineOf(from[at]!); n <= lineOf(from[at + q.length - 1]!); n++) if (changed.has(n)) return false;
+  }
+  return found;
+}
+
+const ALREADY = "(already released) ";
+
+/**
+ * The release check's answer parser (BR-2411, D-107): a `duplication` finding whose every place is quoted from text the last
+ * release already shipped becomes a note; one that touches a changed line, has no places or quotes words not found still blocks.
+ */
+export function releaseParser(texts: readonly ShippedText[], guide: string, baseline: Baseline | undefined): AnswerParser {
+  const sources = new Map<string, { text: string; changed: Set<number> }>();
+  for (const t of texts) sources.set(t.path, { text: t.text, changed: changedSince(t.text, baseline?.texts.get(t.path)) });
+  sources.set(GUIDE_PLACE, { text: guide, changed: changedSince(guide, baseline?.guide) });
+  const old = (places: unknown): boolean => {
+    if (!Array.isArray(places) || places.length === 0) return false;
+    return places.every((p) => {
+      const { file, quote } = (p !== null && typeof p === "object" ? p : {}) as { file?: unknown; quote?: unknown };
+      const source = typeof file === "string" ? sources.get(file.replace(/^\.\//, "")) : undefined;
+      return source !== undefined && typeof quote === "string" && quoteIsOld(source.text, quote, source.changed);
+    });
+  };
+  return (answer) => {
+    const parsed = parseAnswer(answer);
+    if (!parsed.ok) return parsed;
+    const list = (answer as { findings?: unknown }).findings;
+    // reason: an answer without finding objects carries no places, so nothing in it can be shown to be old (D-107)
+    if (!Array.isArray(list) || !list.every((f) => f !== null && typeof f === "object")) return parsed;
+    let blocking = false;
+    const findings = list.map((f, i) => {
+      const { criterion, text, places } = f as { criterion?: unknown; text?: unknown; places?: unknown };
+      if (criterion === "note") return parsed.value.findings[i]!;
+      if (old(places)) return `${ALREADY}${String(text)}`;
+      blocking = true;
+      return parsed.value.findings[i]!;
+    });
+    return ok({ verdict: blocking ? "block" : "ok", findings });
+  };
+}
+
 /** One earlier verdict on the same texts, so the paid review runs once per set of texts (BR-2411). */
 export interface EarlierVerdict {
   readonly verdict: "ok" | "block";
@@ -105,6 +235,8 @@ export interface ReleaseCheckEnv {
   readonly budgetBytes: number;
   readonly parallel: number;
   readonly guide: string;
+  /** What the last release shipped; absent when nothing was released yet (D-107). */
+  readonly baseline?: Baseline | undefined;
   /** The verdict an earlier release check gave these texts, by hash. */
   readonly earlier: (hash: string) => EarlierVerdict | undefined;
   /** Records a verdict this check got from the review command. */
@@ -117,6 +249,8 @@ export interface ReleaseCheck {
   readonly findings: readonly string[];
   /** True when an earlier verdict on the same texts was used and the review command did not run. */
   readonly reused: boolean;
+  /** True when the texts are exactly the last release's: nothing changed can repeat anything, the review command did not run (D-107). */
+  readonly unchanged?: boolean;
   readonly calls: number;
 }
 
@@ -124,12 +258,15 @@ export interface ReleaseCheck {
 export async function releaseCheck(e: ReleaseCheckEnv): Promise<Result<ReleaseCheck>> {
   const texts = shippedTexts(e.cwd);
   if (texts.length === 0) return err("io", `no canon-* skill under ${join(e.cwd, ".claude", "skills")}`);
-  const hash = releaseHash(texts, e.guide);
+  const hash = releaseHash(texts, e.guide, e.baseline?.commit);
+  const b = e.baseline;
+  // reason: with no changed line no duplicate can block (D-107), so the paid review is not run
+  if (b && b.guide === e.guide && texts.every((t) => b.texts.get(t.path) === t.text)) return ok({ hash, verdict: "ok", findings: [], reused: false, unchanged: true, calls: 0 });
   const earlier = e.earlier(hash);
   if (earlier) return ok({ hash, verdict: earlier.verdict, findings: earlier.findings, reused: true, calls: 0 });
-  const prompts = releasePrompts(texts, e.guide, e.budgetBytes);
+  const prompts = releasePrompts(texts, e.guide, e.budgetBytes, e.baseline);
   if (!prompts.ok) return prompts;
-  const v = await runReviews(e.reviewer, e.cwd, prompts.value, e.limits, e.parallel);
+  const v = await runReviews(e.reviewer, e.cwd, prompts.value, e.limits, e.parallel, releaseParser(texts, e.guide, e.baseline));
   if (!v.ok) return v;
   e.record(hash, v.value);
   return ok({ hash, verdict: v.value.verdict, findings: v.value.findings, reused: false, calls: prompts.value.length });

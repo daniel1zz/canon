@@ -3,7 +3,8 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, writeFi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { project, sh } from "../../work/testkit.ts";
-import { releasePrompts, reportBlock, RELEASE_ISSUE_TITLE, type ShippedText } from "./release-review.ts";
+import { quoteIsOld, releasePrompts, reportBlock, RELEASE_ISSUE_TITLE, type ShippedText } from "./release-review.ts";
+import { Database } from "bun:sqlite";
 
 const SCRIPT = join(import.meta.dir, "../../../scripts/release.ts");
 
@@ -49,7 +50,7 @@ describe("release check (BR-2411)", () => {
     expect(prompt).toContain("Always run the tests before landing.");
     expect(prompt).toContain("Run the tests before you land.");
     expect(prompt).not.toContain("Project skill.");
-    expect(prompt).toContain("# canon brief workflow guide");
+    expect(prompt).toContain("# guide: canon brief workflow guide");
     expect(readFileSync(join(tools, "kind.txt"), "utf8")).toBe("release\n");
     const green = sh(root, "rev-parse", "HEAD");
     expect(readFileSync(join(root, "dist/canon"), "utf8")).toBe(`fake canon ${green}\n`);
@@ -58,8 +59,57 @@ describe("release check (BR-2411)", () => {
     expect(existsSync(join(root, "dist/skills/mine"))).toBe(false);
     const again = run();
     expect(again.code).toBe(0);
-    expect(again.out).toContain("verdict reused");
+    expect(again.out).toContain("nothing changed");
     expect(prompts()).toBe("1");
+  });
+
+  test("BR-2411 D-107: after a release only a duplicate touching a line changed since then blocks; one quoted wholly from released text is a note; no places or a quote not found still blocks", () => {
+    const { root, tools, run, prompts } = releaseRepo({ findings: [] });
+    expect(run().code).toBe(0);
+    const first = sh(root, "rev-parse", "HEAD");
+    const db = new Database(join(root, ".git/canon/state.db"));
+    const published = db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'release.published'").all().map((r) => JSON.parse(r.detail) as { commit: string; guide: string });
+    db.close();
+    expect(published.map((p) => p.commit)).toEqual([first]);
+    expect(published[0]!.guide.length).toBeGreaterThan(0);
+    writeFileSync(join(root, ".claude/skills/canon-b/SKILL.md"), "---\nname: canon-b\ndescription: Use for canon-b\n---\nRun the tests before you land.\nKeep each commit small.\n");
+    sh(root, "commit", "-qam", "canon-b grows");
+    // reason: the same texts reuse the recorded verdict, so each answer below is asked for afresh
+    const forget = () => {
+      const d = new Database(join(root, ".git/canon/state.db"));
+      d.run("DELETE FROM events WHERE kind = 'release.review'");
+      d.close();
+    };
+    const answer = (places: unknown) => forget() ?? writeFileSync(join(tools, "answer.json"), JSON.stringify({ findings: [{ criterion: "duplication", text: "canon-a and canon-b both require tests before landing", ...(places === undefined ? {} : { places }) }] }));
+    answer([{ file: ".claude/skills/canon-a/SKILL.md", quote: "Always run the tests before landing." }, { file: ".claude/skills/canon-b/SKILL.md", quote: "Run the tests  before you land." }]);
+    const old = run("--check");
+    expect([old.code, old.err]).toEqual([0, ""]);
+    expect(old.out).toContain("note: (already released) canon-a and canon-b both require tests before landing");
+    const prompt = readFileSync(join(tools, `prompt-${Number(prompts()) - 1}.txt`), "utf8");
+    expect(prompt).toContain(`Lines added or changed since the last release in .claude/skills/canon-b/SKILL.md (line number, then the line):\n6: Keep each commit small.`);
+    expect(prompt).toContain("Lines added or changed since the last release in .claude/skills/canon-a/SKILL.md: none.");
+    answer([{ file: ".claude/skills/canon-a/SKILL.md", quote: "Always run the tests before landing." }, { file: ".claude/skills/canon-b/SKILL.md", quote: "Keep each commit small." }]);
+    expect(run("--check").code).toBe(1);
+    answer(undefined);
+    expect(run("--check").code).toBe(1);
+    answer([{ file: ".claude/skills/canon-a/SKILL.md", quote: "Always run the tests before landing." }, { file: ".claude/skills/canon-b/SKILL.md", quote: "words that are nowhere" }]);
+    expect(run("--check").code).toBe(1);
+  });
+
+  test("BR-2411 D-107: with nothing released yet every line counts as changed, so any duplication blocks", () => {
+    const { tools, run } = releaseRepo({ findings: [{ criterion: "duplication", text: "a repeats b", places: [{ file: ".claude/skills/canon-a/SKILL.md", quote: "Always run the tests before landing." }] }] });
+    const r = run("--check");
+    expect(r.code).toBe(1);
+    expect(r.out).toContain("baseline: none");
+    expect(readFileSync(join(tools, "prompt-0.txt"), "utf8")).toContain("all of them (there is no earlier release)");
+  });
+
+  test("BR-2411 D-107: a quote is matched with whitespace as one space and is old only when every place it is found avoids the changed lines", () => {
+    const text = "one two\nthree four\nfive\none two\n";
+    expect(quoteIsOld(text, "two three", new Set([3]))).toBe(true);
+    expect(quoteIsOld(text, "two three", new Set([2]))).toBe(false);
+    expect(quoteIsOld(text, "one two", new Set([4]))).toBe(false);
+    expect(quoteIsOld(text, "absent", new Set())).toBe(false);
   });
 
   test("BR-2411: a block publishes nothing, prints the findings, files one issue and exits 1; the next run with the same texts reuses the block without a review or a second issue", () => {

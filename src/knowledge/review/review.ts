@@ -342,9 +342,12 @@ export async function runJsonCommand(command: string, cwd: string, prompt: strin
   }
 }
 
-export async function runReview(command: string, cwd: string, prompt: string, limits: ReviewLimits): Promise<Result<ReviewVerdict>> {
+/** How one answer becomes a verdict; the release check passes its own, which places each finding (BR-2411, D-107). */
+export type AnswerParser = (answer: unknown) => Result<ReviewVerdict>;
+
+export async function runReview(command: string, cwd: string, prompt: string, limits: ReviewLimits, parse: AnswerParser = parseAnswer): Promise<Result<ReviewVerdict>> {
   const v = await runJsonCommand(command, cwd, prompt, limits);
-  return v.ok ? parseAnswer(v.value) : v;
+  return v.ok ? parse(v.value) : v;
 }
 
 /** What one review answer means: the verdict canon derives, the findings as text, the wording answers (BR-2367, D-74). */
@@ -719,7 +722,7 @@ export function splitNote(prompts: readonly string[]): string | undefined {
  * call blocked, the findings of all calls in call order without repeats, the wording answers of the first call. A call that
  * fails ends the review at once: the calls still running are stopped and no other starts (BR-2216).
  */
-export async function runReviews(command: string, cwd: string, prompts: readonly string[], limits: ReviewLimits, parallel = 1): Promise<Result<ReviewVerdict>> {
+export async function runReviews(command: string, cwd: string, prompts: readonly string[], limits: ReviewLimits, parallel = 1, parse: AnswerParser = parseAnswer): Promise<Result<ReviewVerdict>> {
   const results: (ReviewVerdict | undefined)[] = prompts.map(() => undefined);
   const running = new Set<{ kill(): void }>();
   let failed: Result<never> | undefined;
@@ -736,7 +739,7 @@ export async function runReviews(command: string, cwd: string, prompts: readonly
         if (r) running.add((mine = r));
         else if (mine) running.delete(mine);
       };
-      const one = await runReview(command, cwd, prompts[i]!, { ...limits, track });
+      const one = await runReview(command, cwd, prompts[i]!, { ...limits, track }, parse);
       if (!one.ok) {
         // reason: the first failure is the one reported; the calls it stops fail too, only because they were stopped (BR-2216)
         if (failed === undefined) {

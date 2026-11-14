@@ -2,7 +2,8 @@
 /**
  * canon's release, run from `hooks.after_green` in a checkout of the tested commit (D-31, BR-2222, D-91):
  *   1. the release check: every shipped canon-* SKILL.md and the workflow guide, reviewed together for duplication (BR-2411);
- *      the same texts are reviewed once, a later run reuses the recorded verdict;
+ *      the same texts are reviewed once, a later run reuses the recorded verdict; only a duplicate touching text changed since
+ *      the last release blocks (D-107), and a publish records its commit and guide as the next baseline (`release.published`);
  *   2. on ok, publishes `dist/canon` and `dist/skills` into the primary checkout from this commit (BR-2412);
  *   on block, publishes nothing, prints the findings, names them on GitHub (one open `canon-review` issue) and exits 1.
  *
@@ -17,7 +18,7 @@ import { git } from "../src/kernel/git.ts";
 import { err, ok, type Result } from "../src/kernel/result.ts";
 import { reviewSettingsOn } from "../src/work/land/checks/review-scope.ts";
 import { WORKFLOW_GUIDE } from "../src/invocation/guide.ts";
-import { releaseCheck, reportBlock, type EarlierVerdict } from "../src/knowledge/review/release-review.ts";
+import { loadBaseline, releaseCheck, reportBlock, shippedTexts, type EarlierVerdict } from "../src/knowledge/review/release-review.ts";
 import { publishRelease } from "../src/install/publish.ts";
 
 function say(line: string): void {
@@ -55,6 +56,15 @@ function earlier(hash: string): EarlierVerdict | undefined {
   const d = JSON.parse(row.detail) as { verdict: "ok" | "block"; findings: string[] };
   return { verdict: d.verdict, findings: d.findings };
 }
+const PUBLISHED = "release.published";
+// reason: the last release is the baseline: only a duplicate touching text changed since then blocks (D-107, BR-2411)
+const baseline = loadBaseline(cwd, checkOnly ? w.primary : primary, shippedTexts(cwd), (commit) => {
+  const row = w.db.db.query<{ detail: string }, [string, string]>("SELECT detail FROM events WHERE kind = ? AND json_extract(detail, '$.commit') = ? ORDER BY id DESC LIMIT 1").get(PUBLISHED, commit);
+  return row ? (JSON.parse(row.detail) as { guide?: string }).guide : undefined;
+});
+if (!baseline.ok) fail(4, `the release check could not run: ${baseline.error.message}; nothing is published`);
+if (baseline.value) say(`baseline: the release ${baseline.value.commit.slice(0, 9)}${baseline.value.guide === undefined ? " (it recorded no guide: the whole guide counts as changed)" : ""}`);
+else say("baseline: none (nothing was released yet): every line counts as changed");
 const check = await releaseCheck({
   cwd,
   reviewer,
@@ -62,12 +72,13 @@ const check = await releaseCheck({
   budgetBytes: s.reviewMaxPromptBytes,
   parallel: s.reviewParallel,
   guide: WORKFLOW_GUIDE,
+  baseline: baseline.value,
   earlier,
   record: (hash, v) => w.db.event(w.actor, KIND, null, { hash, verdict: v.verdict, findings: v.findings, commit: green }),
 });
 if (!check.ok) fail(4, `the release check could not run: ${check.error.message}; nothing is published`);
 const c = check.value;
-say(`check ${c.verdict}${c.reused ? " (these texts were checked before: verdict reused, the review command did not run)" : ` (${c.calls} call(s))`}`);
+say(`check ${c.verdict}${c.unchanged ? ` (the same texts as the release ${baseline.value?.commit.slice(0, 9)}: nothing changed, the review command did not run)` : c.reused ? " (these texts were checked before: verdict reused, the review command did not run)" : ` (${c.calls} call(s))`}`);
 if (c.verdict === "ok") for (const f of c.findings) say(`note: ${f}`);
 if (c.verdict === "block") {
   console.error(`release: blocked, nothing published; dist/ keeps the previous release. Shipped texts repeat a requirement:\n${c.findings.map((f) => `  - ${f}`).join("\n")}`);
@@ -92,4 +103,7 @@ function build(outfile: string): Result<void> {
 const published = publishRelease({ primary, cwd, green, build });
 if (!published.ok) fail(4, `${published.error.message}; nothing is published`);
 if (published.value.kind === "older") say(`${published.value.published.slice(0, 9)} is already published and is newer; nothing to do`);
-else say(`published dist/canon and dist/skills from ${green.slice(0, 9)}`);
+else {
+  w.db.event(w.actor, PUBLISHED, null, { commit: green, guide: WORKFLOW_GUIDE });
+  say(`published dist/canon and dist/skills from ${green.slice(0, 9)}`);
+}
