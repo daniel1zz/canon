@@ -296,7 +296,7 @@ describe("what the rule review prompt asks of untestable and contradiction (D-11
 
 describe("blocking findings outside the landing", () => {
   const changed = new Set([id("BR", 5), id("BR", 6)]);
-  test("BR-2485: a blocking finding naming only unchanged documents becomes a note, and the verdict is derived again", () => {
+  test("BR-2485, BR-2434: a blocking finding naming only unchanged documents becomes a note, so it is not recorded, and the verdict is derived again", () => {
     const text = `${id("D", 89)} 「核实」 vs ${id("D", 99)} 「不另跑核实」`;
     const v = onlyChangedBlock({ verdict: "block", findings: [`[contradiction] ${text}`, "a note"] }, changed);
     expect(v.verdict).toBe("ok");
