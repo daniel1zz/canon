@@ -10,9 +10,16 @@ import { err, ok, type Result } from "../../../kernel/result.ts";
 export function noticeProposedDecisions(ws: Workspace, say: Say, t: { wt: string; base: string; head: string; subject: string | null; corpus: Corpus }): Result<string[]> {
   const added = git(t.wt, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=A", t.base, t.head, "--", "canon/decisions");
   if (!added.ok) return err("io", added.error.message);
-  const paths = new Set(added.value === "" ? [] : added.value.split("\n"));
+  // reason: an edit to a decision still proposed (an owner's answer written into it, say) leaves it proposed too; it is said as well (BR-2355, #217)
+  const edited = git(t.wt, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=M", t.base, t.head, "--", "canon/decisions");
+  if (!edited.ok) return err("io", edited.error.message);
+  const lines = (v: string) => new Set(v === "" ? [] : v.split("\n"));
+  const paths = lines(added.value);
+  const changed = lines(edited.value);
   const proposed = t.corpus.docs.filter((d) => d.kind === "decision" && d.status === "proposed" && paths.has(d.path));
+  const touched = t.corpus.docs.filter((d) => d.kind === "decision" && d.status === "proposed" && changed.has(d.path));
   for (const d of proposed) say(`proposed decision: ${d.id} ${d.title} lands still proposed (only a landing with --finish accepts the decisions its change added, D-109); accept it with \`canon decision accept ${d.id}\` in a change`);
-  if (proposed.length > 0) ws.db.event(ws.actor, "land.proposed", t.subject, { decisions: proposed.map((d) => d.id) });
+  for (const d of touched) say(`proposed decision: ${d.id} ${d.title} was edited and is still proposed: ask the owner whether to accept it (canon human ask), then \`canon decision accept ${d.id}\` in a change`);
+  if (proposed.length + touched.length > 0) ws.db.event(ws.actor, "land.proposed", t.subject, { decisions: proposed.map((d) => d.id), ...(touched.length ? { edited: touched.map((d) => d.id) } : {}) });
   return ok(proposed.map((d) => d.id));
 }

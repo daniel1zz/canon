@@ -1,3 +1,4 @@
+import { proposedNotice } from "./proposed.ts";
 import { readFileSync } from "node:fs";
 import { readRuntime } from "../../kernel/agent.ts";
 import { recordCodexStartup } from "../agent-session.ts";
@@ -237,6 +238,9 @@ function briefState(ws: Workspace): Result<void> {
     else if (chores.value.length) say(`Unfinished chores (resume with canon chore start <identity>): ${chores.value.map((c) => c.subject).join(", ")}`);
     const pending = questions(ws.db, "pending").length;
     if (pending) say(`${pending} question(s) wait for a human (canon human pending)`);
+    // Decisions left proposed for long, oldest first; like the questions, only where no change is claimed (BR-2476, BR-2024).
+    const mainDocs = mainCorpus(ws);
+    if (mainDocs.ok) for (const line of proposedNotice(ws.primary, ws.config.main, mainDocs.value)) say(line);
     // Open review findings project-wide, counted (BR-2437).
     const findings = findingsCount(ws.db);
     if (findings) say(findings);

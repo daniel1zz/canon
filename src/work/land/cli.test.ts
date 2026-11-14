@@ -180,6 +180,21 @@ describe("a landing that adds a decision still proposed says so", () => {
     // the line is printed once canon check and before_land have passed; no rule review runs in the landing (BR-2014)
   }, TIMED);
 
+  test("BR-2355: a landing that edits a decision still proposed says to ask the owner and lists it as edited in the event; an edited accepted one is not said", async () => {
+    const root = project();
+    const first = startNew(root, "Proposes");
+    add(first.worktree, [5, "proposed"], [7, "accepted"]);
+    expect((await canonIn(first.worktree, "work", "land")).code).toBe(0);
+    const s = startNew(root, "Answers");
+    for (const n of [5, 7]) writeFileSync(join(s.worktree, `canon/decisions/${d(n)}.md`), decision(n, n === 5 ? "proposed" : "accepted").replace("\nC.\n", "\nC. 负责人选定 A。\n"));
+    sh(s.worktree, "commit", "-qam", "the owner's answers");
+    const r = await canonIn(s.worktree, "work", "land");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain(`proposed decision: ${d(5)} Pick 5 was edited and is still proposed: ask the owner whether to accept it (canon human ask)`);
+    expect(r.out).not.toContain(`proposed decision: ${d(7)}`);
+    expect(events(root, "land.proposed").at(-1)).toMatchObject({ decisions: [], edited: [d(5)] });
+  }, TIMED);
+
   test("BR-2355 D-109: --finish accepts in the close commit the decisions its change added and supersedes their targets", async () => {
     const root = project();
     const old = startNew(root, "Old");
@@ -203,7 +218,7 @@ describe("a landing that adds a decision still proposed says so", () => {
     expect(events(root, "land.proposed")).toEqual([]);
   }, TIMED);
 
-  test("BR-2355: an accepted new decision, an edit of a decision already on main, or no decision at all prints nothing and records no event", async () => {
+  test("BR-2355: an accepted new decision, an edit of an accepted decision already on main, or no decision at all prints nothing and records no event", async () => {
     const root = project();
     const a = startNew(root, "Accepted");
     add(a.worktree, [5, "accepted"], [6, "proposed"]);
@@ -215,15 +230,15 @@ describe("a landing that adds a decision still proposed says so", () => {
 
     const root2 = project();
     const old = startNew(root2, "Old");
-    add(old.worktree, [6, "proposed"]);
+    add(old.worktree, [6, "accepted"]);
     expect((await canonIn(old.worktree, "work", "land")).code).toBe(0);
     const edit = startNew(root2, "Edits");
-    writeFileSync(join(edit.worktree, `canon/decisions/${d(6)}.md`), decision(6, "proposed").replace("B.\n", "B, reworded.\n"));
+    writeFileSync(join(edit.worktree, `canon/decisions/${d(6)}.md`), decision(6, "accepted").replace("B.\n", "B, reworded.\n"));
     sh(edit.worktree, "commit", "-qam", "edit");
     const re = await canonIn(edit.worktree, "work", "land");
     expect(re.code).toBe(0);
     expect(re.out).not.toContain("proposed decision:");
-    expect(events(root2, "land.proposed").length).toBe(1); // the first landing's only
+    expect(events(root2, "land.proposed")).toEqual([]); // an accepted decision is never said
 
     const root3 = project();
     const none = startNew(root3, "None");
