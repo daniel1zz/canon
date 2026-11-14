@@ -199,6 +199,7 @@ describe("a worker session started by another session", () => {
     expect(reason("canon chore start x --as=w1")).toBe("allow");
     expect(reason("canon work land --as w1 --as w2")).toContain("Got --as 'w1', 'w2'");
     expect(reason("canon work land --as a:b")).toContain("Got --as 'a:b'");
+    expect(reason("canon work land --as ''")).toContain("Got --as ''");
     expect(reason("canon work take C-5 --from x --as w1")).toContain("canon work take is for the main session only");
     expect(reason("canon work unstall C-5 --reason x")).toContain("canon work unstall is for the main session only");
     expect(reason("canon work test --as w1")).toBe("allow"); // not a claim command: not checked
