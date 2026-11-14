@@ -19,7 +19,7 @@ export function noticeProposedDecisions(ws: Workspace, say: Say, t: { wt: string
   const proposed = t.corpus.docs.filter((d) => d.kind === "decision" && d.status === "proposed" && paths.has(d.path));
   const touched = t.corpus.docs.filter((d) => d.kind === "decision" && d.status === "proposed" && changed.has(d.path));
   for (const d of proposed) say(`proposed decision: ${d.id} ${d.title} lands still proposed (only a landing with --finish accepts the decisions its change added, D-109); accept it with \`canon decision accept ${d.id}\` in a change`);
-  for (const d of touched) say(`proposed decision: ${d.id} ${d.title} was edited and is still proposed: ask the owner whether to accept it (canon human ask), then \`canon decision accept ${d.id}\` in a change`);
+  for (const d of touched) say(`proposed decision: ${d.id} ${d.title} was edited and is still proposed: if it is in effect, accept it with \`canon decision accept ${d.id}\` in a change; ask the owner (canon human ask) only if it still waits on their choice`);
   if (proposed.length + touched.length > 0) ws.db.event(ws.actor, "land.proposed", t.subject, { decisions: proposed.map((d) => d.id), ...(touched.length ? { edited: touched.map((d) => d.id) } : {}) });
   return ok(proposed.map((d) => d.id));
 }

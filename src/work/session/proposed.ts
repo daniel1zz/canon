@@ -28,7 +28,7 @@ export function proposedNotice(primary: string, main: string, corpus: Corpus, no
   if (old.length === 0) return [];
   const days = (t: number) => Math.floor((now - t) / 86_400_000);
   return [
-    `${old.length} decision(s) proposed for more than ${PROPOSED_AGE_HOURS} h: ask the owner whether to accept each (canon human ask), then canon decision accept <D-n> in a change`,
+    `${old.length} decision(s) proposed for more than ${PROPOSED_AGE_HOURS} h: accept each one in effect with canon decision accept <D-n> in a change; ask the owner (canon human ask) only about one still waiting on their choice`,
     ...old.slice(0, SHOWN).map((x) => `  ${x.d.id} ${x.d.title} (${days(x.t)} d)`),
     ...(old.length > SHOWN ? [`  … and ${old.length - SHOWN} more (canon decision list)`] : []),
   ];

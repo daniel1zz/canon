@@ -31,7 +31,7 @@ describe("proposed decisions in the brief", () => {
     commitAt(root, 5, "proposed", now - 25 * h);
     commitAt(root, 6, "proposed", now - 75 * h);
     expect(notice()).toEqual([
-      "2 decision(s) proposed for more than 24 h: ask the owner whether to accept each (canon human ask), then canon decision accept <D-n> in a change",
+      "2 decision(s) proposed for more than 24 h: accept each one in effect with canon decision accept <D-n> in a change; ask the owner (canon human ask) only about one still waiting on their choice",
       `  ${d(6)} Pick 6 (3 d)`,
       `  ${d(5)} Pick 5 (1 d)`,
     ]);

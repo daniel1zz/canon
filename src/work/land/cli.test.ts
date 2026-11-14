@@ -190,7 +190,7 @@ describe("a landing that adds a decision still proposed says so", () => {
     sh(s.worktree, "commit", "-qam", "the owner's answers");
     const r = await canonIn(s.worktree, "work", "land");
     expect(r.code).toBe(0);
-    expect(r.out).toContain(`proposed decision: ${d(5)} Pick 5 was edited and is still proposed: ask the owner whether to accept it (canon human ask)`);
+    expect(r.out).toContain(`proposed decision: ${d(5)} Pick 5 was edited and is still proposed: if it is in effect, accept it with \`canon decision accept ${d(5)}\` in a change; ask the owner (canon human ask) only if it still waits on their choice`);
     expect(r.out).not.toContain(`proposed decision: ${d(7)}`);
     expect(events(root, "land.proposed").at(-1)).toMatchObject({ decisions: [], edited: [d(5)] });
   }, TIMED);
