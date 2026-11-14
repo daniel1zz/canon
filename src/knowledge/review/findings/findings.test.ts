@@ -45,9 +45,11 @@ function billing(review: "none" | "empty" = "none") {
   return root;
 }
 
-/** Lands a change that rewrites the given rules with the given status, and runs the review after it (BR-2441). */
-async function landRules(root: string, title: string, rules: readonly [number, string][]) {
-  const s = startNew(root, title);
+/**
+ * Lands a change that rewrites the given rules with the given status, and runs the review after it (BR-2441). `s`: the
+ * change, started before the findings were recorded, as a parallel session's would be (no new change starts while findings are owed, BR-2464).
+ */
+async function landRules(root: string, title: string, rules: readonly [number, string][], s = startNew(root, title)) {
   for (const [n, status] of rules) writeFileSync(join(s.worktree, `canon/rules/billing/${BR(n)}.md`), ruleFile(n, status).replace(`Rule ${n}.`, `Rule ${n}, ${title}.`));
   sh(s.worktree, "add", "-A");
   sh(s.worktree, "commit", "-qm", title);
@@ -124,18 +126,19 @@ describe("recording findings", () => {
 describe("closing findings", () => {
   test("BR-2435: a landing that retires a named rule closes the finding; one that only edits it does not; one naming none closes when all its documents are retired", async () => {
     const root = billing();
+    const [e, r2, r3] = [startNew(root, "Edit"), startNew(root, "Retire"), startNew(root, "Retire three")];
     const db = ws(root).db;
     const named = record(db, [f("contradiction", `${BR(1)} 和 ${BR(2)} 的「三天」矛盾`)]).opened[0]!;
     const unnamed = record(db, [f("untestable", "「尽快」无法测试")], [BR(2), BR(3)]).opened[0]!;
-    const edited = await landRules(root, "Edit", [[1, "active"]]);
+    const edited = await landRules(root, "Edit", [[1, "active"]], e);
     expect(edited.kind).toBe("landed");
     expect(openFindings(ws(root).db).map((x) => x.id)).toEqual([named, unnamed]);
-    const retired = await landRules(root, "Retire", [[2, "retired"]]);
+    const retired = await landRules(root, "Retire", [[2, "retired"]], r2);
     expect(retired.kind).toBe("landed");
     expect(openFindings(ws(root).db).map((x) => x.id)).toEqual([unnamed]);
     const row = ws(root).db.db.query<{ closed_how: string; closed_event: number; kind: string }, [number]>("SELECT closed_how, closed_event, (SELECT kind FROM events WHERE id = closed_event) AS kind FROM review_findings WHERE id = ?").get(named)!;
     expect(row).toEqual({ closed_how: "retired", closed_event: row.closed_event, kind: "land.ok" });
-    const both = await landRules(root, "Retire three", [[3, "retired"]]);
+    const both = await landRules(root, "Retire three", [[3, "retired"]], r3);
     expect(both.kind).toBe("landed");
     expect(openFindings(ws(root).db)).toEqual([]);
   });
@@ -168,8 +171,9 @@ describe("closing findings", () => {
 
   test("BR-2434: a later review that does not mention an open finding leaves it open", async () => {
     const root = billing("empty");
+    const quiet = startNew(root, "Quiet review");
     const open = record(ws(root).db, [f("contradiction", `${BR(1)} 和 ${BR(2)} 的「三天」矛盾`)]).opened[0]!;
-    expect((await landRules(root, "Quiet review", [[1, "active"]])).kind).toBe("landed");
+    expect((await landRules(root, "Quiet review", [[1, "active"]], quiet)).kind).toBe("landed");
     expect(ws(root).db.db.query("SELECT 1 FROM events WHERE kind = 'review.ok'").get()).not.toBeNull();
     expect(openFindings(ws(root).db).map((x) => x.id)).toEqual([open]);
   });
@@ -322,15 +326,17 @@ describe("showing findings", () => {
     change(3, `\`${BR(1)}\` only as an example.`);
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "changes");
+    const wt = (c: string) => canon(root, "work", "start", c).out.match(/cd (.+)/)![1]!.trim();
+    // both started before the findings, as parallel sessions' would be (BR-2464)
+    const [w2, w3] = [wt(id("C", 2)), wt(id("C", 3))];
     const db = ws(root).db;
     const one = record(db, [f("contradiction", `${BR(1)} 和 ${BR(7)} 的「三天」矛盾`)]).opened[0]!;
     record(db, [f("untestable", "「尽快」无法测试")], [BR(1)]);
-    const wt = (c: string) => canon(root, "work", "start", c).out.match(/cd (.+)/)![1]!.trim();
-    const inChange = canon(wt(id("C", 2)), "brief").out;
+    const inChange = canon(w2, "brief").out;
     expect(inChange).toContain(`Open review finding #${one} [contradiction] ${BR(1)}, ${BR(7)}: `);
     expect(inChange.match(/Open review finding #/g)?.length).toBe(2);
     expect(inChange).not.toContain("open review finding(s)");
-    expect(canon(wt(id("C", 3)), "brief").out).not.toContain("Open review finding");
+    expect(canon(w3, "brief").out).not.toContain("Open review finding");
     expect(canon(root, "brief").out).toContain("2 open review finding(s) on 2 document(s): canon context <id> lists them");
   });
 });

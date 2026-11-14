@@ -304,6 +304,7 @@ describe("rule review after landing", () => {
     const needsEnv = reviewer(root, `cat > /dev/null\ncat .env > /dev/null || exit 3\necho '{"verdict":"ok","findings":[]}'`, "env");
     configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(needsEnv.script)}\n`);
     const s = startNew(root, "Rule needing env");
+    const t = startNew(root, "Another rule"); // started before the failed review, as a parallel session's would be (BR-2464)
     writeFileSync(join(s.worktree, ".env"), "KEY=1\n");
     addRule(s.worktree);
     const r = await landReviewed(root, s.worktree);
@@ -311,7 +312,6 @@ describe("rule review after landing", () => {
     expect(r.review).toContain("git-ignored files such as node_modules");
     const strict = reviewer(root, `cat > /dev/null\necho '{"verdict":"block","findings":["vague"]}'`, "strict");
     configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(strict.script)}\n`);
-    const t = startNew(root, "Another rule");
     writeFileSync(join(t.worktree, "canon/rules/billing/BR-2.md"), `---\nid: BR-2\ntitle: Fees\nuntested: demo\nbusiness: x\n---\n## 规则\n\nFees are fine.\n`);
     sh(t.worktree, "add", "-A");
     sh(t.worktree, "commit", "-qm", "rule 2");
@@ -339,6 +339,7 @@ describe("rule review after landing", () => {
     const flawed = reviewer(root, `cat > /dev/null\necho '{"verdict":"ok","findings":[{"criterion":"contradiction","text":"${id} contradicts BR-9"}]}'`, "flawed");
     configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(flawed.script)}\n`);
     const s = startNew(root, "Rule with a flaw");
+    const t = startNew(root, "Another rule"); // started before the finding, as a parallel session's would be (BR-2464)
     addRule(s.worktree);
     const r = await landReviewed(root, s.worktree);
     expect(r.out.kind).toBe("landed");
@@ -347,7 +348,6 @@ describe("rule review after landing", () => {
 
     const notes = reviewer(root, `cat > /dev/null\necho '{"findings":[{"criterion":"note","text":"BR-2 could be shorter"}]}'`, "notes");
     configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(notes.script)}\n`);
-    const t = startNew(root, "Another rule");
     writeFileSync(join(t.worktree, "canon/rules/billing/BR-2.md"), `---\nid: BR-2\ntitle: Fees\nuntested: demo\nbusiness: x\n---\n## 规则\n\nFees are fine.\n`);
     sh(t.worktree, "add", "-A");
     sh(t.worktree, "commit", "-qm", "rule 2");
@@ -731,10 +731,10 @@ describe("rule review after landing", () => {
     test("BR-2442: two blocking findings, one already open under the same identity: one new record, both numbers in the log", async () => {
       const two = `cat > /dev/null\necho '{"findings":[{"criterion":"contradiction","text":"${id} 和 BR-7 的「三天」矛盾"},{"criterion":"untestable","text":"${id} 的「很快」无法测试"}]}'`;
       const root = blockingProject(two);
+      const s = startNew(root, "Rule"); // started before the finding was open (BR-2464)
       const db = ws(root).db;
       const seeded = recordFindings(db, { findings: [{ criterion: "contradiction", text: `${id} 和 BR-7 的「三天」矛盾` }], reviewed: [id], change: null, event: db.event("agent:t", "review.block", null, {}), sha: null });
       if (!seeded.ok) throw new Error(seeded.error.message);
-      const s = startNew(root, "Rule");
       addRule(s.worktree);
       const r = await landReviewed(root, s.worktree);
       const all = openFindings(ws(root).db);
