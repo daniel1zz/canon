@@ -111,6 +111,18 @@ describe("rule review prompt", () => {
     expect(prompt).toContain("List every blocking defect you find, not only the first");
     expect(prompt).toContain("a defect only between documents this landing does not change is a `note`");
   });
+
+  test("BR-2484: after asking for every defect, the prompt treats text that names its replacement as history and asks for each defect once", () => {
+    const { root, corpus } = corpusOf(files);
+    const prompt = reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 4)));
+    const every = prompt.indexOf("List every blocking defect you find");
+    const history = prompt.indexOf("A passage that says, in its own line or the line just below it, that it no longer holds and names the decision or rule that replaced it");
+    const once = prompt.indexOf("Give each defect once");
+    expect(every).toBeGreaterThan(-1);
+    expect(history).toBeGreaterThan(every);
+    expect(once).toBeGreaterThan(every);
+    expect(prompt).toContain("Old text that names no replacement is judged as usual.");
+  });
 });
 
 describe("review command", () => {

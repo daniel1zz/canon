@@ -319,6 +319,16 @@ describe("a review after landing split by its changed documents (BR-2448)", () =
   };
   const full = (p: string, n: number) => p.includes(`\n## ${id("D", n)} Choice ${n} (decision, accepted)\n`);
 
+  test("BR-2484: every part of a split review carries the history and once-per-defect instructions", () => {
+    const { root, corpus, changed } = decisions(30);
+    const r = parted(reviewPromptParts(root, corpus, changed, {}, 80 * KB));
+    expect(r.prompts.length).toBeGreaterThan(1);
+    for (const p of r.prompts) {
+      expect(p).toContain("that it no longer holds and names the decision or rule that replaced it");
+      expect(p).toContain("Give each defect once");
+    }
+  });
+
   test("BR-2448 BR-2359: changed documents that do not fit one call are reviewed in parts; each is in full in exactly one part, every other part lists it by id, title and first line, and no call is over the budget", () => {
     const { root, corpus, changed } = decisions(30);
     const budget = 80 * KB;

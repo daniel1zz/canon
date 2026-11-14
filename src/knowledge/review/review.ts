@@ -132,6 +132,10 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
     NO_VERDICT,
     // reason: a defect left out blocks a later landing of the same text, and each call reports what it happens to notice (BR-2009, #173)
     "List every blocking defect you find, not only the first: a defect you leave out blocks a later landing of the same text. A blocking finding must involve at least one changed or deleted document; a defect only between documents this landing does not change is a `note`.",
+    // reason: a decision keeps what was decided then; a line that names its replacement is history, and reviewers read it as a live contradiction (BR-2484, #57, #58)
+    "A passage that says, in its own line or the line just below it, that it no longer holds and names the decision or rule that replaced it (for example 当时决定（D-89 起不再这样……）) records what was decided then: judge the replacement it names, and never give a `contradiction` or `restatement` against the replaced words. Old text that names no replacement is judged as usual.",
+    // reason: one review reported the same D-51 defect four times in different words (BR-2484, findings #43, #44, #46, #50)
+    "Give each defect once: findings that quote the same passages for the same problem are one finding, whatever their wording; name every document it concerns in that one sentence.",
     "Do not block for wording, style or formatting.",
     "One rule is one trigger (one command, event or kind of input) and one outcome (D-5). The error cases, exit codes and boundaries of the same trigger belong in that rule as examples, and a definition table (such as a list of exit codes) is one rule: do not suggest splitting those. Suggest a split only when a rule covers two different triggers, or two outcomes that could change independently; never block for it.",
     "Write the findings in the language the documents are written in.",
