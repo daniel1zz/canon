@@ -162,6 +162,15 @@ describe("rule review prompt budget", () => {
     expect(msg).not.toContain("cannot help");
   });
 
+  test("BR-2359: in a split review the documents the changed ones name count as changed documents in the refusal's sizes", () => {
+    const { root, corpus } = bigDomain(30);
+    const six = corpus.docs.find((d) => d.id === id("BR", 6))!;
+    const citing = [{ ...six, body: `${six.body}\n按 ${id("BR", 1)}。 ${"y".repeat(5 * KB)}\n` }] as typeof corpus.docs;
+    const msg = refusal(reviewPrompts(root, corpus, citing, {}, 20 * KB));
+    expect(msg).toMatch(/changed documents 3\d KB, review instructions/);
+    expect(msg).toContain("land the changed documents in several smaller changes");
+  });
+
   test("BR-2359: a domain rule that cannot fit with a small change: the refusal says splitting the change cannot help and names the budget and the domain split", () => {
     const { root, corpus } = bigDomain(30);
     const msg = refusal(reviewPrompts(root, corpus, changedRule(corpus, 6), {}, 25 * KB)); // every rule is 30 KB
