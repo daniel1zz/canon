@@ -11,6 +11,8 @@ import { removeReviewTree } from "../../work/land/checks/review-tree.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { REVIEW_NONE, REVIEW_WAYS_OUT } from "./config-keys.ts";
 import { reviewLanded } from "./landed.ts";
+import { Slots } from "./review.ts";
+import { reviewSettingsOn } from "../../work/land/checks/review-scope.ts";
 
 /**
  * The queue of landed reviews (BR-2441, D-89): a landing that changed rules, decisions, releases or standing instructions,
@@ -160,20 +162,41 @@ function claimReviewer(db: CoordDb, self: Proc): boolean {
     .immediate();
 }
 
+/** The paths a landed review reads that another review may write findings about: what it changed under canon/ and in the standing instructions (BR-2487). */
+function pathsOf(ws: Workspace, job: Job, standing: readonly string[]): ReadonlySet<string> {
+  const diff = git(ws.primary, "diff", "--name-only", "--no-renames", job.base, job.head);
+  // reason: when the diff cannot be read, the review overlaps everything, so it keeps queue order with every other (BR-2487)
+  if (!diff.ok) return new Set(["*"]);
+  return new Set(diff.value.split("\n").filter((p) => p !== "" && (p.startsWith("canon/") || standing.includes(p))));
+}
+
+const overlaps = (a: ReadonlySet<string>, b: ReadonlySet<string>): boolean => a.has("*") || b.has("*") || [...a].some((p) => b.has(p));
+
 /**
- * The next queued review, marked running; or, when none is left, the reviewer's place given up in the same transaction, so
- * a review queued just after is seen either here or by the reviewer its landing starts (BR-2441).
+ * The next queued review that may start now, marked running: the first in queue order that shares no path with an earlier
+ * review still queued or running (BR-2487). With none queued and none running here, the reviewer's place is given up in the
+ * same transaction, so a review queued just after is seen either here or by the reviewer its landing starts (BR-2441).
  */
-function nextOrRelease(db: CoordDb, self: Proc): Job | undefined {
+function nextOrRelease(db: CoordDb, self: Proc, active: number, paths: (job: Job) => ReadonlySet<string>): Job | "wait" | undefined {
   return db.db
-    .transaction((): Job | undefined => {
-      const job = db.db.query<Job, []>(`SELECT ${COLS} FROM landed_reviews WHERE state = 'queued' ORDER BY id LIMIT 1`).get();
-      if (!job) {
+    .transaction((): Job | "wait" | undefined => {
+      // reason: only this reviewer runs reviews, so with none running here one still `running` was left by a reviewer that died (BR-2441)
+      if (active === 0) db.db.query("UPDATE landed_reviews SET state = 'queued' WHERE state = 'running'").run();
+      const open = db.db.query<Job, []>(`SELECT ${COLS} FROM landed_reviews WHERE state IN ('queued', 'running') ORDER BY id`).all();
+      if (open.length === 0 && active === 0) {
         db.db.query("DELETE FROM landed_reviewer WHERE id = 1 AND pid = ? AND pid_start = ?").run(self.pid, self.start);
         return undefined;
       }
-      db.db.query("UPDATE landed_reviews SET state = 'running' WHERE id = ?").run(job.id);
-      return { ...job, state: "running" };
+      const before: ReadonlySet<string>[] = [];
+      for (const job of open) {
+        const mine = paths(job);
+        if (job.state === "queued" && !before.some((p) => overlaps(p, mine))) {
+          db.db.query("UPDATE landed_reviews SET state = 'running' WHERE id = ?").run(job.id);
+          return { ...job, state: "running" };
+        }
+        before.push(mine);
+      }
+      return "wait";
     })
     .immediate();
 }
@@ -182,10 +205,19 @@ function finish(db: CoordDb, id: number, state: "done" | "failed"): void {
   db.db.query("UPDATE landed_reviews SET state = ?, finished_at = ? WHERE id = ?").run(state, new Date().toISOString(), id);
 }
 
+/** How many reviews run at once and how many calls they share, from main's canon/config.yaml; 1 and 1 when it cannot be read. */
+function concurrency(ws: Workspace): { reviews: number; calls: number; standing: readonly string[] } {
+  const s = reviewSettingsOn(ws.primary, ws.config.main);
+  // reason: a config that cannot be read fails each review with its reason (reviewLanded); here it only falls back to running them one at a time (BR-2487)
+  return s.ok ? { reviews: s.value.landedReviewParallel, calls: s.value.reviewParallel, standing: s.value.instructions } : { reviews: 1, calls: 1, standing: [] };
+}
+
 /**
- * `canon work review-landed` (BR-2441): unless another reviewer is alive, runs the queued reviews one at a time until none is
- * left. Each review writes its lines to its own log, which `canon work after-land` prints; one that cannot run is marked failed
- * with the reason (`review.fail`), never retried silently.
+ * `canon work review-landed` (BR-2441, BR-2487): unless another reviewer is alive, runs the queued reviews until none is
+ * left, up to `landed_review_parallel` at once (read from main before each start), their calls together within
+ * `review_parallel`; a review starts only when no earlier review still queued or running shares a path with it. Each review
+ * writes its lines to its own log, which `canon work after-land` prints; one that cannot run is marked failed with the reason
+ * (`review.fail`), never retried silently.
  */
 export async function runLandedReviews(ws: Workspace, say: Say, guide: string | undefined): Promise<Result<number>> {
   const self = selfProcess();
@@ -194,46 +226,69 @@ export async function runLandedReviews(ws: Workspace, say: Say, guide: string | 
     say("review: another reviewer is running the queued reviews");
     return ok(0);
   }
-  const running: Running = {};
-  let current: Job | undefined;
+  const active = new Map<number, { job: Job; running: Running; done: Promise<void> }>();
   const onSignal = (signal: NodeJS.Signals) => {
-    running.review?.kill();
-    if (running.reviewTree !== undefined) removeReviewTree(ws, running.reviewTree);
-    if (running.readTree !== undefined) removeReviewTree(ws, running.readTree);
-    // reason: the review it was running stays `running`; the next reviewer runs it again (BR-2441)
-    if (current) appendFileSync(current.log, `review: stopped by ${signal}; the next reviewer runs it again\n`);
+    for (const { job, running } of active.values()) {
+      running.review?.kill();
+      if (running.reviewTree !== undefined) removeReviewTree(ws, running.reviewTree);
+      if (running.readTree !== undefined) removeReviewTree(ws, running.readTree);
+      // reason: the review it was running stays `running`; the next reviewer runs it again (BR-2441)
+      appendFileSync(job.log, `review: stopped by ${signal}; the next reviewer runs it again\n`);
+    }
     ws.db.db.query("DELETE FROM landed_reviewer WHERE id = 1 AND pid = ? AND pid_start = ?").run(self.pid, self.start);
     process.exit(signal === "SIGINT" ? 130 : 143);
   };
   process.on("SIGTERM", onSignal);
   process.on("SIGINT", onSignal);
+  const pathCache = new Map<number, ReadonlySet<string>>();
   let n = 0;
+  let { reviews, calls, standing } = concurrency(ws);
+  const slots = new Slots(calls);
+  const runOne = async (job: Job, running: Running): Promise<void> => {
+    mkdirSync(dirname(job.log), { recursive: true });
+    const line = (text: string) => {
+      appendFileSync(job.log, `${text}\n`);
+      // reason: reviews running at once write to one reviewer log, so each line says whose it is (BR-2487)
+      say(reviews > 1 ? `[${job.change ?? job.head.slice(0, 9)}] ${text}` : text);
+    };
+    line(`review of ${job.change ?? job.head.slice(0, 9)}: landed ${job.head.slice(0, 9)} on ${job.base.slice(0, 9)}`);
+    let r: Result<void>;
+    try {
+      r = await reviewLanded(ws, job, line, guide, running, slots);
+    } catch (e) {
+      r = err("io", (e as Error).message);
+    }
+    if (r.ok) {
+      finish(ws.db, job.id, "done");
+      line("review: done");
+    } else {
+      ws.db.event(ws.actor, "review.fail", job.change, { landed: job.landed, commit: job.head, message: r.error.message.slice(0, 2000) });
+      finish(ws.db, job.id, "failed");
+      line(`review: could not run: ${r.error.message}`);
+    }
+    n++;
+  };
   try {
     for (;;) {
-      current = nextOrRelease(ws.db, self);
-      if (!current) return ok(n);
-      const job = current;
-      mkdirSync(dirname(job.log), { recursive: true });
-      const line = (text: string) => {
-        appendFileSync(job.log, `${text}\n`);
-        say(text);
-      };
-      line(`review of ${job.change ?? job.head.slice(0, 9)}: landed ${job.head.slice(0, 9)} on ${job.base.slice(0, 9)}`);
-      let r: Result<void>;
-      try {
-        r = await reviewLanded(ws, job, line, guide, running);
-      } catch (e) {
-        r = err("io", (e as Error).message);
+      ({ reviews, calls, standing } = concurrency(ws));
+      slots.resize(calls);
+      let next: Job | "wait" | undefined = "wait";
+      while (active.size < reviews) {
+        next = nextOrRelease(ws.db, self, active.size, (job) => {
+          let p = pathCache.get(job.id);
+          if (!p) pathCache.set(job.id, (p = pathsOf(ws, job, standing)));
+          return p;
+        });
+        if (next === undefined || next === "wait") break;
+        const job = next;
+        const running: Running = {};
+        const done = runOne(job, running).finally(() => active.delete(job.id));
+        active.set(job.id, { job, running, done });
       }
-      if (r.ok) {
-        finish(ws.db, job.id, "done");
-        line("review: done");
-      } else {
-        ws.db.event(ws.actor, "review.fail", job.change, { landed: job.landed, commit: job.head, message: r.error.message.slice(0, 2000) });
-        finish(ws.db, job.id, "failed");
-        line(`review: could not run: ${r.error.message}`);
-      }
-      n++;
+      if (next === undefined && active.size === 0) return ok(n);
+      // reason: with nothing running here every open review is queued, and the first of them always may start (BR-2487)
+      if (active.size === 0) throw new Error("the landed review queue has open reviews but none could start; this is a canon bug");
+      await Promise.race([...active.values()].map((a) => a.done));
     }
   } finally {
     process.off("SIGTERM", onSignal);

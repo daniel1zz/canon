@@ -317,6 +317,40 @@ export interface ReviewLimits {
   readonly keep?: string;
   /** Given the command's whole stdout and stderr once it has ended, whatever the outcome. */
   readonly capture?: (out: string, errText: string) => void;
+  /** Calls shared with other reviews running at once: each call takes one before it starts (BR-2487). */
+  readonly slots?: Slots;
+}
+
+/** A first-come, first-served count of calls that may run at once, shared by the reviews after landing that run together (BR-2487). */
+export class Slots {
+  private free: number;
+  private size: number;
+  private readonly waiting: (() => void)[] = [];
+  constructor(size: number) {
+    this.free = size;
+    this.size = size;
+  }
+  async take(): Promise<void> {
+    if (this.free > 0) {
+      this.free--;
+      return;
+    }
+    await new Promise<void>((resolve) => this.waiting.push(resolve));
+  }
+  /** Changes the size for the calls not yet started; calls already running keep their slot. */
+  resize(size: number): void {
+    this.free += size - this.size;
+    this.size = size;
+    while (this.free > 0 && this.waiting.length > 0) {
+      this.free--;
+      this.waiting.shift()!();
+    }
+  }
+  give(): void {
+    const next = this.waiting.shift();
+    if (next) next();
+    else this.free++;
+  }
 }
 
 /** Why a review command exited non-zero: stderr's head, else stdout's tail, both labelled when both exist (BR-2216, #132). */
@@ -842,7 +876,14 @@ export async function runReviews(command: string, cwd: string, prompts: readonly
       let out = "";
       let errText = "";
       const started = Date.now();
-      const one = await runReview(command, cwd, prompts[i]!, { ...limits, track, capture: (o, e) => ((out = o), (errText = e)) }, parse);
+      await limits.slots?.take();
+      let one: Result<ReviewVerdict>;
+      try {
+        one = failed === undefined ? await runReview(command, cwd, prompts[i]!, { ...limits, track, capture: (o, e) => ((out = o), (errText = e)) }, parse) : err("io", "stopped");
+      } finally {
+        limits.slots?.give();
+      }
+      if (failed !== undefined) return;
       if (!one.ok) {
         // reason: the first failure is the one reported; the calls it stops fail too, only because they were stopped (BR-2216)
         if (failed === undefined) {

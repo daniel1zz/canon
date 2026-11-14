@@ -140,6 +140,8 @@ export interface ReviewSettings {
   readonly reviewTimeoutMs: number;
   readonly reviewMaxPromptBytes: number;
   readonly reviewParallel: number;
+  /** How many landed reviews run at once (BR-2487). */
+  readonly landedReviewParallel: number;
   readonly instructions: readonly string[];
 }
 
@@ -164,9 +166,11 @@ export function reviewSettingsOn(wt: string, rev: string): Result<ReviewSettings
   if (!reviewMaxPromptBytes.ok) return reviewMaxPromptBytes;
   const reviewParallel = field(reviewKeys.reviewParallel);
   if (!reviewParallel.ok) return reviewParallel;
+  const landedReviewParallel = field(reviewKeys.landedReviewParallel);
+  if (!landedReviewParallel.ok) return landedReviewParallel;
   const instructions = field(reviewKeys.instructions);
   if (!instructions.ok) return instructions;
-  return ok({ review: review.value, reviewTimeoutMs: reviewTimeoutMs.value, reviewMaxPromptBytes: reviewMaxPromptBytes.value, reviewParallel: reviewParallel.value, instructions: instructions.value });
+  return ok({ review: review.value, reviewTimeoutMs: reviewTimeoutMs.value, reviewMaxPromptBytes: reviewMaxPromptBytes.value, reviewParallel: reviewParallel.value, landedReviewParallel: landedReviewParallel.value, instructions: instructions.value });
 }
 
 /** Whether two `<rev>:<path>` objects are the same blob, i.e. the same bytes. */

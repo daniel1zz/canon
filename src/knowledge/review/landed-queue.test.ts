@@ -90,6 +90,39 @@ describe("the queue of reviews after landing (BR-2441)", () => {
     expect(b!.base).toBe(a!.head);
   });
 
+  test("BR-2487: with landed_review_parallel 2 and review_parallel 2, two reviews of different documents run at the same time", async () => {
+    const { root, seen } = queueProject("landed_review_parallel: 2\nreview_parallel: 2\n");
+    for (const n of [1, 2]) expect((await land(ws(ruleChange(root, n).worktree), FAST, quiet)).kind).toBe("landed");
+    const r = await runLandedReviews(ws(root), quiet, undefined);
+    expect(r.ok && r.value).toBe(2);
+    expect(seen()).toContain("overlap");
+    expect(jobs(root).map((j) => j.state)).toEqual(["done", "done"]);
+  });
+
+  test("BR-2487: reviews running at once share review_parallel: with it at 1 their calls never run at the same time", async () => {
+    const { root, seen } = queueProject("landed_review_parallel: 2\nreview_parallel: 1\n");
+    for (const n of [1, 2]) expect((await land(ws(ruleChange(root, n).worktree), FAST, quiet)).kind).toBe("landed");
+    const r = await runLandedReviews(ws(root), quiet, undefined);
+    expect(r.ok && r.value).toBe(2);
+    expect(seen()).toEqual(["start", "end", "start", "end"]);
+  });
+
+  test("BR-2487: two reviews that change the same document keep queue order and never run at the same time, whatever landed_review_parallel says", async () => {
+    const { root, seen } = queueProject("landed_review_parallel: 2\nreview_parallel: 2\n");
+    expect((await land(ws(ruleChange(root, 1).worktree), FAST, quiet)).kind).toBe("landed");
+    const again = startNew(root, "Rule 1 again");
+    writeFileSync(join(again.worktree, "canon/rules/billing/BR-1.md"), "---\nid: BR-1\ntitle: Rule 1\nuntested: demo\nbusiness: x\n---\n## 规则\n\nRule 1 holds twice.\n");
+    sh(again.worktree, "add", "-A");
+    sh(again.worktree, "commit", "-qm", "rule 1 again");
+    expect((await land(ws(again.worktree), FAST, quiet)).kind).toBe("landed");
+    const r = await runLandedReviews(ws(root), quiet, undefined);
+    expect(r.ok && r.value).toBe(2);
+    expect(seen()).toEqual(["start", "end", "start", "end"]);
+    const [a, b] = jobs(root);
+    expect(readFileSync(a!.log, "utf8")).toContain("review: done");
+    expect([a!.state, b!.state]).toEqual(["done", "done"]);
+  });
+
   test("BR-2441: with a reviewer alive, a landing that queues a review starts no second one; with none alive and the variable unset, it starts one", async () => {
     const { root } = queueProject();
     expect((await land(ws(ruleChange(root, 1).worktree), FAST, quiet)).kind).toBe("landed");

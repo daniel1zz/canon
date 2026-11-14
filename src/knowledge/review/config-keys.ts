@@ -67,6 +67,15 @@ export const reviewKeys = {
     listed: 67,
     checked: 47,
   }),
+  landedReviewParallel: configKey<number>({
+    key: "landed_review_parallel",
+    doc: "How many queued reviews after landing the background reviewer runs at once (BR-2487, D-121); their calls together stay within `review_parallel`. 1 runs them one after another.",
+    default: 1,
+    schema: { type: "integer", minimum: 1, default: 1 },
+    read: (v) => (typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`landed_review_parallel` must be a whole number of at least 1")),
+    listed: 68,
+    checked: 48,
+  }),
   instructions: configKey<readonly string[]>({
     key: "instructions",
     doc: "Repo-relative files every session reads at start; changing one triggers the duplicate review (BR-2143).",

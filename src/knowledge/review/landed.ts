@@ -6,7 +6,7 @@ import type { Running } from "../../work/land/outcome.ts";
 import { readCorpus } from "../documents/read.ts";
 import type { Corpus, Doc } from "../documents/model.ts";
 import { findDoc } from "../query/query.ts";
-import { partsNote, reviewPromptParts, runReview, runReviews, splitNote, type ReviewLimits, type ReviewVerdict, onlyChangedBlock } from "./review.ts";
+import { partsNote, reviewPromptParts, runReview, runReviews, splitNote, type ReviewLimits, type ReviewVerdict, onlyChangedBlock, type Slots } from "./review.ts";
 import { REVIEW_NONE } from "./config-keys.ts";
 import { reviewTree } from "../../work/land/checks/review-tree.ts";
 import { architectureOf, couldNotRun, duplicateReviewPrompt, reviewScope, reviewSettingsOn, standingTouched, type ReviewSettings } from "../../work/land/checks/review-scope.ts";
@@ -35,7 +35,7 @@ export interface LandedJob {
 }
 
 /** Reviews one landed commit; an error means a review could not run and the job failed (BR-2441). */
-export async function reviewLanded(ws: Workspace, job: LandedJob, say: Say, guide: string | undefined, running: Running): Promise<Result<void>> {
+export async function reviewLanded(ws: Workspace, job: LandedJob, say: Say, guide: string | undefined, running: Running, slots?: Slots): Promise<Result<void>> {
   const by = job.reviewer ?? job.base;
   if (job.reviewer) say(`review: run again with main's review command at ${job.reviewer.slice(0, 9)}, not the one at ${job.base.slice(0, 9)} before the landing (BR-2449)`);
   const settings = reviewSettingsOn(ws.primary, by);
@@ -48,7 +48,7 @@ export async function reviewLanded(ws: Workspace, job: LandedJob, say: Say, guid
     if (!dir.ok) return dir;
     // reason: the signal handler removes this tree too, so a stopped reviewer leaves no worktree behind (BR-2441)
     running.readTree = dir.value;
-    return await reviewIn(ws, job, say, guide, running, settings.value, dir.value, run);
+    return await reviewIn(ws, job, say, guide, running, settings.value, dir.value, run, slots);
   } finally {
     const a = at.release();
     running.readTree = undefined;
@@ -58,7 +58,7 @@ export async function reviewLanded(ws: Workspace, job: LandedJob, say: Say, guid
   }
 }
 
-async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string | undefined, running: Running, s: ReviewSettings, wt: string, tree: ReturnType<typeof reviewTree>): Promise<Result<void>> {
+async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string | undefined, running: Running, s: ReviewSettings, wt: string, tree: ReturnType<typeof reviewTree>, slots: Slots | undefined): Promise<Result<void>> {
   const { base, head, change } = job;
   const read = readCorpus(wt, ws.config.types, ws.config);
   const scope = reviewScope(wt, base, head, read.corpus);
@@ -76,7 +76,7 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
     return ok(undefined);
   }
   const reviewer = s.review;
-  const limits: ReviewLimits = { timeoutMs: s.reviewTimeoutMs, kind: "land", track: (r) => (running.review = r), ...(job.log ? { keep: job.log.replace(/\.log$/, "") } : {}) };
+  const limits: ReviewLimits = { timeoutMs: s.reviewTimeoutMs, kind: "land", track: (r) => (running.review = r), ...(job.log ? { keep: job.log.replace(/\.log$/, "") } : {}), ...(slots ? { slots } : {}) };
   const docIds = [...changedDocs.map((d) => d.id), ...deleted.map((d) => d.id)];
   // reason: a finding naming no document is attached to every reviewed one; a review of README text only has its domains (BR-2434)
   const attachTo = docIds.length > 0 ? docIds : readmes;
@@ -147,7 +147,8 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
     if (!at.ok) return at;
     const prompt = duplicateReviewPrompt(wt, base, head, standing, s.instructions, guide);
     if (!prompt.ok) return prompt;
-    const v = await runReview(reviewer, at.value, prompt.value, limits);
+    // reason: through runReviews so the call takes one of the slots shared with the reviews running at once (BR-2487)
+    const v = await runReviews(reviewer, at.value, [prompt.value], limits, 1);
     if (!v.ok) return err("io", couldNotRun("duplicate", v.error.message, at.value, job.reviewer ?? base, job.reviewer ? "main" : "before"));
     const done = settle(ws, job, say, v.value, standing, "duplicate", { landed: job.landed, docs: standing, reviewed: standing, commit: head, base });
     if (!done.ok) return done;
