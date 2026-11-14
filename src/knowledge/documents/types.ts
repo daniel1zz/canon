@@ -26,7 +26,7 @@ export interface DocType {
 export const BUILTIN_TYPES: readonly DocType[] = [
   { name: "rule", prefix: "BR", dir: "rules", statuses: ["active", "retired", "planned"], defaultStatus: "active", fields: [], sections: [], builtin: true },
   { name: "decision", prefix: "D", dir: "decisions", statuses: ["proposed", "accepted", "superseded"], defaultStatus: "proposed", fields: [], sections: ["背景", "方案", "决定", "后果"], builtin: true },
-  { name: "change", prefix: "C", dir: "changes", statuses: ["open", "done", "dropped"], defaultStatus: "open", fields: [], sections: ["为什么", "要改什么", "任务"], builtin: true },
+  { name: "change", prefix: "C", dir: "changes", statuses: ["open", "done", "dropped"], defaultStatus: "open", fields: [], sections: ["为什么", "要改什么"], builtin: true },
   { name: "note", prefix: "N", dir: "notes", statuses: undefined, defaultStatus: undefined, fields: [], sections: [], builtin: true },
   // reason: built in, not declared, because only canon's code can write `shipped_at`, run `canon release` and freeze a shipped release (D-61)
   { name: "release", prefix: "R", dir: "releases", statuses: ["planned", "active", "shipped"], defaultStatus: "planned", fields: [], sections: ["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"], builtin: true },

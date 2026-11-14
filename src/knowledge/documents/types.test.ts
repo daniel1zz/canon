@@ -136,9 +136,9 @@ describe("declared document types", () => {
       const r = canon(repo(bad), "check");
       expect([r.code, r.err.includes("sections")]).toEqual([2, true]);
     }
-    const tpl = repo("", { "canon/templates/change.md": "## 为什么\n\n<x>\n\n## 要改什么\n\n<y>\n" });
+    const tpl = repo("", { "canon/templates/change.md": "## 为什么\n\n<x>\n" });
     const r = canon(tpl, "check");
-    expect([r.code, r.err.includes("`## 任务`")]).toEqual([2, true]);
+    expect([r.code, r.err.includes("`## 要改什么`")]).toEqual([2, true]);
     const extra = "types:\n  decision:\n    sections: [背景, 风险]\n";
     const builtin = canon(repo(extra), "check");
     expect([builtin.code, builtin.err.includes("built-in decision template")]).toEqual([2, true]);

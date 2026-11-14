@@ -64,7 +64,7 @@ describe("exit codes", () => {
     expect(readFileSync(join(wt, change), "utf8")).toContain("## 陷阱和假设");
     const template = readFileSync(join(wt, change), "utf8");
     expect(template.indexOf("## 教训")).toBeGreaterThan(template.indexOf("## 陷阱和假设")); // BR-2037: lessons before the tasks
-    expect(template.indexOf("## 教训")).toBeLessThan(template.indexOf("## 任务"));
+    expect(template).not.toContain("## 任务"); // BR-2037, D-108: no tasks section
     expect(template).toContain("本变更为自己的功能或修复写的规则、测试和检查不是教训"); // BR-2037, D-78
     expect(canon(wt, "rule", "domain", "shipping", "--code", "src/shipping").code).toBe(0);
     expect(readFileSync(join(wt, "canon/rules/shipping/README.md"), "utf8")).toContain("## 业务"); // BR-2037, BR-2430: the domain README template lists businesses too
@@ -86,7 +86,7 @@ describe("exit codes", () => {
       .replace("<方案二>：<采用或否决，以及理由>", "Database：否决，太重")
       .replace(placeholder, "   - 来源：notes.txt “the original sentence quoted here”")
       .replace(placeholder, "   - 来源：notes.txt “the original sentence quoted here”")
-      .replace("<决定了什么。>", "Files.")
+      .replace(/<决定了什么。[^>]*>/, "Files.")
       .replace("<带来哪些变化、代价和后续工作。>", "None.");
     writeFileSync(join(root, path), filled);
     const r = canon(root, "check");

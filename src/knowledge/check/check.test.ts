@@ -281,8 +281,9 @@ describe("required sections", () => {
       "canon/rules/billing/README.md": `---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n${terms}`,
       "canon/rules/auth/README.md": "---\ncode: [src/auth]\n---\n# auth\n\nLogin.\n\n## 术语\n\n",
       "canon/rules/pay/README.md": "---\ncode: [src/pay]\n---\n# pay\n\nPayments.\n",
-      ...change(1, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n"),
-      ...change(2, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] <任务>\n"),
+      ...change(1, "## 为什么\n\nW.\n"),
+      ...change(2, "## 为什么\n\nW.\n\n## 要改什么\n\n<具体改动，以及会新增或修改哪些规则。>\n"),
+      ...change(4, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n"),
       ...change(3, "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n\n## 陷阱和假设\n\nY.\n\n## 任务\n\n- [x] X\n"),
       [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: X\nstatus: superseded\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\nA.\n`,
       "canon/notes/N-1.md": "---\nid: N-1\ntitle: Free\n---\nAnything.\n",
@@ -290,8 +291,8 @@ describe("required sections", () => {
     const got = check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "doc-missing-section").map((f) => `${f.path.split("/").pop()} ${f.message}`);
     expect(got.sort()).toEqual(
       [
-        "C-1.md C-1 lacks or leaves empty: ## 任务",
-        "C-2.md C-2 lacks or leaves empty: ## 任务",
+        "C-1.md C-1 lacks or leaves empty: ## 要改什么",
+        "C-2.md C-2 lacks or leaves empty: ## 要改什么",
         `${d(1)}.md ${d(1)} lacks or leaves empty: ## 后果`,
         "README.md domain auth README lacks or leaves empty: ## 术语",
         "README.md domain pay README lacks or leaves empty: ## 术语",

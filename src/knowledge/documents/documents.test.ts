@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 import { CoordDb } from "../../work/db.ts";
 import { check } from "../check/check.ts";
 import { slugify } from "./model.ts";
+import { templateFor } from "./templates.ts";
 import { readCorpus } from "./read.ts";
 import { createDoc, setMeta } from "./write.ts";
 import { ws } from "../../work/testkit.ts";
@@ -117,6 +118,12 @@ describe("creating documents", () => {
     const decision = canon(root, "decision", "new", "--title", "知识以文件存放").out.trim();
     const text = readFileSync(join(root, decision), "utf8");
     for (const s of ["## 背景", "## 方案", "## 决定", "## 后果"]) expect(text).toContain(s);
+    // D-108: the prompts say where the details go, so a decision or rule cites a rule instead of restating it
+    expect(text).toContain("这里只写规则编号");
+    const ruleText = templateFor("rule");
+    expect(ruleText).toContain("只写“按 BR-x”");
+    expect(ruleText).toContain("就拆成另一条规则");
+    expect(ruleText).not.toContain("一句话写清楚");
     expect(canon(root, "rule", "domain", "billing", "--code", "src/billing").code).toBe(0);
     expect(readFileSync(join(root, "canon/rules/billing/README.md"), "utf8")).toContain("## 术语");
     const change = canon(root, "change", "new", "--title", "X").out.trim();
@@ -127,8 +134,7 @@ describe("creating documents", () => {
       readFileSync(full, "utf8")
         .replace("<要解决什么问题。>", "Why.")
         .replace("<具体改动，以及会新增或修改哪些规则。>", "What.")
-        .replace(/<每条教训一行[^\n]*>/, "无")
-        .replace("- [ ] <任务>", "- [ ] Do it"),
+        .replace(/<每条一行[^\n]*>/, "无"),
     );
     const findings = canon(root, "check").out.split("\n").filter((l) => l.includes(change));
     expect(findings.map((l) => l.split(/\s+/)[0])).toEqual(["template-unfilled"]);
