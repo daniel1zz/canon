@@ -70,7 +70,7 @@ describe("rule review of restatements", () => {
 
   test("BR-2405: a finding under the restatement key blocks", () => {
     expect(RULE_CRITERIA).toContain("restatement");
-    const v = parseAnswer({ findings: [{ criterion: "restatement", text: `${B2} 复述了 ${B1}` }] });
+    const v = parseAnswer({ findings: [{ criterion: "restatement", text: `${B2} 「三天内退款」 复述了 ${B1} 「五天内退款」` }] });
     expect(v.ok && v.value.verdict).toBe("block");
     expect(findingOf(`[restatement] ${B2} 复述了 ${B1}`).criterion).toBe("restatement");
   });

@@ -39,7 +39,7 @@ function kindProject(answer = '{"verdict":"ok","findings":[]}') {
 
 describe("CANON_REVIEW_KIND (BR-2366)", () => {
   test("BR-2366: the review command of the review after a landing runs with CANON_REVIEW_KIND=land; a blocking finding runs no other command", async () => {
-    const t = kindProject(`{"findings":[{"criterion":"contradiction","text":"${id} contradicts itself"}]}`);
+    const t = kindProject(`{"findings":[{"criterion":"contradiction","text":"${id} 「三天」 contradicts itself 「五天」"}]}`);
     expect((await land(ws(t.change().worktree), FAST, quiet)).kind).toBe("landed");
     await reviewLandings(t.root);
     expect(t.kinds()).toEqual(["land"]);

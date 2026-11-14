@@ -336,14 +336,14 @@ describe("rule review after landing", () => {
 
   test("BR-2367: a finding that names a blocking criterion makes the review a block even when the answer says ok; findings that are all notes are an ok", async () => {
     const root = billingProject(`floor: "true"\ntests: []\n`);
-    const flawed = reviewer(root, `cat > /dev/null\necho '{"verdict":"ok","findings":[{"criterion":"contradiction","text":"${id} contradicts BR-9"}]}'`, "flawed");
+    const flawed = reviewer(root, `cat > /dev/null\necho '{"verdict":"ok","findings":[{"criterion":"contradiction","text":"${id} 「三天」 contradicts BR-9 「五天」"}]}'`, "flawed");
     configOnMain(root, `floor: "true"\ntests: []\nreview: ${JSON.stringify(flawed.script)}\n`);
     const s = startNew(root, "Rule with a flaw");
     const t = startNew(root, "Another rule"); // started before the finding, as a parallel session's would be (BR-2464)
     addRule(s.worktree);
     const r = await landReviewed(root, s.worktree);
     expect(r.out.kind).toBe("landed");
-    expect(r.review).toContain(`[contradiction] ${id} contradicts BR-9`);
+    expect(r.review).toContain(`[contradiction] ${id} 「三天」 contradicts BR-9 「五天」`);
     expect(kinds(root)).toEqual(["review.block"]);
 
     const notes = reviewer(root, `cat > /dev/null\necho '{"findings":[{"criterion":"note","text":"BR-2 could be shorter"}]}'`, "notes");
