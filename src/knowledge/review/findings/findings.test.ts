@@ -204,7 +204,7 @@ describe("canon finding close (BR-2453)", () => {
     };
     return { root, db, n: r.value.opened[0]!, commit };
   }
-  const input = (root: string, n: number | string, more: { fixed?: string; spurious?: string; reason?: string }) => ({ cwd: root, main: "main", actor: "agent:test", id: String(n), reason: "why", caller: { key: "human:test", human: true }, ...more });
+  const input = (root: string, n: number | string, more: { fixed?: string; spurious?: string; reason?: string }) => ({ cwd: root, main: "main", actor: "agent:test", id: String(n), reason: "why", caller: { key: "human:test", root: "human:test", human: true }, ...more });
   const row = (db: CoordDb, n: number) => db.db.query<{ closed_how: string | null; closed_event: number | null }, [number]>("SELECT closed_how, closed_event FROM review_findings WHERE id = ?").get(n)!;
 
   test("BR-2453: --fixed with a later commit on main that changed a document it is attached to closes it with a finding.close event; again is a conflict", () => {
@@ -370,12 +370,12 @@ describe("finding tiers (BR-2477, BR-2478, BR-2479, BR-2480, D-118)", () => {
     };
     return { root, db, n: r.value.opened[0]!, fix: commit("Rule 1, fixed."), commit };
   }
-  const main: Caller = { key: "claude:main-session", human: false };
-  const owner: Caller = { key: "human:owner", human: true };
-  const advisor: Caller = { key: "codex:advisor", human: false };
+  const main: Caller = { key: "claude:main-session", root: "claude:main-session", human: false };
+  const owner: Caller = { key: "human:owner", root: "human:owner", human: true };
+  const advisor: Caller = { key: "codex:advisor", root: "codex:advisor", human: false };
   const close = (root: string, db: CoordDb, n: number, caller: Caller, more: { fixed?: string; spurious?: string; owner?: string; covers?: string }) => closeFinding(db, { cwd: root, main: "main", actor: "agent:test", id: String(n), reason: "why", caller, ...more });
   const tier = (db: CoordDb, n: number, t: string, caller: Caller = main) => setTier(db, { actor: "agent:test", caller, id: String(n), tier: t, reason: "because" });
-  const adv = (root: string, db: CoordDb, n: number, caller: Caller, verdict: "support" | "oppose", target: { fixed?: string; spurious?: string }) => advise(db, { cwd: root, actor: "agent:a", caller, id: String(n), verdict, reason: "checked", ...target });
+  const adv = (root: string, db: CoordDb, n: number, caller: Caller, verdict: "support" | "oppose", target: { fixed?: string; spurious?: string }) => advise(db, { cwd: root, main: "main", actor: "agent:a", caller, id: String(n), verdict, reason: "checked", ...target });
   const why = (r: { ok: boolean; error?: { message: string } }) => (r.ok ? "ok" : r.error!.message);
 
   test("BR-2477: a finding starts untriaged; a session sets and raises its tier with a reason but never lowers it; the owner may", () => {
@@ -394,7 +394,7 @@ describe("finding tiers (BR-2477, BR-2478, BR-2479, BR-2480, D-118)", () => {
   test("BR-2478: an untriaged finding is not closed by a session, not even with an approved --owner; tier A closes as fixed alone but not as spurious; the owner closes any", () => {
     const { root, db, n, fix } = fixture();
     expect(why(close(root, db, n, main, { fixed: fix }))).toContain("has no tier yet");
-    const approved = askOwner(db, { cwd: root, actor: "agent:test", id: String(n), fixed: fix, reason: "x" });
+    const approved = askOwner(db, { cwd: root, main: "main", actor: "agent:test", id: String(n), fixed: fix, reason: "x" });
     if (!approved.ok) throw new Error(approved.error.message);
     db.db.query("UPDATE questions SET answer = ?, answered_by = 'human:owner' WHERE id = ?").run(APPROVE, approved.value.question);
     expect(why(close(root, db, n, main, { fixed: fix, owner: String(approved.value.question) }))).toContain("has no tier yet");
@@ -427,10 +427,111 @@ describe("finding tiers (BR-2477, BR-2478, BR-2479, BR-2480, D-118)", () => {
     const { root, db, n, fix } = fixture();
     tier(db, n, "B");
     expect(why(close(root, db, n, main, { fixed: fix }))).toContain(`ask the owner instead (canon finding ask ${n}, then --owner <question>)`);
-    const a = askOwner(db, { cwd: root, actor: "agent:test", id: String(n), fixed: fix, reason: "no advisor online" });
+    const a = askOwner(db, { cwd: root, main: "main", actor: "agent:test", id: String(n), fixed: fix, reason: "no advisor online" });
     if (!a.ok) throw new Error(a.error.message);
     db.db.query("UPDATE questions SET answer = ?, answered_by = 'human:owner' WHERE id = ?").run(APPROVE, a.value.question);
     expect(close(root, db, n, main, { fixed: fix, owner: String(a.value.question) }).ok).toBe(true);
+  });
+
+  /** `db` whose next write transaction first runs `other`, as another session's write landing between a read and this write (#224). */
+  function between(db: CoordDb, other: () => void): CoordDb {
+    let pending = true;
+    const sqlite = new Proxy(db.db, {
+      get(target, key) {
+        if (key === "transaction")
+          return (fn: () => unknown) => ({
+            immediate() {
+              if (pending) {
+                pending = false;
+                other();
+              }
+              return target.transaction(fn).immediate();
+            },
+          });
+        const v = Reflect.get(target, key) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+    return new Proxy(db, {
+      get(target, key) {
+        if (key === "db") return sqlite;
+        const v = Reflect.get(target, key) as unknown;
+        return typeof v === "function" ? (v as (...a: unknown[]) => unknown).bind(target) : v;
+      },
+    });
+  }
+
+  test("BR-2477, BR-2478, BR-2480: a raise to C, an objection or an owner question another session commits before this one writes is seen: the stale lower, the close and the second ask are refused (#222, #223, #224)", () => {
+    const one = fixture();
+    const other = ws(one.root).db;
+    tier(one.db, one.n, "A");
+    expect(why(setTier(between(one.db, () => tier(other, one.n, "C")), { actor: "a", caller: main, id: String(one.n), tier: "B", reason: "stale" }))).toContain("a session only raises a tier");
+    expect(openFindings(one.db)[0]!.tier).toBe("C");
+    const two = fixture();
+    tier(two.db, two.n, "A");
+    expect(why(close(two.root, between(two.db, () => tier(ws(two.root).db, two.n, "C")), two.n, main, { fixed: two.fix }))).toContain("is tier C");
+    const three = fixture();
+    tier(three.db, three.n, "B");
+    adv(three.root, three.db, three.n, advisor, "support", { fixed: three.fix });
+    expect(why(close(three.root, between(three.db, () => adv(three.root, ws(three.root).db, three.n, advisor, "oppose", { fixed: three.fix })), three.n, main, { fixed: three.fix }))).toContain("opposes");
+    const four = fixture();
+    tier(four.db, four.n, "C");
+    let raced: unknown;
+    const second = askOwner(between(four.db, () => (raced = askOwner(ws(four.root).db, { cwd: four.root, main: "main", actor: "b", id: String(four.n), fixed: four.fix, reason: "other" }))), { cwd: four.root, main: "main", actor: "a", id: String(four.n), fixed: four.fix, reason: "first" });
+    expect((raced as { ok: boolean }).ok).toBe(true);
+    expect(why(second)).toContain("already waits on owner question");
+    expect(four.db.db.query<{ n: number }, []>("SELECT count(*) AS n FROM questions WHERE answer IS NULL").get()!.n).toBe(1);
+  });
+
+  test("BR-2478: support from the closer's own session does not count: a subagent closing on its parent's support is refused, a sibling's too; a subagent or worker may still close on the owner's approval (#225)", () => {
+    const { root, db, n, fix } = fixture();
+    tier(db, n, "B");
+    const parent = callerOf({ CODEX_SESSION_ID: "root-s", CODEX_THREAD_ID: "root-s" }, "agent:root");
+    const child = callerOf({ CODEX_SESSION_ID: "root-s", CODEX_THREAD_ID: "child-t" }, "agent:root:child");
+    expect(child.root).toBe(parent.root);
+    adv(root, db, n, parent, "support", { fixed: fix });
+    expect(why(close(root, db, n, child, { fixed: fix }))).toContain("this is a subagent");
+    const sibling = callerOf({ CODEX_SESSION_ID: "root-s", CODEX_THREAD_ID: "other-t" }, "agent:root:other");
+    const top = callerOf({ CODEX_SESSION_ID: "root-s", CODEX_THREAD_ID: "root-s" }, "agent:root");
+    db.db.query("INSERT INTO finding_advice(finding, session, actor, verdict, how, target, reason, at, docs_at) VALUES (?, ?, 'x', 'support', 'fixed', ?, 'r', 'now', NULL)").run(n, sibling.key, fix);
+    expect(why(close(root, db, n, top, { fixed: fix }))).toContain("another session must support");
+    const worker = callerOf({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "w1", CLAUDE_DELEGATE_CHILD: "1" }, "agent:w1");
+    adv(root, db, n, advisor, "support", { fixed: fix });
+    expect(why(close(root, db, n, worker, { fixed: fix }))).toContain("this is a delegated worker");
+    const a = askOwner(db, { cwd: root, main: "main", actor: "agent:test", id: String(n), fixed: fix, reason: "worker's fix" });
+    if (!a.ok) throw new Error(a.error.message);
+    db.db.query("UPDATE questions SET answer = ?, answered_by = 'human:owner' WHERE id = ?").run(APPROVE, a.value.question);
+    expect(close(root, db, n, child, { fixed: fix, owner: String(a.value.question) }).ok).toBe(true);
+  });
+
+  test("BR-2479, BR-2480: a spurious close's support or owner approval stops counting once a document the finding names changes on main; a change to another file does not matter, and a fix's support is bound to its commit only (#226)", () => {
+    const quote = "untested: fixture";
+    const one = fixture();
+    tier(one.db, one.n, "B");
+    adv(one.root, one.db, one.n, advisor, "support", { spurious: quote });
+    writeFileSync(join(one.root, "README.md"), "unrelated\n");
+    sh(one.root, "add", "-A");
+    sh(one.root, "commit", "-qm", "unrelated");
+    expect(close(one.root, one.db, one.n, main, { spurious: quote }).ok).toBe(true);
+    const two = fixture();
+    tier(two.db, two.n, "B");
+    adv(two.root, two.db, two.n, advisor, "support", { spurious: quote });
+    two.commit("Rule 1, fixed. Exception: orders below 100 get no refund.");
+    expect(why(close(two.root, two.db, two.n, main, { spurious: quote }))).toContain("another session must support");
+    adv(two.root, two.db, two.n, advisor, "support", { spurious: quote });
+    expect(close(two.root, two.db, two.n, main, { spurious: quote }).ok).toBe(true);
+    const three = fixture();
+    tier(three.db, three.n, "C");
+    const a = askOwner(three.db, { cwd: three.root, main: "main", actor: "agent:test", id: String(three.n), spurious: quote, reason: "holds" });
+    if (!a.ok) throw new Error(a.error.message);
+    three.db.db.query("UPDATE questions SET answer = ?, answered_by = 'human:owner' WHERE id = ?").run(APPROVE, a.value.question);
+    three.commit("Rule 1, changed after the approval.");
+    expect(why(close(three.root, three.db, three.n, main, { spurious: quote, owner: String(a.value.question) }))).toContain("changed on main since the owner approved");
+    const four = fixture();
+    tier(four.db, four.n, "B");
+    adv(four.root, four.db, four.n, advisor, "support", { fixed: four.fix });
+    four.commit("Rule 1, edited again after the fix.");
+    expect(close(four.root, four.db, four.n, main, { fixed: four.fix }).ok).toBe(true);
   });
 
   test("BR-2479: a subagent, a delegated worker or an unnamed session cannot advise; callerOf reads the host environment, not CANON_ACTOR", () => {
@@ -440,25 +541,25 @@ describe("finding tiers (BR-2477, BR-2478, BR-2479, BR-2480, D-118)", () => {
     const worker = callerOf({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "w1", CLAUDE_DELEGATE_CHILD: "1" }, "agent:w1");
     expect(why(adv(root, db, n, worker, "support", { fixed: fix }))).toContain("a delegated worker");
     expect(why(adv(root, db, n, callerOf({ CLAUDECODE: "1" }, "agent:unknown"), "support", { fixed: fix }))).toContain("cannot name");
-    expect(callerOf({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "abc", CANON_ACTOR: "agent:someone" }, "agent:someone")).toEqual({ key: "claude:abc", human: false });
-    expect(callerOf({}, "human:me")).toEqual({ key: "human:me", human: true });
+    expect(callerOf({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "abc", CANON_ACTOR: "agent:someone" }, "agent:someone")).toEqual({ key: "claude:abc", root: "claude:abc", human: false });
+    expect(callerOf({}, "human:me")).toEqual({ key: "human:me", root: "human:me", human: true });
   });
 
   test("BR-2478, BR-2480: tier C closes only with the owner's approval of this close; a pending question exempts it from the debt, a rejection or another close does not do", () => {
     const { root, db, n, fix, commit } = fixture();
     tier(db, n, "C");
     expect(why(close(root, db, n, main, { fixed: fix }))).toContain("the owner decides");
-    const a = askOwner(db, { cwd: root, actor: "agent:test", id: String(n), fixed: fix, reason: "narrows BR-1 to domestic orders" });
+    const a = askOwner(db, { cwd: root, main: "main", actor: "agent:test", id: String(n), fixed: fix, reason: "narrows BR-1 to domestic orders" });
     expect(a.ok).toBe(true);
     if (!a.ok) return;
     expect(a.value.text).toStartWith(`Close review finding #${n} ([contradiction] ${BR(1)}, ${BR(2)}: `);
     expect(db.db.query<{ question: number }, [number]>("SELECT question FROM review_findings WHERE id = ?").get(n)!.question).toBe(a.value.question);
-    expect(why(askOwner(db, { cwd: root, actor: "agent:test", id: String(n), fixed: fix, reason: "again" }))).toContain("already waits on owner question");
+    expect(why(askOwner(db, { cwd: root, main: "main", actor: "agent:test", id: String(n), fixed: fix, reason: "again" }))).toContain("already waits on owner question");
     const q = String(a.value.question);
     expect(why(close(root, db, n, main, { fixed: fix, owner: q }))).toContain("not answered yet");
     db.db.query("UPDATE questions SET answer = ?, answered_by = 'human:owner' WHERE id = ?").run(REJECT, a.value.question);
     expect(why(close(root, db, n, main, { fixed: fix, owner: q }))).toContain("did not approve");
-    const b = askOwner(db, { cwd: root, actor: "agent:test", id: String(n), fixed: fix, reason: "second try" });
+    const b = askOwner(db, { cwd: root, main: "main", actor: "agent:test", id: String(n), fixed: fix, reason: "second try" });
     if (!b.ok) throw new Error(b.error.message);
     db.db.query("UPDATE questions SET answer = ?, answered_by = 'agent:x', relayed = 'approve', witness = 'differs' WHERE id = ?").run(APPROVE, b.value.question);
     expect(why(close(root, db, n, main, { fixed: fix, owner: String(b.value.question) }))).toContain("not backed");
@@ -478,7 +579,7 @@ describe("finding tiers (BR-2477, BR-2478, BR-2479, BR-2480, D-118)", () => {
     expect(why(close(root, db, n, main, { fixed: fix, owner: String(older), covers: "overseas orders only" }))).toContain("not in its question or answer");
     const elsewhere = fixture();
     tier(elsewhere.db, elsewhere.n, "C");
-    const foreign = askOwner(elsewhere.db, { cwd: elsewhere.root, actor: "agent:test", id: String(elsewhere.n), fixed: elsewhere.fix, reason: "x" });
+    const foreign = askOwner(elsewhere.db, { cwd: elsewhere.root, main: "main", actor: "agent:test", id: String(elsewhere.n), fixed: elsewhere.fix, reason: "x" });
     if (!foreign.ok) throw new Error(foreign.error.message);
     db.db.query("INSERT INTO finding_asks(question, finding, how, target) VALUES (?, ?, 'fixed', ?)").run(older, n + 1, fix);
     expect(why(close(root, db, n, main, { fixed: fix, owner: String(older), covers: "keep the three-day refund window" }))).toContain(`asked about finding #${n + 1}`);

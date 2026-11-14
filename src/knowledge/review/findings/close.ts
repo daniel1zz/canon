@@ -1,7 +1,10 @@
 import { git } from "../../../kernel/git.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import type { CoordDb } from "../../../work/db.ts";
-import { tierGate, type Caller } from "./tier.ts";
+import { mainAt, tierGate, type Caller } from "./tier.ts";
+import { attachedDocs, docsAt, pathOn } from "./docs.ts";
+
+export { pathOn };
 
 /**
  * `canon finding close` (BR-2453, D-99): whoever settles a finding, the main agent or a person, closes it with the commit on
@@ -39,8 +42,6 @@ export interface Closed {
 export const MIN_QUOTE = 8;
 const squash = (s: string): string => s.replace(/\s+/g, " ").trim();
 const ID = /^(BR|D|R)-\d+$/;
-/** The overview is not a document with an id, but an `overview` finding's fix usually lands there (BR-2453). */
-const OVERVIEW = "canon/architecture.md";
 
 interface Row {
   id: number;
@@ -50,15 +51,6 @@ interface Row {
   sha: string | null;
   closed_at: string | null;
   closed_how: string | null;
-}
-
-/** The file of document `doc` on `main`: a rule, decision or release by its id, a standing instruction by its path. */
-export function pathOn(cwd: string, main: string, doc: string): string | undefined {
-  if (!ID.test(doc)) return doc;
-  const names = git(cwd, "ls-tree", "-r", "--name-only", main, "canon/");
-  if (!names.ok) return undefined;
-  const re = new RegExp(`/${doc}(-[^/]*)?\\.md$`);
-  return names.value.split("\n").find((p) => re.test(p));
 }
 
 /** Whether `commit` changed the file of any of `docs` (a document deleted by it counts by its path in the commit's parent). */
@@ -87,11 +79,15 @@ export function closeFinding(db: CoordDb, input: CloseInput): Result<Closed> {
     commit = c.value;
   }
   if (row.closed_at !== null) return err("conflict", `review finding #${n} is already closed (${row.closed_how}, ${row.closed_at})`);
+  // reason: one commit of main for every read below, so the checks and the documents' versions come from one tree (#226)
+  const at = mainAt(input.cwd, input.main);
+  if (!at.ok) return at;
+  const main = at.value;
   // reason: an overview finding is attached to the documents it contradicts, but its fix or its disproof is in the overview itself (BR-2453)
-  const docs = [...(JSON.parse(row.docs) as string[]), ...(row.criterion === "overview" ? [OVERVIEW] : [])];
+  const docs = attachedDocs(row.docs, row.criterion);
   let by: string;
   if (commit !== undefined) {
-    const onMain = git(input.cwd, "merge-base", "--is-ancestor", commit, input.main);
+    const onMain = git(input.cwd, "merge-base", "--is-ancestor", commit, main);
     if (!onMain.ok) return err("refused", `--fixed ${input.fixed}: the commit is not on ${input.main}; land the fix first`);
     // reason: the fix must come after the review that gave the finding, or any old commit touching the document would close it (BR-2453)
     if (row.sha !== null && git(input.cwd, "merge-base", "--is-ancestor", commit, row.sha).ok) return err("refused", `--fixed ${input.fixed}: the commit is already in ${row.sha.slice(0, 9)}, the commit the review saw when it gave #${n}; the fix must come after the finding`);
@@ -103,21 +99,23 @@ export function closeFinding(db: CoordDb, input: CloseInput): Result<Closed> {
     const quote = squash(input.spurious ?? "");
     if ([...quote].length < MIN_QUOTE) return err("refused", `--spurious: the quote must be at least ${MIN_QUOTE} characters of the document's own text, got ${JSON.stringify(quote)}`);
     const found = docs.find((d) => {
-      const p = pathOn(input.cwd, input.main, d);
-      const text = p ? git(input.cwd, "show", `${input.main}:${p}`) : undefined;
+      const p = pathOn(input.cwd, main, d);
+      const text = p ? git(input.cwd, "show", `${main}:${p}`) : undefined;
       return text?.ok === true && squash(text.value).includes(quote);
     });
     if (!found) return err("refused", `--spurious: the quote is in none of the documents #${n} is attached to on ${input.main}: ${docs.join(", ")}`);
     by = found;
   }
   const how = commit !== undefined ? "fixed" : "spurious";
-  // reason: the tier decides who may settle it, checked after BR-2453's own evidence so its refusals keep their order (BR-2478)
-  const gate = tierGate(db, { id: n, caller: input.caller, target: { how, target: commit ?? squash(input.spurious ?? "") }, evidence: { ...(input.owner !== undefined ? { owner: input.owner } : {}), ...(input.covers !== undefined ? { covers: input.covers } : {}) } });
-  if (!gate.ok) return gate;
+  const stamp = docsAt(input.cwd, main, docs);
   const write = db.db.transaction((): Result<Closed> => {
     // reason: another session may have closed it since the read above; only one close is written (BR-2453)
     const now = look();
     if (now && now.closed_at !== null) return err("conflict", `review finding #${n} is already closed (${now.closed_how}, ${now.closed_at})`);
+    // reason: the tier decides who may settle it, checked after BR-2453's own evidence so its refusals keep their order (BR-2478);
+    // inside the write transaction, so a tier raised or an objection recorded meanwhile is seen (#222, #224)
+    const gate = tierGate(db, { id: n, caller: input.caller, target: { how, target: commit ?? squash(input.spurious ?? "") }, evidence: { ...(input.owner !== undefined ? { owner: input.owner } : {}), ...(input.covers !== undefined ? { covers: input.covers } : {}) }, stamp });
+    if (!gate.ok) return gate;
     const detail = how === "fixed" ? { finding: n, how, commit, reason, ...gate.value } : { finding: n, how, quote: squash(input.spurious ?? ""), doc: by, reason, ...gate.value };
     const event = db.event(input.actor, "finding.close", row.change, detail);
     db.db.query("UPDATE review_findings SET closed_at = ?, closed_how = ?, closed_event = ? WHERE id = ? AND closed_at IS NULL").run(new Date().toISOString(), how, event, n);

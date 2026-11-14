@@ -210,6 +210,9 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   // Who may settle a finding: A the session, B with an advisor's support, C the owner; null until triaged (BR-2477, D-118).
   ["review_findings", "tier TEXT"],
   ["review_findings", "tier_reason TEXT"],
+  // The versions on main of the finding's documents that advice or an owner question judged, `doc=blob` lines (#226).
+  ["finding_advice", "docs_at TEXT"],
+  ["finding_asks", "docs_at TEXT"],
 ];
 
 /**

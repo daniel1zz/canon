@@ -67,6 +67,7 @@ const finding = defineCommand({
         const r = must(
           advise(ws.db, {
             cwd: ws.root,
+            main: ws.config.main,
             actor: ws.actor,
             caller: callerOf(process.env, ws.actor),
             id: String(args.id),
@@ -92,6 +93,7 @@ const finding = defineCommand({
         const r = must(
           askOwner(ws.db, {
             cwd: ws.root,
+            main: ws.config.main,
             actor: ws.actor,
             id: String(args.id),
             ...(typeof args.fixed === "string" ? { fixed: args.fixed } : {}),
