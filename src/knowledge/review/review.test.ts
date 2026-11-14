@@ -1,3 +1,4 @@
+import { findingOf } from "./findings/findings.ts";
 import { describe, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -162,9 +163,10 @@ describe("review verdict derived from the criteria findings name (BR-2367)", () 
     expect(wording).toEqual({ ok: true, value: { verdict: "ok", findings: ["n"], wording: { "BR-1": "wording" } } });
   });
 
-  test("BR-2481: a contradiction or restatement that quotes no text is a note saying why; one that quotes, or another criterion without quotes, still blocks", async () => {
+  test("BR-2481, BR-2434: a contradiction or restatement that quotes no text is a note saying why, which is not recorded as an open finding; one that quotes, or another criterion without quotes, still blocks", async () => {
     const unquoted = "BR-1000 cites BR-956 only in the part this call shows; cannot be decided here";
     expect(await answer(`{"findings":[${f("contradiction", unquoted)}]}`)).toEqual({ ok: true, value: { verdict: "ok", findings: [`${unquoted} (canon: given as [contradiction] but quotes no text, so taken as a note)`] } });
+    expect(findingOf(`${unquoted} (canon: given as [contradiction] but quotes no text, so taken as a note)`).criterion).toBe("note");
     expect(await answer(`{"findings":[${f("restatement", "未发现可判定的 restatement，\`BR-5\` 无复述")}]}`)).toEqual({ ok: true, value: { verdict: "ok", findings: ["未发现可判定的 restatement，`BR-5` 无复述 (canon: given as [restatement] but quotes no text, so taken as a note)"] } });
     expect(await answer(`{"findings":[${f("restatement", "BR-5 「三天内退款」 restates BR-4 「五天内退款」")}]}`)).toEqual({ ok: true, value: { verdict: "block", findings: ["[restatement] BR-5 「三天内退款」 restates BR-4 「五天内退款」"] } });
     expect(await answer(`{"findings":[${f("untestable", "BR-4 says nothing about exit codes")}]}`)).toEqual({ ok: true, value: { verdict: "block", findings: ["[untestable] BR-4 says nothing about exit codes"] } });
