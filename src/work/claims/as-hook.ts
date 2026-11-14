@@ -27,7 +27,7 @@ export function runAsCheck(raw: string, fallbackCwd: string, runtime: AgentRunti
   const context = runtime === "codex" ? effectiveAgentSession(process.env, cwd) : undefined;
   const agentId = typeof input?.["agent_id"] === "string" && input["agent_id"] !== "" ? input["agent_id"] : context?.ok ? context.value?.child : undefined;
   // reason: a Codex session gets its subagent from the session context; only a Claude Code session can be a worker started by another (BR-2468)
-  const v = checkCommand(command, agentId, () => (runtime === "codex" ? false : startedBySession()));
+  const v = checkCommand(command, agentId, () => (runtime === "codex" ? false : workerByEnv(process.env) || startedBySession()));
   if (v.kind === "deny") return `${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: v.reason } })}\n`;
   if (v.kind === "skip") return skip(v.reason, v.sub, cwd, agentId);
   return "";
@@ -46,5 +46,12 @@ function skip(reason: string, sub: string, cwd: string, agentId: string | undefi
     return say(reason, `the event could not be recorded: ${e instanceof Error ? e.message : String(e)}`);
   }
 }
+
+/**
+ * A worker its launcher marked (BR-2468, D-114): `delegate run` sets CLAUDE_DELEGATE_CHILD=1 in the worker's environment,
+ * which its hooks inherit; it holds when the launcher was detached from the session that started it and the process tree
+ * no longer shows that session.
+ */
+export const workerByEnv = (env: Record<string, string | undefined>): boolean => env["CLAUDE_DELEGATE_CHILD"] === "1";
 
 const say = (reason: string, why: string) => `${JSON.stringify({ systemMessage: `canon work check-as: --as was not checked for this Bash call (${reason}); ${why}` })}\n`;

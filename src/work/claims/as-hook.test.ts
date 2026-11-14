@@ -16,7 +16,7 @@ const CLI = join(import.meta.dir, "../../invocation/main.ts");
 const SESSION = "s1abcdef-0000";
 
 async function hook(stdin: string, cwd: string, env: Record<string, string> = {}) {
-  const base: Record<string, string | undefined> = { ...process.env, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SESSION, CLAUDE_PID: undefined, ...env };
+  const base: Record<string, string | undefined> = { ...process.env, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SESSION, CLAUDE_PID: undefined, CLAUDE_DELEGATE_CHILD: undefined, ...env };
   delete base["CANON_ACTOR"];
   const p = Bun.spawn(["bun", CLI, "work", "check-as", "--hook"], { cwd, stdin: new Response(stdin), stdout: "pipe", stderr: "pipe", env: base as Record<string, string> });
   const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
@@ -226,6 +226,14 @@ describe("a worker session started by another session", () => {
     expect(named.ok ? named.value : named.error.message).toBe("agent:a69bb94c:worker-w6");
     const bare = currentActor(env);
     expect(bare.ok ? bare.value : bare.error.message).toBe("agent:a69bb94c");
+  });
+
+  test("BR-2468: a session whose launcher marked it with CLAUDE_DELEGATE_CHILD=1 is a worker even with no claude above it; another value is not", async () => {
+    const marked = { CLAUDE_DELEGATE_CHILD: "1" };
+    expect(denied((await hook(input("canon work land --finish", root), root, marked)).out)?.permissionDecisionReason).toContain("--as <your worker name>");
+    expect(denied((await hook(input("canon work land --finish --as worker-t2", root), root, marked)).out)).toBeUndefined();
+    expect(denied((await hook(input("canon work take C-618 --from x --as worker-t2", root), root, marked)).out)?.permissionDecisionReason).toContain("canon work take is for the main session only");
+    expect(denied((await hook(input("canon work land --as w1", root), root, { CLAUDE_DELEGATE_CHILD: "0" })).out)?.permissionDecisionReason).toContain("--as is only for subagents");
   });
 
   test("BR-2468: the hook run under two claude processes refuses a worker's land without --as and lets it through with one", async () => {
