@@ -1241,6 +1241,7 @@ describe("test files that mostly wait", () => {
       "note: src/wait.test.ts took 40.0s but its processes used 1.0s of CPU (98% waiting): a test that waits for a timer, a sleep or a poll should use a short one (BR-2472)",
       "note: src/edge.test.ts took 10.0s but its processes used 2.0s of CPU (80% waiting): a test that waits for a timer, a sleep or a poll should use a short one (BR-2472)",
     ]);
+    expect(waitingReport([{ file: "src/wait.test.ts", ms: 40_000, cpuMs: 1_000 }], { load: 8, cpus: 8 }).lines[0]).toContain("took 40.0s");
     const busy = waitingReport([{ file: "src/wait.test.ts", ms: 40_000, cpuMs: 1_000 }], { load: 9, cpus: 8 });
     expect(busy.files).toEqual(["src/wait.test.ts"]);
     expect(busy.lines).toEqual(["note: 1 test file(s) mostly waited, but the machine was busier than its CPUs or its load could not be read, so waiting for a CPU cannot be told apart; run them again when it is quieter (BR-2472)"]);
