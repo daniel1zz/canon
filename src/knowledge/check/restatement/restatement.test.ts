@@ -120,7 +120,7 @@ describe("canon restatements --hook", () => {
     const out = JSON.parse(r.out) as { hookSpecificOutput: { hookEventName: string; additionalContext: string } };
     expect(out.hookSpecificOutput.hookEventName).toBe("PostToolUse");
     expect(out.hookSpecificOutput.additionalContext).toContain(`${B2} restates ${B1}`);
-    expect(out.hookSpecificOutput.additionalContext).toContain("the rule review after landing records a restatement in added lines as a blocking finding (BR-2405)");
+    expect(out.hookSpecificOutput.additionalContext).toContain("the rule review after landing records one in added lines as a blocking finding when it disagrees with the rule it copies, else as a note (BR-2405)");
   });
 
   test("BR-2402: a restatement already on main, with only the examples edited, says nothing about restatements", () => {
