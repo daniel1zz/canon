@@ -86,3 +86,17 @@ test("BR-2402: a multi-file Codex apply_patch checks every edited rule and emits
   expect(deleted.code).toBe(0);
   expect(deleted.out).toBe("");
 });
+
+
+test("BR-2275: an empty native answer is null and a numeric answer is refused", () => {
+  const root = project();
+  const payload = { session_id: "session-a", tool_name: "request_user_input", tool_input: { questions: [{ id: "q", question: "Ship?" }] }, tool_response: { answers: { q: { answers: [] } } } };
+  expect(cli(root, payload, undefined, "human", "record", "--runtime", "codex").code).toBe(0);
+  const db = new Database(join(root, ".git/canon/state.db"), { readonly: true });
+  const row = db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind='human.asked'").get()!;
+  expect(JSON.parse(row.detail).questions[0].answer).toBeNull();
+  const malformed = { ...payload, tool_response: { answers: { q: { answers: 1 } } } };
+  expect(cli(root, malformed, undefined, "human", "record", "--runtime", "codex").code).toBe(2);
+  expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind='human.asked'").get()!.n).toBe(1);
+  db.close();
+});

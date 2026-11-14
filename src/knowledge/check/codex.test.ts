@@ -9,16 +9,18 @@ function check(root: string, ...args: string[]) {
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
 }
 
-test("BR-2256: Codex sizes use AGENTS and native skill descriptions, with override precedence", () => {
+test("BR-2256 BR-2257: Codex sizes use AGENTS and native skill descriptions, with override precedence", () => {
   const root = project();
   writeFileSync(join(root, "CLAUDE.md"), "legacy text\n");
   writeFileSync(join(root, "AGENTS.md"), "规则\n");
   mkdirSync(join(root, ".agents/skills/a"), { recursive: true });
   writeFileSync(join(root, ".agents/skills/a/SKILL.md"), "---\nname: a\ndescription: 做 A\n---\nBody\n");
+  writeFileSync(join(root, "canon/config.yaml"), "floor: \"true\"\ntests: []\nsession_text_budget: 1\n");
   const r = check(root, "--sizes", "--json");
   expect(r.code).toBe(0);
   expect(JSON.parse(r.out)).toEqual([]);
   expect(r.err).toContain("session-text AGENTS.md: 7 bytes");
+  expect(r.err).toContain("over session_text_budget 1 (AGENTS.md 7");
   expect(r.err).toContain("session-text .agents/skills/a/SKILL.md description: 5 bytes");
   expect(r.err).not.toContain("session-text CLAUDE.md");
   writeFileSync(join(root, "AGENTS.override.md"), "override\n");

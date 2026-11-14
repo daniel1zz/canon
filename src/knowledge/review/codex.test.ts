@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -36,4 +37,31 @@ test("BR-2143: two host entries for the same physical skill contribute one descr
   mkdirSync(join(root, ".agents"));
   symlinkSync("../.claude/skills", join(root, ".agents/skills"));
   expect(standingText(root, []).skills.map((s) => s.description)).toEqual(["One physical procedure"]);
+});
+
+
+test("BR-2410: native shipped skills skip duplicate review but AGENTS and locally edited skills do not", async () => {
+  const root = project();
+  const prompt = root + "-native-shipped-prompt";
+  const command = "cat > '" + prompt + "'; echo '{\"verdict\":\"ok\",\"findings\":[]}'";
+  writeFileSync(join(root, "canon/config.yaml"), "floor: \"true\"\ntests: []\nreview: " + JSON.stringify(command) + "\n");
+  sh(root, "add", "-A");
+  sh(root, "commit", "-qm", "review config");
+  const change = startNew(root, "Native shipped skills");
+  const skill = ".agents/skills/canon-a/SKILL.md";
+  mkdirSync(dirname(join(change.worktree, skill)), { recursive: true });
+  const text = "---\nname: canon-a\ndescription: Native shipped description\n---\nShipped full text\n";
+  writeFileSync(join(change.worktree, skill), text);
+  writeFileSync(join(change.worktree, ".agents/skills/.canon-skills.json"), JSON.stringify({ files: { "canon-a/SKILL.md": createHash("sha256").update(text).digest("hex") } }));
+  expect((await previewReview(ws(change.worktree), "workflow")).kind).toBe("nothing");
+  expect(existsSync(prompt)).toBe(false);
+  writeFileSync(join(change.worktree, "AGENTS.md"), "Canonical pointer changed here.\n");
+  expect((await previewReview(ws(change.worktree), "workflow")).kind).toBe("ok");
+  const shown = readFileSync(prompt, "utf8");
+  expect(shown).toContain("# Changed in this landing: AGENTS.md");
+  expect(shown).toContain("Native shipped description (shipped by canon)");
+  expect(shown).not.toContain("Shipped full text");
+  writeFileSync(join(change.worktree, skill), text + "Locally modified\n");
+  expect((await previewReview(ws(change.worktree), "workflow")).kind).toBe("ok");
+  expect(readFileSync(prompt, "utf8")).toContain("Locally modified");
 });

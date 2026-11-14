@@ -18,6 +18,7 @@ describe("Codex coordination identity", () => {
     expect(value(currentActor(envFor({ CODEX_THREAD_ID: "session-a" })))).toBe("agent:codex-session-a");
     expect(value(currentActor(envFor({ CODEX_THREAD_ID: "session-b" })))).toBe("agent:codex-session-b");
     expect(value(currentActor(envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "session-a" })))).toBe("agent:codex-session-a");
+    expect(value(currentActor(envFor({ CODEX_THREAD_ID: "session-a" }), "worker"))).toBe("agent:codex-session-a:worker");
     expect(value(currentActor(envFor({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "session-a" })))).toBe("agent:session-");
     expect(value(currentActor(envFor()))).toStartWith("human:");
     expect(value(currentActor(envFor({ CODEX_THREAD_ID: "session-a", CLAUDECODE: "1" })))).toBe("agent:codex-session-a");
@@ -97,7 +98,7 @@ describe("Codex coordination identity", () => {
     expect(terminal.out).not.toContain("has no canon check-as hook");
   });
 
-  test("BR-2023: native startup payloads bind a child with only CODEX_THREAD_ID to its parent", () => {
+  test("BR-2023 BR-2276 BR-2289: native startup payloads bind a child with only CODEX_THREAD_ID to its parent", () => {
     const root = project();
     for (const input of [
       { hook_event_name: "SessionStart", session_id: "native-root", cwd: root, source: "startup" },
@@ -121,6 +122,7 @@ describe("Codex coordination identity", () => {
     expect(db.query<{ actor: string }, []>("SELECT actor FROM events WHERE kind='human.asked'").get()!.actor).toBe("agent:codex-native-root:native-child");
     expect(cli(root, envFor({ CODEX_THREAD_ID: "native-child" }), "human", "answer", "1", "yes", "--relayed", "yes").code).toBe(0);
     expect(db.query<{ witness: string }, []>("SELECT witness FROM questions WHERE id=1").get()!.witness).toBe("match");
+    expect(cli(root, envFor({ CODEX_THREAD_ID: "native-child" }), "human", "pending", "--all").out).toContain("the human's words match Claude Code's record");
     expect(cli(root, envFor({ CODEX_THREAD_ID: "native-root" }), "work", "take", claim.subject, "--from", "native-child").code).toBe(0);
     db.close();
   });
@@ -132,4 +134,19 @@ describe("Codex coordination identity", () => {
     expect(r.stdout.toString()).toContain("How to work here");
     expect(existsSync(join(root, ".git/canon/state.db"))).toBe(false);
   });
+});
+
+
+test("BR-2023: corrupt recorded native relationships fail loudly before a new claim", () => {
+  const root = project();
+  const startup = Bun.spawnSync([process.execPath, MAIN, "brief", "--hook", "--runtime", "codex"], { cwd: root, env: envFor(), stdin: Buffer.from(JSON.stringify({ hook_event_name: "SessionStart", session_id: "broken-root" })), stdout: "pipe", stderr: "pipe" });
+  expect(startup.exitCode).toBe(0);
+  const db = new Database(join(root, ".git/canon/state.db"));
+  db.query("UPDATE events SET detail='not-json' WHERE kind='session.codex'").run();
+  const broken = cli(root, envFor({ CODEX_THREAD_ID: "broken-root" }), "work", "start", "--title", "Refused");
+  expect(broken.code).toBe(4);
+  expect(broken.err).toContain("cannot read the Codex session relationship");
+  expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM claims").get()!.n).toBe(0);
+  expect(cli(root, envFor({ CODEX_THREAD_ID: "independent" }), "work", "start", "--title", "Independent").code).toBe(0);
+  db.close();
 });

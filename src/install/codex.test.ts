@@ -30,7 +30,7 @@ function commit(root: string) {
 }
 
 describe("Codex project assets through the CLI", () => {
-  test("BR-2459 BR-2032: Codex init writes native assets, a Codex reviewer and no Claude assets; repeat is current", () => {
+  test("BR-2459 BR-2032 BR-2264: Codex init writes native assets, a Codex reviewer and no Claude assets; repeat is current", () => {
     const { root, source } = fixture();
     const r = cli(root, source, "init", "--agent", "codex", "--floor", "true");
     expect(r.code).toBe(0);
@@ -106,7 +106,7 @@ describe("Codex project assets through the CLI", () => {
     expect(readFileSync(outside, "utf8")).toBe("outside");
   });
 
-  test("BR-2459 BR-2460: update lands Codex assets; uninstall removes managed assets but keeps team instructions and tools", () => {
+  test("BR-2459 BR-2460 BR-2084 BR-2278: update lands Codex assets; uninstall removes managed assets but keeps team instructions and tools", () => {
     const { root, source } = fixture();
     writeFileSync(join(root, "AGENTS.md"), "Team instructions.\n");
     expect(cli(root, source, "init", "--agent", "codex", "--floor", "true").code).toBe(0);
@@ -173,4 +173,34 @@ describe("Codex project assets through the CLI", () => {
     expect(existsSync(join(root, ".agents"))).toBe(false);
     expect(read(root, ".codex/hooks.json")).toBe(own);
   });
+});
+
+
+test("BR-2459 BR-2087 BR-2185 BR-2274 BR-2343 BR-2404 BR-2305: Codex installs each native hook and no Claude worktree exclusion", () => {
+  const { root, source } = fixture();
+  expect(cli(root, source, "init", "--agent", "codex").code).toBe(0);
+  const hooks = JSON.parse(read(root, ".codex/hooks.json")).hooks;
+  const commands = (event: string, matcher?: string) => hooks[event].filter((g: { matcher?: string }) => g.matcher === matcher).flatMap((g: { hooks: { command: string }[] }) => g.hooks.map(h => h.command));
+  for (const event of ["SessionStart", "SubagentStart"]) expect(commands(event).join(" ")).toContain("canon brief --hook --runtime codex");
+  expect(commands("PreToolUse", "Bash").join(" ")).toContain("canon snapshot take --hook --runtime codex || echo");
+  expect(commands("PreToolUse", "Bash").join(" ")).toContain("canon work check-as --hook --runtime codex || echo");
+  expect(commands("PostToolUse", "request_user_input").join(" ")).toContain("canon human record --runtime codex || echo");
+  expect(commands("PostToolUse", "apply_patch|Write|Edit").join(" ")).toContain("canon restatements --hook --runtime codex || echo");
+  expect(read(root, ".git/info/exclude")).not.toContain("/.claude/worktrees/");
+  const before = read(root, ".codex/hooks.json");
+  expect(cli(root, source, "install").code).toBe(0);
+  expect(read(root, ".codex/hooks.json")).toBe(before);
+});
+
+test("BR-2080: a source repository keeps its skill source and Codex alias unchanged", () => {
+  const { root } = fixture();
+  const source = join(root, ".claude/skills");
+  mkdirSync(join(source, "canon-source"), { recursive: true });
+  writeFileSync(join(source, "canon-source/SKILL.md"), "Source instructions\n");
+  mkdirSync(join(root, ".agents"));
+  symlinkSync("../.claude/skills", join(root, ".agents/skills"));
+  expect(cli(root, source, "init", "--agent", "all").code).toBe(0);
+  expect(read(root, ".agents/skills/canon-source/SKILL.md")).toBe("Source instructions\n");
+  expect(existsSync(join(root, ".agents/skills/.canon-skills.json"))).toBe(false);
+  expect(read(root, ".codex/hooks.json")).toContain("canon brief --hook --runtime codex");
 });
