@@ -414,6 +414,36 @@ export function parseAnswer(v: unknown): Result<ReviewVerdict> {
   return ok({ verdict: blocking ? "block" : "ok", findings, ...extra });
 }
 
+/** What canon adds to a blocking finding that names only documents the landing did not change (BR-2485). */
+export const outsideNote = (criterion: string): string => `(canon: given as [${criterion}] but names no document this landing changed or deleted, so taken as a note)`;
+
+/** The criteria whose subject is not a document id (the overview's diff, a README's 业务 section), so they are never demoted for it (BR-2485). */
+const NOT_BY_ID: readonly string[] = ["overview", "business-overlap"];
+
+/**
+ * A rule review's verdict with every blocking finding that names document ids, none of them changed or deleted by this
+ * landing, taken as a note (BR-2485); the verdict is derived again. A landing that changed no document with an id, and an
+ * answer in the format before BR-2367, are left as they are.
+ */
+export function onlyChangedBlock(v: ReviewVerdict, changed: ReadonlySet<string>): ReviewVerdict {
+  if (changed.size === 0) return v;
+  let keyed = false;
+  let blocking = false;
+  const findings = v.findings.map((f) => {
+    const m = /^\[([a-z-]+)\] /.exec(f);
+    if (!m || !(RULE_CRITERIA as readonly string[]).includes(m[1]!)) return f;
+    keyed = true;
+    const text = f.slice(m[0].length);
+    const ids = namedIds(text);
+    // reason: the prompt already says a defect only between unchanged documents is a note, and reviewers still block on them (BR-2485, BR-2009)
+    if (!NOT_BY_ID.includes(m[1]!) && ids.length > 0 && !ids.some((id) => changed.has(id))) return `${text} ${outsideNote(m[1]!)}`;
+    blocking = true;
+    return f;
+  });
+  if (!keyed) return v;
+  return { ...v, verdict: blocking ? "block" : "ok", findings };
+}
+
 /** Text every session reads at start, gathered from the tree that is landing (BR-2143). */
 export interface StandingText {
   /** The configured instruction files that exist, path and whole text. */

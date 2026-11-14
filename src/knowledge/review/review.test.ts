@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readCorpus } from "../documents/read.ts";
-import { DUPLICATE_CRITERIA, RULE_CRITERIA, duplicatePrompt, reviewPrompt, runReview, standingText } from "./review.ts";
+import { DUPLICATE_CRITERIA, RULE_CRITERIA, duplicatePrompt, onlyChangedBlock, outsideNote, reviewPrompt, runReview, standingText } from "./review.ts";
 
 const id = (p: string, n: number) => [p, n].join("-");
 
@@ -291,5 +291,33 @@ describe("what the rule review prompt asks of untestable and contradiction (D-11
     const p = prompt();
     expect(p).toContain("Quote both passages and name the conditions (an input, a sequence of inputs or a state history) and the two incompatible results.");
     expect(p).toContain("Two requirements that differ but can both be met are not a contradiction, and one text saying nothing is not a contrary result; a tension you cannot show that way is a `note`.");
+  });
+});
+
+describe("blocking findings outside the landing", () => {
+  const changed = new Set([id("BR", 5), id("BR", 6)]);
+  test("BR-2485: a blocking finding naming only unchanged documents becomes a note, and the verdict is derived again", () => {
+    const text = `${id("D", 89)} 「核实」 vs ${id("D", 99)} 「不另跑核实」`;
+    const v = onlyChangedBlock({ verdict: "block", findings: [`[contradiction] ${text}`, "a note"] }, changed);
+    expect(v.verdict).toBe("ok");
+    expect(v.findings).toEqual([`${text} ${outsideNote("contradiction")}`, "a note"]);
+    expect(findingOf(v.findings[0]!).criterion).toBe("note");
+  });
+
+  test("BR-2485: a finding naming a changed or deleted document, naming no id, or about the overview still blocks", () => {
+    const kept = [
+      `[contradiction] ${id("BR", 5)} 「三天」 vs ${id("BR", 4)} 「五天」`,
+      `[contradiction] ${id("BR", 6)} 「x」 vs ${id("BR", 4)} 「y」`,
+      "[untestable] the rule is vague",
+      `[overview] ${id("BR", 4)} 「x」 vs the overview`,
+      `[business-overlap] ${id("BR", 4)} two businesses`,
+    ];
+    for (const f of kept) expect(onlyChangedBlock({ verdict: "block", findings: [f] }, changed)).toEqual({ verdict: "block", findings: [f] });
+  });
+
+  test("BR-2485: with no changed document that has an id, and for an answer in the old format, nothing is demoted", () => {
+    const f = `[contradiction] ${id("D", 89)} 「a」 vs ${id("D", 99)} 「b」`;
+    expect(onlyChangedBlock({ verdict: "block", findings: [f] }, new Set())).toEqual({ verdict: "block", findings: [f] });
+    expect(onlyChangedBlock({ verdict: "block", findings: [`${id("D", 89)} is vague`] }, changed)).toEqual({ verdict: "block", findings: [`${id("D", 89)} is vague`] });
   });
 });

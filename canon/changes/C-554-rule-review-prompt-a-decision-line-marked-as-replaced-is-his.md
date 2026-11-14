@@ -5,6 +5,7 @@ title: "Rule review prompt: a decision line marked as replaced is history, not a
 status: open
 rules:
   - BR-2484
+  - BR-2485
 ---
 
 ## 为什么
@@ -24,6 +25,8 @@ rules:
 - 同一个问题只报一条。
 
 代码在 `src/knowledge/review/review.ts` 的 promptHead；拆成几次调用时，每次调用的提示都有这两句。
+
+只改提示还不够：这个变更自己的预览评审里，Codex 照样拿没改动的 D-89 报阻塞意见，可提示早就写了"阻塞意见至少要牵涉一份改动的文档"（BR-2009）。所以加新规则 BR-2485：一条阻塞意见点名的编号里如果没有一份是这次改动或删除的，canon 就把它当成提示。`overview`、`business-overlap`、没点名编号的意见和旧格式的回答不降级。合入后的评审和 `canon work review` 都按这条处理（`onlyChangedBlock`）。
 
 ## 陷阱和假设
 

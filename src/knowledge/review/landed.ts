@@ -6,7 +6,7 @@ import type { Running } from "../../work/land/outcome.ts";
 import { readCorpus } from "../documents/read.ts";
 import type { Corpus, Doc } from "../documents/model.ts";
 import { findDoc } from "../query/query.ts";
-import { partsNote, reviewPromptParts, runReview, runReviews, splitNote, type ReviewLimits, type ReviewVerdict } from "./review.ts";
+import { partsNote, reviewPromptParts, runReview, runReviews, splitNote, type ReviewLimits, type ReviewVerdict, onlyChangedBlock } from "./review.ts";
 import { REVIEW_NONE } from "./config-keys.ts";
 import { reviewTree } from "../../work/land/checks/review-tree.ts";
 import { architectureOf, couldNotRun, duplicateReviewPrompt, reviewScope, reviewSettingsOn, standingTouched, type ReviewSettings } from "../../work/land/checks/review-scope.ts";
@@ -130,12 +130,12 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
         const r = await runReviews(reviewer, at.value, small.value.prompts, limits, s.reviewParallel);
         if (!r.ok) return err("io", couldNotRun("rule", r.error.message, at.value, job.reviewer ?? base, job.reviewer ? "main" : "before"));
         // reason: the earlier pass's notes are kept with the new ones (BR-2145)
-        verdict = { verdict: r.value.verdict, findings: [...usable.findings, ...r.value.findings] };
+        verdict = onlyChangedBlock({ verdict: r.value.verdict, findings: [...usable.findings, ...r.value.findings] }, new Set(docIds));
         incremental = { from: usable.event, added: since.map((d) => d.id) };
       } else {
         const r = await runReviews(reviewer, at.value, prompts, limits, s.reviewParallel);
         if (!r.ok) return err("io", couldNotRun("rule", r.error.message, at.value, job.reviewer ?? base, job.reviewer ? "main" : "before"));
-        verdict = r.value;
+        verdict = onlyChangedBlock(r.value, new Set(docIds));
       }
       const done = settle(ws, job, say, verdict, attachTo, "rule", { ...common, docs_hash, ...(incremental ? { incremental } : { hash }) });
       if (!done.ok) return done;

@@ -16,7 +16,7 @@ import { REVIEW_NONE } from "./config-keys.ts";
 import { passedReview, reviewKey } from "../../work/land/checks/review-reuse.ts";
 import type { Doc, Corpus } from "../documents/model.ts";
 import { planClose, wordingQuestions } from "../../work/execution/landing.ts";
-import { reviewPromptParts, type ReviewExtras, runReview, runReviews, type ReviewVerdict } from "./review.ts";
+import { onlyChangedBlock, reviewPromptParts, type ReviewExtras, runReview, runReviews, type ReviewVerdict } from "./review.ts";
 
 /** What `canon work review` found, as the command turns it into text and an exit code (BR-2358). */
 export type PreviewOutcome =
@@ -146,6 +146,8 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
         if (!run.ok) return { kind: "failed", message: couldNotRun("rule", run.error.message, at.value, main.value) };
         v = run.value;
       }
+      // reason: the preview reports what the review after landing would record (BR-2358, BR-2485)
+      v = onlyChangedBlock(v, new Set([...scope.changedDocs, ...scope.deleted].map((d) => d.id)));
       rule = { hash, verdict: v.verdict, findings: v.findings, ...(wording.questions.length > 0 ? { wording: v.wording ?? {} } : {}) };
       findings.push(...v.findings.map((text) => ({ review: "rule" as const, text })));
       blocked ||= v.verdict === "block";
