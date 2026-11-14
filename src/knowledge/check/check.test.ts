@@ -243,7 +243,7 @@ describe("rule shape", () => {
       "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\n<这个领域管什么、不管什么。>\n",
       ...fileOf(1, "## 规则\n\nS.\n\n## 例子\n\n- <边界上的具体输入或状态> → <必须出现的结果>\n- `canon work start <C-n>` → starts\n"),
       [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: X\n---\n## 背景\n\n<为什么需要做这个决定，有哪些事实和数据。>\n\n\`\`\`\n<kept as code>\n\`\`\`\n`,
-      "canon/changes/C-1.md": "---\nid: C-1\ntitle: X\n---\n## 为什么\n\n<要解决什么问题。>\n",
+      "canon/changes/C-1.md": "---\nid: C-1\ntitle: X\n---\n## 为什么\n\nW.\n\n## 任务\n\n- [ ] <任务>\n", // a project change template's task line (BR-2035)
       "src/billing/a.test.ts": "x\n",
     });
     const got = check(withReports(root, reportsOf({ "src/billing/a.test.ts": [tc(br(1))] }))).filter((f) => f.rule === "template-unfilled").map((f) => f.path.split("/").pop()).sort();
