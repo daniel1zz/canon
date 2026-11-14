@@ -910,5 +910,7 @@ describe("handoff length", () => {
     expect(firstLine("first step\nsecond line")).toBe("first step (canon brief in its worktree shows all of it)");
     expect(firstLine("z".repeat(201))).toBe(`${"z".repeat(200)}… (canon brief in its worktree shows all of it)`);
     expect(firstLine("short")).toBe("short");
+    expect(firstLine("w".repeat(200))).toBe("w".repeat(200));
+    expect(firstLine(`${"v".repeat(200)}\nmore`)).toBe(`${"v".repeat(200)} (canon brief in its worktree shows all of it)`);
   });
 });
