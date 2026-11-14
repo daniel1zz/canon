@@ -1249,7 +1249,7 @@ describe("test files that mostly wait", () => {
     expect(waitingReport([{ file: "src/work.test.ts", ms: 40_000, cpuMs: 30_000 }], quiet)).toEqual({ files: [], lines: [] });
   });
 
-  test("BR-2472: work.test records each file's wall time and the CPU its processes used, a sleep uses next to none and a fixed amount of work uses its CPU", async () => {
+  test("BR-2472 BR-2158: work.test records each file's wall time and the CPU its processes used, a sleep uses next to none and a fixed amount of work uses its CPU", async () => {
     const wt = jobsFixture(2, 'case "$1" in *t1*) sleep 0.6;; *) bun -e "let x = 0; for (let i = 0; i < 4e8; i++) x += i; if (x < 0) console.log(x)";; esac\n', "1");
     await runWorkTest(wt, fakeDeps().d);
     const row = ws(wt).db.db.query<{ d: string }, []>("SELECT detail AS d FROM events WHERE kind = 'work.test' ORDER BY id DESC LIMIT 1").get()!;
