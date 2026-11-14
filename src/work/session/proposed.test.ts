@@ -23,7 +23,7 @@ describe("proposed decisions in the brief", () => {
     const root = project();
     const now = Date.now();
     const h = 3_600_000;
-    const notice = () => proposedNotice(root, "main", corpusOf(ws(root), "main").corpus, now);
+    const notice = () => proposedNotice(root, "main", corpusOf(ws(root)).corpus, now);
     expect(notice()).toEqual([]);
     commitAt(root, 3, "proposed", now - 23 * h);
     commitAt(root, 4, "accepted", now - 100 * h);
@@ -43,16 +43,16 @@ describe("proposed decisions in the brief", () => {
     const now = Math.floor(Date.now() / 1000) * 1000;
     const h = 3_600_000;
     commitAt(root, 7, "proposed", now - 24 * h);
-    expect(proposedNotice(root, "main", corpusOf(ws(root), "main").corpus, now)).toEqual([]);
+    expect(proposedNotice(root, "main", corpusOf(ws(root)).corpus, now)).toEqual([]);
     commitAt(root, 8, "proposed", now - 47 * h);
-    expect(proposedNotice(root, "main", corpusOf(ws(root), "main").corpus, now).slice(1)).toEqual([`  ${d(8)} Pick 8 (1 d)`]);
+    expect(proposedNotice(root, "main", corpusOf(ws(root)).corpus, now).slice(1)).toEqual([`  ${d(8)} Pick 8 (1 d)`]);
   });
 
   test("BR-2476: more than 10 are cut after the oldest 10 with how many more", () => {
     const root = project();
     const now = Date.now();
     for (let n = 1; n <= 12; n++) commitAt(root, n, "proposed", now - (100 - n) * 3_600_000);
-    const lines = proposedNotice(root, "main", corpusOf(ws(root), "main").corpus, now);
+    const lines = proposedNotice(root, "main", corpusOf(ws(root)).corpus, now);
     expect(lines[0]).toStartWith("12 decision(s) proposed for more than 24 h");
     expect(lines[1]).toStartWith(`  ${d(1)} `);
     expect(lines).toHaveLength(12);
