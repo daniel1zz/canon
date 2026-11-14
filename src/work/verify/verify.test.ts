@@ -1158,6 +1158,44 @@ describe("canon work test stops its process tree on a real signal", () => {
     const none = Bun.spawnSync(["bun", MAIN, "work", "test", "--stop"], { cwd: wt, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
     expect(none.exitCode).toBe(3);
   }, 30_000);
+
+  test("BR-2467: two canon work test started together start one run; a run gone without a result is said and a new one starts; --stop with --all is a usage error", async () => {
+    const wt = jobsFixture(1, `sleep ${HANG_SECONDS} &\necho $! >> child.pid\nwait\n`, "1");
+    const env = { ...process.env, CANON_ACTOR: "agent:a" };
+    const spawns = () => ws(wt).db.db.query("SELECT 1 FROM events WHERE kind = 'test.spawn'").all().length;
+    const both = [0, 1].map(() => Bun.spawn(["bun", MAIN, "work", "test"], { cwd: wt, stdout: "pipe", stderr: "pipe", stdin: "ignore", env }));
+    const first = await runPid(wt);
+    await waitFor("the test file to start", () => existsSync(join(wt, "child.pid")));
+    expect(spawns()).toBe(1);
+    for (const p of both) p.kill("SIGTERM"); // nobody follows the run any more
+    expect(await Promise.all(both.map((p) => p.exited))).toEqual([75, 75]);
+    process.kill(first, "SIGKILL"); // killed where no handler runs: no result is recorded
+    await waitGone(first, "the test run");
+    for (const pid of readFileSync(join(wt, "child.pid"), "utf8").trim().split("\n").map(Number)) if (alive(pid)) process.kill(pid, "SIGKILL");
+    const again = Bun.spawn(["bun", MAIN, "work", "test"], { cwd: wt, stdout: "pipe", stderr: "pipe", stdin: "ignore", env });
+    const reader = again.stderr.getReader();
+    let said = "";
+    while (!said.includes("ended without recording a result")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      said += new TextDecoder().decode(value);
+    }
+    expect(said).toContain("ended without recording a result");
+    await waitFor("a second run to be recorded", () => spawns() === 2);
+    const usage = Bun.spawnSync(["bun", MAIN, "work", "test", "--stop", "--all"], { cwd: wt, stdout: "pipe", stderr: "pipe", env });
+    expect(usage.exitCode).toBe(2);
+    // the second run is killed while `again` follows it: the follower says so and ends with 75
+    await waitFor("the second run's test file to start", () => readFileSync(join(wt, "child.pid"), "utf8").trim().split("\n").length === 2);
+    process.kill(await runPid(wt), "SIGKILL");
+    expect(await again.exited).toBe(75);
+    for (;;) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      said += new TextDecoder().decode(value);
+    }
+    expect(said).toMatch(/ended without recording a result \(killed where no handler runs\); run canon work test again/);
+    for (const pid of readFileSync(join(wt, "child.pid"), "utf8").trim().split("\n").map(Number)) if (alive(pid)) process.kill(pid, "SIGKILL");
+  }, 30_000);
 });
 
 describe("overlap with other changes in flight", () => {
