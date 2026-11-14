@@ -347,6 +347,7 @@ describe("a landing after canon work test", () => {
     expect(canon(wt, "work", "test").code).toBe(1);
     const refused = canon(wt, "work", "land");
     expect(refused.code).toBe(1);
+    expect(refused.err).toContain("tests");
     expect(refused.err).toContain("left failures: 2 test file(s) failed: src/b.test.ts, src/c.test.ts");
     expect(refused.err).toContain("canon work test src/b.test.ts src/c.test.ts");
     expect(sh(root, "log", "-1", "--format=%s", "main")).not.toContain("a changes"); // not queued, main did not move
