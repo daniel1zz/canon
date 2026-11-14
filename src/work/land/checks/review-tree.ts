@@ -1,12 +1,17 @@
 import { existsSync, mkdirSync, rmSync } from "node:fs";
-import { dirname } from "node:path";
+import { dirname, join } from "node:path";
 import { addWorktree, pruneWorktrees, removeWorktree } from "../../../kernel/git.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import type { Workspace } from "../../workspace.ts";
-import { reviewDir } from "../batch/batch.ts";
 import type { Running } from "../outcome.ts";
 
 let sequence = 0;
+
+/**
+ * A temporary worktree at main's commit that one landing's review commands run in (BR-2216); `name` is unique per landing step.
+ * reason: it lives here, not with the batch, so the review tree needs nothing from the landing it serves (#212)
+ */
+export const reviewDir = (ws: Workspace, name: string) => join(dirname(ws.db.db.filename), "review", name);
 
 /** Removes the temporary review worktree at `dir`, whatever state it is in; an error says what is left behind. */
 export function removeReviewTree(ws: Workspace, dir: string): Result<void> {

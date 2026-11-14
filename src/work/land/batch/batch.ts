@@ -15,8 +15,6 @@ import { closeRetired } from "../../../knowledge/review/findings/findings.ts";
 /** The temporary worktree a batch led by queue entry `entry` is tested in. */
 export const batchDir = (ws: Workspace, entry: number) => join(dirname(ws.db.db.filename), "batch", String(entry));
 
-/** A temporary worktree at main's commit that one landing's review commands run in (BR-2216); `name` is unique per landing step. */
-export const reviewDir = (ws: Workspace, name: string) => join(dirname(ws.db.db.filename), "review", name);
 
 /** One change in a batch: its queue entry, and the chain commit below it (`base`) and its own top commit (`head`). */
 interface Link {
