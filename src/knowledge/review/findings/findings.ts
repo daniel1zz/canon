@@ -42,8 +42,10 @@ export function quotedSpans(text: string): string[] {
   return [...new Set(spans.filter((s) => s.replace(ID, "").replace(/[\s,，、]/g, "") !== ""))].sort();
 }
 
-/** A finding's identity: criterion, sorted named ids, and the hash of its quoted words or, with none, of its whole squashed text (BR-2433). */
+/** A finding's identity: criterion, sorted named ids, and the hash of its quoted words or, with none, of its whole squashed text; a restatement's is its criterion and ids alone (BR-2433). */
 export function identityOf(f: Finding): string {
+  // reason: one restatement per pair of documents: a review often quotes 2-4 sentences of the same pair, and each became a finding of its own (BR-2433, D-110)
+  if (f.criterion === "restatement") return `${f.criterion} ${namedIds(f.text).join(",")}`;
   const spans = quotedSpans(f.text);
   const pointed = spans.length > 0 ? spans.join("\n") : squash(f.text);
   const hash = createHash("sha256").update(pointed).digest("hex").slice(0, 16);

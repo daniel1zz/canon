@@ -47,6 +47,14 @@ describe("rule review of restatements", () => {
     expect(prompt).toContain("`restatement`: a changed rule or decision that, in a line this landing adds or changes");
   });
 
+  test("BR-2405 D-110: the criterion blocks only a copy that disagrees with the rule it copies; one that agrees is a note, and a line naming the other rule is no restatement", () => {
+    const { prompt } = landing({ [`canon/rules/billing/${B2}.md`]: rule(2, `x。\n第二行。\n${COPY}`) });
+    expect(prompt).toContain("and states it differently from that rule: another condition, outcome, number or order than the rule it copies, so the two now disagree");
+    expect(prompt).toContain("A restatement that agrees with the rule it copies is a `note`, never this key");
+    expect(prompt).toContain("a line that already names the other rule (按 BR-x, 见 BR-x) and adds a few words saying which of its behaviours is meant");
+    expect(prompt).not.toContain("instead of only naming that rule");
+  });
+
   test("BR-2405: a new rule is not listed among the edited lines, but its restatements are hints", () => {
     const { prompt } = landing({ [`canon/rules/billing/${B3}.md`]: rule(3, COPY) });
     expect(prompt).not.toContain("# Lines added or changed in this landing\n");

@@ -69,6 +69,13 @@ describe("finding identity", () => {
     expect(identityOf(f("contradiction", `${BR(1)} 和 ${BR(2)} 的“三天”矛盾`))).toBe(identityOf(f("contradiction", `${BR(2)}、${BR(1)} 互相矛盾：「三天」`)));
   });
 
+  test("BR-2433 D-110: restatements of one pair of documents are one finding whatever words they quote; other pairs are others", () => {
+    const one = f("restatement", `${BR(1)} 复述了 ${BR(2)} 的「七天内到账」`);
+    const other = f("restatement", `${BR(2)} 的「原路退回」又写在 ${BR(1)} 里`);
+    expect(identityOf(one)).toBe(identityOf(other));
+    expect(identityOf(f("restatement", `${BR(1)} 复述了 ${BR(3)} 的「七天内到账」`))).not.toBe(identityOf(one));
+  });
+
   test("BR-2433: spans holding only ids quote nothing; with no quote the whole squashed text counts; ids match whole", () => {
     expect(quotedSpans(`\`${BR(1)}\` 和 \`${BR(2)}, ${BR(3)}\` 矛盾`)).toEqual([]);
     expect(quotedSpans("「 a   b 」 and `x` and “”")).toEqual(["a b", "x"]);
