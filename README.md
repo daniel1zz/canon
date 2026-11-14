@@ -7,7 +7,7 @@ Several AI coding sessions working on one repository at once lose track of each 
 - **The current truth is in one place.** `canon/rules/` says how the product must behave, and whether each rule is planned, passed, or changed and waiting to be run again.
 - **Every important decision says why.** `canon/decisions/` records the choice and the options that were rejected.
 - **New sessions pick up where others stopped.** `canon brief` runs when a session starts and tells it how to work here and what is in flight.
-- **Concurrent work stays safe.** Each work item has its own git worktree and claim. Business changes and document-free chores share the landing queue and checks, so work is not lost and `main` is not broken.
+- **Concurrent work stays safe.** Each work item has its own git worktree and claim. Business changes and document-free chores share the landing queue and checks, so work is not lost and no session overwrites another. With the default `floor_timing: before`, every commit on `main` passed the floor before it landed; with `floor_timing: after`, a commit can reach `main` before the floor tests it, and a failing floor is fixed forward by a `--fix-main` change. `refs/canon/accepted` always names a commit that was tested and accepted.
 - **Documents do not lie.** `canon check` keeps documents and code consistent: no broken references, and every active rule is named by a test.
 - **People only make the decisions left to them.** Direction and reserved questions go to `canon human`; nothing else waits for a person.
 
