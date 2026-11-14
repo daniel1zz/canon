@@ -1,3 +1,4 @@
+import { failedOnCommit } from "./checks/tested.ts";
 import { existsSync } from "node:fs";
 import type { Say, Workspace } from "../workspace.ts";
 import { type Finding } from "../../knowledge/check/check.ts";
@@ -105,6 +106,15 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
   if (!ws.config.floor) return early("no-floor", "canon/config.yaml has no `floor` command; nothing proves the tree is sound");
   const clean = isClean(wt);
   if (!clean.ok || !clean.value) return early("dirty", "the worktree has uncommitted changes; commit them first");
+  // reason: a failure canon work test found on this very commit is not landed on the hope that the floor catches it; with floor_timing: after it would reach main (BR-2463)
+  const own = git(wt, "rev-parse", "HEAD");
+  if (own.ok) {
+    const left = failedOnCommit(ws.db, wt, own.value);
+    if (left.files.length > 0 || left.typecheck !== null) {
+      const what = [...(left.files.length > 0 ? [`${left.files.length} test file(s) failed: ${left.files.join(", ")}`] : []), ...(left.typecheck !== null ? [`the typecheck exited ${left.typecheck}`] : [])].join("; ");
+      return early("check", `canon work test on this commit (${own.value.slice(0, 9)}) left failures: ${what}. Fix them, or if they were a fluke, run them again: canon work test ${left.files.join(" ")}`.trimEnd());
+    }
+  }
   // reason: a refusal its content and main alone decide comes again on the same content and main; said now, without
   // waiting a turn in the queue (BR-2388, #154). Before the close commit, so there is nothing to take back.
   const tip = git(wt, "rev-parse", main);

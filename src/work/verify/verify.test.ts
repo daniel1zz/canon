@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { HANG_SECONDS, project, runsUntilKilled, sh, startNew, waitFor, waitGone, ws } from "../testkit.ts";
 import { EventEmitter } from "node:events";
@@ -334,6 +335,41 @@ const lastEvent = (wt: string) => {
   const ev = ws(wt).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'work.test' ORDER BY id").all();
   return JSON.parse(ev.at(-1)!.detail) as Record<string, unknown>;
 };
+
+describe("a landing after canon work test", () => {
+  test("BR-2463: failures canon work test left on the commit refuse the landing before it queues; a passing rerun of those files on the same commit lets it land", () => {
+    const flag = join(mkdtempSync(join(tmpdir(), "canon-flaky-")), "fail");
+    const { root, wt } = fixture(undefined, { "run.sh": `echo "$1" >> runs.log\nif [ -e ${flag} ]; then echo "flaky in $1"; exit 1; fi\n` });
+    write(wt, { "src/a.ts": "export const a = 2;\n" });
+    sh(wt, "add", "-A");
+    sh(wt, "commit", "-qm", "a changes");
+    writeFileSync(flag, "");
+    expect(canon(wt, "work", "test").code).toBe(1);
+    const refused = canon(wt, "work", "land");
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain("left failures: 2 test file(s) failed: src/b.test.ts, src/c.test.ts");
+    expect(refused.err).toContain("canon work test src/b.test.ts src/c.test.ts");
+    expect(sh(root, "log", "-1", "--format=%s", "main")).not.toContain("a changes"); // not queued, main did not move
+    rmSync(flag);
+    expect(canon(wt, "work", "test", "src/c.test.ts").code).toBe(0);
+    const one = canon(wt, "work", "land");
+    expect([one.code, one.err.includes("1 test file(s) failed: src/b.test.ts")]).toEqual([1, true]);
+    expect(canon(wt, "work", "test", "src/b.test.ts").code).toBe(0);
+    expect(canon(wt, "work", "land").code).toBe(0);
+  });
+
+  test("BR-2463: a failing run on another commit or with uncommitted edits does not refuse the landing", () => {
+    const flag = join(mkdtempSync(join(tmpdir(), "canon-flaky-")), "fail");
+    const { wt } = fixture(undefined, { "run.sh": `echo "$1" >> runs.log\nif [ -e ${flag} ]; then exit 1; fi\n` });
+    write(wt, { "src/a.ts": "export const a = 2;\n" });
+    writeFileSync(flag, "");
+    expect(canon(wt, "work", "test").code).toBe(1); // uncommitted edits: this run tested no commit
+    sh(wt, "add", "-A");
+    sh(wt, "commit", "-qm", "a changes");
+    rmSync(flag);
+    expect(canon(wt, "work", "land").code).toBe(0);
+  });
+});
 
 describe("canon work test type check and canon check", () => {
   test("BR-2226: typecheck_command runs once before the selected tests, and passing it exits 0", () => {

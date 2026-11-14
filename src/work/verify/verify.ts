@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { architectureBase, changeIdsOnBranches, listedBefore } from "../session/inflight.ts";
 import { join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { git } from "../../kernel/git.ts";
+import { git, isClean } from "../../kernel/git.ts";
 import { FILE_PLACEHOLDER } from "./config-keys.ts";
 import { caseNames, readReport, REPORT_PLACEHOLDER } from "./report.ts";
 import { loadReports, recordReport } from "./ledger.ts";
@@ -243,6 +243,8 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   // reason: the change has commits by now, so same-file overlap with other changes in flight can be found before landing (BR-2395, #156)
   for (const line of overlapLines(ws, ws.root)) say(line);
   const subject = claimOfWorktree(ws.db, ws.root)?.subject ?? null;
+  // reason: the landing compares this run's commit and failed files with what it lands (BR-2463); taken before any file runs
+  const at = runAt(ws.root);
   const t0 = performance.now();
   const tail = (output: string) => {
     for (const line of output.trimEnd().split("\n").slice(-TAIL_LINES)) say(`    ${line}`);
@@ -282,7 +284,8 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
         const note = await deps.stop(pids, () => hurried);
         if (note) say(note);
         say(`stopped by ${sig}: ${were} test file(s) were running, ${notStarted} not started`);
-        ws.db.event(ws.actor, "work.test", subject, { all, ...result, jobs: cap, ...jobs, ms: Math.round(performance.now() - t0) });
+        const done = [...finalized.keys()];
+        ws.db.event(ws.actor, "work.test", subject, { all, ...result, jobs: cap, ...jobs, ms: Math.round(performance.now() - t0), ...at, ranFiles: done, failedFiles: done.filter((f) => finalized.get(f)!.exitCode !== 0) });
       } catch (e) {
         console.error(`canon work test: stopping after ${sig} failed: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
@@ -410,6 +413,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   // reason: a run that selected nothing is still a run before landing, which D-23 compares with floor refusals (BR-2158)
   ws.db.event(ws.actor, "work.test", subject, {
     all, ...result, ms, jobs: cap, ...jobs, rerun: rerunAlone.length, rerunFiles: rerunAlone, passedAlone: passedAlone.length, passedAloneFiles: passedAlone, rerunSkipped,
+    ...at, ranFiles: files, failedFiles: failed,
   });
   return ok(result);
 }
@@ -422,4 +426,11 @@ function missingEvidence(ws: Workspace, corpus: Corpus, subject: string | null):
   const planned = planClose(ws.db, ws.config, ws.root, ws.config.main, corpus, change);
   if ("error" in planned) return err("io", planned.error);
   return ok(planned.missing);
+}
+
+/** The commit a run tests and whether the worktree was clean then: only a clean run tested exactly that commit (BR-2463). */
+function runAt(root: string): { head: string | null; clean: boolean } {
+  const head = git(root, "rev-parse", "HEAD");
+  const clean = isClean(root);
+  return { head: head.ok ? head.value : null, clean: clean.ok && clean.value };
 }
