@@ -1,3 +1,4 @@
+import { canonBuild } from "../kernel/build.ts";
 import { Database } from "bun:sqlite";
 import { mkdirSync } from "node:fs";
 import { dirname, isAbsolute, join } from "node:path";
@@ -185,6 +186,8 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ["queue", "scoped INTEGER"],
   // The owner-verdict question two opposed findings await, written by canon finding reconcile (BR-2461, D-103).
   ["review_findings", "question INTEGER"],
+  // The canon build that wrote the event: the released commit, or "dev" from source (BR-2475, D-116).
+  ["events", "canon TEXT"],
 ];
 
 /**
@@ -293,8 +296,8 @@ export class CoordDb {
   event(actor: string, kind: string, subject: string | null, detail: Record<string, unknown>): number {
     return Number(
       this.db
-        .query("INSERT INTO events(ts, actor, kind, subject, detail, worktree) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(new Date().toISOString(), actor, kind, subject, JSON.stringify(detail), this.worktree).lastInsertRowid,
+        .query("INSERT INTO events(ts, actor, kind, subject, detail, worktree, canon) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(new Date().toISOString(), actor, kind, subject, JSON.stringify(detail), this.worktree, canonBuild()).lastInsertRowid,
     );
   }
 
@@ -307,8 +310,8 @@ export class CoordDb {
     if (seen) return false;
     return (
       this.db
-        .query("INSERT OR IGNORE INTO events(ts, actor, kind, subject, detail, worktree) VALUES (?, ?, ?, ?, ?, ?)")
-        .run(new Date().toISOString(), actor, kind, subject, JSON.stringify(detail), this.worktree).changes > 0
+        .query("INSERT OR IGNORE INTO events(ts, actor, kind, subject, detail, worktree, canon) VALUES (?, ?, ?, ?, ?, ?, ?)")
+        .run(new Date().toISOString(), actor, kind, subject, JSON.stringify(detail), this.worktree, canonBuild()).changes > 0
     );
   }
 

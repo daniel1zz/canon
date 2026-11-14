@@ -12,6 +12,7 @@
  * `--check`: only the release check, in the current checkout; prints the verdict, exits 1 on block; publishes and files nothing.
  * Exit codes: 0 published (or a newer release is already there), 1 blocked, 2 usage, 4 environment (review command, git, gh, build).
  */
+import { buildDefine } from "../src/kernel/build.ts";
 import { writeFileSync } from "node:fs";
 import { openWorkspace } from "../src/work/workspace.ts";
 import { git } from "../src/kernel/git.ts";
@@ -97,7 +98,8 @@ function build(outfile: string): Result<void> {
     writeFileSync(outfile, `fake canon ${green}\n`);
     return ok(undefined);
   }
-  const r = Bun.spawnSync(["bun", "build", "--compile", "src/invocation/main.ts", "--outfile", outfile], { cwd, stdout: "pipe", stderr: "pipe" });
+  // reason: the published commit is embedded, so every event the binary writes says which canon wrote it (BR-2475, D-116)
+  const r = Bun.spawnSync(["bun", "build", "--compile", ...buildDefine(green), "src/invocation/main.ts", "--outfile", outfile], { cwd, stdout: "pipe", stderr: "pipe" });
   return r.exitCode === 0 ? ok(undefined) : err("io", `bun build exited ${r.exitCode}: ${r.stderr.toString().trim().slice(0, 500)}`);
 }
 const published = publishRelease({ primary, cwd, green, build });
