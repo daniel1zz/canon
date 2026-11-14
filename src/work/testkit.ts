@@ -6,6 +6,7 @@ import { openWorkspace, type Workspace } from "./workspace.ts";
 import { git } from "../kernel/git.ts";
 import { start } from "./session/session.ts";
 import { NO_START_ENV, runLandedReviews } from "../knowledge/review/landed-queue.ts";
+import { CLEAN_AFTER_LAND_ENV } from "./session/clean-after-land.ts";
 
 /** Fixtures shared by the work and hook tests: throwaway repositories and workspaces. */
 export const quiet = () => {};
@@ -14,6 +15,8 @@ export const FAST = { finish: false, timeoutMs: 20_000 };
 // reason: a landing in a test queues its review without starting a background reviewer, so no test leaves one behind; a
 // test runs the queued reviews with reviewLandings (BR-2441). A spawned canon inherits this.
 process.env[NO_START_ENV] = "0";
+// reason: nor a background removal of the landed worktree, which would race a test that inspects or cleans it (BR-2486)
+process.env[CLEAN_AFTER_LAND_ENV] = "0";
 
 /** Runs the reviews the landings in `root` queued, in this process, as the background reviewer would (BR-2441); what they said. */
 export async function reviewLandings(root: string, guide?: string): Promise<string[]> {

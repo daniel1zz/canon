@@ -27,6 +27,7 @@ import { firstLine, handoffs } from "./handoffs.ts";
 import { listedChanges, marksOf } from "./inflight.ts";
 import { overlapsOf } from "./overlap.ts";
 import { clean, LESSON_REMINDER, mainCorpus, start, startChore, stop } from "./session.ts";
+import { CLEAN_DONE, cleanAfterLanding } from "./clean-after-land.ts";
 import { choreIn, choresInFlight, isChore } from "./subject.ts";
 import { redMainNotice, startFixMain } from "../watch/redmain.ts";
 import { ensureWatcher, untestedNotice } from "../watch/watch.ts";
@@ -142,10 +143,26 @@ const STALE: Record<ClaimState, string> = { live: "", expired: "  (expired: leas
 
 const cleanCmd = takesMany(defineCommand({
   meta: { description: "Remove worktrees that are clean and fully landed; list the rest with the reason they stay. Name changes to remove only theirs" },
-  args: { changes: { type: "positional", required: false, description: "Only these changes' worktrees (C-n ...)" } },
-  run({ args }) {
+  args: {
+    changes: { type: "positional", required: false, description: "Only these changes' worktrees (C-n ...)" },
+    "after-landing": { type: "boolean", description: "Started by land --finish: retry for about two minutes while a process is still inside the one named worktree (BR-2486)" },
+  },
+  async run({ args }) {
     const ws = workspace();
-    const r = must(clean(ws, say, args._.map(String)));
+    const names = args._.map(String);
+    if (args["after-landing"]) {
+      if (names.length !== 1) fail({ code: "invalid", message: "--after-landing takes exactly one change or chore" });
+      let r: Awaited<ReturnType<typeof cleanAfterLanding>>;
+      try {
+        r = await cleanAfterLanding(ws, say, names[0]!);
+      } finally {
+        // reason: canon work after-land waits for this line, so it is written however the removal ends (BR-2486)
+        say(CLEAN_DONE);
+      }
+      must(r);
+      return;
+    }
+    const r = must(clean(ws, say, names));
     for (const k of r.kept) say(`kept ${k}`);
   },
 }));

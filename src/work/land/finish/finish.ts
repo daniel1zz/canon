@@ -11,6 +11,7 @@ import { setMeta } from "../../../knowledge/documents/write.ts";
 import { addedReferenceStamps } from "../../../knowledge/links/stamp.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import { queueLandedReview, type ReviewNeeds } from "../../../knowledge/review/landed-queue.ts";
+import { startCleanAfterLanding } from "../../session/clean-after-land.ts";
 
 /** The `canon: close C-n` commit `--finish` made before queuing, so a landing that fails can take it back. */
 export interface CloseCommit {
@@ -162,7 +163,9 @@ export function finishLanding(ws: Workspace, opts: LandOptions, say: Say, l: { e
     if (releaseOwnClaim(ws.db, l.subject, ws.root, ws.actor)) dropHandoff(ws.db, l.subject);
     else if (claimOfWorktree(ws.db, ws.root)) say(`${l.subject} is claimed by another session now; its claim and handoff were left as they are`);
     finished = true;
-    say(`${l.subject} ${isChore(l.subject) ? "completed" : "closed"}; remove the worktree with \`canon work clean ${l.subject}\` once you have left it`);
+    say(`${l.subject} ${isChore(l.subject) ? "completed" : "closed"}`);
+    // reason: landed worktrees piled up because only a manual clean removed them (BR-2486, #228)
+    startCleanAfterLanding(ws, say, l.subject);
   }
   return { kind: "landed", sha: l.sha, change: l.subject, subject: l.subject, ...(l.subject ? { workKind: isChore(l.subject) ? "chore" as const : "change" as const } : {}), finished };
 }
