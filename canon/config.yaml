@@ -67,7 +67,7 @@ land_batch_max: 4
 # 每个变更一个端口（D-41）：在这里写 ports: 4100-4199 这样的范围，setup 和 hook 命令的环境里就有 CANON_PORT；canon 自己不起本地服务，没有设。
 setup: "bun install"
 # 规则和决策文字的评审：从 stdin 读提示，在 stdout 输出 JSON 结论
-review: "scripts/review-claude.sh"
+review: "scripts/review-codex.sh"
 # 合入移动 main 之后把 main 推到这个 git 远端（D-38、BR-2259）；推送失败不改变合入结果，canon brief 提示没推上去的提交数
 remote: origin
 # 生命周期 hook（D-2、D-3）：每项是一条命令或命令列表
@@ -76,7 +76,7 @@ hooks:
     # 评审的批量阈值 review_max_unreviewed、review_max_age_minutes 写在顶层，不在 hooks 下
     # 合入后的代码评审（C-2）：只找安全和并发问题，一个根因一个 issue，写到 GitHub（负责人 2026-11-03 同意开启）；用 sonnet（负责人 2026-11-04，C-308）
     # FORCE_PROMPT_CACHING_5M=1：每次评审的内容只用一次，5 分钟缓存的写入比 1 小时便宜（C-326）
-    - "FORCE_PROMPT_CACHING_5M=1 CANON_CODE_REVIEW_AI='claude -p --model sonnet --tools \"\" --output-format text' bun scripts/code-review.ts"
+    - "CANON_CODE_REVIEW_AI='codex exec --ephemeral --skip-git-repo-check --sandbox read-only -c features.hooks=false -c mcp_servers={} -m gpt-6.1-terra -' bun scripts/code-review.ts"
   after_green:
     # main 的后台 floor 通过后，从这个测过的提交发布主 checkout 的 dist/canon（PATH 上的 canon）和它安装的 dist/skills，
     # 不从没测过的 main 构建：合入了把命令行弄坏的变更时，修复变更还能用旧的 canon 合进来（D-31、BR-2222）。
