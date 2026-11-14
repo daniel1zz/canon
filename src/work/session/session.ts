@@ -10,6 +10,8 @@ import { sessionProcess } from "../claims/liveness.ts";
 import { runHooksSync } from "../hooks/hooks.ts";
 import { inFlight, noticeOverlaps } from "./overlap.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
+import { openFindings } from "../../knowledge/review/findings/findings.ts";
+import { failedReviewNotice } from "../../knowledge/review/landed-queue.ts";
 import { slugify, type Change, type Corpus } from "../../knowledge/documents/model.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
@@ -51,7 +53,27 @@ export interface Started {
  * up on main, and else on its own `change/C-n` branch: a change made with --title lives only there until it
  * lands, and a session that stopped without a handoff must still be able to resume it (BR-2107).
  */
-export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] } }, say: Say): Result<Started> {
+/**
+ * BR-2464: what a session owes before it starts new work (the owner's choice B in canon human #36): open review findings it can
+ * settle (one waiting on the owner's verdict is the owner's, not the agent's) and failed reviews after landing. One line each kind.
+ */
+export function workDebt(ws: Workspace): string[] {
+  const unanswered = new Set(ws.db.db.query<{ id: number }, []>("SELECT f.id FROM review_findings f JOIN questions q ON q.id = f.question WHERE f.closed_at IS NULL AND q.answer IS NULL").all().map((r) => r.id));
+  const open = openFindings(ws.db).filter((f) => !unanswered.has(f.id));
+  const failed = failedReviewNotice(ws.db);
+  return [
+    ...(open.length > 0 ? [`${open.length} open review finding(s) (${open.slice(0, 10).map((f) => `#${f.id}`).join(", ")}${open.length > 10 ? ", …" : ""}): settle each with canon finding close; canon context <id> shows them`] : []),
+    ...failed,
+  ];
+}
+
+/** Whether a change was started before: it has a branch of its own (BR-2464 lets it go on). */
+function startedBefore(ws: Workspace, id: string): boolean {
+  const refs = git(ws.primary, "for-each-ref", "--format=%(refname:short)", `refs/heads/change/${id}`, `refs/heads/change/${id}-*`);
+  return refs.ok && refs.value.trim() !== "";
+}
+
+export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] } }, say: Say, opts: { fixMain?: boolean } = {}): Result<Started> {
   const main = ws.config.main;
   // reason: BR-2012 — checked before an id is allocated or git is called, so a repository with no commit yet loses no number (BR-2002)
   if (mainIsUnborn(ws.primary, main)) return err("io", `${main} has no commit yet, so no change can start: ${firstCommitStep(main)}`);
@@ -80,9 +102,14 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
       ws.db.event(ws.actor, "start.refuse", doc.id, { reason: "not-open", status: doc.status });
       return err("invalid", `${doc.id} is ${doc.status}`);
     }
+    // reason: new work waits while findings or failed reviews are owed; a change already started goes on, a chore settles them (BR-2464)
+    const owed = opts.fixMain || existing || startedBefore(ws, doc.id) ? [] : workDebt(ws);
+    if (owed.length > 0) return refuseForDebt(ws, doc.id, owed);
     changeId = doc.id;
     slug = slugify(doc.title);
   } else {
+    const owed = opts.fixMain ? [] : workDebt(ws);
+    if (owed.length > 0) return refuseForDebt(ws, null, owed);
     // reason: checked before an id is allocated, so a refused start leaves no number, worktree or claim behind (BR-2376, BR-2002)
     const bad = target.plan ? planProblem(onMain.value, ws.config.main, target.plan) : undefined;
     if (bad) {
@@ -432,4 +459,9 @@ export function keepReason(ws: Workspace, w: WorktreeInfo, held: ReadonlySet<str
 
 export function describeOccupants(list: readonly Occupant[]): string {
   return list.map((o) => `pid ${o.pid} (${o.command})`).join(", ");
+}
+
+function refuseForDebt(ws: Workspace, subject: string | null, owed: readonly string[]): Result<never> {
+  ws.db.event(ws.actor, "start.refuse", subject, { reason: "debt", owed: owed.map((l) => l.slice(0, 300)) });
+  return err("refused", `no new change while review work is owed (BR-2464):\n${owed.map((l) => `  - ${l}`).join("\n")}\nSettle it first, in a chore (canon chore start "<title>") or in the change it belongs to; a change already started, canon work start --fix-main and chores are not held back.`);
 }

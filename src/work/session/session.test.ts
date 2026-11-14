@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claims, holdClaim, takeClaim } from "../claims/claims.ts";
 import { processOf } from "../claims/liveness.ts";
-import { clean, start, stop } from "./session.ts";
+import { clean, start, startChore, stop } from "./session.ts";
 import { writeSchemaFile } from "../../invocation/reference/reference.ts";
 import { land } from "../land/land.ts";
 import { addWorktree, git, listWorktreesLocked, withWorktreeLock } from "../../kernel/git.ts";
@@ -841,5 +841,48 @@ describe("start and clean leave nothing half made", () => {
     expect(again.value.removed).toEqual([three.worktree]);
     expect(lines).toEqual([`removed ${three.worktree}`]);
     expect(hasBranch(root, three.branch)).toBe(false);
+  });
+});
+
+describe("no new change while review work is owed", () => {
+  const owe = (root: string) => {
+    const db = ws(root).db;
+    const add = (id: number) => db.db.query("INSERT INTO review_findings(identity, criterion, ids, docs, text, change, event, sha, opened_at) VALUES (?, 'contradiction', '[]', '[]', 'x contradicts y', 'C-9', 1, 'abc', ?)").run(`identity-${id}`, new Date().toISOString());
+    add(1);
+    add(2);
+    return db;
+  };
+  const changesIn = (root: string) => sh(root, "for-each-ref", "--format=%(refname:short)", "refs/heads/change/");
+
+  test("BR-2464: open findings refuse a new change with exit 1 and a debt event, and leave no id, worktree or claim; a chore, a change already started and the fix of main go on", () => {
+    const root = project();
+    const before = startNew(root, "Started earlier");
+    const db = owe(root);
+    const r = start(ws(root), { title: "New feature" }, quiet);
+    expect(r.ok ? "" : r.error.code).toBe("refused");
+    expect(r.ok ? "" : r.error.message).toContain("2 open review finding(s) (#1, #2)");
+    expect(r.ok ? "" : r.error.message).toContain("canon chore start");
+    expect(changesIn(root).split("\n").filter((l) => l !== "")).toEqual([before.branch]);
+    expect(claims(db).map((c) => c.subject)).toEqual([before.change]); // nothing new claimed
+    expect(db.db.query<{ d: string }, []>("SELECT json_extract(detail, '$.reason') AS d FROM events WHERE kind = 'start.refuse'").all().map((x) => x.d)).toEqual(["debt"]);
+    stop(ws(before.worktree), "hand over", undefined, true); // released, so the resume is a fresh start of a change already started
+    const again = start(ws(root), { change: before.change }, quiet);
+    expect(again.ok ? "" : again.error.message).toBe(""); // already started: it goes on
+    expect(startChore(ws(root), { title: "settle the findings" }, quiet).ok).toBe(true);
+    expect(start(ws(root), { title: "fix main" }, quiet, { fixMain: true }).ok).toBe(true);
+  });
+
+  test("BR-2464: a finding waiting on the owner's verdict is not owed; a failed review after landing is, until it ran again", () => {
+    const root = project();
+    const db = owe(root);
+    db.db.query("INSERT INTO questions(subject, asked_by, question, options, multi, asked_at) VALUES (NULL, 'agent:x', 'which way?', '[]', 0, ?)").run(new Date().toISOString());
+    const q = Number(db.db.query<{ id: number }, []>("SELECT MAX(id) AS id FROM questions").get()!.id);
+    db.db.query("UPDATE review_findings SET question = ?").run(q);
+    expect(start(ws(root), { title: "Free to start" }, quiet).ok).toBe(true);
+    db.db.query("INSERT INTO landed_reviews(entry, change, base, head, landed, log, state, queued_at) VALUES (1, 'C-1', 'a', 'b', 1, 'review.log', 'failed', ?)").run(new Date().toISOString());
+    const r = start(ws(root), { title: "Next" }, quiet);
+    expect(r.ok ? "" : r.error.message).toContain("canon work review-landed --again C-1");
+    db.db.query("INSERT INTO landed_reviews(entry, change, base, head, landed, log, state, queued_at) VALUES (1, 'C-1', 'a', 'b', 1, 'review.log', 'done', ?)").run(new Date().toISOString());
+    expect(start(ws(root), { title: "Next" }, quiet).ok).toBe(true);
   });
 });

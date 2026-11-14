@@ -142,7 +142,7 @@ export function startFixMain(ws: Workspace, say: Say): Result<Started> {
   }
   const r = reserved.value;
   const release = () => ws.db.db.query("UPDATE red_main SET fix_pid = NULL, fix_start = NULL WHERE fix_pid = ? AND fix_start = ?").run(self.pid, self.start);
-  const s = start(ws, { title: fixTitle(r.sha) }, say);
+  const s = start(ws, { title: fixTitle(r.sha) }, say, { fixMain: true });
   if (!s.ok) {
     release();
     return s;
