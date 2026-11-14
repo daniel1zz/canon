@@ -39,6 +39,8 @@ describe("work start", () => {
       expect(r.code).toBe(4);
       expect(r.err).toContain("main has no commit yet");
       expect(r.err).toContain('git commit -m "canon init"');
+      expect(r.err).toContain('git add -A && git commit');
+      expect(r.err).not.toContain('git add canon .claude');
       expect(r.err).not.toContain("invalid reference");
     }
     expect(cli("events").out).not.toContain("id.allocate");

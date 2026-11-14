@@ -64,6 +64,8 @@ test("BR-2275: Codex question ids map to original text, secret answers are omitt
     const bad = cli(root, { ...input, tool_response: { answers } }, undefined, "human", "record", "--runtime", "codex");
     expect(bad.code).toBe(2);
   }
+  const pending = cli(root, { ...input, tool_response: { request_id: "pending-1" } }, undefined, "human", "record", "--runtime", "codex");
+  expect(pending.code).toBe(2);
   expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind='human.asked'").get()!.n).toBe(1);
   db.close();
 });
