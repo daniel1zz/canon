@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import type { CoordDb } from "../../../work/db.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import { DUPLICATE_CRITERIA, RULE_CRITERIA } from "../review.ts";
+import { tierCounts } from "./tier.ts";
 
 /**
  * Open review findings (D-89, D-97): a finding that names a blocking criterion has an identity (BR-2433), is
@@ -63,6 +64,8 @@ export interface OpenFinding {
   readonly event: number;
   readonly sha: string | null;
   readonly openedAt: string;
+  /** Who may settle it (BR-2477): A, B or C; null until triaged. */
+  readonly tier: string | null;
 }
 
 interface Row {
@@ -76,9 +79,10 @@ interface Row {
   event: number;
   sha: string | null;
   opened_at: string;
+  tier: string | null;
 }
 
-const fromRow = (r: Row): OpenFinding => ({ id: r.id, identity: r.identity, criterion: r.criterion, ids: JSON.parse(r.ids) as string[], docs: JSON.parse(r.docs) as string[], text: r.text, change: r.change, event: r.event, sha: r.sha, openedAt: r.opened_at });
+const fromRow = (r: Row): OpenFinding => ({ id: r.id, identity: r.identity, criterion: r.criterion, ids: JSON.parse(r.ids) as string[], docs: JSON.parse(r.docs) as string[], text: r.text, change: r.change, event: r.event, sha: r.sha, openedAt: r.opened_at, tier: r.tier });
 
 export interface Recorded {
   /** The ids of the records this call opened. */
@@ -133,7 +137,7 @@ export function recordFindings(db: CoordDb, input: { readonly findings: readonly
 
 /** The open findings attached to any of `docs`, oldest first; every open finding when `docs` is omitted (BR-2436, BR-2437). */
 export function openFindings(db: CoordDb, docs?: Iterable<string>): OpenFinding[] {
-  const all = db.db.query<Row, []>("SELECT id, identity, criterion, ids, docs, text, change, event, sha, opened_at FROM review_findings WHERE closed_at IS NULL ORDER BY id").all().map(fromRow);
+  const all = db.db.query<Row, []>("SELECT id, identity, criterion, ids, docs, text, change, event, sha, opened_at, tier FROM review_findings WHERE closed_at IS NULL ORDER BY id").all().map(fromRow);
   if (docs === undefined) return all;
   const want = new Set(docs);
   return all.filter((f) => f.docs.some((d) => want.has(d)));
@@ -169,16 +173,16 @@ export function closeSpurious(db: CoordDb, finding: Finding, event: number): num
 /** One open finding as `canon context` and `canon brief` print it (BR-2436, BR-2437). */
 export function renderFinding(f: OpenFinding, now: Date = new Date()): string {
   const days = Math.max(0, Math.floor((now.getTime() - Date.parse(f.openedAt)) / 86_400_000));
-  return `#${f.id} [${f.criterion}] ${f.ids.length > 0 ? f.ids.join(", ") : "-"}: ${f.text} (${f.change ? `${f.change}, ` : ""}opened ${f.openedAt.slice(0, 10)}, ${days} day${days === 1 ? "" : "s"} ago)`;
+  return `#${f.id} ${f.tier ? `tier ${f.tier}` : "untriaged"} [${f.criterion}] ${f.ids.length > 0 ? f.ids.join(", ") : "-"}: ${f.text} (${f.change ? `${f.change}, ` : ""}opened ${f.openedAt.slice(0, 10)}, ${days} day${days === 1 ? "" : "s"} ago)`;
 }
 
 /** What `canon context` and `canon brief` say about open findings before listing them. */
-export const FINDINGS_HINT = 'Settle each now: fixed, canon finding close <n> --fixed <commit> --reason "<why>"; does not hold, canon finding close <n> --spurious "<quote from a document it names>" --reason "<why>". Open until closed explicitly (also: a document it names retired or superseded, or canon verdict record); a later review that does not mention one does not close it.';
+export const FINDINGS_HINT = 'Give each a tier with canon finding tier <n> A|B|C --reason "<why>" (A you settle it, B another session supports the close with canon finding advise, C the owner approves it through canon finding ask then --owner <question>; a spurious close is B at least). Settle each now: fixed, canon finding close <n> --fixed <commit> --reason "<why>"; does not hold, canon finding close <n> --spurious "<quote from a document it names>" --reason "<why>". Open until closed explicitly (also: a document it names retired or superseded, or canon verdict record); a later review that does not mention one does not close it.';
 
 /** The line `canon brief` prints outside a change worktree: how many findings are open, on how many documents (BR-2437). */
 export function findingsCount(db: CoordDb): string | undefined {
   const all = openFindings(db);
   if (all.length === 0) return undefined;
   const docs = new Set(all.flatMap((f) => f.docs));
-  return `${all.length} open review finding(s) on ${docs.size} document(s): canon context <id> lists them`;
+  return `${all.length} open review finding(s) on ${docs.size} document(s) (${tierCounts(all.map((f) => f.tier))}): canon context <id> lists them`;
 }

@@ -6,6 +6,8 @@ import { recordVerdict } from "../../../work/stats/verdict.ts";
 import type { CoordDb } from "../../../work/db.ts";
 import { FAST, project, reviewLandings, sh, startNew, ws } from "../../../work/testkit.ts";
 import { closeFinding } from "./close.ts";
+import { APPROVE, REJECT, advise, askOwner, callerOf, setTier, type Caller } from "./tier.ts";
+import { ask } from "../../../work/humans/questions.ts";
 import { closeRetired, findingOf, identityOf, namedIds, openFindings, quotedSpans, recordFindings, renderFinding, type Finding } from "./findings.ts";
 
 // Ids are built at run time so this file names no real document (canon check reads ids in test files).
@@ -202,7 +204,7 @@ describe("canon finding close (BR-2453)", () => {
     };
     return { root, db, n: r.value.opened[0]!, commit };
   }
-  const input = (root: string, n: number | string, more: { fixed?: string; spurious?: string; reason?: string }) => ({ cwd: root, main: "main", actor: "agent:test", id: String(n), reason: "why", ...more });
+  const input = (root: string, n: number | string, more: { fixed?: string; spurious?: string; reason?: string }) => ({ cwd: root, main: "main", actor: "agent:test", id: String(n), reason: "why", caller: { key: "human:test", human: true }, ...more });
   const row = (db: CoordDb, n: number) => db.db.query<{ closed_how: string | null; closed_event: number | null }, [number]>("SELECT closed_how, closed_event FROM review_findings WHERE id = ?").get(n)!;
 
   test("BR-2453: --fixed with a later commit on main that changed a document it is attached to closes it with a finding.close event; again is a conflict", () => {
@@ -211,7 +213,7 @@ describe("canon finding close (BR-2453)", () => {
     const c = closeFinding(db, input(root, n, { fixed: fix.slice(0, 9), reason: "narrowed" }));
     expect(c.ok && c.value).toEqual({ id: n, how: "fixed", by: fix });
     const ev = db.db.query<{ id: number; subject: string; actor: string; detail: string }, []>("SELECT id, subject, actor, detail FROM events WHERE kind = 'finding.close'").get()!;
-    expect(JSON.parse(ev.detail)).toEqual({ finding: n, how: "fixed", commit: fix, reason: "narrowed" });
+    expect(JSON.parse(ev.detail)).toEqual({ finding: n, how: "fixed", commit: fix, reason: "narrowed", tier: null, by: "owner" });
     expect([ev.subject, ev.actor]).toEqual([id("C", 9), "agent:test"]);
     expect(row(db, n)).toEqual({ closed_how: "fixed", closed_event: ev.id });
     const again = closeFinding(db, input(root, n, { fixed: fix }));
@@ -279,7 +281,7 @@ describe("canon finding close (BR-2453)", () => {
     expect(row(db, n).closed_how).toBe("spurious");
   });
 
-  test("BR-2453: usage errors exit 2, an unknown finding or commit 3, a closed one 5; an agent may close one, #n works as n, and the line says how", () => {
+  test("BR-2453, BR-2478: usage errors exit 2, an unknown finding or commit 3, a closed one 5; an agent closes one once it has a tier, #n works as n, and the line says how", () => {
     const { root, n, commit } = opened();
     expect(canon(root, "finding", "close", "0", "--fixed", "main", "--reason", "x").code).toBe(2);
     expect(canon(root, "finding", "close", String(n), "--reason", "x").code).toBe(2);
@@ -288,6 +290,8 @@ describe("canon finding close (BR-2453)", () => {
     expect(canon(root, "finding", "close", "99", "--fixed", "main", "--reason", "x").code).toBe(3);
     expect(canon(root, "finding", "close", String(n), "--fixed", "nosuchref", "--reason", "x").code).toBe(3);
     const fix = commit(`canon/rules/billing/${BR(1)}.md`, ruleFile(1).replace("Rule 1.", "Rule 1, fixed."));
+    expect(canon(root, "finding", "close", `#${n}`, "--fixed", fix, "--reason", "x").code).toBe(1);
+    expect(canon(root, "finding", "tier", String(n), "A", "--reason", "wording the code already decides").code).toBe(0);
     const done = canon(root, "finding", "close", `#${n}`, "--fixed", fix, "--reason", "x");
     expect([done.code, done.out.trim()]).toEqual([0, `closed review finding #${n}: fixed by ${fix.slice(0, 9)}`]);
     expect(canon(root, "finding", "close", String(n), "--fixed", fix, "--reason", "x").code).toBe(5);
@@ -303,28 +307,30 @@ describe("showing findings", () => {
     record(db, [f("untestable", "「尽快」无法测试")], [BR(1), BR(2)], null);
     const today = new Date().toISOString().slice(0, 10);
     const out = canon(root, "context", "billing").out;
-    expect(out).toContain("# Open review findings\n\nSettle each now: fixed, canon finding close <n> --fixed <commit> --reason \"<why>\";");
-    expect(out).toContain(`- #${first} [contradiction] ${BR(1)}, ${BR(7)}: ${BR(1)} 和 ${BR(7)} 的「三天」矛盾 (${id("C", 9)}, opened ${today}, 0 days ago)`);
-    expect(out.match(/\[untestable\] -: 「尽快」无法测试 \(opened \d{4}-\d{2}-\d{2}, 0 days ago\)/g)?.length).toBe(1);
+    expect(out).toContain("# Open review findings\n\nGive each a tier with canon finding tier <n> A|B|C")
+    expect(out).toContain("Settle each now: fixed, canon finding close <n> --fixed <commit> --reason \"<why>\";");
+    expect(out).toContain(`- #${first} untriaged [contradiction] ${BR(1)}, ${BR(7)}: ${BR(1)} 和 ${BR(7)} 的「三天」矛盾 (${id("C", 9)}, opened ${today}, 0 days ago)`);
+    expect(out.match(/untriaged \[untestable\] -: 「尽快」无法测试 \(opened \d{4}-\d{2}-\d{2}, 0 days ago\)/g)?.length).toBe(1);
     // BR-7 lives in another domain; asked about directly, it shows the finding too.
     mkdirSync(join(root, "canon/rules/shipping"), { recursive: true });
     writeFileSync(join(root, "canon/rules/shipping/README.md"), "---\ncode: [src/shipping]\n---\n# shipping\n\nParcels.\n");
     writeFileSync(join(root, `canon/rules/shipping/${BR(7)}.md`), ruleFile(7));
-    expect(canon(root, "context", BR(7)).out).toContain(`- #${first} [contradiction]`);
+    expect(canon(root, "context", BR(7)).out).toContain(`- #${first} untriaged [contradiction]`);
     db.db.query("UPDATE review_findings SET closed_at = 'x', closed_how = 'spurious' WHERE criterion = 'untestable'").run();
     expect(canon(root, "context", "billing").out).not.toContain("[untestable]");
     db.db.query("UPDATE review_findings SET closed_at = 'x', closed_how = 'spurious'").run();
     expect(canon(root, "context", "billing").out).not.toContain("Open review findings");
   });
 
-  test("BR-2436: the age is whole days since recording, one day singular", () => {
-    const base = { id: 1, identity: "x", criterion: "untestable", ids: [], docs: [BR(1)], text: "t", change: null, event: 1, sha: null, openedAt: "2026-11-01T10:00:00.000Z" };
-    expect(renderFinding(base, new Date("2026-11-04T09:00:00.000Z"))).toBe("#1 [untestable] -: t (opened 2026-11-01, 2 days ago)");
-    expect(renderFinding(base, new Date("2026-11-04T10:00:00.000Z"))).toBe("#1 [untestable] -: t (opened 2026-11-01, 3 days ago)");
-    expect(renderFinding(base, new Date("2026-11-02T10:00:00.000Z"))).toBe("#1 [untestable] -: t (opened 2026-11-01, 1 day ago)");
+  test("BR-2436, BR-2477: the age is whole days since recording, one day singular; the tier, or untriaged, follows the number", () => {
+    const base = { id: 1, identity: "x", criterion: "untestable", ids: [], docs: [BR(1)], text: "t", change: null, event: 1, sha: null, openedAt: "2026-11-01T10:00:00.000Z", tier: null };
+    expect(renderFinding(base, new Date("2026-11-04T09:00:00.000Z"))).toBe("#1 untriaged [untestable] -: t (opened 2026-11-01, 2 days ago)");
+    expect(renderFinding({ ...base, tier: "B" }, new Date("2026-11-04T09:00:00.000Z"))).toBe("#1 tier B [untestable] -: t (opened 2026-11-01, 2 days ago)");
+    expect(renderFinding(base, new Date("2026-11-04T10:00:00.000Z"))).toBe("#1 untriaged [untestable] -: t (opened 2026-11-01, 3 days ago)");
+    expect(renderFinding(base, new Date("2026-11-02T10:00:00.000Z"))).toBe("#1 untriaged [untestable] -: t (opened 2026-11-01, 1 day ago)");
   });
 
-  test("BR-2437: brief in a change worktree lists the findings on the documents the change names; elsewhere a count, none no line", () => {
+  test("BR-2437, BR-2477: brief in a change worktree lists the findings on the documents the change names; elsewhere a count, none no line", () => {
     const root = billing();
     expect(canon(root, "brief").out).not.toContain("open review finding");
     mkdirSync(join(root, "canon/changes"), { recursive: true });
@@ -340,10 +346,142 @@ describe("showing findings", () => {
     const one = record(db, [f("contradiction", `${BR(1)} 和 ${BR(7)} 的「三天」矛盾`)]).opened[0]!;
     record(db, [f("untestable", "「尽快」无法测试")], [BR(1)]);
     const inChange = canon(w2, "brief").out;
-    expect(inChange).toContain(`Open review finding #${one} [contradiction] ${BR(1)}, ${BR(7)}: `);
+    expect(inChange).toContain(`Open review finding #${one} untriaged [contradiction] ${BR(1)}, ${BR(7)}: `);
     expect(inChange.match(/Open review finding #/g)?.length).toBe(2);
     expect(inChange).not.toContain("open review finding(s)");
     expect(canon(w3, "brief").out).not.toContain("Open review finding");
-    expect(canon(root, "brief").out).toContain("2 open review finding(s) on 2 document(s): canon context <id> lists them");
+    expect(canon(root, "brief").out).toContain("2 open review finding(s) on 2 document(s) (A 0, B 0, C 0, untriaged 2): canon context <id> lists them");
+  });
+});
+
+describe("finding tiers (BR-2477, BR-2478, BR-2479, BR-2480, D-118)", () => {
+  /** billing with open finding #n on BR-1 and BR-2, and a later fix of BR-1 on main. */
+  function fixture() {
+    const root = billing();
+    const db = ws(root).db;
+    const event = db.event("agent:x", "review.block", id("C", 9), {});
+    const r = recordFindings(db, { findings: [f("contradiction", `${BR(1)} 和 ${BR(2)} 的「三天」矛盾`)], reviewed: [], change: id("C", 9), event, sha: sh(root, "rev-parse", "main") });
+    if (!r.ok) throw new Error(r.error.message);
+    const commit = (text: string) => {
+      writeFileSync(join(root, `canon/rules/billing/${BR(1)}.md`), ruleFile(1).replace("Rule 1.", text));
+      sh(root, "add", "-A");
+      sh(root, "commit", "-qm", text);
+      return sh(root, "rev-parse", "HEAD");
+    };
+    return { root, db, n: r.value.opened[0]!, fix: commit("Rule 1, fixed."), commit };
+  }
+  const main: Caller = { key: "claude:main-session", human: false };
+  const owner: Caller = { key: "human:owner", human: true };
+  const advisor: Caller = { key: "codex:advisor", human: false };
+  const close = (root: string, db: CoordDb, n: number, caller: Caller, more: { fixed?: string; spurious?: string; owner?: string; covers?: string }) => closeFinding(db, { cwd: root, main: "main", actor: "agent:test", id: String(n), reason: "why", caller, ...more });
+  const tier = (db: CoordDb, n: number, t: string, caller: Caller = main) => setTier(db, { actor: "agent:test", caller, id: String(n), tier: t, reason: "because" });
+  const adv = (root: string, db: CoordDb, n: number, caller: Caller, verdict: "support" | "oppose", target: { fixed?: string; spurious?: string }) => advise(db, { cwd: root, actor: "agent:a", caller, id: String(n), verdict, reason: "checked", ...target });
+  const why = (r: { ok: boolean; error?: { message: string } }) => (r.ok ? "ok" : r.error!.message);
+
+  test("BR-2477: a finding starts untriaged; a session sets and raises its tier with a reason but never lowers it; the owner may", () => {
+    const { db, n } = fixture();
+    expect(openFindings(db)[0]!.tier).toBeNull();
+    expect(setTier(db, { actor: "a", caller: main, id: String(n), tier: "D", reason: "x" }).ok).toBe(false);
+    expect(setTier(db, { actor: "a", caller: main, id: String(n), tier: "A", reason: " " }).ok).toBe(false);
+    expect(tier(db, n, "a").ok).toBe(true);
+    expect(tier(db, n, "C").ok).toBe(true);
+    expect(why(tier(db, n, "B"))).toContain("a session only raises a tier");
+    expect(tier(db, n, "B", owner).ok).toBe(true);
+    expect(openFindings(db)[0]!.tier).toBe("B");
+    expect(db.db.query<{ n: number }, []>("SELECT count(*) AS n FROM events WHERE kind = 'finding.tier'").get()!.n).toBe(3);
+  });
+
+  test("BR-2478: an untriaged finding is not closed by a session; tier A closes as fixed alone but not as spurious; the owner closes any", () => {
+    const { root, db, n, fix } = fixture();
+    expect(why(close(root, db, n, main, { fixed: fix }))).toContain("has no tier yet");
+    tier(db, n, "A");
+    expect(why(close(root, db, n, main, { spurious: "untested: fixture" }))).toContain("a spurious close needs another session's support");
+    expect(close(root, db, n, main, { fixed: fix }).ok).toBe(true);
+    const other = fixture();
+    expect(close(other.root, other.db, other.n, owner, { fixed: other.fix }).ok).toBe(true);
+  });
+
+  test("BR-2478, BR-2479: tier B needs another session's support for this very close; its own, an objection, or support for an older fix does not do", () => {
+    const { root, db, n, fix, commit } = fixture();
+    tier(db, n, "B");
+    expect(why(close(root, db, n, main, { fixed: fix }))).toContain("another session must support");
+    adv(root, db, n, main, "support", { fixed: fix });
+    expect(why(close(root, db, n, main, { fixed: fix }))).toContain("another session must support");
+    adv(root, db, n, advisor, "support", { fixed: fix });
+    const newer = commit("Rule 1, fixed again.");
+    expect(why(close(root, db, n, main, { fixed: newer }))).toContain("another session must support");
+    adv(root, db, n, advisor, "oppose", { fixed: fix });
+    expect(why(close(root, db, n, main, { fixed: fix }))).toContain("opposes");
+    adv(root, db, n, advisor, "support", { fixed: newer });
+    const c = close(root, db, n, main, { fixed: newer });
+    expect(c.ok).toBe(true);
+    const ev = db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'finding.close'").get()!;
+    expect(JSON.parse(ev.detail)).toMatchObject({ tier: "B", advisors: ["codex:advisor"] });
+  });
+
+  test("BR-2478, BR-2480: with no advisor, a tier B finding goes to the owner: the refusal says so, and the owner's approval closes it", () => {
+    const { root, db, n, fix } = fixture();
+    tier(db, n, "B");
+    expect(why(close(root, db, n, main, { fixed: fix }))).toContain(`ask the owner instead (canon finding ask ${n}, then --owner <question>)`);
+    const a = askOwner(db, { cwd: root, actor: "agent:test", id: String(n), fixed: fix, reason: "no advisor online" });
+    if (!a.ok) throw new Error(a.error.message);
+    db.db.query("UPDATE questions SET answer = ?, answered_by = 'human:owner' WHERE id = ?").run(APPROVE, a.value.question);
+    expect(close(root, db, n, main, { fixed: fix, owner: String(a.value.question) }).ok).toBe(true);
+  });
+
+  test("BR-2479: a subagent, a delegated worker or an unnamed session cannot advise; callerOf reads the host environment, not CANON_ACTOR", () => {
+    const { root, db, n, fix } = fixture();
+    const sub = callerOf({ CODEX_SESSION_ID: "s1", CODEX_THREAD_ID: "t2" }, "agent:x");
+    expect(why(adv(root, db, n, sub, "support", { fixed: fix }))).toContain("a subagent");
+    const worker = callerOf({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "w1", CLAUDE_DELEGATE_CHILD: "1" }, "agent:w1");
+    expect(why(adv(root, db, n, worker, "support", { fixed: fix }))).toContain("a delegated worker");
+    expect(why(adv(root, db, n, callerOf({ CLAUDECODE: "1" }, "agent:unknown"), "support", { fixed: fix }))).toContain("cannot name");
+    expect(callerOf({ CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "abc", CANON_ACTOR: "agent:someone" }, "agent:someone")).toEqual({ key: "claude:abc", human: false });
+    expect(callerOf({}, "human:me")).toEqual({ key: "human:me", human: true });
+  });
+
+  test("BR-2478, BR-2480: tier C closes only with the owner's approval of this close; a pending question exempts it from the debt, a rejection or another close does not do", () => {
+    const { root, db, n, fix, commit } = fixture();
+    tier(db, n, "C");
+    expect(why(close(root, db, n, main, { fixed: fix }))).toContain("the owner decides");
+    const a = askOwner(db, { cwd: root, actor: "agent:test", id: String(n), fixed: fix, reason: "narrows BR-1 to domestic orders" });
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    expect(a.value.text).toStartWith(`Close review finding #${n} ([contradiction] ${BR(1)}, ${BR(2)}: `);
+    expect(db.db.query<{ question: number }, [number]>("SELECT question FROM review_findings WHERE id = ?").get(n)!.question).toBe(a.value.question);
+    expect(why(askOwner(db, { cwd: root, actor: "agent:test", id: String(n), fixed: fix, reason: "again" }))).toContain("already waits on owner question");
+    const q = String(a.value.question);
+    expect(why(close(root, db, n, main, { fixed: fix, owner: q }))).toContain("not answered yet");
+    db.db.query("UPDATE questions SET answer = ?, answered_by = 'human:owner' WHERE id = ?").run(REJECT, a.value.question);
+    expect(why(close(root, db, n, main, { fixed: fix, owner: q }))).toContain("did not approve");
+    const b = askOwner(db, { cwd: root, actor: "agent:test", id: String(n), fixed: fix, reason: "second try" });
+    if (!b.ok) throw new Error(b.error.message);
+    db.db.query("UPDATE questions SET answer = ?, answered_by = 'agent:x', relayed = 'approve', witness = 'differs' WHERE id = ?").run(APPROVE, b.value.question);
+    expect(why(close(root, db, n, main, { fixed: fix, owner: String(b.value.question) }))).toContain("not backed");
+    db.db.query("UPDATE questions SET witness = 'match' WHERE id = ?").run(b.value.question);
+    const newer = commit("Rule 1, other fix.");
+    expect(why(close(root, db, n, main, { fixed: newer, owner: String(b.value.question) }))).toContain("ask again for this close");
+    expect(close(root, db, n, main, { fixed: fix, owner: String(b.value.question) }).ok).toBe(true);
+  });
+
+  test("BR-2480: an older owner answer that decides the close is reused with a quote of its words; one about another finding, or an absent quote, is not", () => {
+    const { root, db, n, fix } = fixture();
+    tier(db, n, "C");
+    const older = ask(db, "agent:x", null, "Should domestic orders keep the three-day refund window?", ["yes, keep three days", "no"]);
+    expect(why(close(root, db, n, main, { fixed: fix, owner: String(older) }))).toContain("not answered yet");
+    db.db.query("UPDATE questions SET answer = 'yes, keep three days', answered_by = 'human:owner' WHERE id = ?").run(older);
+    expect(why(close(root, db, n, main, { fixed: fix, owner: String(older) }))).toContain("add --covers");
+    expect(why(close(root, db, n, main, { fixed: fix, owner: String(older), covers: "overseas orders only" }))).toContain("not in its question or answer");
+    const elsewhere = fixture();
+    tier(elsewhere.db, elsewhere.n, "C");
+    const foreign = askOwner(elsewhere.db, { cwd: elsewhere.root, actor: "agent:test", id: String(elsewhere.n), fixed: elsewhere.fix, reason: "x" });
+    if (!foreign.ok) throw new Error(foreign.error.message);
+    db.db.query("INSERT INTO finding_asks(question, finding, how, target) VALUES (?, ?, 'fixed', ?)").run(older, n + 1, fix);
+    expect(why(close(root, db, n, main, { fixed: fix, owner: String(older), covers: "keep the three-day refund window" }))).toContain(`asked about finding #${n + 1}`);
+    db.db.query("DELETE FROM finding_asks WHERE question = ?").run(older);
+    const c = close(root, db, n, main, { fixed: fix, owner: String(older), covers: "keep the three-day refund window" });
+    expect(c.ok).toBe(true);
+    const ev = db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'finding.close'").get()!;
+    expect(JSON.parse(ev.detail)).toMatchObject({ tier: "C", owner: older, covers: "keep the three-day refund window" });
   });
 });

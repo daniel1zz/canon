@@ -1,6 +1,7 @@
 import { git } from "../../../kernel/git.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import type { CoordDb } from "../../../work/db.ts";
+import { tierGate, type Caller } from "./tier.ts";
 
 /**
  * `canon finding close` (BR-2453, D-99): whoever settles a finding, the main agent or a person, closes it with the commit on
@@ -19,6 +20,12 @@ export interface CloseInput {
   readonly fixed?: string;
   readonly spurious?: string;
   readonly reason: string;
+  /** Who runs the close, from the host environment (D-118). */
+  readonly caller: Caller;
+  /** The owner question that approves this close (BR-2480). */
+  readonly owner?: string;
+  /** For an owner question not asked for this close: its words that decide it (BR-2480). */
+  readonly covers?: string;
 }
 
 export interface Closed {
@@ -104,11 +111,14 @@ export function closeFinding(db: CoordDb, input: CloseInput): Result<Closed> {
     by = found;
   }
   const how = commit !== undefined ? "fixed" : "spurious";
+  // reason: the tier decides who may settle it, checked after BR-2453's own evidence so its refusals keep their order (BR-2478)
+  const gate = tierGate(db, { id: n, caller: input.caller, target: { how, target: commit ?? squash(input.spurious ?? "") }, evidence: { ...(input.owner !== undefined ? { owner: input.owner } : {}), ...(input.covers !== undefined ? { covers: input.covers } : {}) } });
+  if (!gate.ok) return gate;
   const write = db.db.transaction((): Result<Closed> => {
     // reason: another session may have closed it since the read above; only one close is written (BR-2453)
     const now = look();
     if (now && now.closed_at !== null) return err("conflict", `review finding #${n} is already closed (${now.closed_how}, ${now.closed_at})`);
-    const detail = how === "fixed" ? { finding: n, how, commit, reason } : { finding: n, how, quote: squash(input.spurious ?? ""), doc: by, reason };
+    const detail = how === "fixed" ? { finding: n, how, commit, reason, ...gate.value } : { finding: n, how, quote: squash(input.spurious ?? ""), doc: by, reason, ...gate.value };
     const event = db.event(input.actor, "finding.close", row.change, detail);
     db.db.query("UPDATE review_findings SET closed_at = ?, closed_how = ?, closed_event = ? WHERE id = ? AND closed_at IS NULL").run(new Date().toISOString(), how, event, n);
     return ok({ id: n, how, by });

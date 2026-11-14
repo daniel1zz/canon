@@ -159,6 +159,23 @@ CREATE TABLE IF NOT EXISTS landed_reviewer (
   pid_start  TEXT NOT NULL,
   started_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS finding_advice (
+  id       INTEGER PRIMARY KEY AUTOINCREMENT,
+  finding  INTEGER NOT NULL,
+  session  TEXT NOT NULL,              -- the advising host session (runtime:id), or human:<name> outside one (BR-2479)
+  actor    TEXT NOT NULL,
+  verdict  TEXT NOT NULL CHECK (verdict IN ('support', 'oppose')),
+  how      TEXT NOT NULL CHECK (how IN ('fixed', 'spurious')),
+  target   TEXT NOT NULL,              -- the full fixing commit, or the squashed quote
+  reason   TEXT NOT NULL,
+  at       TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS finding_asks (
+  question INTEGER PRIMARY KEY,        -- the owner question canon finding ask recorded (BR-2480)
+  finding  INTEGER NOT NULL,
+  how      TEXT NOT NULL CHECK (how IN ('fixed', 'spurious')),
+  target   TEXT NOT NULL
+);
 `;
 
 /** Columns added after the first schema, as `table`, `column definition`. */
@@ -190,6 +207,9 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ["events", "canon TEXT"],
   // The main commit whose review settings and review command a rerun uses; null runs the landing's own base (BR-2449, #215).
   ["landed_reviews", "reviewer TEXT"],
+  // Who may settle a finding: A the session, B with an advisor's support, C the owner; null until triaged (BR-2477, D-118).
+  ["review_findings", "tier TEXT"],
+  ["review_findings", "tier_reason TEXT"],
 ];
 
 /**
