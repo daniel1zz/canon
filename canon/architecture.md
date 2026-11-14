@@ -27,10 +27,10 @@ title: 架构总览
 - 决策：D-2、D-3、D-4、D-15、D-28、D-63。
 
 **协调数据库 `state.db`**
-- 职责：多个会话同时工作时的共享状态：认领、合入队列、负责人标的优先合入（`canon backlog urgent`）、交接记录、留给人的问题、编号、端口、事件表（每次写入和拒绝）、后台部件的登记、排队的合入后评审（`landed_reviews`）、未处理的评审意见（`review_findings`，含 reconcile 互记的 `question` 列，见合入后的命令和评审）、挑选命令回答的缓存（`related_picks`，BR-2444）。
+- 职责：多个会话同时工作时的共享状态：认领、合入队列、负责人标的优先合入（`canon backlog urgent`）、交接记录、留给人的问题、编号、端口、事件表（每次写入和拒绝，每条记下写它的 canon 构建提交，源码运行记 `dev`，BR-2475）、后台部件的登记、排队的合入后评审（`landed_reviews`）、未处理的评审意见（`review_findings`，含 reconcile 互记的 `question` 列，见合入后的命令和评审）、挑选命令回答的缓存（`related_picks`，BR-2444）。
 - 数据：`<git 公共目录>/canon/state.db`（SQLite），本机所有 worktree 共用，不提交、不跨机器。知识（规则、决策）不放这里。
 - 代码：`src/work`（`db.ts`、`workspace.ts`），各子领域读写自己的表；`src/work/humans`（留给人的问题）、`src/work/stats`（从事件表算统计，`canon stats`、`canon events`、`canon usage`）。
-- 决策：D-6、D-11、D-18、D-33、D-41、D-45、D-47、D-73。
+- 决策：D-6、D-11、D-18、D-33、D-41、D-45、D-47、D-73、D-116。
 
 **主 checkout 与工作 worktree**
 - 职责：主 checkout 签出 main，main 只通过共享合入流水线前移；业务变更有 worktree `<仓库名>.worktrees/C-n`、分支 `change/C-n`、Change 文档和认领；杂务由 `canon chore start` 开工，工作树以 `chore-<UUID>` 命名，分支为 `chore/<UUID>-<slug>`，没有 Change 文档或 C 编号。分支是杂务身份和类型的恢复源，事件保存标题，认领只负责所有权；双方共用租约、交接、队列、端口和快照（D-100）。认领的持有者是会话，子 agent 的名字写在后面（`agent:<会话>:<名字>`）：子 agent 的认领类命令（`work start`、`land`、`stop`、`drop`，以及 `chore start`、`chore land`）带 `--as <自己的 agent_id>`，别的会话启动的 worker 会话带自己定的名字（BR-2468），主会话不带；主会话用 `canon work take <工作身份> --from <agent_id>` 接手子 agent 的工作，`take` 和 `unstall` 不给子 agent（BR-2340）；`take` 只在 Claude Code 或 Codex 的主会话里运行（BR-2336），`unstall` 主会话和人都能运行（BR-2455）。快照（每次 Bash 前给 hook 的 `cwd` 所在 worktree 和调用者自己认领的其他 worktree 各做一个，D-71）和归档是 git ref：`refs/canon/snapshots/*`、`refs/canon/archive/*`。
@@ -75,7 +75,7 @@ title: 架构总览
 
 canon 这个仓库在 `canon/config.yaml` 里配了下面这些，是项目配置，不是 canon 的部件：
 
-- **`dist/canon` 和 `dist/skills`**：只在主 checkout 里，PATH 上的 canon 指向 `dist/canon`，它装进项目的 skill 来自 `dist/skills`（指向 `skills-<提交>` 的符号链接）。`after_green` 运行 `scripts/release.ts`：先把测过的提交里所有 `canon-*` 的 SKILL.md 和工作说明放在一起做一次重复评审（同样的文字只评审一次；以上一次发布为基线，只拦碰到改动行的重复，发布成功时记 `release.published` 作为下一次的基线，D-107），通过才从这个提交编译二进制、复制 skill、切换链接；编译可以和别的发布并行，检查当前版本、放置、切换和清理在 `<git 公共目录>/canon/publish.lock` 的互斥段里做，段内重读当前版本（BR-2412）；拦截时什么也不发布，提一个 `canon-review` issue，退出码 1。不从没测过的 main 构建（D-31、D-91、D-107、BR-2411、BR-2412）。
+- **`dist/canon` 和 `dist/skills`**：只在主 checkout 里，PATH 上的 canon 指向 `dist/canon`，它装进项目的 skill 来自 `dist/skills`（指向 `skills-<提交>` 的符号链接）。`after_green` 运行 `scripts/release.ts`：先把测过的提交里所有 `canon-*` 的 SKILL.md 和工作说明放在一起做一次重复评审（同样的文字只评审一次；以上一次发布为基线，只拦碰到改动行的重复，发布成功时记 `release.published` 作为下一次的基线，D-107），通过才从这个提交编译二进制、复制 skill、切换链接；编译可以和别的发布并行，检查当前版本、放置、切换和清理在 `<git 公共目录>/canon/publish.lock` 的互斥段里做，段内重读当前版本（BR-2412）；拦截时什么也不发布，提一个 `canon-review` issue，退出码 1。不从没测过的 main 构建，构建时把被发布的提交嵌进二进制（D-31、D-91、D-107、D-116、BR-2411、BR-2412）。
 - **`scripts/review-claude.sh`**：`review` 配的命令，用 `claude -p` 做规则评审，也用于发布评审（`CANON_REVIEW_KIND=release`）。
 - **`scripts/code-review.ts`**：`after_land` 配的命令，攒批后让 `claude -p` 评审合入的代码，只找安全和并发问题，发现的提成 GitHub issue；没到点时在后台留一个等待进程（`--wait`，协调数据库的 `code_review_waiter` 保证只有一个），到点评审后退出（D-59、D-68）。
 - **floor**：类型检查加 `scripts/test.sh`；`floor_timing: after`、`land_batch_max: 4`。
