@@ -2,10 +2,14 @@
 id: C-554
 title: "Rule review prompt: a decision line marked as replaced is history, not a
   contradiction; each defect given once"
-status: open
+status: done
 rules:
   - BR-2484
   - BR-2485
+passes:
+  BR-2434: 139a7a86d120a258 test
+  BR-2484: 922b52d986ab3af9 test
+  BR-2485: 31027a8544610f37 test
 ---
 
 ## 为什么
