@@ -236,7 +236,7 @@ describe("canon work review-landed --again (BR-2449)", () => {
     expect(jobs(root)).toHaveLength(2);
   });
 
-  test("BR-2449: a review run again uses main's current review command, so a reviewer fixed after the landing reviews it; the documents stay the landing's", async () => {
+  test("BR-2449, BR-2074, BR-2216: a review run again uses main's current review command, so a reviewer fixed after the landing reviews it; the documents stay the landing's", async () => {
     const { root } = queueProject();
     const broken = join(root, "..", `${root.split("/").pop()}-broken.sh`);
     writeFileSync(broken, "#!/bin/sh\ncat > /dev/null\necho 'profile luna is gone' >&2\nexit 2\n");
