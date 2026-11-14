@@ -413,6 +413,7 @@ describe("canon work test time limit", () => {
     expect(busy[2]).toContain("the machine was busier than its CPUs");
     const quiet = timeoutReport(30, ended, 2, 3, { load: 3, cpus: 8 }, { load: 4, cpus: 8 });
     expect(quiet[2]).toContain("the suite itself is too slow");
+    expect(timeoutReport(30, ended, 0, 0, { load: 8, cpus: 8 }, { load: 8, cpus: 8 })[2]).toContain("the suite itself is too slow"); // equal is not over
   });
 });
 
