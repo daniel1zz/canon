@@ -429,7 +429,7 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     }
   }, TIMED * 2);
 
-  test("BR-2239: an answer canon cannot read is asked once more with the error; a readable second answer lands, a second unreadable one refuses saying it asked twice (#227)", async () => {
+  test("BR-2239, BR-2216: an answer canon cannot read is asked once more with the error; a readable second answer lands, a second unreadable one refuses saying it asked twice (#227)", async () => {
     const counted = (root: string, second: string) => `n=$(cat ${root}-asked 2>/dev/null || echo 0); echo $((n + 1)) > ${root}-asked; cat > ${promptOf(root)}-$n; if [ "$n" = 0 ]; then echo '{"findings":["${br(1)} changes when the line shows"]}'; else echo '${second}'; fi`;
     const good = await wordingProject((r) => counted(r, `{"findings":[],"wording":{"${br(1)}":"wording"}}`));
     write(good.s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
