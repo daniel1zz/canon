@@ -391,9 +391,13 @@ describe("finding tiers (BR-2477, BR-2478, BR-2479, BR-2480, D-118)", () => {
     expect(db.db.query<{ n: number }, []>("SELECT count(*) AS n FROM events WHERE kind = 'finding.tier'").get()!.n).toBe(3);
   });
 
-  test("BR-2478: an untriaged finding is not closed by a session; tier A closes as fixed alone but not as spurious; the owner closes any", () => {
+  test("BR-2478: an untriaged finding is not closed by a session, not even with an approved --owner; tier A closes as fixed alone but not as spurious; the owner closes any", () => {
     const { root, db, n, fix } = fixture();
     expect(why(close(root, db, n, main, { fixed: fix }))).toContain("has no tier yet");
+    const approved = askOwner(db, { cwd: root, actor: "agent:test", id: String(n), fixed: fix, reason: "x" });
+    if (!approved.ok) throw new Error(approved.error.message);
+    db.db.query("UPDATE questions SET answer = ?, answered_by = 'human:owner' WHERE id = ?").run(APPROVE, approved.value.question);
+    expect(why(close(root, db, n, main, { fixed: fix, owner: String(approved.value.question) }))).toContain("has no tier yet");
     tier(db, n, "A");
     expect(why(close(root, db, n, main, { spurious: "untested: fixture" }))).toContain("a spurious close needs another session's support");
     expect(close(root, db, n, main, { fixed: fix }).ok).toBe(true);
