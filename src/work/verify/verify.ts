@@ -1,5 +1,6 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
 import { overlapLines } from "../session/overlap.ts";
+import { loadDetail } from "../session/load.ts";
 import { tmpdir } from "node:os";
 import { architectureBase, changeIdsOnBranches, listedBefore } from "../session/inflight.ts";
 import { join } from "node:path";
@@ -184,6 +185,8 @@ export interface WorkTestResult {
   readonly evidence: number;
   /** The signal that stopped the run, when one did (BR-2304). */
   readonly signal?: string;
+  /** True when the run went past test_timeout_minutes and was stopped (BR-2466). */
+  readonly timedOut?: boolean;
 }
 
 /** True when `canon work test` must exit 1: a test file, the type check or canon check failed. */
@@ -266,16 +269,19 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   const stoppedP = new Promise<WorkTestResult>((resolve) => {
     stoppedWith = resolve;
   });
-  const onSignal = (sig: NodeJS.Signals) => {
+  const loadAtStart = loadDetail();
+  const onSignal = (sig: NodeJS.Signals | "timeout") => {
     if (signal !== undefined) {
       hurried = true; // a second signal ends the wait at once (BR-2304)
       return;
     }
-    signal = sig;
+    // reason: going past test_timeout_minutes stops the run the way a signal does, so nothing keeps running and what ended is recorded (BR-2466)
+    const timedOut = sig === "timeout";
+    signal = timedOut ? "SIGTERM" : sig;
     // reason: everything the stop reports is taken here, before any file can end; later ends are not recorded (BR-2304)
     for (const g of [...groups]) if (!groupAlive(g)) groups.delete(g);
     const were = running();
-    const result: WorkTestResult = { files: finalized.size, failed: failedNow(), typecheck, check: 0, unmatched: unmatched.length, evidence: 0, signal: sig };
+    const result: WorkTestResult = { files: finalized.size, failed: failedNow(), typecheck, check: 0, unmatched: unmatched.length, evidence: 0, ...(timedOut ? { timedOut: true } : { signal: sig }) };
     const notStarted = files.length - finalized.size - were;
     const pids = [...groups];
     void (async () => {
@@ -283,18 +289,20 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
       try {
         const note = await deps.stop(pids, () => hurried);
         if (note) say(note);
-        say(`stopped by ${sig}: ${were} test file(s) were running, ${notStarted} not started`);
+        if (timedOut) for (const line of timeoutReport(ws.config.testTimeoutMinutes, [...finalized.values()], were, notStarted, loadAtStart, loadDetail())) say(line);
+        else say(`stopped by ${sig}: ${were} test file(s) were running, ${notStarted} not started`);
         const done = [...finalized.keys()];
-        ws.db.event(ws.actor, "work.test", subject, { all, ...result, jobs: cap, ...jobs, ms: Math.round(performance.now() - t0), ...at, ranFiles: done, failedFiles: done.filter((f) => finalized.get(f)!.exitCode !== 0) });
+        ws.db.event(ws.actor, "work.test", subject, { all, ...result, jobs: cap, ...jobs, ms: Math.round(performance.now() - t0), ...at, ranFiles: done, failedFiles: done.filter((f) => finalized.get(f)!.exitCode !== 0), ...(timedOut ? { loadAtStart, loadAtEnd: loadDetail() } : {}) });
       } catch (e) {
         console.error(`canon work test: stopping after ${sig} failed: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
-        deps.exit(EXIT_OF_SIGNAL[sig]!);
+        deps.exit(timedOut ? 1 : EXIT_OF_SIGNAL[sig]!);
         stoppedWith(result);
       }
     })();
   };
   for (const s of STOP_SIGNALS) deps.signals.on(s, onSignal);
+  const limit = setTimeout(() => onSignal("timeout"), ws.config.testTimeoutMinutes * 60_000);
 
   const rerunAlone: string[] = [];
   const passedAlone: string[] = [];
@@ -360,6 +368,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
     }
   };
   const stopped = await Promise.race([phases().then(() => undefined), stoppedP]);
+  clearTimeout(limit);
   // reason: a stop that began as the phases ended is still being carried out; its result is the run's (BR-2304)
   const result0 = stopped ?? (signal !== undefined ? await stoppedP : undefined);
   for (const s of STOP_SIGNALS) deps.signals.off(s, onSignal);
@@ -433,4 +442,20 @@ function runAt(root: string): { head: string | null; clean: boolean } {
   const head = git(root, "rev-parse", "HEAD");
   const clean = isClean(root);
   return { head: head.ok ? head.value : null, clean: clean.ok && clean.value };
+}
+
+/**
+ * What a run stopped at test_timeout_minutes says (BR-2466): the limit, the slowest files that ended, how many were still
+ * running or not started, and the load at the start and now, so a slow suite is told apart from a busy machine.
+ */
+export function timeoutReport(minutes: number, ended: readonly { file: string; ms: number }[], running: number, notStarted: number, start: { load?: number; cpus?: number }, now: { load?: number; cpus?: number }): string[] {
+  const slow = [...ended].sort((a, b) => b.ms - a.ms).slice(0, 5);
+  const cpus = now.cpus ?? start.cpus;
+  const busy = cpus !== undefined && [start.load, now.load].some((l) => l !== undefined && l > cpus);
+  const load = (l: { load?: number }) => (l.load === undefined ? "unknown" : String(l.load));
+  return [
+    `canon work test ran past test_timeout_minutes (${minutes}) and was stopped: ${running} test file(s) were running, ${notStarted} not started`,
+    ...(slow.length > 0 ? [`slowest that ended: ${slow.map((r) => `${r.file} ${secs(r.ms)}`).join(", ")}`] : []),
+    `load at the start ${load(start)}, now ${load(now)}${cpus !== undefined ? ` on ${cpus} CPUs` : ""}: ${busy ? "the machine was busier than its CPUs, so other runs likely slowed this one; run it again when it is quieter, and look at the suite if it is still this slow" : "the machine was not overloaded, so the suite itself is too slow: make the slowest files faster (a test that waits for a timer should use a short one)"}`,
+  ];
 }

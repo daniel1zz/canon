@@ -66,4 +66,13 @@ export const verifyKeys = {
     listed: 47,
     checked: 67,
   }),
+  testTimeoutMinutes: configKey<number>({
+    key: "test_timeout_minutes",
+    doc: "How long one `canon work test` may run in all, in minutes (fractions allowed); past it the run stops like a signal stops it and fails, naming the slowest files and the machine load, since a run that long means the suite or the machine needs looking at (BR-2466). Default 30.",
+    default: 30,
+    schema: { type: ["number", "null"], exclusiveMinimum: 0, default: 30 },
+    read: (v) => (v === null ? ok(30) : typeof v === "number" && v > 0 && Number.isFinite(v) ? ok(v) : err("invalid", "`test_timeout_minutes` must be a number of minutes greater than 0")),
+    listed: 220,
+    checked: 220,
+  }),
 };

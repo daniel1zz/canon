@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { HANG_SECONDS, project, runsUntilKilled, sh, startNew, waitFor, waitGone, ws } from "../testkit.ts";
 import { EventEmitter } from "node:events";
 import { recordReport } from "./ledger.ts";
-import { commandFor, machineDeps, selectTests, workTest, type WorkTestDeps, type WorkTestResult } from "./verify.ts";
+import { commandFor, machineDeps, selectTests, timeoutReport, workTest, type WorkTestDeps, type WorkTestResult } from "./verify.ts";
 import type { CpuSample } from "./pool.ts";
 
 const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
@@ -386,6 +386,33 @@ describe("a landing after canon work test", () => {
     expect([refused.code, refused.err.includes("not run again since: 2 test file(s) failed: src/b.test.ts, src/c.test.ts")]).toEqual([1, true]);
     expect(canon(wt, "work", "test", "src/b.test.ts", "src/c.test.ts").code).toBe(0);
     expect(canon(wt, "work", "land").code).toBe(0);
+  });
+});
+
+describe("canon work test time limit", () => {
+  test("BR-2466: a run past test_timeout_minutes is stopped like a signal stops it, fails with exit 1 and names the slowest files and the load", () => {
+    // reason: the limit is what is tested, not its length: 0.05 minutes (3 s) stands in for the default 30 (BR-2466)
+    const config = `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\ntest_jobs: 1\ntest_timeout_minutes: 0.05\n`;
+    const { wt } = fixture(undefined, { "canon/config.yaml": config, "run.sh": 'echo "$1" >> runs.log\ncase "$1" in *c.test.ts) sleep 30;; esac\n' });
+    write(wt, { "src/a.ts": "export const a = 2;\n" });
+    const t0 = Date.now();
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(1);
+    expect(Date.now() - t0).toBeLessThan(25_000); // stopped near the limit, not after the 30 s the file would take
+    expect(r.out).toContain("canon work test ran past test_timeout_minutes (0.05) and was stopped: 1 test file(s) were running, 0 not started");
+    expect(r.out).toMatch(/slowest that ended: src\/b\.test\.ts \d/);
+    expect(r.out).toMatch(/load at the start [\d.]+, now [\d.]+ on \d+ CPUs/);
+    const e = ws(wt).db.db.query<{ d: string }, []>("SELECT detail AS d FROM events WHERE kind = 'work.test' ORDER BY id DESC LIMIT 1").get()!;
+    expect(JSON.parse(e.d)).toMatchObject({ timedOut: true, ranFiles: ["src/b.test.ts"], failedFiles: [] });
+  });
+
+  test("BR-2466: the report tells a busy machine from a slow suite by the load against the CPUs", () => {
+    const ended = [{ file: "a.test.ts", ms: 1000 }, { file: "b.test.ts", ms: 9000 }];
+    const busy = timeoutReport(30, ended, 2, 3, { load: 15.6, cpus: 8 }, { load: 12, cpus: 8 });
+    expect(busy[1]).toBe("slowest that ended: b.test.ts 9.0s, a.test.ts 1.0s");
+    expect(busy[2]).toContain("the machine was busier than its CPUs");
+    const quiet = timeoutReport(30, ended, 2, 3, { load: 3, cpus: 8 }, { load: 4, cpus: 8 });
+    expect(quiet[2]).toContain("the suite itself is too slow");
   });
 });
 
