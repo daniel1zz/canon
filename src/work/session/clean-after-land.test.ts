@@ -19,7 +19,7 @@ const sitIn = (dir: string, seconds: number) => Bun.spawn(["sleep", String(secon
 const subjectOf = (worktree: string) => worktree.split("/").pop()!;
 
 describe("the landed worktree removed after land --finish (BR-2486)", () => {
-  test("BR-2486: land --finish says the worktree is removed in the background, and canon work after-land --wait reports it removed", async () => {
+  test("BR-2486, BR-2167: land --finish says the worktree is removed in the background, and canon work after-land --wait waits for the removal and reports it removed", async () => {
     const root = project();
     const s = startNew(root, "Removed after landing");
     const said: string[] = [];
