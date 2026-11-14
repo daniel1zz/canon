@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readCorpus } from "../documents/read.ts";
@@ -240,6 +240,26 @@ describe("rule review prompt budget", () => {
       const until = Date.now() + 5000;
       while (!gone() && Date.now() < until) await Bun.sleep(50);
       expect(gone()).toBe(true);
+    }, 60_000);
+
+    test("BR-2482: a failed call keeps its prompt, stdout and stderr next to the log, and the failure names the call and its seconds; without a keep path nothing is written", async () => {
+      const dir = mkdtempSync(join(tmpdir(), "canon-keep-"));
+      const keep = join(dir, "logs", "landed-review-1-2");
+      const cmd = `p=$(cat); case "$p" in *SECOND*) echo partial out; echo the stream was malformed >&2; exit 1;; *) echo '{"findings":[]}';; esac`;
+      const r = await runReviews(cmd, dir, ["FIRST prompt", "SECOND prompt"], { ...limits, keep }, 1);
+      expect(r.ok).toBe(false);
+      if (r.ok) return;
+      expect(r.error.message).toMatch(/^call 2 of 2 failed after \d+ s \(its prompt, stdout and stderr: .*landed-review-1-2\.call-2\.prompt, \.out, \.err\): /);
+      expect(r.error.message).toContain("the stream was malformed");
+      expect(readFileSync(`${keep}.call-2.prompt`, "utf8")).toBe("SECOND prompt");
+      expect(readFileSync(`${keep}.call-2.out`, "utf8")).toBe("partial out\n");
+      expect(readFileSync(`${keep}.call-2.err`, "utf8")).toBe("the stream was malformed\n");
+      expect(existsSync(`${keep}.call-1.prompt`)).toBe(false);
+      const noJson = await runReviews(`cat > /dev/null; echo just words`, dir, ["ONLY"], { ...limits, keep: join(dir, "nojson") }, 1);
+      expect(!noJson.ok && noJson.error.message).toStartWith("call 1 of 1 failed after ");
+      expect(readFileSync(join(dir, "nojson.call-1.out"), "utf8")).toBe("just words\n");
+      const bare = await runReviews(cmd, dir, ["SECOND"], limits, 1);
+      expect(!bare.ok && bare.error.message).toMatch(/^call 1 of 1 failed after \d+ s: /);
     }, 60_000);
 
     test("BR-2359: the findings are merged in call order whichever call ends first", async () => {

@@ -1,3 +1,4 @@
+import { logFile } from "../../work/hooks/hooks.ts";
 import { relatedSections } from "../query/pick.ts";
 import { copyFileSync, existsSync, mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -118,7 +119,7 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
   };
   process.on("SIGTERM", onSignal);
   process.on("SIGINT", onSignal);
-  const limits = { timeoutMs: onMain.reviewTimeoutMs, kind: "preview" as const, track: (r: { kill(): void } | undefined) => (running.review = r) };
+  const limits = { timeoutMs: onMain.reviewTimeoutMs, kind: "preview" as const, track: (r: { kill(): void } | undefined) => (running.review = r), keep: logFile(ws.db, `review-preview-${new Date().toISOString().replace(/[:.]/g, "-")}`) };
   const findings: { review: "rule" | "duplicate"; text: string }[] = [];
   let blocked = false;
   let reusedFrom: number | undefined;

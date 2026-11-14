@@ -30,6 +30,8 @@ export interface LandedJob {
   readonly landed: number;
   /** The main commit whose review command runs it; null or absent: the landing's base (BR-2074, BR-2449). */
   readonly reviewer?: string | null;
+  /** The review's log; a failed call keeps its prompt and output next to it (BR-2482). */
+  readonly log?: string;
 }
 
 /** Reviews one landed commit; an error means a review could not run and the job failed (BR-2441). */
@@ -74,7 +76,7 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
     return ok(undefined);
   }
   const reviewer = s.review;
-  const limits: ReviewLimits = { timeoutMs: s.reviewTimeoutMs, kind: "land", track: (r) => (running.review = r) };
+  const limits: ReviewLimits = { timeoutMs: s.reviewTimeoutMs, kind: "land", track: (r) => (running.review = r), ...(job.log ? { keep: job.log.replace(/\.log$/, "") } : {}) };
   const docIds = [...changedDocs.map((d) => d.id), ...deleted.map((d) => d.id)];
   // reason: a finding naming no document is attached to every reviewed one; a review of README text only has its domains (BR-2434)
   const attachTo = docIds.length > 0 ? docIds : readmes;

@@ -21,6 +21,7 @@ import { reviewSettingsOn } from "../src/work/land/checks/review-scope.ts";
 import { WORKFLOW_GUIDE } from "../src/invocation/guide.ts";
 import { loadBaseline, releaseCheck, reportBlock, shippedTexts, type EarlierVerdict } from "../src/knowledge/review/release-review.ts";
 import { publishRelease } from "../src/install/publish.ts";
+import { logFile } from "../src/work/hooks/hooks.ts";
 
 function say(line: string): void {
   console.log(`release: ${line}`);
@@ -69,7 +70,7 @@ else say("baseline: none (nothing was released yet): every line counts as change
 const check = await releaseCheck({
   cwd,
   reviewer,
-  limits: { timeoutMs: s.reviewTimeoutMs, kind: "release" },
+  limits: { timeoutMs: s.reviewTimeoutMs, kind: "release", keep: logFile(w.db, `release-review-${green.slice(0, 12)}`) },
   budgetBytes: s.reviewMaxPromptBytes,
   parallel: s.reviewParallel,
   guide: WORKFLOW_GUIDE,

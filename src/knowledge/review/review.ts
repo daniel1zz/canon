@@ -1,7 +1,7 @@
 import { SKILL_DIRS, standingInstructions } from "../../kernel/agent.ts";
 import { restatementLine, type Restatement } from "../check/restatement/restatement.ts";
-import { realpathSync, existsSync, readdirSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { realpathSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { parse } from "yaml";
 import { stripCode, type Corpus, type Doc, type Domain, type Rule } from "../documents/model.ts";
 import { idsIn } from "../documents/types.ts";
@@ -296,6 +296,10 @@ export interface ReviewLimits {
   readonly kind: ReviewKind;
   /** Called with the running review's stopper when it starts, and with undefined when it has ended. */
   readonly track?: (running: { kill(): void } | undefined) => void;
+  /** Where a failed call keeps its prompt, stdout and stderr: `<keep>.call-<n>.prompt|out|err`, next to the review's log (BR-2482, #218). */
+  readonly keep?: string;
+  /** Given the command's whole stdout and stderr once it has ended, whatever the outcome. */
+  readonly capture?: (out: string, errText: string) => void;
 }
 
 /** Why a review command exited non-zero: stderr's head, else stdout's tail, both labelled when both exist (BR-2216, #132). */
@@ -335,6 +339,7 @@ export async function runJsonCommand(command: string, cwd: string, prompt: strin
     clearTimeout(timer);
     limits.track?.(undefined);
   }
+  limits.capture?.(out, errText);
   if (timedOut) return err("io", `review command did not finish within ${limits.timeoutMs / 60_000} minute(s) (review_timeout_minutes) and was stopped with its children`);
   if (code !== 0) return err("io", failureMessage(code, errText, out));
   const match = out.match(/\{[\s\S]*\}/);
@@ -732,6 +737,25 @@ export function splitNote(prompts: readonly string[]): string | undefined {
  * call blocked, the findings of all calls in call order without repeats, the wording answers of the first call. A call that
  * fails ends the review at once: the calls still running are stopped and no other starts (BR-2216).
  */
+/**
+ * Which call failed and after how long, and where its prompt and output are kept (BR-2482, #218): without them a failure that
+ * only some calls hit cannot be reproduced. A kept file that cannot be written is said, never hidden.
+ */
+function callFailure(n: number, of: number, ms: number, kept: { prompt: string; out: string; errText: string }, keep: string | undefined): string {
+  const head = `call ${n} of ${of} failed after ${Math.round(ms / 1000)} s`;
+  if (keep === undefined) return head;
+  const base = `${keep}.call-${n}`;
+  try {
+    mkdirSync(dirname(base), { recursive: true });
+    writeFileSync(`${base}.prompt`, kept.prompt);
+    writeFileSync(`${base}.out`, kept.out);
+    writeFileSync(`${base}.err`, kept.errText);
+    return `${head} (its prompt, stdout and stderr: ${base}.prompt, .out, .err)`;
+  } catch (e) {
+    return `${head} (its prompt and output could not be kept at ${base}.*: ${(e as Error).message})`;
+  }
+}
+
 export async function runReviews(command: string, cwd: string, prompts: readonly string[], limits: ReviewLimits, parallel = 1, parse: AnswerParser = parseAnswer): Promise<Result<ReviewVerdict>> {
   const results: (ReviewVerdict | undefined)[] = prompts.map(() => undefined);
   const running = new Set<{ kill(): void }>();
@@ -749,11 +773,14 @@ export async function runReviews(command: string, cwd: string, prompts: readonly
         if (r) running.add((mine = r));
         else if (mine) running.delete(mine);
       };
-      const one = await runReview(command, cwd, prompts[i]!, { ...limits, track }, parse);
+      let out = "";
+      let errText = "";
+      const started = Date.now();
+      const one = await runReview(command, cwd, prompts[i]!, { ...limits, track, capture: (o, e) => ((out = o), (errText = e)) }, parse);
       if (!one.ok) {
         // reason: the first failure is the one reported; the calls it stops fail too, only because they were stopped (BR-2216)
         if (failed === undefined) {
-          failed = one;
+          failed = err(one.error.code, `${callFailure(i + 1, prompts.length, Date.now() - started, { prompt: prompts[i]!, out, errText }, limits.keep)}: ${one.error.message}`);
           stopAll();
         }
         return;
