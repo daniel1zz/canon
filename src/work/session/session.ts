@@ -11,7 +11,6 @@ import { runHooksSync } from "../hooks/hooks.ts";
 import { inFlight, noticeOverlaps } from "./overlap.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { openFindings } from "../../knowledge/review/findings/findings.ts";
-import { failedReviewNotice } from "../../knowledge/review/landed-queue.ts";
 import { slugify, type Change, type Corpus } from "../../knowledge/documents/model.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
@@ -54,17 +53,14 @@ export interface Started {
  * lands, and a session that stopped without a handoff must still be able to resume it (BR-2107).
  */
 /**
- * BR-2464: what a session owes before it starts new work (the owner's choice B in canon human #36): open review findings it can
- * settle (one waiting on the owner's verdict is the owner's, not the agent's) and failed reviews after landing. One line each kind.
+ * BR-2464: what a session owes before it starts new work (the owner's choice B in canon human #36, asked about findings piling
+ * up): open review findings it can settle; one waiting on the owner's verdict is the owner's, not the agent's. A failed review
+ * is not owed here: it fails when the review command's quota runs out, and holding every start until then helps nobody.
  */
 export function workDebt(ws: Workspace): string[] {
   const unanswered = new Set(ws.db.db.query<{ id: number }, []>("SELECT f.id FROM review_findings f JOIN questions q ON q.id = f.question WHERE f.closed_at IS NULL AND q.answer IS NULL").all().map((r) => r.id));
   const open = openFindings(ws.db).filter((f) => !unanswered.has(f.id));
-  const failed = failedReviewNotice(ws.db);
-  return [
-    ...(open.length > 0 ? [`${open.length} open review finding(s) (${open.slice(0, 10).map((f) => `#${f.id}`).join(", ")}${open.length > 10 ? ", …" : ""}): settle each with canon finding close; canon context <id> shows them`] : []),
-    ...failed,
-  ];
+  return open.length > 0 ? [`${open.length} open review finding(s) (${open.slice(0, 10).map((f) => `#${f.id}`).join(", ")}${open.length > 10 ? ", …" : ""}): settle each with canon finding close; canon context <id> shows them`] : [];
 }
 
 /** Whether a change was started before: it has a branch of its own (BR-2464 lets it go on). */

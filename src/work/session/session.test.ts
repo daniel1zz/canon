@@ -885,17 +885,15 @@ describe("no new change while review work is owed", () => {
     expect(r.ok ? "" : r.error.message).toContain("11 open review finding(s) (#1, #2, #3, #4, #5, #6, #7, #8, #9, #10, …)");
   });
 
-  test("BR-2464: a finding waiting on the owner's verdict is not owed; a failed review after landing is, until it ran again", () => {
+  test("BR-2464: a finding waiting on the owner's verdict is not owed, and neither is a failed review after landing", () => {
     const root = project();
     const db = owe(root);
     db.db.query("INSERT INTO questions(subject, asked_by, question, options, multi, asked_at) VALUES (NULL, 'agent:x', 'which way?', '[]', 0, ?)").run(new Date().toISOString());
     const q = Number(db.db.query<{ id: number }, []>("SELECT MAX(id) AS id FROM questions").get()!.id);
     db.db.query("UPDATE review_findings SET question = ?").run(q);
     expect(start(ws(root), { title: "Free to start" }, quiet).ok).toBe(true);
+    // a review that failed (the review command's quota ran out, say) is not owed: it does not hold a start back
     db.db.query("INSERT INTO landed_reviews(entry, change, base, head, landed, log, state, queued_at) VALUES (1, 'C-1', 'a', 'b', 1, 'review.log', 'failed', ?)").run(new Date().toISOString());
-    const r = start(ws(root), { title: "Next" }, quiet);
-    expect(r.ok ? "" : r.error.message).toContain("canon work review-landed --again C-1");
-    db.db.query("INSERT INTO landed_reviews(entry, change, base, head, landed, log, state, queued_at) VALUES (1, 'C-1', 'a', 'b', 1, 'review.log', 'done', ?)").run(new Date().toISOString());
     expect(start(ws(root), { title: "Next" }, quiet).ok).toBe(true);
   });
 });
