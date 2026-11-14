@@ -904,6 +904,13 @@ describe("no new change while review work is owed", () => {
     expect(plain.ok ? "" : plain.error.message).toContain("--settles <n>[,<n>]");
     const usage = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", "--title", "x", "--settles", "abc"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
     expect(usage.exitCode).toBe(2);
+    const run = (...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", ...args], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } }).exitCode;
+    expect(run("--title", "x", "--settles", "0")).toBe(2);
+    expect(run("--fix-main", "--settles", "1")).toBe(2);
+    db.db.query("INSERT INTO questions(subject, asked_by, question, options, multi, asked_at) VALUES (NULL, 'agent:x', 'which way?', '[]', 0, ?)").run(new Date().toISOString());
+    db.db.query("UPDATE review_findings SET question = (SELECT MAX(id) FROM questions) WHERE id = 1").run();
+    const waiting = start(ws(root), { title: "Settle the one the owner weighs" }, quiet, { settles: [1] });
+    expect(waiting.ok ? "" : waiting.error.message).toBe("");
   });
 
   test("BR-2464: a finding waiting on the owner's verdict is not owed, and neither is a failed review after landing", () => {

@@ -95,7 +95,7 @@ flowchart LR
   I -->|没通过| K[fix-main 变更向前修]
 ```
 
-- **一个变更**：`work start`（子 agent 带 `--as <agent_id>`，worker 会话带自己的名字，BR-2468）建 worktree、分支和认领，有未处理的评审意见时不开新变更（杂务、`--fix-main` 和已开始的变更照常，BR-2464）；改完 `work test`（在后台进程里跑、命令只跟随，BR-2467；总时限 `test_timeout_minutes`，默认 30 分钟，超过就停下并以 1 退出，写明最慢的文件和机器负载，BR-2466）；`work land --finish` 进合入流水线，只有 main 通过比较并交换前移；`work after-land <C-n> --wait` 等后台命令和合入后的评审；`work clean` 删 worktree。每一步的要求看 `work/session`、`work/verify`、`work/land` 的规则（D-5、D-16、D-22、D-62）。
+- **一个变更**：`work start`（子 agent 带 `--as <agent_id>`，worker 会话带自己的名字，BR-2468）建 worktree、分支和认领，有未处理的评审意见时不开新变更（杂务、`--fix-main`、已开始的变更和用 `--settles` 点名要处理的意见的变更照常，BR-2464）；改完 `work test`（在后台进程里跑、命令只跟随，BR-2467；总时限 `test_timeout_minutes`，默认 30 分钟，超过就停下并以 1 退出，写明最慢的文件和机器负载，BR-2466）；`work land --finish` 进合入流水线，只有 main 通过比较并交换前移；`work after-land <C-n> --wait` 等后台命令和合入后的评审；`work clean` 删 worktree。每一步的要求看 `work/session`、`work/verify`、`work/land` 的规则（D-5、D-16、D-22、D-62）。
 - **后台 floor watch**：合入移动 main 后启动，在自己的进程组里；测过的结果决定 `refs/canon/green`，没通过的记进 red_main，`canon brief` 提示（D-31、D-55、D-59）。
 - **问人**：`canon human ask` 把问题记进 `state.db`（`src/work/humans`）；人在对话里回答，提问工具的 hook 记录；`canon human answer --relayed` 对照记录，对不上只标记（D-6、D-45、D-47）；例外是带选项的问题，回答和原话说的选项不同、或把人自己的话改写了，按 BR-2021 拒绝。
 - **计划**：大工作在变更文件的 `## 计划` 表里写步骤和依赖；做步骤的变更在 front matter 写 `plan: C-n` 和 `steps`（`canon work start --plan --step` 开工时写好，已经开工的用 `canon plan link` 补上）；`canon plan status` 从变更的状态算出每步已完成、进行中、可开始还是被挡住，不另存；`canon brief`（没认领变更的地方）列出有可开始步骤的计划，`canon change list` 标出步骤和计划进度，`canon work start --step` 提示这一步已有哪个变更在做，都用同一个算法（`src/knowledge/plans`，D-77）。
