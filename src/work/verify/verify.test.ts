@@ -348,7 +348,7 @@ describe("a landing after canon work test", () => {
     const refused = canon(wt, "work", "land");
     expect(refused.code).toBe(1);
     expect(refused.err).toContain("tests");
-    expect(refused.err).toContain("left failures: 2 test file(s) failed: src/b.test.ts, src/c.test.ts");
+    expect(refused.err).toContain("not run again since: 2 test file(s) failed: src/b.test.ts, src/c.test.ts");
     expect(refused.err).toContain("canon work test src/b.test.ts src/c.test.ts");
     expect(sh(root, "log", "-1", "--format=%s", "main")).not.toContain("a changes"); // not queued, main did not move
     rmSync(flag);
@@ -359,7 +359,7 @@ describe("a landing after canon work test", () => {
     expect(canon(wt, "work", "land").code).toBe(0);
   });
 
-  test("BR-2463: a failing run on another commit or with uncommitted edits does not refuse the landing", () => {
+  test("BR-2463: a failing run with uncommitted edits does not refuse the landing", () => {
     const flag = join(mkdtempSync(join(tmpdir(), "canon-flaky-")), "fail");
     const { wt } = fixture(undefined, { "run.sh": `echo "$1" >> runs.log\nif [ -e ${flag} ]; then exit 1; fi\n` });
     write(wt, { "src/a.ts": "export const a = 2;\n" });
@@ -368,6 +368,23 @@ describe("a landing after canon work test", () => {
     sh(wt, "add", "-A");
     sh(wt, "commit", "-qm", "a changes");
     rmSync(flag);
+    expect(canon(wt, "work", "land").code).toBe(0);
+  });
+
+  test("BR-2463: a commit made after a failing run does not clear it; only a passing run of those files on the branch does", () => {
+    const flag = join(mkdtempSync(join(tmpdir(), "canon-flaky-")), "fail");
+    const { wt } = fixture(undefined, { "run.sh": `echo "$1" >> runs.log\nif [ -e ${flag} ]; then exit 1; fi\n` });
+    write(wt, { "src/a.ts": "export const a = 2;\n" });
+    sh(wt, "add", "-A");
+    sh(wt, "commit", "-qm", "a changes");
+    writeFileSync(flag, "");
+    expect(canon(wt, "work", "test").code).toBe(1);
+    rmSync(flag);
+    write(wt, { "README.md": "a doc edit after the tests\n" });
+    sh(wt, "commit", "-qam", "docs only");
+    const refused = canon(wt, "work", "land");
+    expect([refused.code, refused.err.includes("not run again since: 2 test file(s) failed: src/b.test.ts, src/c.test.ts")]).toEqual([1, true]);
+    expect(canon(wt, "work", "test", "src/b.test.ts", "src/c.test.ts").code).toBe(0);
     expect(canon(wt, "work", "land").code).toBe(0);
   });
 });
