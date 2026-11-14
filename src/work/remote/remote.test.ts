@@ -193,6 +193,10 @@ describe("a failed push", () => {
     expect(Date.now() - t).toBeLessThan(20_000);
     expect(String(events(root, "push.fail").at(-1)!["reason"])).toContain("1 s");
     expect(bareMain(bare)).toBe(before);
+    // reason: land returned only after the push's process group was stopped, so nothing in it can still write the pid file.
+    // On a loaded machine git can be stopped at 1 s before it starts the hook at all (#213): then there is no hook child to
+    // stop, and that is a correct outcome, not a failure; when the hook did start, its child must be gone.
+    if (!existsSync(pidFile) || readFileSync(pidFile, "utf8").trim() === "") return;
     const child = await sleeperPid(pidFile);
     try {
       await waitGone(child, "the pre-push hook's child");
