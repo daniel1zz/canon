@@ -186,10 +186,10 @@ function sameBlob(wt: string, a: string, b: string): boolean {
 }
 
 /** Why a review that could not run refused the landing, and what its directory lacks (BR-2216). */
-export function couldNotRun(kind: "rule" | "duplicate" | "wording", error: string, dir: string, main: string): string {
+export function couldNotRun(kind: "rule" | "duplicate" | "wording", error: string, dir: string, main: string, at: "before" | "main" = "before"): string {
   return [
     `the ${kind === "wording" ? "wording judgement" : `${kind} review`} could not run: ${error}`,
     // reason: the review runs in a checkout of main's commit, so a command that needs git-ignored files fails there (BR-2216, D-51)
-    `  the review command ran in a temporary worktree at ${kind === "wording" ? "main's commit" : "the commit main was on before the landing"} ${main.slice(0, 9)} (${dir}, removed afterwards), which holds only committed files: git-ignored files such as node_modules, .env or *.local.json are not there, so the command must not depend on them`,
+    `  the review command ran in a temporary worktree at ${kind === "wording" || at === "main" ? "main's commit" : "the commit main was on before the landing"} ${main.slice(0, 9)} (${dir}, removed afterwards), which holds only committed files: git-ignored files such as node_modules, .env or *.local.json are not there, so the command must not depend on them`,
   ].join("\n");
 }

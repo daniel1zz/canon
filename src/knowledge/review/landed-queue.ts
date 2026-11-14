@@ -1,3 +1,4 @@
+import { git } from "../../kernel/git.ts";
 import { appendFileSync, closeSync, existsSync, mkdirSync, openSync, readFileSync } from "node:fs";
 import { dirname } from "node:path";
 import type { CoordDb } from "../../work/db.ts";
@@ -43,9 +44,11 @@ export interface Job {
   readonly landed: number;
   readonly log: string;
   readonly state: JobState;
+  /** The main commit whose review command runs this review; null: the landing's base (BR-2074), set only by --again (BR-2449). */
+  readonly reviewer: string | null;
 }
 
-const COLS = "id, entry, change, base, head, landed, log, state";
+const COLS = "id, entry, change, base, head, landed, log, state, reviewer";
 
 /**
  * After a landing moved main (BR-2441): queues the review of `head` against `base` and starts the reviewer, or, with no reviewer
@@ -67,7 +70,7 @@ export function queueLandedReview(ws: Workspace, say: Say, l: { entry: number; s
   );
   say(`review: ${docs.join(", ")} are reviewed after the landing, in the background (log: ${log})${l.subject ? `; canon work after-land --wait ${l.subject} reports it` : ""}`);
   ensureLandedReviewer(ws, say);
-  return { id, entry: l.entry, change: l.subject, base: l.base, head: l.head, landed: l.landed, log, state: "queued" };
+  return { id, entry: l.entry, change: l.subject, base: l.base, head: l.head, landed: l.landed, log, state: "queued", reviewer: null };
 }
 
 /**
@@ -87,12 +90,16 @@ export function requeueLandedReview(ws: Workspace, say: Say, change: string): Re
   if (entry === undefined) return err("not_found", `${change}'s latest landing (event ${landing.id}) has no landed queue entry to file its review under`);
   const n = ws.db.db.query<{ n: number }, [number]>("SELECT COUNT(*) AS n FROM landed_reviews WHERE landed = ?").get(landing.id)!.n;
   const log = logFile(ws.db, `landed-review-${entry}-${landing.id}${n > 0 ? `-again-${n}` : ""}.log`);
+  // reason: the reviewer is infrastructure, not part of the change judged: a rerun after a failure uses main's current review
+  // command, so one fixed since the landing can review it; the documents still come from the landing (BR-2449, #215)
+  const now = git(ws.primary, "rev-parse", "--verify", `${ws.config.main}^{commit}`);
+  if (!now.ok) return err("io", `main (${ws.config.main}) cannot be read for its review command: ${now.error.message}`);
   const id = Number(
-    ws.db.db.query("INSERT INTO landed_reviews(entry, change, base, head, landed, log, state, queued_at) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?)").run(entry, change, d.base, d.sha, landing.id, log, new Date().toISOString()).lastInsertRowid,
+    ws.db.db.query("INSERT INTO landed_reviews(entry, change, base, head, landed, log, state, queued_at, reviewer) VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?)").run(entry, change, d.base, d.sha, landing.id, log, new Date().toISOString(), now.value).lastInsertRowid,
   );
-  say(`review: the review after ${change}'s landing of ${d.sha.slice(0, 9)} on ${d.base.slice(0, 9)} is queued ${last ? "again after it failed" : "(none was queued for it)"} (log: ${log}); canon work after-land --wait ${change} reports it`);
+  say(`review: the review after ${change}'s landing of ${d.sha.slice(0, 9)} on ${d.base.slice(0, 9)} is queued ${last ? "again after it failed" : "(none was queued for it)"}, with main's review command at ${now.value.slice(0, 9)} (log: ${log}); canon work after-land --wait ${change} reports it`);
   ensureLandedReviewer(ws, say);
-  return ok({ id, entry, change, base: d.base, head: d.sha, landed: landing.id, log, state: "queued" });
+  return ok({ id, entry, change, base: d.base, head: d.sha, landed: landing.id, log, state: "queued", reviewer: now.value });
 }
 
 interface ReviewerRow {

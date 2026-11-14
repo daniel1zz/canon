@@ -28,15 +28,19 @@ export interface LandedJob {
   readonly head: string;
   /** The landing's land.ok event. */
   readonly landed: number;
+  /** The main commit whose review command runs it; null or absent: the landing's base (BR-2074, BR-2449). */
+  readonly reviewer?: string | null;
 }
 
 /** Reviews one landed commit; an error means a review could not run and the job failed (BR-2441). */
 export async function reviewLanded(ws: Workspace, job: LandedJob, say: Say, guide: string | undefined, running: Running): Promise<Result<void>> {
-  const settings = reviewSettingsOn(ws.primary, job.base);
-  if (!settings.ok) return err("invalid", `canon/config.yaml at ${job.base.slice(0, 9)} cannot be read for the review settings: ${settings.error.message}`);
+  const by = job.reviewer ?? job.base;
+  if (job.reviewer) say(`review: run again with main's review command at ${job.reviewer.slice(0, 9)}, not the one at ${job.base.slice(0, 9)} before the landing (BR-2449)`);
+  const settings = reviewSettingsOn(ws.primary, by);
+  if (!settings.ok) return err("invalid", `canon/config.yaml at ${by.slice(0, 9)} cannot be read for the review settings: ${settings.error.message}`);
   const headRunning: Running = {};
   const at = reviewTree(ws, headRunning, job.head);
-  const run = reviewTree(ws, running, job.base);
+  const run = reviewTree(ws, running, by);
   try {
     const dir = at.get();
     if (!dir.ok) return dir;
@@ -122,13 +126,13 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
         const smallParts = partsNote(small.value.parts);
         if (smallParts) say(`review: ${smallParts}`);
         const r = await runReviews(reviewer, at.value, small.value.prompts, limits, s.reviewParallel);
-        if (!r.ok) return err("io", couldNotRun("rule", r.error.message, at.value, base));
+        if (!r.ok) return err("io", couldNotRun("rule", r.error.message, at.value, job.reviewer ?? base, job.reviewer ? "main" : "before"));
         // reason: the earlier pass's notes are kept with the new ones (BR-2145)
         verdict = { verdict: r.value.verdict, findings: [...usable.findings, ...r.value.findings] };
         incremental = { from: usable.event, added: since.map((d) => d.id) };
       } else {
         const r = await runReviews(reviewer, at.value, prompts, limits, s.reviewParallel);
-        if (!r.ok) return err("io", couldNotRun("rule", r.error.message, at.value, base));
+        if (!r.ok) return err("io", couldNotRun("rule", r.error.message, at.value, job.reviewer ?? base, job.reviewer ? "main" : "before"));
         verdict = r.value;
       }
       const done = settle(ws, job, say, verdict, attachTo, "rule", { ...common, docs_hash, ...(incremental ? { incremental } : { hash }) });
@@ -142,7 +146,7 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
     const prompt = duplicateReviewPrompt(wt, base, head, standing, s.instructions, guide);
     if (!prompt.ok) return prompt;
     const v = await runReview(reviewer, at.value, prompt.value, limits);
-    if (!v.ok) return err("io", couldNotRun("duplicate", v.error.message, at.value, base));
+    if (!v.ok) return err("io", couldNotRun("duplicate", v.error.message, at.value, job.reviewer ?? base, job.reviewer ? "main" : "before"));
     const done = settle(ws, job, say, v.value, standing, "duplicate", { landed: job.landed, docs: standing, reviewed: standing, commit: head, base });
     if (!done.ok) return done;
   }

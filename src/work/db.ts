@@ -188,6 +188,8 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ["review_findings", "question INTEGER"],
   // The canon build that wrote the event: the released commit, or "dev" from source (BR-2475, D-116).
   ["events", "canon TEXT"],
+  // The main commit whose review settings and review command a rerun uses; null runs the landing's own base (BR-2449, #215).
+  ["landed_reviews", "reviewer TEXT"],
 ];
 
 /**

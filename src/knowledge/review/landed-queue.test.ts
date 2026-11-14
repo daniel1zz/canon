@@ -236,6 +236,36 @@ describe("canon work review-landed --again (BR-2449)", () => {
     expect(jobs(root)).toHaveLength(2);
   });
 
+  test("BR-2449: a review run again uses main's current review command, so a reviewer fixed after the landing reviews it; the documents stay the landing's", async () => {
+    const { root } = queueProject();
+    const broken = join(root, "..", `${root.split("/").pop()}-broken.sh`);
+    writeFileSync(broken, "#!/bin/sh\ncat > /dev/null\necho 'profile luna is gone' >&2\nexit 2\n");
+    chmodSync(broken, 0o755);
+    const config = (cmd: string) => `floor: "true"\ntests: []\nreview: ${JSON.stringify(cmd)}\n`;
+    const good = readFileSync(join(root, "canon/config.yaml"), "utf8").match(/^review: (.*)$/m)![1]!;
+    writeFileSync(join(root, "canon/config.yaml"), config(broken));
+    sh(root, "commit", "-qam", "a reviewer that fails");
+    const s = ruleChange(root, 1);
+    expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    expect((await runLandedReviews(ws(root), quiet, undefined)).ok).toBe(true);
+    const [failed] = jobs(root);
+    expect(failed!.state).toBe("failed");
+    expect(readFileSync(failed!.log, "utf8")).toContain("profile luna is gone");
+    writeFileSync(join(root, "canon/config.yaml"), config(JSON.parse(good)));
+    sh(root, "commit", "-qam", "the reviewer is fixed");
+    const fixedAt = sh(root, "rev-parse", "HEAD").trim();
+    const r = cli(root, "--again", s.change);
+    expect(r.out).toContain(`with main's review command at ${fixedAt.slice(0, 9)}`);
+    const again = jobs(root)[1]!;
+    expect(again).toMatchObject({ base: failed!.base, head: failed!.head, state: "queued" });
+    expect(ws(root).db.db.query<{ r: string }, [number]>("SELECT reviewer AS r FROM landed_reviews WHERE id = ?").get(again.id)!.r).toBe(fixedAt);
+    expect((await runLandedReviews(ws(root), quiet, undefined)).ok).toBe(true);
+    const log = readFileSync(again.log, "utf8");
+    expect(log).toContain(`run again with main's review command at ${fixedAt.slice(0, 9)}, not the one at ${failed!.base.slice(0, 9)}`);
+    expect(log).toContain("review: BR-1");
+    expect(lastLine(again.log)).toBe("review: done");
+  });
+
   test("BR-2449: canon work status lists a failed review with its log and the --again command until a later run is done", async () => {
     const { root, fail } = queueProject();
     writeFileSync(fail, "");
