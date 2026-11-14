@@ -1249,8 +1249,8 @@ describe("test files that mostly wait", () => {
     expect(waitingReport([{ file: "src/work.test.ts", ms: 40_000, cpuMs: 30_000 }], quiet)).toEqual({ files: [], lines: [] });
   });
 
-  test("BR-2472: work.test records each file's wall time and the CPU its processes used, a sleep near none and a busy loop near all of it", async () => {
-    const wt = jobsFixture(2, 'case "$1" in *t1*) sleep 0.6;; *) bun -e "const e = Date.now() + 600; while (Date.now() < e) {}";; esac\n', "1");
+  test("BR-2472: work.test records each file's wall time and the CPU its processes used, a sleep uses next to none and a fixed amount of work uses its CPU", async () => {
+    const wt = jobsFixture(2, 'case "$1" in *t1*) sleep 0.6;; *) bun -e "let x = 0; for (let i = 0; i < 4e8; i++) x += i; if (x < 0) console.log(x)";; esac\n', "1");
     await runWorkTest(wt, fakeDeps().d);
     const row = ws(wt).db.db.query<{ d: string }, []>("SELECT detail AS d FROM events WHERE kind = 'work.test' ORDER BY id DESC LIMIT 1").get()!;
     const detail = JSON.parse(row.d) as { fileTimes: Record<string, number[]>; waitedFiles: string[] };
@@ -1258,8 +1258,10 @@ describe("test files that mostly wait", () => {
     const [busyMs, busyCpu] = detail.fileTimes["src/t2.test.ts"]!;
     expect(sleepMs).toBeGreaterThanOrEqual(600);
     expect(sleepCpu!).toBeLessThan(sleepMs! / 2);
-    expect(busyCpu!).toBeGreaterThanOrEqual(500);
-    expect(busyMs).toBeGreaterThanOrEqual(600);
+    // reason: a fixed amount of work uses the same CPU however busy the machine is; a loop timed by the clock does not
+    expect(busyCpu!).toBeGreaterThanOrEqual(150);
+    expect(busyCpu!).toBeGreaterThan(sleepCpu! + 100);
+    expect(busyMs).toBeGreaterThanOrEqual(busyCpu! * 0.9);
     expect(detail.waitedFiles).toEqual([]); // under 10 s: not said
   });
 
