@@ -1,3 +1,4 @@
+import { commitmentFindings } from "./commitments.ts";
 import { fileSourceFailure, MIN_QUOTE, optionProblems, sourceFile, sources } from "./sources.ts";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
@@ -46,6 +47,7 @@ export type CheckRule =
   | "rule-no-example" // an active or planned rule without `untested:` has no example in "## 例子"
   | "example-before-change" // a current rule's "## 例子" states how the product behaved before the change (BR-2301)
   | "rule-business-unmapped" // a rule this work added or changed names no business its domain lists (BR-2431)
+  | "decision-rule-unlinked" // a decision's 决定 names, in a line this work wrote, a rule that does not name it back (BR-2469)
   | "domain-no-decision" // a domain this work adds that no current decision names (BR-2446)
   | "domain-code-missing" // a domain README lists a code path that does not exist (BR-2079)
   | "domain-name-technical" // a domain named after a technical layer: only ever a note, never a finding (BR-2318)
@@ -244,6 +246,7 @@ export function check(input: CheckInput): Finding[] {
   findings.push(...architectureFindings(input));
   // reason: `architecture.since` is this work's base commit, which is also what "added or changed by this work" means here (BR-2431, BR-2344)
   for (const f of businessFindings(input.root, input.corpus, input.architecture?.since)) findings.push({ path: f.path, rule: "rule-business-unmapped", message: f.message });
+  for (const f of commitmentFindings(input.root, input.corpus, input.architecture?.since)) findings.push({ path: f.path, rule: "decision-rule-unlinked", message: f.message });
   // reason: `architecture.refs` is what was there before this work, which is also what "a domain this work adds" means here (BR-2446, BR-2352)
   for (const f of domainDecisionFindings(input.root, input.corpus, input.architecture?.refs)) findings.push({ path: f.path, rule: "domain-no-decision", message: f.message });
   for (const s of staleLinks(input.corpus)) {

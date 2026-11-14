@@ -14,6 +14,7 @@ import { reviewSizeHints } from "../review/size-hint.ts";
 import { testFilesFor } from "./tests.ts";
 import { restatementLine } from "./restatement/restatement.ts";
 import { workBase, workRestatements } from "./restatement/work.ts";
+import { deferralNotes } from "./commitments.ts";
 
 /** `canon check`: corpus integrity. */
 
@@ -44,6 +45,8 @@ const checkCmd = defineCommand({
     const work = must(thisWorkChanges(ws, read.corpus));
     // reason: a restatement this work wrote is said and never fails the check; the rule review is what blocks it (BR-2403, D-84)
     if (work) for (const r of workRestatements(ws.root, must(workBase(ws.root, ws.config.main)), read.corpus, work.changed)) console.error(`note: ${restatementLine(r)}`);
+    // reason: words that put a behaviour off are a guess, so they are said and never fail the check (BR-2470, D-112)
+    if (work) for (const n of deferralNotes(ws.root, must(workBase(ws.root, ws.config.main)), work.changed)) console.error(n);
     // reason: domains the overview never named are old gaps, said and never refused; only a landing that adds one is refused (D-65, D-37)
     for (const h of architectureHints(input)) console.error(h);
     if (args.json) json(findings);
