@@ -364,6 +364,11 @@ export async function runJsonCommand(command: string, cwd: string, prompt: strin
   }
 }
 
+/** The prompt asked again after an answer canon could not read: the same prompt, then why the answer was refused (BR-2239, #227). */
+export function retryPrompt(prompt: string, error: string): string {
+  return `${prompt}\n\n# Your previous answer could not be read\n\n${error}\n\nAnswer again with JSON only, in exactly the format asked above.\n`;
+}
+
 /** How one answer becomes a verdict; the release check passes its own, which places each finding (BR-2411, D-107). */
 export type AnswerParser = (answer: unknown) => Result<ReviewVerdict>;
 

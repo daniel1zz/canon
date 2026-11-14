@@ -429,6 +429,37 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     }
   }, TIMED * 2);
 
+  test("BR-2239: an answer canon cannot read is asked once more with the error; a readable second answer lands, a second unreadable one refuses saying it asked twice (#227)", async () => {
+    const counted = (root: string, second: string) => `n=$(cat ${root}-asked 2>/dev/null || echo 0); echo $((n + 1)) > ${root}-asked; cat > ${promptOf(root)}-$n; if [ "$n" = 0 ]; then echo '{"findings":["${br(1)} changes when the line shows"]}'; else echo '${second}'; fi`;
+    const good = await wordingProject((r) => counted(r, `{"findings":[],"wording":{"${br(1)}":"wording"}}`));
+    write(good.s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+    const said: string[] = [];
+    const out = await land(ws(good.s.worktree), FINISH, (l: string) => said.push(l));
+    expect(out.kind).toBe("landed");
+    expect(readFileSync(`${good.root}-asked`, "utf8").trim()).toBe("2");
+    expect(said.join("\n")).toContain("wording judgement: the answer could not be read");
+    const again = readFileSync(`${promptOf(good.root)}-1`, "utf8");
+    expect(again.startsWith(readFileSync(`${promptOf(good.root)}-0`, "utf8"))).toBe(true);
+    expect(again).toContain("# Your previous answer could not be read");
+    expect(again).toContain("no findings with a criterion");
+    const bad = await wordingProject((r) => counted(r, `{"findings":[{"criterion":"note"}]}`));
+    write(bad.s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+    const refused = await land(ws(bad.s.worktree), FINISH, quiet);
+    expect(refused.kind === "refused" && refused.reason).toBe("review");
+    expect(refused.kind === "refused" && refused.message).toContain("asked twice; neither answer could be read");
+    expect(readFileSync(`${bad.root}-asked`, "utf8").trim()).toBe("2");
+    expect(changeOn(bad.s.worktree, "HEAD", bad.s.change).status).toBe("open");
+  }, TIMED * 2);
+
+  test("BR-2239: a review command that fails is not asked again (#227)", async () => {
+    const { root, s } = await wordingProject((r) => `n=$(cat ${r}-asked 2>/dev/null || echo 0); echo $((n + 1)) > ${r}-asked; cat > /dev/null; echo boom >&2; exit 3`);
+    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+    const out = await land(ws(s.worktree), FINISH, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(out.kind === "refused" && out.message).not.toContain("asked twice");
+    expect(readFileSync(`${root}-asked`, "utf8").trim()).toBe("1");
+  }, TIMED);
+
   test("BR-2361 BR-2239: a review that answered behaviour is not reused for the same prompt: the review command runs again", async () => {
     const { root, s } = await wordingProject((r) => `echo run >> ${promptOf(r)}.runs; cat > /dev/null; echo '{"verdict":"ok","findings":[],"wording":{"${br(1)}":"behaviour"}}'`);
     write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });

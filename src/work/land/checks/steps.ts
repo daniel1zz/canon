@@ -12,7 +12,7 @@ import { runHooks } from "../../hooks/hooks.ts";
 import { changePort } from "../../hooks/ports.ts";
 import { type Doc } from "../../../knowledge/documents/model.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
-import { runReview, wordingPrompt } from "../../../knowledge/review/review.ts";
+import { retryPrompt, runReview, wordingPrompt } from "../../../knowledge/review/review.ts";
 import { REVIEW_NONE } from "../../../knowledge/review/config-keys.ts";
 import type { ReviewNeeds } from "../../../knowledge/review/landed-queue.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
@@ -152,8 +152,15 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       const at = tree.get();
       if (!at.ok) return refuse("environment", at.error.message);
       const limits = { timeoutMs: onMain.reviewTimeoutMs, kind: "land" as const, track: (r: { kill(): void } | undefined) => (v.running.review = r) };
-      const run = await runReview(reviewer, at.value, prompt, limits);
-      if (!run.ok) return refuse("review", couldNotRun("wording", run.error.message, at.value, v.main));
+      let run = await runReview(reviewer, at.value, prompt, limits);
+      // reason: an answer canon cannot read is the reviewer's failure, not a verdict on the change; it is asked once more with the
+      // format error, and only a second unreadable answer refuses (BR-2239, #227). A command that fails or times out is not asked again.
+      const retried = !run.ok && run.error.code === "invalid";
+      if (!run.ok && retried) {
+        say(`wording judgement: the answer could not be read (${run.error.message.slice(0, 200)}); asking the review command once more`);
+        run = await runReview(reviewer, at.value, retryPrompt(prompt, run.error.message), limits);
+      }
+      if (!run.ok) return refuse("review", couldNotRun("wording", retried ? `${run.error.message} (asked twice; neither answer could be read)` : run.error.message, at.value, v.main));
       answers = run.value.wording;
       ws.db.event(ws.actor, "review.wording", subject, { docs: execution.wording.map((q) => q.id), wording: answers ?? {}, hash, commit: head.value });
     }
