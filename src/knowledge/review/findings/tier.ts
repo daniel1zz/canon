@@ -60,12 +60,12 @@ function findingNumber(raw: string): Result<number> {
   return /^\d+$/.test(s) && Number.isSafeInteger(n) && n > 0 ? ok(n) : err("invalid", `the finding number must be a positive whole number, got ${JSON.stringify(raw)}`);
 }
 
-function openRow(db: CoordDb, raw: string): Result<FindingRow> {
+/** The finding by number. A closed one is accepted too: its closing can be corrected with `canon finding amend` under the same tier (BR-2483). */
+function findingRow(db: CoordDb, raw: string): Result<FindingRow> {
   const n = findingNumber(raw);
   if (!n.ok) return n;
   const row = db.db.query<FindingRow, [number]>("SELECT id, tier, closed_at, question, criterion, ids, docs, text FROM review_findings WHERE id = ?").get(n.value);
   if (!row) return err("not_found", `review finding #${n.value} does not exist`);
-  if (row.closed_at !== null) return err("conflict", `review finding #${n.value} is already closed`);
   return ok(row);
 }
 
@@ -78,7 +78,7 @@ export function setTier(db: CoordDb, input: { readonly actor: string; readonly c
   // reason: the tier read, the no-lowering check and the write are one transaction, so a raise committed meanwhile is seen (#223, #224)
   return db.db
     .transaction((): Result<{ id: number; from: Tier | null; to: Tier }> => {
-      const row = openRow(db, input.id);
+      const row = findingRow(db, input.id);
       if (!row.ok) return row;
       const from = row.value.tier as Tier | null;
       if (from !== null && RANK[to as Tier] < RANK[from] && !input.caller.human) return err("refused", `#${row.value.id} is tier ${from}: a session only raises a tier; the owner lowers one (from a terminal outside an agent session)`);
@@ -116,7 +116,7 @@ export function advise(db: CoordDb, input: { readonly cwd: string; readonly main
   if (input.caller.notIndependent) return err("refused", `canon finding advise: this is ${input.caller.notIndependent}; advice comes from a session of its own`);
   const reason = input.reason.trim();
   if (reason === "") return err("invalid", "--reason is required: say why this close holds or does not");
-  const first = openRow(db, input.id);
+  const first = findingRow(db, input.id);
   if (!first.ok) return first;
   const t = targetOf(input.cwd, input.fixed, input.spurious);
   if (!t.ok) return t;
@@ -126,7 +126,7 @@ export function advise(db: CoordDb, input: { readonly cwd: string; readonly main
   const stamp = docsAt(input.cwd, at.value, attachedDocs(first.value.docs, first.value.criterion));
   return db.db
     .transaction((): Result<{ id: number; target: Target }> => {
-      const row = openRow(db, input.id);
+      const row = findingRow(db, input.id);
       if (!row.ok) return row;
       db.db.query("INSERT INTO finding_advice(finding, session, actor, verdict, how, target, reason, at, docs_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)").run(row.value.id, input.caller.key, input.actor, input.verdict, t.value.how, t.value.target, reason, new Date().toISOString(), stamp);
       db.event(input.actor, "finding.advise", null, { finding: row.value.id, session: input.caller.key, verdict: input.verdict, how: t.value.how, target: t.value.target, reason, main: at.value });
@@ -148,7 +148,7 @@ export const REJECT = "reject: do not close it this way";
 export function askOwner(db: CoordDb, input: { readonly cwd: string; readonly main: string; readonly actor: string; readonly id: string; readonly fixed?: string; readonly spurious?: string; readonly reason: string }): Result<{ question: number; text: string; target: Target }> {
   const reason = input.reason.trim();
   if (reason === "") return err("invalid", "--reason is required: say what the close does, for the owner to judge");
-  const first = openRow(db, input.id);
+  const first = findingRow(db, input.id);
   if (!first.ok) return first;
   const t = targetOf(input.cwd, input.fixed, input.spurious);
   if (!t.ok) return t;
@@ -158,7 +158,7 @@ export function askOwner(db: CoordDb, input: { readonly cwd: string; readonly ma
   // reason: the pending check and the new question are one transaction, so two asks at once leave one question (#224)
   return db.db
     .transaction((): Result<{ question: number; text: string; target: Target }> => {
-      const row = openRow(db, input.id);
+      const row = findingRow(db, input.id);
       if (!row.ok) return row;
       const f = row.value;
       if (f.question !== null) {

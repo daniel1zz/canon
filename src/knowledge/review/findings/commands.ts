@@ -1,6 +1,6 @@
 import { defineCommand } from "citty";
 import { entry, must, say, workspace, type DomainCommands } from "../../../invocation/command.ts";
-import { closeFinding, renderClosed } from "./close.ts";
+import { amendFinding, closeFinding, renderClosed } from "./close.ts";
 import { err } from "../../../kernel/result.ts";
 import { advise, askOwner, callerOf, setTier } from "./tier.ts";
 import { reconcileFindings, renderReconciled } from "./reconcile.ts";
@@ -23,6 +23,35 @@ const finding = defineCommand({
         const ws = workspace();
         const c = must(
           closeFinding(ws.db, {
+            cwd: ws.root,
+            main: ws.config.main,
+            actor: ws.actor,
+            id: String(args.id),
+            ...(typeof args.fixed === "string" ? { fixed: args.fixed } : {}),
+            ...(typeof args.spurious === "string" ? { spurious: args.spurious } : {}),
+            reason: typeof args.reason === "string" ? args.reason : "",
+            caller: callerOf(process.env, ws.actor),
+            ...(typeof args.owner === "string" ? { owner: args.owner } : {}),
+            ...(typeof args.covers === "string" ? { covers: args.covers } : {}),
+          }),
+        );
+        say(renderClosed(c));
+      },
+    }),
+    amend: defineCommand({
+      meta: { description: "Correct a closed finding's closing: --fixed <commit on main that changed a document it names> or --spurious \"<quote>\", with --reason saying why the earlier closing was wrong; same checks as close, the earlier closing stays in the event log" },
+      args: {
+        id: { type: "positional", required: true, description: "The closed finding's number" },
+        fixed: { type: "string", description: "The commit on main, after the finding, that changed one of its documents" },
+        spurious: { type: "string", description: "Text, at least 8 characters, found word for word in one of its documents on main" },
+        reason: { type: "string", description: "Why the earlier closing was wrong" },
+        owner: { type: "string", description: "Tier C: the owner question that approves this closing" },
+        covers: { type: "string", description: "With --owner naming a question not asked for this closing: its words that decide it" },
+      },
+      run({ args }) {
+        const ws = workspace();
+        const c = must(
+          amendFinding(ws.db, {
             cwd: ws.root,
             main: ws.config.main,
             actor: ws.actor,

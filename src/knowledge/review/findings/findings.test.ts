@@ -5,7 +5,7 @@ import { land } from "../../../work/land/land.ts";
 import { recordVerdict } from "../../../work/stats/verdict.ts";
 import type { CoordDb } from "../../../work/db.ts";
 import { FAST, project, reviewLandings, sh, startNew, ws } from "../../../work/testkit.ts";
-import { closeFinding } from "./close.ts";
+import { amendFinding, closeFinding, renderClosed } from "./close.ts";
 import { APPROVE, REJECT, advise, askOwner, callerOf, setTier, type Caller } from "./tier.ts";
 import { ask } from "../../../work/humans/questions.ts";
 import { closeRetired, findingOf, identityOf, namedIds, openFindings, quotedSpans, recordFindings, renderFinding, type Finding } from "./findings.ts";
@@ -588,5 +588,44 @@ describe("finding tiers (BR-2477, BR-2478, BR-2479, BR-2480, D-118)", () => {
     expect(c.ok).toBe(true);
     const ev = db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'finding.close'").get()!;
     expect(JSON.parse(ev.detail)).toMatchObject({ tier: "C", owner: older, covers: "keep the three-day refund window" });
+  });
+
+  test("BR-2483: a closed finding's closing is corrected with amend: spurious to fixed by a later commit; the earlier close event stays and the row points at the amend", () => {
+    const { root, db, n, fix } = fixture();
+    tier(db, n, "B");
+    adv(root, db, n, advisor, "support", { spurious: "untested: fixture" });
+    expect(close(root, db, n, main, { spurious: "untested: fixture" }).ok).toBe(true);
+    const first = db.db.query<{ closed_event: number }, [number]>("SELECT closed_event FROM review_findings WHERE id = ?").get(n)!.closed_event;
+    const amend = (more: { fixed?: string; spurious?: string; reason?: string }, caller: Caller = main) => amendFinding(db, { cwd: root, main: "main", actor: "agent:test", id: String(n), reason: "the advisor showed it was real", caller, ...more });
+    expect(why(amend({ fixed: fix, reason: " " }))).toContain("say why the earlier closing was wrong");
+    expect(why(amend({ fixed: fix }))).toContain("another session must support");
+    adv(root, db, n, advisor, "support", { fixed: fix });
+    const a = amend({ fixed: fix });
+    expect(a.ok).toBe(true);
+    if (!a.ok) return;
+    expect(renderClosed(a.value)).toBe(`amended review finding #${n}: now fixed by ${fix.slice(0, 9)}; was spurious (event ${first})`);
+    const row = db.db.query<{ closed_how: string; closed_event: number }, [number]>("SELECT closed_how, closed_event FROM review_findings WHERE id = ?").get(n)!;
+    expect(row.closed_how).toBe("fixed");
+    const ev = db.db.query<{ kind: string; detail: string }, [number]>("SELECT kind, detail FROM events WHERE id = ?").get(row.closed_event)!;
+    expect(ev.kind).toBe("finding.amend");
+    expect(JSON.parse(ev.detail)).toMatchObject({ finding: n, how: "fixed", commit: fix, reason: "the advisor showed it was real", tier: "B", from: { how: "spurious", target: "untested: fixture", event: first } });
+    expect(db.db.query<{ kind: string }, [number]>("SELECT kind FROM events WHERE id = ?").get(first)!.kind).toBe("finding.close");
+    expect(why(amend({ fixed: fix }))).toContain("is already closed as fixed by");
+  });
+
+  test("BR-2483: amend applies close's checks and the tier's; an open finding is closed, not amended; an untriaged closed finding is tiered first", () => {
+    const { root, db, n, fix, commit } = fixture();
+    const amend = (more: { fixed?: string; spurious?: string }, caller: Caller = main) => amendFinding(db, { cwd: root, main: "main", actor: "agent:test", id: String(n), reason: "r", caller, ...more });
+    expect(why(amend({ fixed: fix }))).toContain("is still open");
+    expect(close(root, db, n, owner, { fixed: fix }).ok).toBe(true);
+    expect(why(close(root, db, n, owner, { fixed: fix }))).toContain(`canon finding amend ${n}`);
+    expect(why(amend({ fixed: fix }, owner))).toContain("is already closed as fixed by");
+    const later = commit("Rule 1, fixed properly.");
+    expect(why(amend({ fixed: later }))).toContain("has no tier yet");
+    expect(tier(db, n, "A").ok).toBe(true);
+    expect(why(amend({ spurious: "not in any document at all" }))).toContain("the quote is in none of the documents");
+    expect(why(amend({ spurious: "untested: fixture" }))).toContain("a spurious close needs another session's support");
+    expect(amend({ fixed: later }).ok).toBe(true);
+    expect(amend({ spurious: "untested: fixture" }, owner).ok).toBe(true);
   });
 });
