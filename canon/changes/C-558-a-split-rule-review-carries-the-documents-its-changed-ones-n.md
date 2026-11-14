@@ -3,10 +3,13 @@ id: C-558
 title: A split rule review carries the documents its changed ones name in full
   only as far as they fit; the rest are listed by id, title and first line
   (#229)
-status: open
+status: done
 rules:
   - BR-2488
   - BR-2359
+passes:
+  BR-2359: 886e2f936073858a test
+  BR-2488: 8dc8f0fac17a88d4 test
 ---
 
 ## 为什么
