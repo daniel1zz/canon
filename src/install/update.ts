@@ -270,7 +270,7 @@ export async function updateProject(ws: Workspace, source: string, force: boolea
   }
   const lw = openWorkspace(wt);
   if (!lw.ok) return lw;
-  const out = await land(lw.value, { finish: true, timeoutMs }, say);
+  const out = await land(lw.value, { finish: true, timeoutMs, removeWorktree: "now" }, say);
   if (out.kind === "landed") return ok({ kind: "landed", version: st.value.version, change: started.value.change, sha: out.sha });
   const findings = out.kind === "refused" && out.findings ? `\n${out.findings.map((x) => `  ${x.rule} ${x.path}: ${x.message}`).join("\n")}` : "";
   const message = out.kind === "timeout" ? `still ${out.ahead} landing(s) ahead; run \`canon chore land\` in ${wt}` : `${out.reason}: ${out.message}${findings}`;

@@ -106,7 +106,7 @@ describe("Codex project assets through the CLI", () => {
     expect(readFileSync(outside, "utf8")).toBe("outside");
   });
 
-  test("BR-2459 BR-2460 BR-2084 BR-2278: update lands Codex assets; uninstall removes managed assets but keeps team instructions and tools", () => {
+  test("BR-2459 BR-2460 BR-2084 BR-2278 BR-2486: update lands Codex assets and removes its landed worktree at once; uninstall removes managed assets but keeps team instructions and tools", () => {
     const { root, source } = fixture();
     writeFileSync(join(root, "AGENTS.md"), "Team instructions.\n");
     expect(cli(root, source, "init", "--agent", "codex", "--floor", "true").code).toBe(0);
@@ -122,6 +122,8 @@ describe("Codex project assets through the CLI", () => {
     expect(update.code).toBe(0);
     expect(sh(root, "show", "main:.agents/skills/canon-a/SKILL.md")).toBe("upstream v2");
     expect(sh(root, "status", "--porcelain")).toBe("");
+    // BR-2486: canon update runs from the primary checkout, so it removes its landed worktree at once, leaving nothing for uninstall to wait for (BR-2283)
+    expect(sh(root, "worktree", "list", "--porcelain").split("\n").filter((l) => l.startsWith("worktree ")).length).toBe(1);
     const removed = cli(root, source, "uninstall");
     expect(removed.code).toBe(0);
     expect(existsSync(join(root, ".agents/skills/canon-a"))).toBe(false);

@@ -6,6 +6,7 @@ import { logFile } from "../hooks/hooks.ts";
 import { canonCommand } from "../watch/watch.ts";
 import type { Result } from "../../kernel/result.ts";
 import { clean } from "./session.ts";
+import { isGone, processOf } from "../claims/liveness.ts";
 
 /**
  * The landed worktree removed after `canon work land --finish` (BR-2486, #228): a background `canon work clean <subject>
@@ -34,6 +35,9 @@ export function startCleanAfterLanding(ws: Workspace, say: Say, subject: string)
     // reason: its own process group, from the primary checkout, so it outlives the landing and is never inside the worktree it removes (BR-2486)
     const p = Bun.spawn([...canonCommand(), "work", "clean", subject, "--after-landing"], { cwd: ws.primary, stdout: fd, stderr: fd, stdin: "ignore", detached: true, env: { ...(process.env as Record<string, string>) } });
     p.unref();
+    // reason: canon uninstall waits for a removal still running, so the process is recorded where it can be checked (BR-2283, BR-2486)
+    const proc = processOf(p.pid);
+    ws.db.event(ws.actor, "clean.start", subject, { log, pid: p.pid, start: proc?.start ?? null });
   } catch (e) {
     say(`${subject}'s worktree was not removed: \`canon work clean ${subject} --after-landing\` could not be started in the background (${(e as Error).message}); run canon work clean ${subject} once you have left it`);
     return;
@@ -61,6 +65,27 @@ export async function cleanAfterLanding(ws: Workspace, say: Say, subject: string
     }
     await Bun.sleep(delaysMs[i]!);
   }
+}
+
+/**
+ * The background removals still running (BR-2283, BR-2486): the latest one started for each subject whose log has no
+ * `clean: done` and whose process is not provably gone (an unreadable process table counts as running, D-11).
+ */
+export function runningCleanups(db: CoordDb): { readonly subject: string; readonly log: string }[] {
+  const rows = db.db.query<{ subject: string; detail: string }, []>("SELECT subject, detail FROM events WHERE kind = 'clean.start' AND id IN (SELECT MAX(id) FROM events WHERE kind = 'clean.start' GROUP BY subject)").all();
+  return rows.flatMap((r) => {
+    const d = JSON.parse(r.detail) as { log: string; pid: number; start: string | null };
+    const read = readCleanAfterLanding(db, r.subject);
+    if (!read || read.done) return [];
+    // reason: a process whose start could not be read when it was started is judged by its pid alone (BR-2486)
+    const gone = d.start === null ? processOf(d.pid) === undefined : isGone({ pid: d.pid, start: d.start }) === true;
+    return gone ? [] : [{ subject: r.subject, log: d.log }];
+  });
+}
+
+/** The subject of the latest background removal started, for `canon work after-land` named no change (BR-2486). */
+export function latestCleanup(db: CoordDb): string | undefined {
+  return db.db.query<{ subject: string }, []>("SELECT subject FROM events WHERE kind = 'clean.start' ORDER BY id DESC LIMIT 1").get()?.subject;
 }
 
 /** The background removal's log for `subject`, as `canon work after-land` reports it; undefined when none was started. */

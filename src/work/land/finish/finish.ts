@@ -12,6 +12,7 @@ import { addedReferenceStamps } from "../../../knowledge/links/stamp.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import { queueLandedReview, type ReviewNeeds } from "../../../knowledge/review/landed-queue.ts";
 import { startCleanAfterLanding } from "../../session/clean-after-land.ts";
+import { clean } from "../../session/session.ts";
 
 /** The `canon: close C-n` commit `--finish` made before queuing, so a landing that fails can take it back. */
 export interface CloseCommit {
@@ -165,7 +166,12 @@ export function finishLanding(ws: Workspace, opts: LandOptions, say: Say, l: { e
     finished = true;
     say(`${l.subject} ${isChore(l.subject) ? "completed" : "closed"}`);
     // reason: landed worktrees piled up because only a manual clean removed them (BR-2486, #228)
-    startCleanAfterLanding(ws, say, l.subject);
+    if (opts.removeWorktree === "now") {
+      // reason: run from the primary checkout, nothing of this landing is inside the worktree; a background removal would only make the next command wait for it (BR-2283)
+      const c = clean({ ...ws, root: ws.primary }, say, [l.subject]);
+      if (!c.ok) say(`${l.subject}'s worktree was not removed: ${c.error.message}`);
+      else for (const k of c.value.kept) say(`kept ${k}`);
+    } else startCleanAfterLanding(ws, say, l.subject);
   }
   return { kind: "landed", sha: l.sha, change: l.subject, subject: l.subject, ...(l.subject ? { workKind: isChore(l.subject) ? "chore" as const : "change" as const } : {}), finished };
 }

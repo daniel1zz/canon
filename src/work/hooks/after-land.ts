@@ -1,7 +1,7 @@
 import type { Workspace } from "../workspace.ts";
 import { batchState, renderAfterLand, settleBackgroundHooks, type BackgroundBatch, type BatchState } from "./hooks.ts";
 import { ensureLandedReviewer, landedReview, type Job } from "../../knowledge/review/landed-queue.ts";
-import { CLEAN_DONE, readCleanAfterLanding } from "../session/clean-after-land.ts";
+import { CLEAN_DONE, latestCleanup, readCleanAfterLanding } from "../session/clean-after-land.ts";
 
 /**
  * What `canon work after-land` reports for one landing (BR-2166, BR-2441): its background after_land commands and the review
@@ -18,7 +18,8 @@ export interface AfterLand {
 export function readAfterLand(ws: Workspace, change: string | undefined, log?: string, job?: number): AfterLand {
   const batch = settleBackgroundHooks(ws.db, ws.actor, change, log);
   const review = job !== undefined ? landedReview(ws.db, { id: job }) : batch ? (batch.entry !== null ? landedReview(ws.db, { entry: batch.entry }) : undefined) : landedReview(ws.db, change !== undefined ? { change } : {});
-  const subject = change ?? batch?.change ?? review?.change ?? undefined;
+  // reason: a landing with no after_land commands and no review still has its worktree removal to report (BR-2486)
+  const subject = change ?? batch?.change ?? review?.change ?? latestCleanup(ws.db);
   const clean = subject ? readCleanAfterLanding(ws.db, subject) : undefined;
   return { batch, review, ...(clean ? { clean } : {}) };
 }

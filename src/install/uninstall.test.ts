@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { CHECK_AS_COMMAND, planUnhook, RECORD_COMMAND, RESTATEMENT_COMMAND, RESTATEMENT_MATCHER, SNAPSHOT_COMMAND } from "./hook.ts";
 import { boundedLoop, waitFor } from "../work/testkit.ts";
+import { CoordDb } from "../work/db.ts";
+import { processOf } from "../work/claims/liveness.ts";
 
 // reason: every test drives the canon CLI through spawned processes, a landing included (C-111)
 setDefaultTimeout(60_000);
@@ -235,6 +237,33 @@ describe("canon uninstall", () => {
     writeFileSync(`${hold}.release`, "");
     await waitFor("the cleanup to finish once the after_land command has ended", () => canon(root, env, "uninstall").code === 0, 30_000);
     expect(existsSync(guard(root))).toBe(false);
+  });
+});
+
+describe("waiting for a background worktree removal (BR-2283, BR-2486)", () => {
+  test("BR-2283, BR-2486: while a landed worktree is still being removed in the background, the cleanup waits with exit 75; once it is done it finishes", async () => {
+    // A project whose coordination database records a removal whose process is still alive and whose log is not done.
+    const other = project();
+    const state = join(other.root, ".git", "canon");
+    const log = join(state, "logs", "clean-C-9.log");
+    mkdirSync(dirname(log), { recursive: true });
+    writeFileSync(log, "");
+    const sleeper = Bun.spawn(["sleep", "30"], { stdout: "ignore", stderr: "ignore", stdin: "ignore" });
+    try {
+      const db = CoordDb.open(join(state, "state.db"), other.root);
+      if (!db.ok) throw new Error(db.error.message);
+      db.value.event("agent:test", "clean.start", "C-9", { log, pid: sleeper.pid, start: processOf(sleeper.pid)?.start ?? null });
+      db.value.db.close();
+      const r = canon(other.root, other.env, "uninstall");
+      expect(r.code).toBe(75);
+      expect(r.err).toContain("still removing the landed worktree of C-9");
+      expect(existsSync(guard(other.root))).toBe(true);
+      writeFileSync(log, "clean: done\n");
+      await waitFor("the cleanup to finish once the removal is done", () => canon(other.root, other.env, "uninstall").code === 0, 30_000);
+      expect(existsSync(guard(other.root))).toBe(false);
+    } finally {
+      sleeper.kill();
+    }
   });
 });
 

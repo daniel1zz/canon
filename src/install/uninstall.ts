@@ -20,6 +20,7 @@ import { branchSubject, isChore } from "../work/session/subject.ts";
 import { hooksDir, removeGuard } from "./githook.ts";
 import { planUnhook, writeUnhook } from "./hook.ts";
 import { applyUnskills, planUnskills } from "./install.ts";
+import { runningCleanups } from "../work/session/clean-after-land.ts";
 
 /**
  * `canon uninstall` (D-46). canon/config.yaml on main is canon's switch: while it is there, every clone's git guard is
@@ -209,7 +210,7 @@ async function removeFromMain(root: string, config: Config, opts: UninstallOptio
     const r = git(wt, ...args);
     if (!r.ok) return r;
   }
-  const out = await land(lw.value, { finish: true, timeoutMs: opts.timeoutMs ?? ws.config.landTimeoutMs }, say);
+  const out = await land(lw.value, { finish: true, timeoutMs: opts.timeoutMs ?? ws.config.landTimeoutMs, removeWorktree: "now" }, say);
   if (out.kind === "timeout") return ok({ kind: "timeout", message: `still ${out.ahead} landing(s) ahead; run \`canon chore land\` in ${wt}, then canon uninstall again` });
   if (out.kind === "refused") {
     const findings = out.findings ? `\n${out.findings.map((x) => `  ${x.rule} ${x.path}: ${x.message}`).join("\n")}` : "";
@@ -250,6 +251,9 @@ function cleanUp(root: string, config: Config | undefined, opts: UninstallOption
     const batch = settleBackgroundHooks(db, actor.value);
     if (batch && batchState(batch) === "running") return ok({ kind: "later", message: "the last landing's after_land commands are still running; run canon uninstall again once they finish (canon work after-land --wait)" });
     if (liveWatcher(db)) return ok({ kind: "later", message: "canon's background floor watcher is still running; run canon uninstall again once it finishes" });
+    // reason: the removal runs git inside the landed worktree, which would read as work still in use (BR-2283, BR-2486)
+    const removing = runningCleanups(db);
+    if (removing.length > 0) return ok({ kind: "later", message: `canon is still removing the landed worktree of ${removing.map((r) => r.subject).join(", ")} in the background (log: ${removing.map((r) => r.log).join(", ")}); run canon uninstall again once it finishes (canon work after-land --wait ${removing[0]!.subject})` });
   }
 
   let did = false;

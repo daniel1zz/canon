@@ -34,7 +34,8 @@ describe("the landed worktree removed after land --finish (BR-2486)", () => {
     const subject = subjectOf(s.worktree);
     expect(said.join("\n")).toContain(`${subject}'s worktree is removed in the background once nothing runs inside it`);
     expect(said.join("\n")).not.toContain("once you have left it");
-    const r = await waitAfterLand(ws(root), subject, 25_000, 200);
+    // with no change named, after-land finds the latest removal (BR-2486)
+    const r = await waitAfterLand(ws(root), undefined, 25_000, 200);
     expect(r.clean?.done).toBe(true);
     const text = renderAfterLandAll(r);
     expect(text).toContain("removal of the landed worktree");

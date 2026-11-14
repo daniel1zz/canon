@@ -12,6 +12,11 @@ export interface LandOptions {
   readonly fetcher?: Fetcher;
   /** The workflow guide `canon brief` prints, one of the standing texts the duplicate review compares (BR-2143). */
   readonly guide?: string;
+  /**
+   * With `finish`, how the landed worktree is removed (BR-2486): `background` (the default) once nothing runs inside it;
+   * `now`, in this process, for a landing started from the primary checkout (canon update and uninstall), where nothing does.
+   */
+  readonly removeWorktree?: "background" | "now";
 }
 
 export type LandOutcome =
