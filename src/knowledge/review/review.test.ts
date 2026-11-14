@@ -121,7 +121,8 @@ describe("rule review prompt", () => {
     expect(every).toBeGreaterThan(-1);
     expect(history).toBeGreaterThan(every);
     expect(once).toBeGreaterThan(every);
-    expect(prompt).toContain("Old text that names no replacement is judged as usual.");
+    expect(prompt).toContain("lists another in `amends:` or `supersedes:`, the later one wins where they differ");
+    expect(prompt).toContain("Old text that names no replacement and is listed in no `amends:` or `supersedes:` is judged as usual.");
   });
 });
 
