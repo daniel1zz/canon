@@ -613,7 +613,7 @@ describe("finding tiers (BR-2477, BR-2478, BR-2479, BR-2480, D-118)", () => {
     expect(why(amend({ fixed: fix }))).toContain("is already closed as fixed by");
   });
 
-  test("BR-2483: amend applies close's checks and the tier's; an open finding is closed, not amended; an untriaged closed finding is tiered first", () => {
+  test("BR-2483, BR-2453: amend applies close's checks and the tier's; closing a closed finding points at amend; an open finding is closed, not amended; an untriaged closed finding is tiered first", () => {
     const { root, db, n, fix, commit } = fixture();
     const amend = (more: { fixed?: string; spurious?: string }, caller: Caller = main) => amendFinding(db, { cwd: root, main: "main", actor: "agent:test", id: String(n), reason: "r", caller, ...more });
     expect(why(amend({ fixed: fix }))).toContain("is still open");
