@@ -1,3 +1,4 @@
+import { liveClaims } from "../claims/claims.ts";
 import { basename } from "node:path";
 import type { Workspace } from "../workspace.ts";
 import { git, listWorktreesLocked } from "../../kernel/git.ts";
@@ -40,8 +41,11 @@ export function overlapsOf(ws: Workspace, worktree: string): Overlaps {
   if (!own.ok) return { found: [], unreadable: [`cannot compare ${mine.branch} with ${ws.config.main}: ${own.error.message}`] };
   if (own.value.size === 0) return { found: [], unreadable };
   const out: Overlap[] = [];
+  // reason: only work someone holds now is compared; a worktree nobody holds (lease ended, holder gone, released) is compared again when it is resumed, which runs this check (BR-2062)
+  const held = new Set(liveClaims(ws.db).map((c) => c.holder));
   for (const w of wts.value) {
     if (w.path === worktree || !w.path.startsWith(dir) || !w.branch || w.branch === ws.config.main) continue;
+    if (!held.has(w.path)) continue;
     const theirs = changedFiles(ws, w.branch);
     if (!theirs.ok) {
       unreadable.push(`cannot compare ${w.branch} with ${ws.config.main}: ${theirs.error.message}`);

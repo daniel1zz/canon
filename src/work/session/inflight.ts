@@ -8,7 +8,7 @@ import { CANON_DIR } from "../../knowledge/documents/read.ts";
 import type { ArchitectureBase } from "../../knowledge/check/architecture.ts";
 import { liveClaims } from "../claims/claims.ts";
 import type { Workspace } from "../workspace.ts";
-import { handoffs, type Handoff } from "./handoffs.ts";
+import { firstLine, handoffs, type Handoff } from "./handoffs.ts";
 
 /**
  * The changes `canon change list` and `canon brief` offer to pick from (BR-2291, D-50): those in a corpus, plus the
@@ -153,7 +153,7 @@ export function marksOf(l: ListedChange, full: boolean): string[] {
   if (l.onBranch.length === 1) out.push(`on branch ${l.onBranch[0]}`);
   if (l.onBranch.length > 1) out.push(`ambiguous: ${l.onBranch.join(", ")}`);
   if (l.onBranch.length && l.change.status === "done") out.push("closed on branch, not landed");
-  if (l.handoff) out.push(full ? `handoff: ${l.handoff.next}` : "handoff");
+  if (l.handoff) out.push(full ? `handoff: ${firstLine(l.handoff.next)}` : "handoff");
   if (l.claimed) out.push("claimed");
   return out;
 }

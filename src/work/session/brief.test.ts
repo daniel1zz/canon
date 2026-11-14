@@ -1,5 +1,5 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { holdClaim, takeClaim } from "../claims/claims.ts";
@@ -27,6 +27,11 @@ const commitFile = (wt: string, file: string, text: string) => {
 };
 
 /** A worktree under the change worktree directory whose branch shares no history with main, so `git diff main...` fails. */
+/** Gives the orphan worktree a live claim, as a worktree someone works in has (BR-2062 compares only those). */
+function holdOrphan(root: string, path: string): void {
+  ws(root).db.db.query("INSERT INTO claims(subject, holder, worktree, expires_at, version) VALUES ('C-9', 'agent:z', ?, ?, 1)").run(realpathSync(path), new Date(Date.now() + 3_600_000).toISOString());
+}
+
 function orphanWorktree(root: string): { path: string; branch: string } {
   const path = `${join(root, "..", root.split("/").pop()!)}.worktrees/C-9`;
   sh(root, "worktree", "add", "-q", "--orphan", "-b", "change/C-9-orphan", path);
@@ -180,11 +185,26 @@ describe("overlap comparisons that fail", () => {
     const s = startNew(root, "A");
     commitFile(s.worktree, "shared.txt", "a\n");
     const o = orphanWorktree(root);
+    // a held one: an unheld worktree is not compared at all (BR-2062)
+    holdOrphan(root, o.path);
     const lines: string[] = [];
     const found = noticeOverlaps(ws(s.worktree), s.worktree, s.change, "land", (l) => lines.push(l));
     expect(found).toEqual([]);
     expect(lines.length).toBe(1);
     expect(lines[0]).toStartWith(`overlap: cannot compare ${o.branch} with main: `);
+  });
+
+  test("BR-2062: a worktree whose claim has ended or that nobody claims is not compared; once held again it is", () => {
+    const root = project();
+    const a = startNew(root, "A");
+    const b = startNew(root, "B");
+    commitFile(a.worktree, "shared.txt", "a\n");
+    commitFile(b.worktree, "shared.txt", "b\n");
+    const db = ws(root).db;
+    db.db.query("UPDATE claims SET expires_at = ? WHERE subject = ?").run(new Date(Date.now() - 1000).toISOString(), b.change);
+    expect(noticeOverlaps(ws(a.worktree), a.worktree, a.change, "land", () => {})).toEqual([]);
+    db.db.query("UPDATE claims SET expires_at = ? WHERE subject = ?").run(new Date(Date.now() + 3_600_000).toISOString(), b.change);
+    expect(noticeOverlaps(ws(a.worktree), a.worktree, a.change, "land", () => {}).map((o) => o.change)).toEqual([b.change]);
   });
 
   test("BR-2063: brief says a failed comparison, prints overlaps without writing overlap.notice", () => {
@@ -198,6 +218,7 @@ describe("overlap comparisons that fail", () => {
     expect(r.out).toContain(`Overlap: ${b.change} also changes shared.txt`);
     expect(ws(root).db.db.query("SELECT 1 FROM events WHERE kind = 'overlap.notice'").all()).toEqual([]);
     const o = orphanWorktree(root);
+    holdOrphan(root, o.path);
     const again = canon(a.worktree, "brief");
     expect(again.code).toBe(0);
     expect(again.out).toContain(`Overlap check failed: cannot compare ${o.branch} with main: `);

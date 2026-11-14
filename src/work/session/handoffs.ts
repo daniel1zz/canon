@@ -33,3 +33,11 @@ export function handoffs(db: CoordDb): Handoff[] {
 export function dropHandoff(db: CoordDb, subject: string): void {
   db.db.query("DELETE FROM handoffs WHERE subject = ?").run(subject);
 }
+
+/** A handoff's first line, at most 200 characters, for the lists that show every handoff at once (BR-2465). */
+export function firstLine(next: string): string {
+  const lines = next.split("\n");
+  const line = lines[0]!.trimEnd();
+  const cut = line.length > 200 ? `${line.slice(0, 200)}…` : line;
+  return lines.length > 1 || line.length > 200 ? `${cut} (canon brief in its worktree shows all of it)` : cut;
+}

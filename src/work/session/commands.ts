@@ -19,7 +19,7 @@ import { activeQueue, keptPlaces } from "../land/queue/queue.ts";
 import { marks } from "../land/queue/urgent.ts";
 import { attemptIn, describeAttempt, goneLanders, openAttempts } from "../land/queue/interrupted.ts";
 import { openWorkspace, type Workspace } from "../workspace.ts";
-import { handoffs } from "./handoffs.ts";
+import { firstLine, handoffs } from "./handoffs.ts";
 import { listedChanges, marksOf } from "./inflight.ts";
 import { overlapsOf } from "./overlap.ts";
 import { clean, LESSON_REMINDER, mainCorpus, start, startChore, stop } from "./session.ts";
@@ -113,7 +113,7 @@ const status = defineCommand({
     if (data.urgent.length > 0) say("Urgent by the owner:");
     for (const m of data.urgent) say(`  ${m.change}  relayed by ${m.actor} (${m.at}): ${m.words}`);
     say("Handoffs:");
-    for (const h of data.handoffs) say(`  ${h.subject.padEnd(8)} next: ${h.next}  (${h.actor}, ${h.updated_at})`);
+    for (const h of data.handoffs) say(`  ${h.subject.padEnd(8)} next: ${firstLine(h.next)}  (${h.actor}, ${h.updated_at})`);
     say(`Questions waiting for a human: ${data.questions.length}`);
   },
 });

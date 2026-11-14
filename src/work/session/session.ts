@@ -304,7 +304,12 @@ function createDocProbe(ws: Workspace, corpus: Corpus, _title: string): { id: st
 export const LESSON_REMINDER =
   "lessons: if this work taught something about the process or tools that could become a mechanism (a rule, check or command) beyond this change, record it under ## 教训 in the change file and ask the owner before making it one; the rules, tests and checks this change wrote for its own feature or fix are not lessons";
 
+/** The longest `--next` a handoff takes (BR-2465): the next step, not a log; details belong in the change file. */
+export const HANDOFF_NEXT_MAX = 2000;
+
 export function stop(ws: Workspace, next: string, note: string | undefined, release: boolean, say: Say = () => {}): Result<string> {
+  // reason: one 42 KB handoff made canon work status print 65 KB to every session (BR-2465)
+  if (next.length > HANDOFF_NEXT_MAX) return err("invalid", `--next is ${next.length} characters; a handoff names the next step in at most ${HANDOFF_NEXT_MAX} (BR-2465): write the details into the change file and point to them`);
   // Release too goes through the holder check: only the holder lets its claim go (BR-2104).
   const renewed = renewClaim(ws.db, ws.root, ws.actor, ws.config.claimLeaseMs, sessionProcess());
   if (!renewed.ok) return renewed;

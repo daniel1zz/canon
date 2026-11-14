@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { claims, holdClaim, takeClaim } from "../claims/claims.ts";
 import { processOf } from "../claims/liveness.ts";
 import { clean, start, startChore, stop } from "./session.ts";
+import { firstLine, handoffs } from "./handoffs.ts";
 import { writeSchemaFile } from "../../invocation/reference/reference.ts";
 import { land } from "../land/land.ts";
 import { addWorktree, git, listWorktreesLocked, withWorktreeLock } from "../../kernel/git.ts";
@@ -895,5 +896,19 @@ describe("no new change while review work is owed", () => {
     // a review that failed (the review command's quota ran out, say) is not owed: it does not hold a start back
     db.db.query("INSERT INTO landed_reviews(entry, change, base, head, landed, log, state, queued_at) VALUES (1, 'C-1', 'a', 'b', 1, 'review.log', 'failed', ?)").run(new Date().toISOString());
     expect(start(ws(root), { title: "Next" }, quiet).ok).toBe(true);
+  });
+});
+
+describe("handoff length", () => {
+  test("BR-2465: --next over 2000 characters is refused and not recorded; status shows only the first line of a long one", () => {
+    const root = project();
+    const s = startNew(root, "Long");
+    const long = stop(ws(s.worktree), "x".repeat(2001), undefined, false);
+    expect(long.ok ? "" : `${long.error.code} ${long.error.message}`).toContain("invalid --next is 2001 characters");
+    expect(handoffs(ws(root).db)).toEqual([]);
+    expect(stop(ws(s.worktree), "y".repeat(2000), undefined, false).ok).toBe(true);
+    expect(firstLine("first step\nsecond line")).toBe("first step (canon brief in its worktree shows all of it)");
+    expect(firstLine("z".repeat(201))).toBe(`${"z".repeat(200)}… (canon brief in its worktree shows all of it)`);
+    expect(firstLine("short")).toBe("short");
   });
 });
