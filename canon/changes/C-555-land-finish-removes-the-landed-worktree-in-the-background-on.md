@@ -2,9 +2,12 @@
 id: C-555
 title: land --finish removes the landed worktree in the background once the
   landing has exited (#228)
-status: open
+status: done
 rules:
   - BR-2486
+passes:
+  BR-2167: a1051c9e0f56d237 test
+  BR-2486: d3ffc244cee93909 test
 ---
 
 ## 为什么
