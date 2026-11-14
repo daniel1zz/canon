@@ -17,9 +17,10 @@ import { reviewSettingsOn } from "../../work/land/checks/review-scope.ts";
 /**
  * The queue of landed reviews (BR-2441, D-89): a landing that changed rules, decisions, releases or standing instructions,
  * with a reviewer on main, queues one review of the commit it put on main and starts the reviewer unless one is alive. The
- * reviewer runs the queued reviews one at a time, in queue order, and ends when none is left; only one runs per clone (the
- * `landed_reviewer` row), so the reviews of a busy morning never run side by side (D-83). A review left `running` by a
- * reviewer that died is run again by the next one, so a queued review is never dropped.
+ * reviewer runs the queued reviews in queue order, up to `landed_review_parallel` at once with their calls within
+ * `review_parallel`, reviews of the same files one after another (BR-2487, D-121), and ends when none is left; only one
+ * reviewer runs per clone (the `landed_reviewer` row). A review left `running` by a reviewer that died is run again by the
+ * next one, so a queued review is never dropped.
  */
 
 /** What a landing found for the reviews after it: what they read, and main's reviewer (BR-2441). */
