@@ -89,4 +89,23 @@ describe("a decision's commitments reach the rules that hold them", () => {
     put(wt, { "canon/rules/billing/BR-9.md": rule(9, "x。\n\n`在那之前` 这几个字写在反引号里。") });
     expect(canon(wt, "check").err).not.toContain("puts off a behaviour");
   });
+
+  test("BR-2471: an item of a 决定 this work wrote that names no rule is a note, never a finding; an item naming one, or one this work did not write, is not said", () => {
+    const root = fixture();
+    put(root, { "canon/decisions/D-3.md": decision(3, "1. 旧的一条没写规则。") });
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "an old item with no rule");
+    const wt = startNew(root, "新决策").worktree;
+    put(wt, {
+      "canon/decisions/D-2.md": decision(2, "1. 退款立即到账，按 BR-9。\n2. 敌人有韧性值：\n   - 韧性打空进入硬直。\n3. 背景里的 `BR-12` 不算点名。"),
+      "canon/rules/billing/BR-9.md": rule(9, "立即到账（D-2）。"),
+      "canon/decisions/D-3.md": decision(3, "1. 旧的一条没写规则。", "后果改了。"),
+    });
+    const r = canon(wt, "check");
+    expect(r.out).not.toContain("names no rule");
+    const notes = r.err.split("\n").filter((l) => l.includes("names no rule"));
+    expect(notes.length).toBe(2);
+    expect(notes[0]).toMatch(/^note: canon\/decisions\/D-2\.md:\d+ an item of D-2's 决定 this work wrote names no rule/);
+    expect(notes.join("\n")).not.toContain("D-3");
+  });
 });

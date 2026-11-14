@@ -90,3 +90,43 @@ export function deferralNotes(root: string, base: string, docs: readonly Doc[]):
   }
   return out;
 }
+
+const ITEM_START = /^(?:\d+[.、]|[-*])\s/;
+
+/** The items of a 决定 section: each top-level list item with the indented lines under it, or each paragraph; 1-based line numbers. */
+function itemsOf(lines: readonly string[], section: ReadonlySet<number>): number[][] {
+  const items: number[][] = [];
+  let cur: number[] | undefined;
+  for (const n of [...section].sort((a, b) => a - b)) {
+    const line = lines[n - 1]!;
+    if (line.trim() === "") {
+      if (cur && !ITEM_START.test(lines[cur[0]! - 1]!)) cur = undefined; // a blank line ends a paragraph, not a list item
+      continue;
+    }
+    if (ITEM_START.test(line) || cur === undefined) items.push((cur = [n]));
+    else cur.push(n);
+  }
+  return items;
+}
+
+/**
+ * The items of a 决定 section this work wrote that name no rule, as notes (BR-2471): a commitment with no rule id is the
+ * one BR-2469 cannot follow. A decision committing to no product behaviour has such items too, so this never fails the check.
+ */
+export function unnamedCommitmentNotes(root: string, corpus: Corpus, base: string, docs: readonly Doc[]): string[] {
+  const rulePrefix = `${corpus.types.find((t) => t.name === "rule")!.prefix}-`;
+  const out: string[] = [];
+  for (const doc of docs) {
+    if (doc.kind !== "decision" || !isCurrent(doc) || !existsSync(join(root, doc.path))) continue;
+    const now = readFileSync(join(root, doc.path), "utf8");
+    const lines = now.split("\n");
+    const added = addedLines(now, textAt(root, base, doc.path));
+    for (const item of itemsOf(lines, sectionLines(now, DECISION_SECTION))) {
+      if (!item.some((n) => added.has(n))) continue;
+      const text = stripCode(item.map((n) => lines[n - 1]!).join("\n"));
+      if ([...idsIn(corpus.types, text)].some((id) => id.startsWith(rulePrefix))) continue;
+      out.push(`note: ${doc.path}:${item[0]} an item of ${doc.id}'s 决定 this work wrote names no rule: a behaviour it commits the product to needs a rule (active, or planned if not built yet) that names ${doc.id}, named here; skip this when the item commits to no product behaviour (BR-2471)`);
+    }
+  }
+  return out;
+}
