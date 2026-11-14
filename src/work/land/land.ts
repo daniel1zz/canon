@@ -21,7 +21,7 @@ import { keptNote, lostTurn, predictedConflicts, priorityNow, waitPollMs } from 
 import { removeReviewTree } from "./checks/review-tree.ts";
 import { findingDetail, verifyChange } from "./checks/steps.ts";
 import { floorScope, floorSkip, runFloor } from "./checks/floor.ts";
-import { afterLand, closeLeftNote, closeSubject, finishLanding, moveMain, reopen, stampAddedReferences, type CloseCommit } from "./finish/finish.ts";
+import { afterLand, closeLeftNote, closeSubject, finishLanding, moveMain, reopen, acceptAddedDecisions, stampAddedReferences, type CloseCommit } from "./finish/finish.ts";
 import { batchDir, landBatch, landedInBatch } from "./batch/batch.ts";
 import { pushMain } from "../remote/remote.ts";
 import { settleInterrupted } from "./queue/interrupted.ts";
@@ -367,6 +367,9 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   if (t.close) {
     const stamped = stampAddedReferences(ws, wt, t.close, base.value, before.value, say);
     if (!stamped.ok) return refuse("environment", `the records of the references this change added could not be written: ${stamped.error.message}`);
+    // The decisions this change added become accepted in the same close commit (BR-2355, D-109).
+    const accepted = acceptAddedDecisions(ws, wt, t.close, base.value, before.value, say);
+    if (!accepted.ok) return refuse("environment", accepted.error.message);
   }
   // The commit the floor, canon check, the review and before_land prove; only this commit may become main (BR-2106).
   const tested = git(wt, "rev-parse", "HEAD");

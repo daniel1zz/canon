@@ -92,6 +92,57 @@ export function stampAddedReferences(ws: Workspace, wt: string, close: CloseComm
 }
 
 /**
+ * D-109, BR-2355: after the rebase, while HEAD is still the close commit, the decisions the change added (new files since
+ * the branch left main, on the branch before the rebase) that are still `proposed` become `accepted` in the close commit,
+ * and the decisions they supersede become `superseded`, as `canon decision accept` does (BR-2027). A decision on main is in
+ * force: its rules are active and its code runs, so `proposed` would only hide it from the review and `canon context`.
+ * A `supersedes` naming itself or no decision is refused later by canon check (BR-2230). Returns the ids accepted.
+ */
+export function acceptAddedDecisions(ws: Workspace, wt: string, close: CloseCommit, onto: string, before: string, say: Say): Result<string[]> {
+  const top = git(wt, "log", "-1", "--format=%s");
+  // reason: no close commit on top to amend, as for the reference records (BR-2440); the landing then only says they stay proposed
+  if (!top.ok || top.value !== closeSubject(close.subject)) return ok([]);
+  const fork = git(wt, "merge-base", before, onto);
+  if (!fork.ok) return fork;
+  const added = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=A", fork.value, before, "--", "canon/decisions");
+  if (!added.ok) return added;
+  const paths = new Set(added.value === "" ? [] : added.value.split("\n"));
+  const corpus = readCorpus(wt, ws.config.types, ws.config).corpus;
+  const proposed = corpus.docs.filter((d) => d.kind === "decision" && d.status === "proposed" && paths.has(d.path));
+  if (proposed.length === 0) return ok([]);
+  const writes: { doc: (typeof corpus.docs)[number]; status: string }[] = [];
+  const accepted: string[] = [];
+  for (const d of proposed) {
+    if (d.kind !== "decision") continue;
+    writes.push({ doc: d, status: "accepted" });
+    for (const id of d.supersedes) {
+      const t = corpus.docs.find((x) => x.id === id);
+      if (t && t.kind === "decision" && t.id !== d.id && t.status !== "superseded") writes.push({ doc: t, status: "superseded" });
+    }
+    accepted.push(d.id);
+  }
+  const files = [...new Set(writes.map((w) => w.doc.path))];
+  // reason: the files were committed as they are at HEAD a moment ago, so putting them back loses no one's edit
+  const undo = (why: string): Result<string[]> => {
+    git(wt, "reset", "-q", "--", ...files);
+    git(wt, "checkout", "-q", "--", ...files);
+    return err("io", `the close commit could not accept the decisions this change added: ${why}`);
+  };
+  for (const w of writes) {
+    const set = setMeta(wt, w.doc, { status: w.status });
+    if (!set.ok) return undo(set.error.message);
+  }
+  const add = git(wt, "add", "--", ...files);
+  if (!add.ok) return undo(add.error.message);
+  const amend = git(wt, "commit", "-q", "--amend", "--no-edit");
+  if (!amend.ok) return undo(amend.error.message);
+  close.stamped.push(...files.filter((f) => !close.stamped.includes(f)));
+  const gone = writes.filter((w) => w.status === "superseded").map((w) => w.doc.id);
+  say(`accepted ${accepted.join(", ")} on landing, in ${close.subject}'s close commit${gone.length > 0 ? `; superseded ${gone.join(", ")}` : ""} (a decision on main is in force, D-109)`);
+  return ok(accepted);
+}
+
+/**
  * After main moved for one landed change, with its own base and head: queues the reviews of the landed commit (BR-2441, D-89)
  * and starts after_land in the background (BR-2030).
  */

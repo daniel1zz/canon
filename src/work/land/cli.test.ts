@@ -180,6 +180,29 @@ describe("a landing that adds a decision still proposed says so", () => {
     // the line is printed once canon check and before_land have passed; no rule review runs in the landing (BR-2014)
   }, TIMED);
 
+  test("BR-2355 D-109: --finish accepts in the close commit the decisions its change added and supersedes their targets", async () => {
+    const root = project();
+    const old = startNew(root, "Old");
+    add(old.worktree, [2, "accepted"]);
+    expect((await canonIn(old.worktree, "work", "land")).code).toBe(0);
+    const s = startNew(root, "Decides");
+    add(s.worktree, [5, "proposed"], [6, "proposed"]);
+    const at = (n: number) => join(s.worktree, `canon/decisions/${d(n)}.md`);
+    writeFileSync(at(5), decision(5, "proposed").replace("status: proposed\n", `status: proposed\nsupersedes:\n  - ${d(2)}\n`));
+    sh(s.worktree, "commit", "-qam", "supersede");
+    const said: string[] = [];
+    const out = await land(ws(s.worktree), { ...FAST, finish: true }, (l: string) => void said.push(l));
+    expect([out.kind, out.kind === "refused" ? out.message : ""]).toEqual(["landed", ""]);
+    const onMain = (n: number) => sh(root, "show", `main:canon/decisions/${d(n)}.md`).match(/^status: (\w+)/m)![1];
+    expect([onMain(5), onMain(2), onMain(6)]).toEqual(["accepted", "superseded", "accepted"]);
+    expect(sh(root, "log", "-1", "--format=%s", "main")).toBe(`canon: close ${s.change}`); // in the close commit, not one of its own
+    const text = said.join("\n");
+    expect(text).toContain(`accepted ${d(5)}, ${d(6)} on landing`);
+    expect(text).toContain(`superseded ${d(2)}`);
+    expect(text).not.toContain("proposed decision:");
+    expect(events(root, "land.proposed")).toEqual([]);
+  }, TIMED);
+
   test("BR-2355: an accepted new decision, an edit of a decision already on main, or no decision at all prints nothing and records no event", async () => {
     const root = project();
     const a = startNew(root, "Accepted");
