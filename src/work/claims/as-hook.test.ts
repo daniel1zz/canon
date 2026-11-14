@@ -7,6 +7,7 @@ import { CoordDb } from "../db.ts";
 import { CHECK_AS_COMMAND } from "../../install/hook.ts";
 import { checkCommand } from "./as-check.ts";
 import { nestedIn } from "./liveness.ts";
+import { currentActor } from "../workspace.ts";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { project } from "../testkit.ts";
 
@@ -209,7 +210,7 @@ describe("a worker session started by another session", () => {
     expect(reason("canon work land", () => false)).toBe("allow");
   });
 
-  test("BR-2468: the process table is read only for a claim command without an agent id; when it cannot be read the call passes as a skip", () => {
+  test("BR-2468 BR-2341: the process table is read only for a claim command without an agent id; when it cannot be read the call passes as a process-table skip", () => {
     let asked = 0;
     const count = () => { asked++; return true; };
     checkCommand("ls -la; canon work test", undefined, count);
@@ -217,6 +218,14 @@ describe("a worker session started by another session", () => {
     expect(asked).toBe(0);
     const v = checkCommand("canon work land --as w1", undefined, () => undefined);
     expect(v).toEqual({ kind: "skip", reason: "process-table", sub: "land" });
+  });
+
+  test("BR-2023 BR-2468: a worker session's own --as name is recorded after its own session id, like a subagent's", () => {
+    const env = { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "a69bb94c-570e-4fcb" };
+    const named = currentActor(env, "worker-w6");
+    expect(named.ok ? named.value : named.error.message).toBe("agent:a69bb94c:worker-w6");
+    const bare = currentActor(env);
+    expect(bare.ok ? bare.value : bare.error.message).toBe("agent:a69bb94c");
   });
 
   test("BR-2468: the hook run under two claude processes refuses a worker's land without --as and lets it through with one", async () => {
