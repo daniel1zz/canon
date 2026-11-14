@@ -37,6 +37,17 @@ describe("proposed decisions in the brief", () => {
     ]);
   });
 
+  test("BR-2476: exactly 24 h is not listed; the age is whole days rounded down", () => {
+    const root = project();
+    // reason: git keeps commit times in whole seconds, so now is too, or "exactly 24 h" would be a fraction of a second more
+    const now = Math.floor(Date.now() / 1000) * 1000;
+    const h = 3_600_000;
+    commitAt(root, 7, "proposed", now - 24 * h);
+    expect(proposedNotice(root, "main", corpusOf(ws(root), "main").corpus, now)).toEqual([]);
+    commitAt(root, 8, "proposed", now - 47 * h);
+    expect(proposedNotice(root, "main", corpusOf(ws(root), "main").corpus, now).slice(1)).toEqual([`  ${d(8)} Pick 8 (1 d)`]);
+  });
+
   test("BR-2476: more than 10 are cut after the oldest 10 with how many more", () => {
     const root = project();
     const now = Date.now();
