@@ -88,6 +88,13 @@ describe("a decision's commitments reach the rules that hold them", () => {
     expect(r.err).not.toContain("BR-13.md");
     put(wt, { "canon/rules/billing/BR-9.md": rule(9, "x。\n\n`在那之前` 这几个字写在反引号里。") });
     expect(canon(wt, "check").err).not.toContain("puts off a behaviour");
+    const between = (n: number) => `由${"字".repeat(n)}变更实现`;
+    put(wt, { "canon/rules/billing/BR-9.md": rule(9, `x。\n\n${between(30)}。`) });
+    expect(canon(wt, "check").err).toContain("puts off a behaviour");
+    put(wt, { "canon/rules/billing/BR-9.md": rule(9, `x。\n\n${between(31)}。`) });
+    expect(canon(wt, "check").err).not.toContain("puts off a behaviour");
+    put(wt, { "canon/rules/billing/BR-9.md": rule(9, "x。\n\n由下一步做。新的变更实现。") });
+    expect(canon(wt, "check").err).not.toContain("puts off a behaviour");
   });
 
   test("BR-2471: an item of a 决定 this work wrote that names no rule is a note, never a finding; an item naming one, or one this work did not write, is not said", () => {
