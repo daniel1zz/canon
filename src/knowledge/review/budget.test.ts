@@ -162,13 +162,31 @@ describe("rule review prompt budget", () => {
     expect(msg).not.toContain("cannot help");
   });
 
-  test("BR-2359: in a split review the documents the changed ones name count as changed documents in the refusal's sizes", () => {
+  test("BR-2488, BR-2359: a named document whose whole text does not fit beside the domain text is listed by id, title and first line, and the review is not refused for it", () => {
     const { root, corpus } = bigDomain(30);
     const six = corpus.docs.find((d) => d.id === id("BR", 6))!;
     const citing = [{ ...six, body: `${six.body}\n按 ${id("BR", 1)}。 ${"y".repeat(5 * KB)}\n` }] as typeof corpus.docs;
-    const msg = refusal(reviewPrompts(root, corpus, citing, {}, 20 * KB));
-    expect(msg).toMatch(/changed documents 3\d KB, review instructions/);
-    expect(msg).toContain("land the changed documents in several smaller changes");
+    const r = reviewPrompts(root, corpus, citing, {}, 60 * KB);
+    if (!r.ok) throw new Error(r.error.message);
+    for (const p of r.value) {
+      expect(size(p)).toBeLessThanOrEqual(60 * KB);
+      expect(p).toContain("# More documents the changed documents name (only id, title and first line here");
+      expect(p).toMatch(new RegExp(`\\n- ${id("BR", 1)} .*\\(rule, active\\): `));
+      expect(p).not.toContain("# Documents the changed documents name (whole text");
+    }
+  });
+
+  test("BR-2488: named documents that fit stay whole in every call, and none is listed", () => {
+    const { root, corpus } = bigDomain(30);
+    const six = corpus.docs.find((d) => d.id === id("BR", 6))!;
+    const citing = [{ ...six, body: `${six.body}\n按 ${id("BR", 1)}。\n` }] as typeof corpus.docs;
+    const r = reviewPrompts(root, corpus, citing, {}, 100 * KB);
+    if (!r.ok) throw new Error(r.error.message);
+    expect(r.value.length).toBeGreaterThan(1);
+    for (const p of r.value) {
+      expect(p).toContain("# Documents the changed documents name (whole text");
+      expect(p).not.toContain("# More documents the changed documents name");
+    }
   });
 
   test("BR-2359: a domain rule that cannot fit with a small change: the refusal says splitting the change cannot help and names the budget and the domain split", () => {

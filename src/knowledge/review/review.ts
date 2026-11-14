@@ -76,6 +76,8 @@ export interface ReviewExtras {
   readonly part?: { readonly i: number; readonly n: number; readonly others: readonly Doc[] };
   /** In a review split into several calls: the rules and decisions the changed documents name, shown whole in every call (BR-2359, #219). */
   readonly cited?: readonly Doc[];
+  /** Named documents that did not fit in full beside the domain text a call needs: listed by id, title and first line (BR-2488, #229). */
+  readonly citedListed?: readonly Doc[];
 }
 
 /** The key of each blocking criterion in the prompts, and `note` for a remark that never blocks (BR-2367, D-74). */
@@ -159,6 +161,10 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
   if (extras.cited?.length) {
     parts.push("# Documents the changed documents name (whole text, in every call, so a relation to them can be judged here; they are not changed by this landing)");
     for (const d of extras.cited) parts.push(docSection(d));
+  }
+  if (extras.citedListed?.length) {
+    parts.push("# More documents the changed documents name (only id, title and first line here: their whole text does not fit in a call beside the domain text; they are not changed by this landing)", "");
+    parts.push(...extras.citedListed.map((d) => `- ${d.id} ${d.title} (${d.kind}${"status" in d ? `, ${d.status}` : ""}): ${firstLine(d)}`), "");
   }
   if (extras.added?.length) {
     parts.push("# Lines added or changed in this landing", "", "For each changed rule or decision that was already on main, the lines this landing adds or changes (line number in the file, then the line). A changed rule or decision not listed here is new: all of its lines are.", "");
@@ -555,12 +561,22 @@ interface Call {
 /** The note a call of a split review carries: which call it is and how many there are (BR-2359). */
 /** The active or proposed rules and decisions the changed documents name, other than themselves, by id (BR-2359, #219). */
 export function citedDocs(corpus: Corpus, changed: readonly Doc[]): Doc[] {
+  return byId(namedInOrder(corpus, changed));
+}
+
+const byId = (docs: readonly Doc[]): Doc[] => [...docs].sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
+
+/** The rules and decisions the changed documents name, in the order they are first named (BR-2488). */
+function namedInOrder(corpus: Corpus, changed: readonly Doc[]): Doc[] {
   const own = new Set(changed.map((d) => d.id));
-  const ids = [...new Set(changed.flatMap((d) => namedIds(`${d.title}\n${d.body}`)))].filter((id) => !own.has(id));
-  return ids
-    .map((id) => findDoc(corpus, id))
-    .filter((d): d is Doc => d !== undefined && (d.kind === "rule" || d.kind === "decision"))
-    .sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  // reason: namedIds sorts, so the order of first mention is read from the text itself (BR-2488)
+  for (const d of changed) for (const m of `${d.title}\n${d.body}`.matchAll(/\b(BR|D)-(\d+)\b/g)) {
+    const id = `${m[1]}-${m[2]}`;
+    if (!own.has(id) && !seen.has(id)) seen.add(id), ids.push(id);
+  }
+  return ids.map((id) => findDoc(corpus, id)).filter((d): d is Doc => d !== undefined && (d.kind === "rule" || d.kind === "decision"));
 }
 
 function callNote(i: number, n: number): string {
@@ -684,6 +700,21 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   const tail = promptTail(corpus);
   // reason: the size split puts a cited rule wherever its domain falls, and a call without it cannot judge 按 BR-n; every call carries them (BR-2359, #219)
   extras = { ...extras, cited: citedDocs(corpus, changed) };
+  // reason: one changed document naming many documents made every call too large to send, so the review never ran; the named
+  // documents are kept whole in the order first named while the call still has room for the largest domain piece it needs (BR-2488, #229)
+  const sizes = reviewSizes(root, corpus).pieces;
+  const largest = Math.max(0, ...contextTops(corpus, changed, extras).map((t) => sizes.find((p) => p.top === t)?.piece ?? 0));
+  const roomFor = (ex: ReviewExtras): number => bytes([...promptHead(corpus, changed, ex), ...tail].join("\n")) + noteRoom(corpus, maxCalls(root, corpus, contextTops(corpus, changed, ex))) + largest;
+  if (roomFor(extras) > budgetBytes) {
+    const kept: Doc[] = [];
+    const listed: Doc[] = [];
+    for (const d of namedInOrder(corpus, changed)) {
+      const tryKept = byId([...kept, d]);
+      if (roomFor({ ...extras, cited: tryKept, citedListed: byId([...listed, ...namedInOrder(corpus, changed).filter((x) => x !== d && !kept.includes(x) && !listed.includes(x))]) }) <= budgetBytes) kept.push(d);
+      else listed.push(d);
+    }
+    extras = { ...extras, cited: byId(kept), citedListed: byId(listed) };
+  }
   const noWording: ReviewExtras = { ...extras, wording: [] };
   const room = noteRoom(corpus, maxCalls(root, corpus, contextTops(corpus, changed, extras)));
   const fixed = (first: boolean): number => bytes([...promptHead(corpus, changed, first ? extras : noWording), ...tail].join("\n")) + room;
