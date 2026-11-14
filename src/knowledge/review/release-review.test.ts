@@ -63,7 +63,7 @@ describe("release check (BR-2411)", () => {
     expect(prompts()).toBe("1");
   });
 
-  test("BR-2411 D-107: after a release only a duplicate touching a line changed since then blocks; one quoted wholly from released text is a note; no places or a quote not found still blocks", () => {
+  test("BR-2411 BR-2367 D-107: after a release only a duplicate touching a line changed since then blocks; one quoted wholly from released text is a note; no places or a quote not found still blocks", () => {
     const { root, tools, run, prompts } = releaseRepo({ findings: [] });
     expect(run().code).toBe(0);
     const first = sh(root, "rev-parse", "HEAD");
