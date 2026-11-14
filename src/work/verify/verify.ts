@@ -167,6 +167,9 @@ async function runShell(root: string, command: string, groups: Set<number>): Pro
   return { exitCode, ms: Math.round(performance.now() - t0), output: `${stdout}${stderr}`, signalled, ...(cpuMs === undefined ? {} : { cpuMs }) };
 }
 
+/** Each ended file's `[wall ms, CPU ms]` (`[wall ms]` without CPU), for work.test, also when a run is stopped (BR-2472). */
+const fileTimesOf = (results: readonly { file: string; ms: number; cpuMs?: number }[]) => Object.fromEntries(results.map((r) => [r.file, r.cpuMs === undefined ? [r.ms] : [r.ms, r.cpuMs]]));
+
 /** A file runs at least this long before its waiting is worth saying (BR-2472). */
 export const WAIT_MIN_MS = 10_000;
 /** A file whose processes used at most this share of its wall time in CPU mostly waited (BR-2472). */
@@ -317,7 +320,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
         if (timedOut) for (const line of timeoutReport(ws.config.testTimeoutMinutes, [...finalized.values()], were, notStarted, loadAtStart, loadDetail())) say(line);
         else say(`stopped by ${sig}: ${were} test file(s) were running, ${notStarted} not started`);
         const done = [...finalized.keys()];
-        ws.db.event(ws.actor, "work.test", subject, { all, ...result, jobs: cap, ...jobs, ms: Math.round(performance.now() - t0), ...at, ranFiles: done, failedFiles: done.filter((f) => finalized.get(f)!.exitCode !== 0), ...(timedOut ? { loadAtStart, loadAtEnd: loadDetail() } : {}) });
+        ws.db.event(ws.actor, "work.test", subject, { all, ...result, jobs: cap, ...jobs, ms: Math.round(performance.now() - t0), ...at, ranFiles: done, failedFiles: done.filter((f) => finalized.get(f)!.exitCode !== 0), fileTimes: fileTimesOf([...finalized.values()]), ...(timedOut ? { loadAtStart, loadAtEnd: loadDetail() } : {}) });
       } catch (e) {
         console.error(`canon work test: stopping after ${sig} failed: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
@@ -451,7 +454,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   ws.db.event(ws.actor, "work.test", subject, {
     all, ...result, ms, jobs: cap, ...jobs, rerun: rerunAlone.length, rerunFiles: rerunAlone, passedAlone: passedAlone.length, passedAloneFiles: passedAlone, rerunSkipped,
     ...at, ranFiles: files, failedFiles: failed,
-    fileTimes: Object.fromEntries([...finalized.values()].map((r) => [r.file, r.cpuMs === undefined ? [r.ms] : [r.ms, r.cpuMs]])), waitedFiles: waiting.files,
+    fileTimes: fileTimesOf([...finalized.values()]), waitedFiles: waiting.files,
   });
   return ok(result);
 }

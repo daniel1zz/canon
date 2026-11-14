@@ -1261,4 +1261,18 @@ describe("test files that mostly wait", () => {
     expect(busyMs).toBeGreaterThanOrEqual(600);
     expect(detail.waitedFiles).toEqual([]); // under 10 s: not said
   });
+
+  test("BR-2472: a run stopped by a signal still records the times of the files that ended", async () => {
+    const wt = jobsFixture(2, 'case "$1" in *t1*) exit 0;; esac\ntouch "started.$$"\nsleep ' + HANG_SECONDS + '\n', "1");
+    const { d, signals } = fakeDeps();
+    const run = workTest(ws(wt), false, () => {}, d);
+    await waitFor("t2 to start", () => readdirSync(wt).some((f) => f.startsWith("started.")));
+    signals.emit("SIGTERM", "SIGTERM");
+    await run;
+    const row = ws(wt).db.db.query<{ d: string }, []>("SELECT detail AS d FROM events WHERE kind = 'work.test' ORDER BY id DESC LIMIT 1").get()!;
+    const detail = JSON.parse(row.d) as { signal: string; fileTimes: Record<string, number[]> };
+    expect(detail.signal).toBe("SIGTERM");
+    expect(Object.keys(detail.fileTimes)).toEqual(["src/t1.test.ts"]);
+    expect(detail.fileTimes["src/t1.test.ts"]!.length).toBe(2);
+  });
 });
