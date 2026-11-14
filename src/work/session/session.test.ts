@@ -888,6 +888,24 @@ describe("no new change while review work is owed", () => {
     expect(r.ok ? "" : r.error.message).toContain("11 open review finding(s) (#1, #2, #3, #4, #5, #6, #7, #8, #9, #10, …)");
   });
 
+  test("BR-2464: a new change that names open findings with --settles starts; one naming a finding that is not open is refused and leaves nothing", () => {
+    const root = project();
+    const db = owe(root);
+    const ok = start(ws(root), { title: "Settle #1" }, quiet, { settles: [1] });
+    expect(ok.ok ? "" : ok.error.message).toBe("");
+    db.db.query("UPDATE review_findings SET closed_at = ? WHERE id = 2").run(new Date().toISOString());
+    const before = changesIn(root);
+    const bad = start(ws(root), { title: "Settle #2 and #9" }, quiet, { settles: [2, 9] });
+    expect(bad.ok ? "" : bad.error.code).toBe("not_found");
+    expect(bad.ok ? "" : bad.error.message).toContain("--settles #2, #9: not an open review finding");
+    expect(changesIn(root)).toBe(before);
+    expect(db.db.query<{ d: string }, []>("SELECT json_extract(detail, '$.reason') AS d FROM events WHERE kind = 'start.refuse'").all().map((x) => x.d)).toEqual(["settles"]);
+    const plain = start(ws(root), { title: "New feature" }, quiet);
+    expect(plain.ok ? "" : plain.error.message).toContain("--settles <n>[,<n>]");
+    const usage = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", "--title", "x", "--settles", "abc"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    expect(usage.exitCode).toBe(2);
+  });
+
   test("BR-2464: a finding waiting on the owner's verdict is not owed, and neither is a failed review after landing", () => {
     const root = project();
     const db = owe(root);

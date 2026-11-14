@@ -45,6 +45,7 @@ const startCmd = defineCommand({
     plan: { type: "string", description: "With --title and --step: the change holding the plan this change does steps of (BR-2376)" },
     step: { type: "string", description: "With --plan: the plan's step names this change does, comma separated (BR-2376)" },
     "fix-main": { type: "boolean", description: "Open the one change that fixes main's failing background floor (floor_timing: after, BR-2221)" },
+    settles: { type: "string", description: "Open review finding numbers this change settles, comma separated: it starts while findings are open (BR-2464)" },
     ...AS_ARG,
   },
   run({ args }) {
@@ -58,7 +59,10 @@ const startCmd = defineCommand({
     const steps = list(args.step);
     if (planned && (String(args.plan).trim() === "" || steps.length === 0)) fail({ code: "invalid", message: "--plan needs a change id and --step at least one step name" });
     const target = typeof args.change === "string" && args.change ? { change: args.change } : { title: String(args.title), rules: list(args.rules), ...(planned ? { plan: { id: String(args.plan).trim().toUpperCase(), steps } } : {}) };
-    const s = must(fixMain ? startFixMain(ws, say) : start(ws, target, say));
+    const settles = list(args.settles).map((v) => v.replace(/^#/, ""));
+    if (settles.some((v) => !/^[1-9]\d*$/.test(v))) fail({ code: "invalid", message: `--settles takes review finding numbers, comma separated (got ${String(args.settles)})` });
+    if (fixMain && settles.length > 0) fail({ code: "invalid", message: "--fix-main opens its own change; give no --settles with it" });
+    const s = must(fixMain ? startFixMain(ws, say) : start(ws, target, say, { settles: settles.map(Number) }));
     for (const line of startHint(ws.db, machineNow(), { fixMain, created: s.created })) say(line);
     // A step another unfinished change is doing is said, never refused: a step may take several changes (BR-2385, D-77).
     if ("plan" in target && target.plan) for (const line of stepsTaken(ws, target.plan, s.change)) say(line);

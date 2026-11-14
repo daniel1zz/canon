@@ -69,8 +69,19 @@ function startedBefore(ws: Workspace, id: string): boolean {
   return refs.ok && refs.value.trim() !== "";
 }
 
-export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] } }, say: Say, opts: { fixMain?: boolean } = {}): Result<Started> {
+export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] } }, say: Say, opts: { fixMain?: boolean; settles?: readonly number[] } = {}): Result<Started> {
   const main = ws.config.main;
+  // reason: a change that settles named open findings is paying the debt, not new work: some findings need a rule edit a
+  // project lets only a change make (BR-2464, #209); every number must be an open finding, so a stale or made-up one opens nothing
+  if (opts.settles && opts.settles.length > 0) {
+    const open = new Set(openFindings(ws.db).map((f) => f.id));
+    const notOpen = opts.settles.filter((n) => !open.has(n));
+    if (notOpen.length > 0) {
+      ws.db.event(ws.actor, "start.refuse", "change" in target ? target.change : null, { reason: "settles", notOpen });
+      return err("not_found", `--settles ${notOpen.map((n) => `#${n}`).join(", ")}: not an open review finding (canon context <id> lists the open ones); a change that settles findings names only open ones`);
+    }
+  }
+  const settling = (opts.settles?.length ?? 0) > 0;
   // reason: BR-2012 — checked before an id is allocated or git is called, so a repository with no commit yet loses no number (BR-2002)
   if (mainIsUnborn(ws.primary, main)) return err("io", `${main} has no commit yet, so no change can start: ${firstCommitStep(main)}`);
   let changeId: string;
@@ -99,12 +110,12 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
       return err("invalid", `${doc.id} is ${doc.status}`);
     }
     // reason: new work waits while findings or failed reviews are owed; a change already started goes on, a chore settles them (BR-2464)
-    const owed = opts.fixMain || existing || startedBefore(ws, doc.id) ? [] : workDebt(ws);
+    const owed = opts.fixMain || settling || existing || startedBefore(ws, doc.id) ? [] : workDebt(ws);
     if (owed.length > 0) return refuseForDebt(ws, doc.id, owed);
     changeId = doc.id;
     slug = slugify(doc.title);
   } else {
-    const owed = opts.fixMain ? [] : workDebt(ws);
+    const owed = opts.fixMain || settling ? [] : workDebt(ws);
     if (owed.length > 0) return refuseForDebt(ws, null, owed);
     // reason: checked before an id is allocated, so a refused start leaves no number, worktree or claim behind (BR-2376, BR-2002)
     const bad = target.plan ? planProblem(onMain.value, ws.config.main, target.plan) : undefined;
@@ -464,5 +475,5 @@ export function describeOccupants(list: readonly Occupant[]): string {
 
 function refuseForDebt(ws: Workspace, subject: string | null, owed: readonly string[]): Result<never> {
   ws.db.event(ws.actor, "start.refuse", subject, { reason: "debt", owed: owed.map((l) => l.slice(0, 300)) });
-  return err("refused", `no new change while review work is owed (BR-2464):\n${owed.map((l) => `  - ${l}`).join("\n")}\nSettle it first, in a chore (canon chore start "<title>") or in the change it belongs to; a change already started, canon work start --fix-main and chores are not held back.`);
+  return err("refused", `no new change while review work is owed (BR-2464):\n${owed.map((l) => `  - ${l}`).join("\n")}\nSettle it first: in a chore (canon chore start "<title>"), in the change it belongs to, or in a new change that names them (canon work start --title "<title>" --settles <n>[,<n>]); a change already started, canon work start --fix-main and chores are not held back.`);
 }
