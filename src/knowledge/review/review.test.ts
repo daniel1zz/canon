@@ -249,14 +249,24 @@ describe("what the rule review prompt asks of untestable and contradiction (D-11
     return reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 4)), {});
   };
 
-  test("BR-2473: untestable leaves a goal a person accepts under ## 验收 alone and never asks to drop, narrow or widen a goal to make it testable", () => {
-    const p = prompt();
-    expect(p).toContain("A rule with `untested:` whose `## 验收` says how a person accepts it (a goal such as feel, look or being worth sharing) is not untestable.");
-    expect(p).toContain("Never ask to delete, narrow or widen a goal or commitment to make it testable: ask for a boundary or a way to accept it.");
+  test("BR-2473: a changed rule's untested: reason reaches the prompt, so the reviewer can see how a person accepts it", () => {
+    const manual = `---\nid: ${id("BR", 5)}\ntitle: Worth sharing\nstatus: active\nuntested: UNIQUE_MANUAL_ACCEPTANCE_REASON\n---\n## 规则\n\nThe end page is worth a screenshot.\n\n## 验收\n\nThe owner plays it and records yes or no.\n`;
+    const { root, corpus } = corpusOf({ ...files, [`canon/rules/billing/${id("BR", 5)}.md`]: manual });
+    const p = reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 5)), {});
+    expect(p).toContain("untested: UNIQUE_MANUAL_ACCEPTANCE_REASON");
+    expect(p).toContain("The owner plays it and records yes or no.");
   });
 
-  test("BR-2474: a contradiction quotes both passages and names one input the two answer differently; one that cannot be shown so is a note", () => {
+  test("BR-2473: untestable accepts a stated way of accepting a goal, still wants a test for a claim a test can decide, and never asks to reshape a goal or invent tiers", () => {
     const p = prompt();
-    expect(p).toContain("for one input or state the two give different results. Quote both passages and name that input and the two results; a tension you cannot show that way is a `note`.");
+    expect(p).toContain("what is accepted, what evidence is handed over, and who accepts or rejects it against the goal and records it; it needs no measurable threshold.");
+    expect(p).toContain("A claim a test can decide (a name not shown early, a reward not given twice) still needs a test, even beside such a goal.");
+    expect(p).toContain("never ask to delete, narrow or widen a goal or commitment, nor to choose levels or tiers the text does not set.");
+  });
+
+  test("BR-2474: a contradiction quotes both passages under the same conditions with two results that cannot both hold; differing but compatible requirements and silence are not one", () => {
+    const p = prompt();
+    expect(p).toContain("Quote both passages and name the conditions (an input, a sequence of inputs or a state history) and the two incompatible results.");
+    expect(p).toContain("Two requirements that differ but can both be met are not a contradiction, and one text saying nothing is not a contrary result; a tension you cannot show that way is a `note`.");
   });
 });
