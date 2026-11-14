@@ -872,6 +872,19 @@ describe("no new change while review work is owed", () => {
     expect(start(ws(root), { title: "fix main" }, quiet, { fixMain: true }).ok).toBe(true);
   });
 
+  test("BR-2464: a change on main not started yet is new work too, and only the first 10 finding numbers are listed", () => {
+    const root = project();
+    mkdirSync(join(root, "canon/changes"), { recursive: true });
+    writeFileSync(join(root, "canon/changes/C-5.md"), "---\nid: C-5\ntitle: Waiting\nstatus: open\n---\n\n## 为什么\n\nW.\n\n## 要改什么\n\nX.\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "a change waits on main");
+    const db = ws(root).db;
+    for (let i = 1; i <= 11; i++) db.db.query("INSERT INTO review_findings(identity, criterion, ids, docs, text, change, event, sha, opened_at) VALUES (?, 'untestable', '[]', '[]', 't', NULL, 1, 'abc', ?)").run(`i-${i}`, new Date().toISOString());
+    const r = start(ws(root), { change: "C-5" }, quiet);
+    expect(r.ok ? "" : r.error.code).toBe("refused");
+    expect(r.ok ? "" : r.error.message).toContain("11 open review finding(s) (#1, #2, #3, #4, #5, #6, #7, #8, #9, #10, …)");
+  });
+
   test("BR-2464: a finding waiting on the owner's verdict is not owed; a failed review after landing is, until it ran again", () => {
     const root = project();
     const db = owe(root);
