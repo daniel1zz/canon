@@ -59,7 +59,7 @@ The change file is the agent brief: the contract a later session works from, pos
 
 - `## 为什么`: the issue number, the current behaviour (for a bug, the broken behaviour and the reproduced scenario) and why it matters.
 - `## 要改什么`: the desired behaviour, including edge and error cases; which rules change or are added (use `canon-rules`, including its section 0 authorship boundary); what is explicitly out of scope, so the implementer does not gold-plate or guess at adjacent features.
-  It also names the regression test, after the rule it proves.
+  It also names the regression test.
 
 A change you write now but leave for another session to implement: hand it off with `canon work stop --release --next "<first step>"`. Plain `canon work stop` keeps your claim, so no other session can start it while yours is alive.
 
