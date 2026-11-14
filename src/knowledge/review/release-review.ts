@@ -73,10 +73,10 @@ export function loadBaseline(cwd: string, primary: string, texts: readonly Shipp
 }
 
 /** What identifies one set of shipped texts: the same texts and guide always give the same hash. */
-export function releaseHash(texts: readonly ShippedText[], guide: string, baseline?: string): string {
+export function releaseHash(texts: readonly ShippedText[], guide: string, baseline?: Baseline): string {
   const h = createHash("sha256");
   // reason: which findings block depends on the baseline as well as the texts, so a verdict is reused only with the same one (D-107)
-  if (baseline !== undefined) h.update(`baseline\0${baseline}\0`);
+  if (baseline !== undefined) h.update(`baseline\0${baseline.commit}\0${baseline.guide ?? "\u0001"}\0`);
   h.update(`guide\0${guide}\0`);
   for (const t of texts) h.update(`${t.path}\0${t.text}\0`);
   return h.digest("hex");
@@ -258,7 +258,7 @@ export interface ReleaseCheck {
 export async function releaseCheck(e: ReleaseCheckEnv): Promise<Result<ReleaseCheck>> {
   const texts = shippedTexts(e.cwd);
   if (texts.length === 0) return err("io", `no canon-* skill under ${join(e.cwd, ".claude", "skills")}`);
-  const hash = releaseHash(texts, e.guide, e.baseline?.commit);
+  const hash = releaseHash(texts, e.guide, e.baseline);
   const b = e.baseline;
   // reason: with no changed line no duplicate can block (D-107), so the paid review is not run
   if (b && b.guide === e.guide && texts.every((t) => b.texts.get(t.path) === t.text)) return ok({ hash, verdict: "ok", findings: [], reused: false, unchanged: true, calls: 0 });
