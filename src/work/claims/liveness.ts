@@ -94,3 +94,29 @@ export function sessionProcess(env: Record<string, string | undefined> = process
   }
   return undefined;
 }
+
+/**
+ * Whether this process runs inside a Claude Code session that another Claude Code session started (BR-2468, D-111):
+ * walking up from this process, a process named `claude` is found above the first one. A worker that a delegation
+ * tool starts with `claude -p` from the main session's Bash is one; its hook input has no `agent_id`. Undefined when
+ * the process table cannot be read.
+ */
+export function startedBySession(pid: number = process.pid): boolean | undefined {
+  const r = ps(["-axo", "pid=,ppid=,comm="]);
+  if (!r || r.code !== 0) return undefined;
+  return nestedIn(r.out, pid);
+}
+
+/** The walk of {@link startedBySession} over a `ps -axo pid=,ppid=,comm=` table. */
+export function nestedIn(table: string, pid: number): boolean {
+  const up = new Map<number, { ppid: number; name: string }>();
+  for (const line of table.split("\n")) {
+    const m = /^\s*(\d+)\s+(\d+)\s+(.*?)\s*$/.exec(line);
+    if (m) up.set(Number(m[1]), { ppid: Number(m[2]), name: m[3]!.split("/").pop()! });
+  }
+  let sessions = 0;
+  for (let p: number | undefined = pid, i = 0; p !== undefined && p > 1 && i < 128; p = up.get(p)?.ppid, i++) {
+    if (up.get(p)?.name === "claude" && ++sessions === 2) return true;
+  }
+  return false;
+}

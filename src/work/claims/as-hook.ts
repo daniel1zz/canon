@@ -2,6 +2,7 @@ import { effectiveAgentSession } from "../agent-session.ts";
 import { agentSession, type AgentRuntime } from "../../kernel/agent.ts";
 import { openWorkspace } from "../workspace.ts";
 import { checkCommand } from "./as-check.ts";
+import { startedBySession } from "./liveness.ts";
 
 /**
  * The PreToolUse hook `canon work check-as --hook` (BR-2340, D-62): reads Claude Code's hook input, returns what goes
@@ -25,7 +26,8 @@ export function runAsCheck(raw: string, fallbackCwd: string, runtime: AgentRunti
   if (!command.includes("canon")) return "";
   const context = runtime === "codex" ? effectiveAgentSession(process.env, cwd) : undefined;
   const agentId = typeof input?.["agent_id"] === "string" && input["agent_id"] !== "" ? input["agent_id"] : context?.ok ? context.value?.child : undefined;
-  const v = checkCommand(command, agentId);
+  // reason: a Codex session gets its subagent from the session context; only a Claude Code session can be a worker started by another (BR-2468)
+  const v = checkCommand(command, agentId, () => (runtime === "codex" ? false : startedBySession()));
   if (v.kind === "deny") return `${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: v.reason } })}\n`;
   if (v.kind === "skip") return skip(v.reason, v.sub, cwd, agentId);
   return "";

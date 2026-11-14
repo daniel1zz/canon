@@ -7,7 +7,7 @@ import { segmentsOf, type Segment } from "./shell-words.ts";
 export type Verdict =
   | { readonly kind: "allow" }
   | { readonly kind: "deny"; readonly reason: string }
-  | { readonly kind: "skip"; readonly reason: "unparsable"; readonly sub: string };
+  | { readonly kind: "skip"; readonly reason: "unparsable" | "process-table"; readonly sub: string };
 
 /** The `canon work` subcommands that act on a claim; the others (test, status, after-land, clean ...) are not checked. */
 const CLAIM_COMMANDS = new Set(["start", "land", "stop", "drop", "take", "unstall"]);
@@ -28,8 +28,12 @@ interface Found {
   readonly as: readonly string[];
 }
 
-/** The decision for the command line `command`, run by the subagent `agentId` or, when absent, the main session. */
-export function checkCommand(command: string, agentId: string | undefined): Verdict {
+/**
+ * The decision for the command line `command`, run by the subagent `agentId`, or, when absent, by a worker session
+ * started by another session or the main session (BR-2468). `worker` is asked only when a claim command without an
+ * agent id is found, since it reads the process table; undefined from it means the table could not be read.
+ */
+export function checkCommand(command: string, agentId: string | undefined, worker: () => boolean | undefined = () => false): Verdict {
   const segments = segmentsOf(command);
   let skipped: string | undefined;
   const found: Found[] = [];
@@ -39,11 +43,26 @@ export function checkCommand(command: string, agentId: string | undefined): Verd
     if (f === "unparsable") skipped ??= firstWordAfterCanonWork(seg);
     else if (f) found.push(f);
   }
+  let isWorker: boolean | undefined = false;
+  if (agentId === undefined && found.length > 0 && !anyActor) {
+    isWorker = worker();
+    if (isWorker === undefined) return { kind: "skip", reason: "process-table", sub: found[0]!.sub };
+  }
   for (const f of found) {
-    const d = decide(f, agentId, anyActor);
+    const d = isWorker ? decideWorker(f) : decide(f, agentId, anyActor);
     if (d) return { kind: "deny", reason: d };
   }
   return skipped === undefined ? { kind: "allow" } : { kind: "skip", reason: "unparsable", sub: skipped };
+}
+
+/** A worker session started by another session (BR-2468): a subagent of it whose name is its own to choose. */
+function decideWorker(f: Found): string | undefined {
+  if (f.sub === "take") return "canon work take is for the main session only: this session was started by another Claude Code session (a worker). Do not run it; tell the session that started you.";
+  if (f.sub === "unstall") return "canon work unstall is for the main session only: this session was started by another Claude Code session (a worker). Do not run it; report the refusals to the session that started you.";
+  const names = new Set(f.as);
+  if (f.as.length > 0 && names.size === 1 && /^[A-Za-z0-9_-]+$/.test(f.as[0]!)) return undefined;
+  const got = f.as.length === 0 ? "" : ` Got --as ${f.as.map((v) => `'${v}'`).join(", ")}.`;
+  return `this session was started by another Claude Code session (a worker), so canon records it as that session's subagent: Re-run the same command with --as <your worker name> appended, the name you were given or any of letters, digits, - and _, the same one every time (for example: canon work ${f.sub} --as worker-1).${got}`;
 }
 
 function decide(f: Found, agentId: string | undefined, anyActor: boolean): string | undefined {

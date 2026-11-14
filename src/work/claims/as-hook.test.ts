@@ -5,6 +5,9 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { CoordDb } from "../db.ts";
 import { CHECK_AS_COMMAND } from "../../install/hook.ts";
+import { checkCommand } from "./as-check.ts";
+import { nestedIn } from "./liveness.ts";
+import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { project } from "../testkit.ts";
 
 // reason: the hook is driven the way Claude Code runs it: `canon work check-as --hook` with the hook input as JSON on stdin (BR-2340, D-62).
@@ -172,4 +175,67 @@ describe("the check-as command itself", () => {
     const p = Bun.spawn(["bun", CLI, "work", "check-as"], { cwd: root, stdout: "pipe", stderr: "pipe" });
     expect(await p.exited).toBe(2);
   });
+});
+
+describe("a worker session started by another session", () => {
+  const worker = () => true;
+  const reason = (command: string, isWorker: () => boolean | undefined = worker) => {
+    const v = checkCommand(command, undefined, isWorker);
+    return v.kind === "deny" ? v.reason : v.kind;
+  };
+
+  test("BR-2468: a session with a claude process above its own claude process is a worker; the main session is not", () => {
+    // pid ppid comm: canon 40 under sh 30 under the worker's claude 20, started through 15 by the main session's claude 10
+    const nested = "  10 1 /usr/local/bin/claude\n  15 10 /bin/zsh\n  20 15 /Users/x/.local/bin/claude\n  30 20 /bin/sh\n  40 30 bun\n";
+    expect(nestedIn(nested, 40)).toBe(true);
+    expect(nestedIn(nested, 15)).toBe(false); // the main session's own Bash: one claude above it
+    expect(nestedIn("  10 1 Claude\n  20 10 claude\n  40 20 bun\n", 40)).toBe(false); // an app named Claude is not a session
+    expect(nestedIn("  10 1 claude-helper\n  20 10 claude\n  40 20 bun\n", 40)).toBe(false);
+  });
+
+  test("BR-2468: a worker's claim command needs one valid --as of its own choosing; take and unstall are refused; others pass", () => {
+    expect(reason("canon work start --title x")).toContain("Re-run the same command with --as <your worker name> appended");
+    expect(reason("canon work land --finish --as worker-w6")).toBe("allow");
+    expect(reason("canon chore start x --as=w1")).toBe("allow");
+    expect(reason("canon work land --as w1 --as w2")).toContain("Got --as 'w1', 'w2'");
+    expect(reason("canon work land --as a:b")).toContain("Got --as 'a:b'");
+    expect(reason("canon work take C-5 --from x --as w1")).toContain("canon work take is for the main session only");
+    expect(reason("canon work unstall C-5 --reason x")).toContain("canon work unstall is for the main session only");
+    expect(reason("canon work test --as w1")).toBe("allow"); // not a claim command: not checked
+    expect(reason("CANON_ACTOR=agent:x canon work land")).toContain("do not set CANON_ACTOR");
+    // the main session (no claude above its own) keeps BR-2340
+    expect(reason("canon work land --as w1", () => false)).toContain("--as is only for subagents");
+    expect(reason("canon work land", () => false)).toBe("allow");
+  });
+
+  test("BR-2468: the process table is read only for a claim command without an agent id; when it cannot be read the call passes as a skip", () => {
+    let asked = 0;
+    const count = () => { asked++; return true; };
+    checkCommand("ls -la; canon work test", undefined, count);
+    checkCommand("canon work land", "a1", count);
+    expect(asked).toBe(0);
+    const v = checkCommand("canon work land --as w1", undefined, () => undefined);
+    expect(v).toEqual({ kind: "skip", reason: "process-table", sub: "land" });
+  });
+
+  test("BR-2468: the hook run under two claude processes refuses a worker's land without --as and lets it through with one", async () => {
+    // reason: ps names a process after the file it was started from, so a link called claude to bun stands in for a session
+    const dir = mkdtempSync(join(tmpdir(), "canon-worker-"));
+    mkdirSync(join(dir, "bin"));
+    const claude = join(dir, "bin", "claude");
+    symlinkSync(process.execPath, claude);
+    const step = join(dir, "step.ts");
+    // each claude runs the next argument list as a child and passes its output through
+    writeFileSync(step, "const p = Bun.spawn(process.argv.slice(2), { stdin: 'inherit', stdout: 'inherit', stderr: 'inherit' }); process.exit(await p.exited);\n");
+    const run = async (command: string) => {
+      const env: Record<string, string | undefined> = { ...process.env, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SESSION };
+      delete env["CANON_ACTOR"];
+      const p = Bun.spawn([claude, step, claude, step, "bun", CLI, "work", "check-as", "--hook"], { cwd: root, stdin: new Response(input(command, root)), stdout: "pipe", stderr: "pipe", env: env as Record<string, string> });
+      const [out, code] = await Promise.all([new Response(p.stdout).text(), p.exited]);
+      expect(code).toBe(0);
+      return denied(out);
+    };
+    expect((await run("canon work land --finish"))?.permissionDecisionReason).toContain("--as <your worker name>");
+    expect(await run("canon work land --finish --as worker-w6")).toBeUndefined();
+  }, 20_000);
 });

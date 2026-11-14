@@ -54,7 +54,7 @@ title: 架构总览
 
 **装进项目的 hook、skill 和 git 守卫**
 
-- 职责：Claude Code 和 Codex 的原生 hook（会话开始跑 `canon brief`；每次 Bash 前快照、检查 `canon work` 和 `canon chore` 的认领命令带不带 `--as`，子 agent 的 `take` 和 `unstall` 一律拒绝（`canon work check-as`，只拒绝、不改写，BR-2340）；提问工具之后记录回答；Claude 的 Write、Edit、MultiEdit 或 Codex 的 apply_patch 之后提示改动的规则或决策在新行里复述了别的规则，并列出和它最相关的几份文档，`canon restatements --hook`，不调模型，D-84、D-90）、两端的 canon 技能入口、git 的 `reference-transaction` hook（main 只能由共享合入流水线移动，`canon work land` 和 `canon chore land` 跟随的是同一个后台合入；新建文档的命令也问 `githook.ts` 当前签出是不是受守卫的 main，是就拒绝，BR-2409）。
+- 职责：Claude Code 和 Codex 的原生 hook（会话开始跑 `canon brief`；每次 Bash 前快照、检查 `canon work` 和 `canon chore` 的认领命令带不带 `--as`，子 agent 的 `take` 和 `unstall` 一律拒绝（`canon work check-as`，只拒绝、不改写，BR-2340；没有 `agent_id`、会话进程上面还有 `claude` 进程的 Claude Code worker 会话按子 agent 要求自己的 `--as`，BR-2468、D-111）；提问工具之后记录回答；Claude 的 Write、Edit、MultiEdit 或 Codex 的 apply_patch 之后提示改动的规则或决策在新行里复述了别的规则，并列出和它最相关的几份文档，`canon restatements --hook`，不调模型，D-84、D-90）、两端的 canon 技能入口、git 的 `reference-transaction` hook（main 只能由共享合入流水线移动，`canon work land` 和 `canon chore land` 跟随的是同一个后台合入；新建文档的命令也问 `githook.ts` 当前签出是不是受守卫的 main，是就拒绝，BR-2409）。
 - 数据：Claude 的 `.claude/settings.json`、`.claude/skills/`；Codex 的 `.codex/hooks.json`、`.agents/skills/` 及有效根 AGENTS 文件的管理段；git hook 目录里的守卫文件。canon 自己仓库的 .agents/skills 是随源码提交的源头链接，不由安装器创建；Codex 的线程亲缘存在共享事件表（D-101）。skill 的来源是 canon 自己仓库的 `.claude/skills`；编译好的 `dist/canon` 先用和它一起发布的 `dist/skills`，npm 包用包里的，`CANON_SKILLS_SOURCE` 可以另指（BR-2082、BR-2412）。`canon init` 和 `canon update` 还写只有标题的 `canon/architecture.md`（已有的不覆盖），以及 `canon/config.yaml` 里缺少的 `links_since`（main 当时的提交，已有的不改，BR-2032、BR-2452）。
 - 代码：`src/install`（`init`、`install`、`update`、`uninstall`、`githook.ts`）。
 - 决策：D-9、D-10、D-16、D-36、D-46、D-53、D-62、D-65、D-84、D-101。
