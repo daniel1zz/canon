@@ -17,6 +17,21 @@ import { EXIT } from "../../invocation/command.ts";
 
 export const RUN_ENV = "CANON_LAND_RUN";
 
+/**
+ * What runs in the background and how it is named to the person following it: the landing (D-80) or a test run (BR-2467).
+ * `env` names the variable that marks the background process, `command` what it runs, `noun` what the messages call it.
+ */
+export interface BackgroundJob {
+  readonly env: string;
+  readonly command: readonly string[];
+  readonly noun: string;
+  readonly again: string;
+  readonly stop: string;
+  readonly dirPrefix: string;
+}
+
+export const LANDING: BackgroundJob = { env: RUN_ENV, command: ["work", "land"], noun: "landing", again: "canon work land", stop: "canon work land --stop", dirPrefix: "land-run" };
+
 const POLL_MS = 100;
 const GONE_MS = 5_000;
 
@@ -24,11 +39,11 @@ const GONE_MS = 5_000;
  * This process's run directory when it is the background landing (D-80): RUN_ENV holds `<follower pid>:<dir>`, and only
  * the process whose parent is that follower is the landing.
  */
-export function backgroundRun(env: Record<string, string | undefined> = process.env, parent: number = process.ppid): string | undefined {
-  const value = env[RUN_ENV];
+export function backgroundRun(env: Record<string, string | undefined> = process.env, parent: number = process.ppid, name: string = RUN_ENV): string | undefined {
+  const value = env[name];
   // reason: Bun starts a child without an explicit env from the environment this process started with, so removing the
   // variable here does not hide it from the floor or hooks; a `canon work land` they run has another parent and is not the landing (BR-2390)
-  delete env[RUN_ENV];
+  delete env[name];
   const m = /^(\d+):(.+)$/.exec(value ?? "");
   return m && Number(m[1]) === parent ? m[2] : undefined;
 }
@@ -51,13 +66,13 @@ export function landArgs(a: { finish?: boolean; timeout?: string; as?: string })
 }
 
 /** Starts the background landing: its own process group, no standard input, its output in a new run directory (D-80). */
-export function startBackground(ws: Workspace, args: readonly string[], dir: string = newRunDir(ws)): { dir: string; proc: Subprocess } {
+export function startBackground(ws: Workspace, args: readonly string[], dir: string = newRunDir(ws), job: BackgroundJob = LANDING): { dir: string; proc: Subprocess } {
   mkdirSync(dir, { recursive: true });
   const out = openSync(join(dir, "out"), "a");
   const err = openSync(join(dir, "err"), "a");
   try {
     // reason: its own process group, so the caller's tool timeout, hang-up or Ctrl-C does not reach the landing (D-80)
-    const proc = Bun.spawn([...canonCommand(), "work", "land", ...args], { cwd: process.cwd(), stdout: out, stderr: err, stdin: "ignore", detached: true, env: { ...(process.env as Record<string, string>), [RUN_ENV]: `${process.pid}:${dir}` } });
+    const proc = Bun.spawn([...canonCommand(), ...job.command, ...args], { cwd: process.cwd(), stdout: out, stderr: err, stdin: "ignore", detached: true, env: { ...(process.env as Record<string, string>), [job.env]: `${process.pid}:${dir}` } });
     // reason: until the landing records land.start, this file is how another `canon work land` tells it is alive (BR-2392, #172)
     const me = processOf(proc.pid);
     if (me) writeFileSync(join(dir, "pid"), `${me.pid}\n${me.start}\n`);
@@ -69,9 +84,9 @@ export function startBackground(ws: Workspace, args: readonly string[], dir: str
 }
 
 /** A new run directory under the coordination database's logs (BR-2390). */
-export function newRunDir(ws: Workspace): string {
+export function newRunDir(ws: Workspace, prefix: string = LANDING.dirPrefix): string {
   const stamp = new Date().toISOString().replace(/[:.]/g, "-");
-  return logFile(ws.db, `land-run-${stamp}-${process.pid}`);
+  return logFile(ws.db, `${prefix}-${stamp}-${process.pid}`);
 }
 
 /** The latest landing from this worktree that ran in the background, with its run directory (BR-2392). */
@@ -83,7 +98,7 @@ export function lastRun(ws: Workspace): { id: number; ts: string; dir: string } 
 }
 
 /** The process a run directory's `pid` file names, once the follower that started it has written it. */
-function runProcess(dir: string): Proc | undefined {
+export function runProcess(dir: string): Proc | undefined {
   const p = join(dir, "pid");
   if (!existsSync(p)) return undefined;
   const [pid, start] = readFileSync(p, "utf8").split("\n");
@@ -128,7 +143,7 @@ function drain(path: string, fd: number, at: number): number {
   }
 }
 
-function exitOf(dir: string): number | undefined {
+export function exitOf(dir: string): number | undefined {
   const p = join(dir, "exit");
   if (!existsSync(p)) return undefined;
   const text = readFileSync(p, "utf8").trim();
@@ -153,13 +168,13 @@ async function gone(l: Lander): Promise<void> {
  * code (killed where no handler runs) returns 75 with what to do next. A SIGINT, SIGTERM or SIGHUP to the follower only
  * detaches it (BR-2391).
  */
-export async function follow(ws: Workspace, dir: string, lander: Lander, pid: number | null): Promise<number> {
+export async function follow(ws: Workspace, dir: string, lander: Lander, pid: number | null, job: BackgroundJob = LANDING): Promise<number> {
   let out = 0;
   let err = 0;
   const detach = (signal: NodeJS.Signals) => {
     out = drain(join(dir, "out"), 1, out);
     err = drain(join(dir, "err"), 2, err);
-    writeSync(2, `canon: detached (${signal}); the landing goes on in the background${pid !== null ? ` (process ${pid})` : ""}. Follow it again: canon work land (in ${ws.root}); stop it: canon work land --stop\n`);
+    writeSync(2, `canon: detached (${signal}); the ${job.noun} goes on in the background${pid !== null ? ` (process ${pid})` : ""}. Follow it again: ${job.again} (in ${ws.root}); stop it: ${job.stop}\n`);
     process.exit(EXIT.timeout);
   };
   const signals: NodeJS.Signals[] = ["SIGINT", "SIGTERM", "SIGHUP"];
@@ -178,7 +193,7 @@ export async function follow(ws: Workspace, dir: string, lander: Lander, pid: nu
         // reason: the exit file is written just before the process ends; returning only once it is gone leaves no landing process behind the command (BR-2390)
         await gone(lander);
         if (last !== undefined) return last;
-        writeSync(2, `canon: the landing process${pid !== null ? ` ${pid}` : ""} ended without recording a result (killed where no handler runs); run canon work land again: it says what was left and cleans it up\n`);
+        writeSync(2, `canon: the ${job.noun} process${pid !== null ? ` ${pid}` : ""} ended without recording a result (killed where no handler runs); run ${job.again} again: it says what was left and cleans it up\n`);
         return EXIT.timeout;
       }
       await Bun.sleep(POLL_MS);

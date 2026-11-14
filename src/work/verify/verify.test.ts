@@ -1093,13 +1093,24 @@ describe("canon work test stops its process tree on a real signal", () => {
       return false;
     }
   };
+  /** The background process running the tests (BR-2467): the one these signals are for; the command only follows it. */
+  const runPid = async (wt: string): Promise<number> => {
+    let pid = 0;
+    await waitFor("the test run to write its process", () => {
+      const row = ws(wt).db.db.query<{ d: string }, []>("SELECT detail AS d FROM events WHERE kind = 'test.spawn' ORDER BY id DESC LIMIT 1").get();
+      const dir = row ? (JSON.parse(row.d) as { run: string }).run : "";
+      if (dir && existsSync(join(dir, "pid"))) pid = Number(readFileSync(join(dir, "pid"), "utf8").split("\n")[0]);
+      return pid > 0;
+    });
+    return pid;
+  };
 
-  test("BR-2304: SIGTERM to canon alone ends the test file's whole process tree and exits 143", async () => {
+  test("BR-2304: SIGTERM to the canon running the tests alone ends the test file's whole process tree and exits 143", async () => {
     const wt = jobsFixture(2, `sleep ${HANG_SECONDS} &\necho $! > child.pid\nwait\n`, "1");
     const proc = await start(wt);
     const pid = Number(readFileSync(join(wt, "child.pid"), "utf8"));
     expect(alive(pid)).toBe(true);
-    proc.kill("SIGTERM");
+    process.kill(await runPid(wt), "SIGTERM"); // the follower then exits with the run's code
     expect(await proc.exited).toBe(143);
     await waitGone(pid, "the test file's child"); // a killed process is gone a moment later, not at the instant canon exits
     const out = await new Response(proc.stdout).text();
@@ -1111,13 +1122,41 @@ describe("canon work test stops its process tree on a real signal", () => {
     const wt = jobsFixture(1, `trap "touch term.seen" TERM INT\nsleep ${HANG_SECONDS} &\necho $! > child.pid\n${runsUntilKilled}\n`, "1");
     const proc = await start(wt);
     const pid = Number(readFileSync(join(wt, "child.pid"), "utf8"));
+    const run = await runPid(wt);
     const t0 = performance.now();
-    proc.kill("SIGTERM");
+    process.kill(run, "SIGTERM");
     await waitFor("the file to get SIGTERM", () => existsSync(join(wt, "term.seen"))); // canon is now waiting for it to exit
-    proc.kill("SIGINT");
+    process.kill(run, "SIGINT");
     expect(await proc.exited).toBe(143);
     expect(performance.now() - t0).toBeLessThan(8000); // not the 10 s grace period
     await waitGone(pid, "the test file's child, which ignored SIGTERM"); // SIGKILLed: gone a moment later, not at the instant canon exits
+  }, 30_000);
+
+  test("BR-2467: a signal to canon work test only detaches it; the run goes on, canon work test follows it again, and --stop stops it", async () => {
+    const wt = jobsFixture(1, `sleep ${HANG_SECONDS} &\necho $! > child.pid\nwait\n`, "1");
+    const proc = await start(wt);
+    const pid = Number(readFileSync(join(wt, "child.pid"), "utf8"));
+    proc.kill("SIGTERM"); // what an agent's command time limit does
+    expect(await proc.exited).toBe(75);
+    expect(await new Response(proc.stderr).text()).toContain("the test run goes on in the background");
+    expect(alive(pid)).toBe(true);
+    const again = Bun.spawn(["bun", MAIN, "work", "test"], { cwd: wt, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    // read until it says it follows the run: only then is --stop sure to find the run still going
+    const reader = again.stderr.getReader();
+    let said = "";
+    while (!said.includes("following it instead of starting another")) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      said += new TextDecoder().decode(value);
+    }
+    const stop = Bun.spawnSync(["bun", MAIN, "work", "test", "--stop"], { cwd: wt, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    expect(stop.exitCode).toBe(143);
+    expect(stop.stdout.toString()).toMatch(/stopped by SIGTERM: 1 test file\(s\) were running/);
+    expect(await again.exited).toBe(143); // the follower started again saw the same run end
+    expect(said).toContain("still running; following it instead of starting another");
+    await waitGone(pid, "the test file's child");
+    const none = Bun.spawnSync(["bun", MAIN, "work", "test", "--stop"], { cwd: wt, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    expect(none.exitCode).toBe(3);
   }, 30_000);
 });
 
