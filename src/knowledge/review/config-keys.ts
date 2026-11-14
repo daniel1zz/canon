@@ -6,7 +6,8 @@ export const REVIEW_NONE = "none";
 
 /** The command an unset `review` should become, as `canon init` writes it (BR-2032) and the refusal suggests (BR-2074). */
 export const DEFAULT_CODEX_REVIEW = "codex exec --ephemeral --sandbox read-only -";
-export const DEFAULT_REVIEW = "claude -p --model sonnet --output-format text";
+// reason: with its default tools the model sometimes reported its findings through a tool and printed no JSON; the prompt holds all it reads (D-120)
+export const DEFAULT_REVIEW = "claude -p --model sonnet --tools '' --output-format text";
 
 /** How to set a reviewer, first; then that turning the review off is the owner's call (BR-2074, D-51). */
 export const REVIEW_WAYS_OUT = [

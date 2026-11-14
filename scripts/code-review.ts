@@ -12,7 +12,7 @@
  * are in or the oldest is `review_max_age_minutes` old, then one review covers them all.
  *
  * Environment: CANON_BASE and CANON_HEAD (set by canon), CANON_CHANGE (unused, the batch names its changes),
- * CANON_CODE_REVIEW_AI (default `claude -p --output-format text`), CANON_GH (default `gh`),
+ * CANON_CODE_REVIEW_AI (default `claude -p --tools '' --output-format text`), CANON_GH (default `gh`),
  * CANON_CODE_REVIEW_FORCE=1 (review everything waiting now; CANON_BASE and CANON_HEAD then default to the reviewed
  * ref and main's tip), CANON_CODE_REVIEW_WAITER=0 (a deferred review starts no background wait), CANON_NOW (an ISO
  * date replacing the clock, for tests).
@@ -30,7 +30,7 @@ if (!ws.ok) {
   console.error(`code-review: ${ws.error.message}`);
   process.exit(1);
 }
-const ai = process.env["CANON_CODE_REVIEW_AI"] || "claude -p --output-format text";
+const ai = process.env["CANON_CODE_REVIEW_AI"] || "claude -p --tools '' --output-format text";
 const gh = process.env["CANON_GH"] || "gh";
 const limits = { maxUnreviewed: ws.value.config.reviewMaxUnreviewed, maxAgeMs: ws.value.config.reviewMaxAgeMs };
 const say = (line: string) => console.log(`code-review: ${line}`);

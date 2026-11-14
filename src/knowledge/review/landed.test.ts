@@ -213,8 +213,8 @@ describe("rule review after landing", () => {
     const said = `${out}${err}`;
     expect(said).toContain(`${id} landed without a review`);
     expect(said).toContain("acceptance fails until they are reviewed");
-    expect(said.indexOf('review: "claude -p --model sonnet --output-format text"')).toBeGreaterThan(-1);
-    expect(said.indexOf('review: "claude -p --model sonnet --output-format text"')).toBeLessThan(said.indexOf("review: none"));
+    expect(said.indexOf('review: "claude -p --model sonnet --tools \'\' --output-format text"')).toBeGreaterThan(-1);
+    expect(said.indexOf('review: "claude -p --model sonnet --tools \'\' --output-format text"')).toBeLessThan(said.indexOf("review: none"));
     expect(said).toContain("canon human ask");
     expect(skips(root)).toEqual(["unconfigured"]);
     expect(queued(root)).toBe(0);
