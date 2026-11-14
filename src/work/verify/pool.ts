@@ -53,6 +53,8 @@ export interface Outcome {
   readonly output: string;
   /** It ended because of SIGHUP, SIGINT or SIGTERM (BR-2304). */
   readonly signalled: boolean;
+  /** CPU time the command and the processes it waited for used, in ms; absent when the system did not report it (BR-2472). */
+  readonly cpuMs?: number;
 }
 
 export interface FileResult extends Outcome {

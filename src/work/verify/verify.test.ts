@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { HANG_SECONDS, project, runsUntilKilled, sh, startNew, waitFor, waitGone, ws } from "../testkit.ts";
 import { EventEmitter } from "node:events";
 import { recordReport } from "./ledger.ts";
-import { commandFor, machineDeps, selectTests, timeoutReport, workTest, type WorkTestDeps, type WorkTestResult } from "./verify.ts";
+import { commandFor, machineDeps, selectTests, timeoutReport, waitingReport, workTest, type WorkTestDeps, type WorkTestResult } from "./verify.ts";
 import type { CpuSample } from "./pool.ts";
 
 const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
@@ -1223,5 +1223,42 @@ describe("overlap with other changes in flight", () => {
   test("BR-2395: no line when the other change changes another file or has not committed the same one", async () => {
     expect((await overlapRun("src/b.ts")).lines).toEqual([]);
     expect((await overlapRun("src/a.ts", false)).lines).toEqual([]);
+  });
+});
+
+describe("test files that mostly wait", () => {
+  test("BR-2472: a file of at least 10 s whose processes used at most 20% of it in CPU is said, slowest first; a shorter or busier file is not", () => {
+    const quiet = { load: 2, cpus: 8 };
+    const r = waitingReport([
+      { file: "src/wait.test.ts", ms: 40_000, cpuMs: 1_000 },
+      { file: "src/edge.test.ts", ms: 10_000, cpuMs: 2_000 },
+      { file: "src/work.test.ts", ms: 40_000, cpuMs: 8_001 },
+      { file: "src/short.test.ts", ms: 9_999, cpuMs: 0 },
+      { file: "src/unknown.test.ts", ms: 60_000 },
+    ], quiet);
+    expect(r.files).toEqual(["src/wait.test.ts", "src/edge.test.ts"]);
+    expect(r.lines).toEqual([
+      "note: src/wait.test.ts took 40.0s but its processes used 1.0s of CPU (98% waiting): a test that waits for a timer, a sleep or a poll should use a short one (BR-2472)",
+      "note: src/edge.test.ts took 10.0s but its processes used 2.0s of CPU (80% waiting): a test that waits for a timer, a sleep or a poll should use a short one (BR-2472)",
+    ]);
+    const busy = waitingReport([{ file: "src/wait.test.ts", ms: 40_000, cpuMs: 1_000 }], { load: 9, cpus: 8 });
+    expect(busy.files).toEqual(["src/wait.test.ts"]);
+    expect(busy.lines).toEqual(["note: 1 test file(s) mostly waited, but the machine was busier than its CPUs or its load could not be read, so waiting for a CPU cannot be told apart; run them again when it is quieter (BR-2472)"]);
+    expect(waitingReport([{ file: "src/wait.test.ts", ms: 40_000, cpuMs: 1_000 }], {}).lines[0]).toContain("could not be read");
+    expect(waitingReport([{ file: "src/work.test.ts", ms: 40_000, cpuMs: 30_000 }], quiet)).toEqual({ files: [], lines: [] });
+  });
+
+  test("BR-2472: work.test records each file's wall time and the CPU its processes used, a sleep near none and a busy loop near all of it", async () => {
+    const wt = jobsFixture(2, 'case "$1" in *t1*) sleep 0.6;; *) bun -e "const e = Date.now() + 600; while (Date.now() < e) {}";; esac\n', "1");
+    await runWorkTest(wt, fakeDeps().d);
+    const row = ws(wt).db.db.query<{ d: string }, []>("SELECT detail AS d FROM events WHERE kind = 'work.test' ORDER BY id DESC LIMIT 1").get()!;
+    const detail = JSON.parse(row.d) as { fileTimes: Record<string, number[]>; waitedFiles: string[] };
+    const [sleepMs, sleepCpu] = detail.fileTimes["src/t1.test.ts"]!;
+    const [busyMs, busyCpu] = detail.fileTimes["src/t2.test.ts"]!;
+    expect(sleepMs).toBeGreaterThanOrEqual(600);
+    expect(sleepCpu!).toBeLessThan(sleepMs! / 2);
+    expect(busyCpu!).toBeGreaterThanOrEqual(500);
+    expect(busyMs).toBeGreaterThanOrEqual(600);
+    expect(detail.waitedFiles).toEqual([]); // under 10 s: not said
   });
 });

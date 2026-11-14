@@ -161,7 +161,32 @@ async function runShell(root: string, command: string, groups: Set<number>): Pro
   for (const g of [...groups]) if (!groupAlive(g)) groups.delete(g);
   // reason: sh reports a command killed by a signal as 128 + the signal's number (BR-2304)
   const signalled = ["SIGHUP", "SIGINT", "SIGTERM"].includes(String(proc.signalCode)) || [129, 130, 143].includes(exitCode);
-  return { exitCode, ms: Math.round(performance.now() - t0), output: `${stdout}${stderr}`, signalled };
+  // reason: the CPU the file's processes used against its wall time tells a test that waits from one that works (BR-2472, D-113)
+  const usage = proc.resourceUsage();
+  const cpuMs = usage ? Math.round(Number(usage.cpuTime.total) / 1000) : undefined;
+  return { exitCode, ms: Math.round(performance.now() - t0), output: `${stdout}${stderr}`, signalled, ...(cpuMs === undefined ? {} : { cpuMs }) };
+}
+
+/** A file runs at least this long before its waiting is worth saying (BR-2472). */
+export const WAIT_MIN_MS = 10_000;
+/** A file whose processes used at most this share of its wall time in CPU mostly waited (BR-2472). */
+export const WAIT_MAX_CPU_SHARE = 0.2;
+
+/**
+ * The files that mostly waited (BR-2472): ran at least WAIT_MIN_MS and used at most WAIT_MAX_CPU_SHARE of it in CPU,
+ * slowest first, as note lines. On a machine busier than its CPUs a file also waits for a CPU, so then they are only counted.
+ */
+export function waitingReport(results: readonly { file: string; ms: number; cpuMs?: number }[], end: { load?: number; cpus?: number }): { files: string[]; lines: string[] } {
+  const waited = results.filter((r) => r.cpuMs !== undefined && r.ms >= WAIT_MIN_MS && r.cpuMs <= r.ms * WAIT_MAX_CPU_SHARE).sort((a, b) => b.ms - a.ms);
+  const files = waited.map((r) => r.file);
+  if (waited.length === 0) return { files, lines: [] };
+  if (end.load === undefined || end.cpus === undefined || end.load > end.cpus) {
+    return { files, lines: [`note: ${waited.length} test file(s) mostly waited, but the machine was busier than its CPUs or its load could not be read, so waiting for a CPU cannot be told apart; run them again when it is quieter (BR-2472)`] };
+  }
+  return {
+    files,
+    lines: waited.map((r) => `note: ${r.file} took ${secs(r.ms)} but its processes used ${secs(r.cpuMs!)} of CPU (${Math.round(100 - (100 * r.cpuMs!) / r.ms)}% waiting): a test that waits for a timer, a sleep or a poll should use a short one (BR-2472)`),
+  };
 }
 
 const secs = (ms: number) => `${(ms / 1000).toFixed(1)}s`;
@@ -416,6 +441,9 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   const result: WorkTestResult = { files: files.length, failed: failed.length, typecheck, check: findings.length, unmatched: unmatched.length, evidence: missing.value.length };
   if (files.length) say(`${files.length} file(s): ${files.length - failed.length} passed, ${failed.length} failed, ${secs(ms)}, at most ${jobs.peak} at once`);
   if (passedAlone.length) say(`failed alongside other files, passed alone: ${passedAlone.join(", ")}`);
+  // A note, never a failure (BR-2472).
+  const waiting = waitingReport([...finalized.values()], loadDetail());
+  for (const line of waiting.lines) say(line);
   if (failed.length) say(`failed: ${failed.join(", ")}`);
   if (typecheck !== null && typecheck !== 0) say(`typecheck failed (exit ${typecheck})`);
   if (findings.length) say(`canon check failed: ${findings.length} finding(s)`);
@@ -423,6 +451,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   ws.db.event(ws.actor, "work.test", subject, {
     all, ...result, ms, jobs: cap, ...jobs, rerun: rerunAlone.length, rerunFiles: rerunAlone, passedAlone: passedAlone.length, passedAloneFiles: passedAlone, rerunSkipped,
     ...at, ranFiles: files, failedFiles: failed,
+    fileTimes: Object.fromEntries([...finalized.values()].map((r) => [r.file, r.cpuMs === undefined ? [r.ms] : [r.ms, r.cpuMs]])), waitedFiles: waiting.files,
   });
   return ok(result);
 }
