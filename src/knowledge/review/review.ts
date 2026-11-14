@@ -1,3 +1,5 @@
+import { namedIds, quotedSpans } from "./findings/quotes.ts";
+import { findDoc } from "../query/query.ts";
 import { SKILL_DIRS, standingInstructions } from "../../kernel/agent.ts";
 import { restatementLine, type Restatement } from "../check/restatement/restatement.ts";
 import { realpathSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
@@ -72,12 +74,19 @@ export interface ReviewExtras {
    * changed documents the other parts show in full, listed here by id, title and first line.
    */
   readonly part?: { readonly i: number; readonly n: number; readonly others: readonly Doc[] };
+  /** In a review split into several calls: the rules and decisions the changed documents name, shown whole in every call (BR-2359, #219). */
+  readonly cited?: readonly Doc[];
 }
 
 /** The key of each blocking criterion in the prompts, and `note` for a remark that never blocks (BR-2367, D-74). */
 export const RULE_CRITERIA = ["contradiction", "untestable", "no-rejected-options", "release", "amends", "overview", "restatement", "business-overlap"] as const;
 export const DUPLICATE_CRITERIA = ["duplication"] as const;
 const CRITERIA: readonly string[] = [...RULE_CRITERIA, ...DUPLICATE_CRITERIA];
+
+/** The criteria a blocking finding must quote the documents for: it is a note when it quotes nothing (BR-2481, D-119). */
+export const MUST_QUOTE: readonly string[] = ["contradiction", "restatement"];
+/** What canon adds to a finding it took as a note for quoting nothing (BR-2481). */
+export const unquotedNote = (criterion: string): string => `(canon: given as [${criterion}] but quotes no text, so taken as a note)`;
 const ANSWER_FORMAT_RULE = `{"findings":[{"criterion":"${RULE_CRITERIA.join('"|"')}"|"note","text":"<one sentence, naming the id>"}]`;
 export const NO_VERDICT = "Do not give a verdict: canon derives it from the keys.";
 
@@ -143,6 +152,10 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
   }
   parts.push("# Changed documents (new text)");
   for (const d of changed) parts.push(docSection(d));
+  if (extras.cited?.length) {
+    parts.push("# Documents the changed documents name (whole text, in every call, so a relation to them can be judged here; they are not changed by this landing)");
+    for (const d of extras.cited) parts.push(docSection(d));
+  }
   if (extras.added?.length) {
     parts.push("# Lines added or changed in this landing", "", "For each changed rule or decision that was already on main, the lines this landing adds or changes (line number in the file, then the line). A changed rule or decision not listed here is new: all of its lines are.", "");
     for (const a of extras.added) parts.push(`## ${a.id} (${a.path})\n\n${a.lines.length ? a.lines.map((l) => `${l.line}: ${l.text}`).join("\n") : "(only lines removed)"}\n`);
@@ -382,6 +395,8 @@ export function parseAnswer(v: unknown): Result<ReviewVerdict> {
     const { criterion, text } = f as { criterion?: unknown; text?: unknown };
     if (typeof text !== "string" || text.trim() === "") return bad("has no text");
     if (criterion === "note") findings.push(text);
+    // reason: these two are about text that exists; one that quotes none of it cannot be checked, and the ones seen said they found nothing (BR-2481, D-119, #219)
+    else if (typeof criterion === "string" && MUST_QUOTE.includes(criterion) && quotedSpans(text).length === 0) findings.push(`${text} ${unquotedNote(criterion)}`);
     else if (typeof criterion === "string" && CRITERIA.includes(criterion)) {
       blocking = true;
       findings.push(`[${criterion}] ${text}`);
@@ -465,8 +480,18 @@ interface Call {
 }
 
 /** The note a call of a split review carries: which call it is and how many there are (BR-2359). */
+/** The active or proposed rules and decisions the changed documents name, other than themselves, by id (BR-2359, #219). */
+export function citedDocs(corpus: Corpus, changed: readonly Doc[]): Doc[] {
+  const own = new Set(changed.map((d) => d.id));
+  const ids = [...new Set(changed.flatMap((d) => namedIds(`${d.title}\n${d.body}`)))].filter((id) => !own.has(id));
+  return ids
+    .map((id) => findDoc(corpus, id))
+    .filter((d): d is Doc => d !== undefined && (d.kind === "rule" || d.kind === "decision"))
+    .sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
+}
+
 function callNote(i: number, n: number): string {
-  return `This review is split into ${n} calls because of its size; this is call ${i} of ${n}. Every call shows the same changed documents, the rule index and the accepted decisions' titles, and only part of the affected domains' text: judge what is shown, and never block because a rule or domain text is not shown in this call.`;
+  return `This review is split into ${n} calls because of its size; this is call ${i} of ${n}. Every call shows the same changed documents, the documents they name, the rule index and the accepted decisions' titles, and only part of the affected domains' text: judge what is shown, and never block because a rule or domain text is not shown in this call.`;
 }
 
 /**
@@ -584,6 +609,8 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   if (bytes(whole) <= budgetBytes) return ok([whole]);
 
   const tail = promptTail(corpus);
+  // reason: the size split puts a cited rule wherever its domain falls, and a call without it cannot judge 按 BR-n; every call carries them (BR-2359, #219)
+  extras = { ...extras, cited: citedDocs(corpus, changed) };
   const noWording: ReviewExtras = { ...extras, wording: [] };
   const room = noteRoom(corpus, maxCalls(root, corpus, contextTops(corpus, changed, extras)));
   const fixed = (first: boolean): number => bytes([...promptHead(corpus, changed, first ? extras : noWording), ...tail].join("\n")) + room;

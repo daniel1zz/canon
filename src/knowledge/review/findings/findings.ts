@@ -3,6 +3,9 @@ import type { CoordDb } from "../../../work/db.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import { DUPLICATE_CRITERIA, RULE_CRITERIA } from "../review.ts";
 import { tierCounts } from "./tier.ts";
+import { namedIds, quotedSpans } from "./quotes.ts";
+
+export { namedIds, quotedSpans };
 
 /**
  * Open review findings (D-89, D-97): a finding that names a blocking criterion has an identity (BR-2433), is
@@ -25,23 +28,7 @@ export function findingOf(stored: string): Finding {
   return m && CRITERIA.includes(m[1]!) ? { criterion: m[1]!, text: m[2]! } : { criterion: "note", text: stored };
 }
 
-const ID = /(?<![A-Za-z0-9-])(BR|D|R)-(\d+)(?![0-9])/g;
-const QUOTE = /「([^」]*)」|“([^”]*)”|`([^`\n]*)`/g;
 const squash = (s: string): string => s.replace(/\s+/g, " ").trim();
-
-/** The rule, decision and release ids `text` names, anywhere in it, unique and sorted (BR-2433). */
-export function namedIds(text: string): string[] {
-  return [...new Set([...text.matchAll(ID)].map((m) => `${m[1]}-${m[2]}`))].sort();
-}
-
-/**
- * The quoted words a finding points at (BR-2433): every span in 「」, “” or single backticks, whitespace squashed,
- * without the spans that are empty or hold only ids (`BR-1` names a document, it quotes nothing); unique and sorted.
- */
-export function quotedSpans(text: string): string[] {
-  const spans = [...text.matchAll(QUOTE)].map((m) => squash(m[1] ?? m[2] ?? m[3] ?? ""));
-  return [...new Set(spans.filter((s) => s.replace(ID, "").replace(/[\s,，、]/g, "") !== ""))].sort();
-}
 
 /** A finding's identity: criterion, sorted named ids, and the hash of its quoted words or, with none, of its whole squashed text; a restatement's is its criterion and ids alone (BR-2433). */
 export function identityOf(f: Finding): string {

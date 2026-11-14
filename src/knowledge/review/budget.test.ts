@@ -80,6 +80,27 @@ describe("rule review prompt budget", () => {
     expect(withA).toContain("# Domain: big "); // and the enclosing domain's
   });
 
+  test("BR-2359: in a split review every call shows, whole, the rules and decisions the changed documents name; an unsplit one shows them only where they live", () => {
+    const { root, corpus } = bigDomain(30);
+    const six = corpus.docs.find((d) => d.id === id("BR", 6))!;
+    const citing = [{ ...six, body: `${six.body}\n按 ${id("BR", 5)} 和 ${id("D", 1)}，不像 ${id("BR", 6)} 自己。\n` }] as typeof corpus.docs;
+    const section = "# Documents the changed documents name";
+    const calls = prompts(reviewPrompts(root, corpus, citing, {}, 80 * KB));
+    expect(calls.length).toBeGreaterThan(1);
+    for (const p of calls) {
+      expect(p).toContain(section);
+      expect(p).toContain(`\n## ${id("BR", 5)} Small five (rule, active)\n\n`);
+      expect(p).toContain(`\n## ${id("D", 1)} Accepted choice (decision, accepted)\n\n`);
+      const cited = p.split(section)[1]!.split("\n# ")[0]!;
+      expect([...cited.matchAll(/^## ((?:BR|D)-\d+) /gm)].map((m) => m[1])).toEqual([id("BR", 5), id("D", 1)]);
+      expect(p).toContain("the documents they name");
+    }
+    const small = corpusOf({ "canon/rules/small/README.md": "# small\n\nSmall.\n", [`canon/rules/small/${id("BR", 5)}.md`]: rule(5, "Five", "Short."), [`canon/rules/small/${id("BR", 7)}.md`]: rule(7, "Seven", `按 ${id("BR", 5)}。`) });
+    const one = prompts(reviewPrompts(small.root, small.corpus, small.corpus.docs.filter((d) => d.id === id("BR", 7)), {}, 250 * KB));
+    expect(one).toHaveLength(1);
+    expect(one[0]).not.toContain(section);
+  });
+
   test("BR-2359: a subdomain that does not fit a call even alone is packed one rule at a time", () => {
     const { root, corpus } = bigDomain(30);
     const budget = 50 * KB; // big/a holds 60 KB of rules, so it goes rule by rule

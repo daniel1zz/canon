@@ -154,12 +154,20 @@ describe("review verdict derived from the criteria findings name (BR-2367)", () 
   test("BR-2367: a finding naming a criterion blocks whatever verdict the answer states; notes alone are ok", async () => {
     const amends = "D-66 changes part of D-21 without amends";
     expect(await answer(`{"findings":[${f("amends", amends)}]}`)).toEqual({ ok: true, value: { verdict: "block", findings: [`[amends] ${amends}`] } });
-    expect(await answer(`{"verdict":"ok","findings":[${f("contradiction", "BR-1 contradicts BR-2")}]}`)).toEqual({ ok: true, value: { verdict: "block", findings: ["[contradiction] BR-1 contradicts BR-2"] } });
+    expect(await answer(`{"verdict":"ok","findings":[${f("contradiction", "BR-1 「三天」 contradicts BR-2 「五天」")}]}`)).toEqual({ ok: true, value: { verdict: "block", findings: ["[contradiction] BR-1 「三天」 contradicts BR-2 「五天」"] } });
     expect(await answer(`{"verdict":"block","findings":[${f("note", "style")}]}`)).toEqual({ ok: true, value: { verdict: "ok", findings: ["style"] } });
     expect(await answer(`{"findings":[${f("note", "BR-3 could be shorter")},${f("untestable", "BR-4 is vague")}]}`)).toEqual({ ok: true, value: { verdict: "block", findings: ["BR-3 could be shorter", "[untestable] BR-4 is vague"] } });
     expect(await answer('{"findings":[]}')).toEqual({ ok: true, value: { verdict: "ok", findings: [] } });
     const wording = await answer(`{"findings":[${f("note", "n")}],"wording":{"BR-1":"wording"}}`);
     expect(wording).toEqual({ ok: true, value: { verdict: "ok", findings: ["n"], wording: { "BR-1": "wording" } } });
+  });
+
+  test("BR-2481: a contradiction or restatement that quotes no text is a note saying why; one that quotes, or another criterion without quotes, still blocks", async () => {
+    const unquoted = "BR-1000 cites BR-956 only in the part this call shows; cannot be decided here";
+    expect(await answer(`{"findings":[${f("contradiction", unquoted)}]}`)).toEqual({ ok: true, value: { verdict: "ok", findings: [`${unquoted} (canon: given as [contradiction] but quotes no text, so taken as a note)`] } });
+    expect(await answer(`{"findings":[${f("restatement", "未发现可判定的 restatement，\`BR-5\` 无复述")}]}`)).toEqual({ ok: true, value: { verdict: "ok", findings: ["未发现可判定的 restatement，`BR-5` 无复述 (canon: given as [restatement] but quotes no text, so taken as a note)"] } });
+    expect(await answer(`{"findings":[${f("restatement", "BR-5 「三天内退款」 restates BR-4 「五天内退款」")}]}`)).toEqual({ ok: true, value: { verdict: "block", findings: ["[restatement] BR-5 「三天内退款」 restates BR-4 「五天内退款」"] } });
+    expect(await answer(`{"findings":[${f("untestable", "BR-4 says nothing about exit codes")}]}`)).toEqual({ ok: true, value: { verdict: "block", findings: ["[untestable] BR-4 says nothing about exit codes"] } });
   });
 
   test("BR-2367: a finding without a usable criterion or text, or a string among objects, is an invalid answer that says which finding and the names", async () => {
