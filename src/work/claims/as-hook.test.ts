@@ -260,7 +260,7 @@ describe("a worker session started by another session", () => {
 });
 
 describe("a worker its launcher named with CANON_SUBAGENT (BR-2495)", () => {
-  test("BR-2495: CANON_SUBAGENT acts as --as unless an explicit --as or a Codex child names someone; CANON_ACTOR beside it, a bad name or no session is a usage error", () => {
+  test("BR-2495 BR-2023: CANON_SUBAGENT acts as --as unless an explicit --as or a Codex child names someone; CANON_ACTOR beside it, a bad name or no session is a usage error", () => {
     const env = { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "a69bb94c-570e-4fcb", CANON_SUBAGENT: "worker-w6" };
     const text = (r: ReturnType<typeof currentActor>) => (r.ok ? r.value : r.error.message);
     expect(text(currentActor(env))).toBe("agent:a69bb94c:worker-w6");
