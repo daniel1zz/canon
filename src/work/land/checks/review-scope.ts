@@ -108,7 +108,9 @@ export function reviewScope(wt: string, base: string, head: string, corpus: Corp
   const activated: Activation[] = [];
   for (const d of changedDocs) {
     if (d.kind !== "rule" || d.status !== "active") continue;
-    const before = textAt(wt, base, d.path);
+    // reason: a rule moved to another domain in the landing that activates it was at another path at base; it is found by its id (BR-2496)
+    const moved = entries.find((e) => e.status === "D" && e.path.split("/").pop()!.match(/^[A-Z][A-Z0-9]*-\d+/)?.[0] === d.id);
+    const before = textAt(wt, base, d.path) ?? (moved ? textAt(wt, base, moved.path) : undefined);
     const parsed = before === undefined ? undefined : parseDocFile(before, d.path);
     if (!parsed?.ok || parsed.value.meta["status"] !== "planned") continue;
     const targets = parsed.value.meta["will_amend"];

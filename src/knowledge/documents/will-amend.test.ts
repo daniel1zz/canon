@@ -89,4 +89,19 @@ describe("the landing that activates a rule with will_amend (BR-2496)", () => {
     // a rule that stays planned, or was never planned, activates nothing
     expect(reviewScope(root, head, head, c).activated).toEqual([]);
   });
+
+  test("BR-2496: a rule moved to another domain in the landing that activates it is still found by its id", () => {
+    const root = repo({ "BR-1022.md": rule("BR-1022", "planned", "will_amend: [BR-300]\n"), "BR-300.md": rule("BR-300", "active") });
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "planned with will_amend");
+    const base = sh(root, "rev-parse", "HEAD");
+    mkdirSync(join(root, "canon/rules/game/shipping"), { recursive: true });
+    writeFileSync(join(root, "canon/rules/game/shipping/README.md"), "# shipping\n\n## 术语\n\n- **原因**：拒绝的理由\n\n## 业务\n\n- **x**：y\n");
+    sh(root, "rm", "-q", "canon/rules/game/BR-1022.md");
+    writeFileSync(join(root, "canon/rules/game/shipping/BR-1022.md"), rule("BR-1022", "active"));
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "activate and move");
+    const head = sh(root, "rev-parse", "HEAD");
+    expect(reviewScope(root, base, head, corpus(root)).activated).toEqual([{ id: "BR-1022", targets: ["BR-300"] }]);
+  });
 });
