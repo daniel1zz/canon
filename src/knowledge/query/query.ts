@@ -204,11 +204,11 @@ function isUnder(path: string, dir: string): boolean {
  * shape first and opens only the rules it touches; `full: true` gives every rule's text (`--full`, and the
  * rule review, which needs the whole domain to find contradictions).
  */
-export function renderContext(root: string, ctx: Context, opts: { readonly full: boolean; readonly target?: string }): string {
+export function renderContext(root: string, ctx: Context, opts: { readonly full: boolean; readonly target?: string; readonly summaries?: ReadonlySet<string> }): string {
   const out: string[] = [];
   const rulesOf = (domain: Domain, rules: readonly Rule[]) => {
     // reason: --full is read whole (the rule review reads it): it stays in id order so its shape does not change (BR-2007)
-    if (opts.full) for (const r of rules) out.push(ruleSection(r));
+    if (opts.full) for (const r of rules) out.push(ruleSection(r, !opts.summaries?.has(r.id)));
     else if (rules.length) {
       const grouped = businessListing(domain, rules, (r) => `- ${r.id}${plannedMark(r)}${releaseMark(r)} ${r.title}`);
       const flat = rules.map((r) => `- ${r.id}${plannedMark(r)}${releaseMark(r)} ${r.title}${businessMark(r)}`);
@@ -233,8 +233,8 @@ export function renderContext(root: string, ctx: Context, opts: { readonly full:
   return out.join("\n");
 }
 
-/** One rule's id, title and whole text, as `renderContext` prints it with `full: true`. */
-export const ruleSection = (r: Rule): string => `## ${r.id}${plannedMark(r)}${releaseMark(r)} ${r.title}${businessMark(r)}\n\n${r.body.trim()}\n`;
+/** One rule's heading and, by default, whole text; a review can read the body in its changed documents instead (BR-2009). */
+export const ruleSection = (r: Rule, full = true): string => `## ${r.id}${plannedMark(r)}${releaseMark(r)} ${r.title}${businessMark(r)}\n${full ? `\n${r.body.trim()}\n` : ""}`;
 
 /** ` [release R-1]` or ` [release R-1, changed in R-2, R-3]` after a tagged rule's id, nothing for a rule that belongs to no release (D-61). */
 export const releaseMark = (d: Doc): string => (d.kind === "rule" && d.release !== undefined ? ` [release ${d.release}${d.changedIn?.length ? `, changed in ${d.changedIn.join(", ")}` : ""}]` : "");

@@ -79,6 +79,11 @@ describe("reviewing a landing whose changed documents already passed (D-81)", ()
     expect(t.events("review.budget.ask")).toEqual([]);
     expect(t.prompt(2)).toContain("# Incremental review");
     expect(t.prompt(2)).toContain("Refunds are logged.");
+    for (const n of [1, 2]) {
+      const prompt = t.prompt(n);
+      expect(prompt.split("Refunds are fine.").length - 1).toBe(1);
+      expect(prompt.slice(prompt.indexOf("# Current context for"))).not.toContain("Refunds are fine.");
+    }
     expect(t.prompt(1)).not.toContain("# Incremental review");
     expect(t.prompt(1)).toContain(`Refunds ${old}`); // the full review sees the whole domain and the index
     expect(t.prompt(2)).not.toContain(`Refunds ${old}`); // the small one only the changed and the newly landed documents

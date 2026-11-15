@@ -111,7 +111,8 @@ export const CRITERION_TEXT: Readonly<Record<string, string>> = {
 
 /** The review prompt with every affected domain's whole text in it, however large. */
 export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras = {}): string {
-  const contexts = contextTops(corpus, changed, extras).map((top) => contextSection(root, corpus, top));
+  const summaries = changedRuleIds(changed);
+  const contexts = contextTops(corpus, changed, extras).map((top) => contextSection(root, corpus, top, summaries));
   return [...promptHead(corpus, changed, extras), ...contexts, ...promptTail(corpus)].join("\n");
 }
 
@@ -282,8 +283,11 @@ function contextTops(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtr
 
 const contextHeader = (top: string): string => `# Current context for ${top}\n\n`;
 
-function contextSection(root: string, corpus: Corpus, top: string): string {
-  return `${contextHeader(top)}${renderContext(root, contextFor(corpus, top), { full: true })}`;
+/** Only rules shown whole in this prompt's Changed documents can omit their domain bodies (BR-2009). */
+const changedRuleIds = (changed: readonly Doc[]): ReadonlySet<string> => new Set(changed.filter((d) => d.kind === "rule").map((d) => d.id));
+
+function contextSection(root: string, corpus: Corpus, top: string, summaries: ReadonlySet<string>): string {
+  return `${contextHeader(top)}${renderContext(root, contextFor(corpus, top), { full: true, summaries })}`;
 }
 
 /** The rule index and the accepted decisions' titles, which every call of a split review carries. */
@@ -623,19 +627,20 @@ function fixedBytes(corpus: Corpus, room: number): number {
 }
 
 /** The pieces one top domain's text is packed from, and what a call pays for them (BR-2359). `g`: the group of this domain already in the call. */
-function packer(root: string, corpus: Corpus, top: string) {
+function packer(root: string, corpus: Corpus, top: string, summaries: ReadonlySet<string> = new Set()) {
   const ctx = contextFor(corpus, top);
   const only = (d: Domain, rules: Context["rules"], withLists: boolean): Context => ({ ...ctx, domains: [d], rules, ...(withLists ? {} : { decisions: [], changes: [], extras: [], others: [] }) });
   const readme = (d: Domain): string => renderContext(root, only(d, [], d.name === top), { full: true });
   const chain = (d: Domain): Domain[] => ctx.domains.filter((x) => x.name === d.name || d.name.startsWith(`${x.name}/`));
+  const rule = (r: Rule): string => ruleSection(r, !summaries.has(r.id));
   // what adding `rules` of `d` costs: the group header unless `g` is there, the READMEs of d and its parents not in `g` yet, the rules
   const price = (g: { readonly emitted: Set<string> } | undefined, d: Domain, rules: readonly Rule[]): number => {
     let n = g ? 0 : bytes(contextHeader(top)) + 1;
     for (const x of chain(d)) if (!g?.emitted.has(x.name)) n += bytes(readme(x)) + 1;
-    for (const r of rules) n += bytes(ruleSection(r)) + 1;
+    for (const r of rules) n += bytes(rule(r)) + 1;
     return n;
   };
-  return { ctx, readme, chain, price };
+  return { ctx, readme, chain, price, rule };
 }
 
 /**
@@ -685,9 +690,15 @@ export interface DomainPiece {
  * `reviewPrompts` packs with. `fixed` is what every call carries besides the changed documents, which are not known without a change.
  */
 export function reviewSizes(root: string, corpus: Corpus): { readonly fixed: number; readonly pieces: readonly DomainPiece[] } {
+  const tops = corpus.domains.filter((d) => !d.parent).map((d) => d.name);
+  return { fixed: fixedBytes(corpus, noteRoom(corpus, maxCalls(root, corpus, tops))), pieces: domainPieces(root, corpus, tops) };
+}
+
+/** The largest indivisible piece per domain, priced exactly as this prompt displays it (BR-2359). */
+function domainPieces(root: string, corpus: Corpus, tops: readonly string[], summaries: ReadonlySet<string> = new Set()): DomainPiece[] {
   const pieces: DomainPiece[] = [];
-  for (const top of corpus.domains.filter((d) => !d.parent).map((d) => d.name)) {
-    const { ctx, price } = packer(root, corpus, top);
+  for (const top of tops) {
+    const { ctx, price } = packer(root, corpus, top, summaries);
     let worst: DomainPiece | undefined;
     for (const d of ctx.domains) {
       const rules = ctx.rules.filter((r) => r.domain === d.name);
@@ -698,8 +709,7 @@ export function reviewSizes(root: string, corpus: Corpus): { readonly fixed: num
     }
     if (worst) pieces.push(worst);
   }
-  const tops = corpus.domains.filter((d) => !d.parent).map((d) => d.name);
-  return { fixed: fixedBytes(corpus, noteRoom(corpus, maxCalls(root, corpus, tops))), pieces };
+  return pieces;
 }
 
 /**
@@ -716,7 +726,8 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   extras = { ...extras, cited: citedDocs(corpus, changed) };
   // reason: one changed document naming many documents made every call too large to send, so the review never ran; the named
   // documents are kept whole in the order first named while the call still has room for the largest domain piece it needs (BR-2488, #229)
-  const sizes = reviewSizes(root, corpus).pieces;
+  const summaries = changedRuleIds(changed);
+  const sizes = domainPieces(root, corpus, contextTops(corpus, changed, extras), summaries);
   const largest = Math.max(0, ...contextTops(corpus, changed, extras).map((t) => sizes.find((p) => p.top === t)?.piece ?? 0));
   const roomFor = (ex: ReviewExtras): number => bytes([...promptHead(corpus, changed, ex), ...tail].join("\n")) + noteRoom(corpus, maxCalls(root, corpus, contextTops(corpus, changed, ex))) + largest;
   if (roomFor(extras) > budgetBytes) {
@@ -750,7 +761,7 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   const roomOf = (c: Call): number => (c === calls[0] ? budgetBytes - fixed(true) : budgetBytes - fixedRest);
 
   for (const top of contextTops(corpus, changed, extras)) {
-    const { ctx, readme, chain, price: priceIn } = packer(root, corpus, top);
+    const { ctx, readme, chain, rule, price: priceIn } = packer(root, corpus, top, summaries);
     const price = (call: Call, d: Domain, rules: readonly Rule[]): number => priceIn(call.groups.get(top), d, rules);
     const add = (call: Call, d: Domain, rules: readonly Rule[]): void => {
       call.size += price(call, d, rules);
@@ -761,7 +772,7 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
         g.emitted.add(x.name);
         g.blocks.push(readme(x));
       }
-      for (const r of rules) g.blocks.push(ruleSection(r));
+      for (const r of rules) g.blocks.push(rule(r));
     };
     const empty = (): Call => ({ groups: new Map(), size: 0 });
     for (const d of ctx.domains) {
@@ -819,7 +830,6 @@ export function reviewPromptParts(root: string, corpus: Corpus, changed: readonl
   const whole = reviewPrompts(root, corpus, changed, extras, budgetBytes);
   if (whole.ok) return ok({ prompts: whole.value, parts: [changed] });
   if (changed.length < 2) return whole;
-  const pieces = new Map(reviewSizes(root, corpus).pieces.map((p) => [p.top, p.piece]));
   const tail = bytes(promptTail(corpus).join("\n"));
   // reason: the documents of one domain go together, so a contradiction between them is seen whole in one part (BR-2448)
   const key = (d: Doc): string => (d.kind === "rule" ? `0 ${d.domain}` : `1 ${d.kind}`);
@@ -840,7 +850,7 @@ export function reviewPromptParts(root: string, corpus: Corpus, changed: readonl
   const fits = (docs: readonly Doc[], i: number): boolean => {
     const ex = extrasOf(docs, i, changed.length);
     const tops = contextTops(corpus, docs, ex);
-    const piece = Math.max(0, ...tops.map((t) => pieces.get(t) ?? 0));
+    const piece = Math.max(0, ...domainPieces(root, corpus, tops, changedRuleIds(docs)).map((p) => p.piece));
     return bytes(promptHead(corpus, docs, ex).join("\n")) + tail + noteRoom(corpus, maxCalls(root, corpus, tops)) + piece + 2 <= budgetBytes;
   };
   const groups: Doc[][] = [];
