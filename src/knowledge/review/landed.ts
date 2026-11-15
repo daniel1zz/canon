@@ -88,7 +88,7 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
     const overview = architectureOf(wt, base, head);
     if (!overview.ok) return overview;
     const architecture = overview.value;
-    const extras = { deleted, readmes, deletedReadmes, change: change ? findDoc(read.corpus, change) : undefined, added: scope.added, restatements: scope.restatements, ...(architecture ? { architecture } : {}) };
+    const extras = { deleted, readmes, deletedReadmes, change: change ? findDoc(read.corpus, change) : undefined, added: scope.added, restatements: scope.restatements, activated: scope.activated, ...(architecture ? { architecture } : {}) };
     const parted = reviewPromptParts(wt, read.corpus, changedDocs, extras, s.reviewMaxPromptBytes);
     if (!parted.ok) return err("invalid", parted.error.message);
     const prompts = parted.value.prompts;
@@ -118,7 +118,7 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
         say(`review: the changed documents are the ones that passed review event ${usable.event}; reviewing them only against what landed on main since: ${since.map((d) => d.id).join(", ")}`);
         const keep = new Set<Doc>([...changedDocs, ...since]);
         // reason: retain added lines so old restatements cannot block an incremental review (BR-2405, D-84).
-        const small = reviewPromptParts(wt, { ...read.corpus, docs: read.corpus.docs.filter((d) => keep.has(d)) }, changedDocs, { deleted, readmes, deletedReadmes, change: extras.change, added: scope.added, incremental: { from: usable.event, added: since } }, s.reviewMaxPromptBytes);
+        const small = reviewPromptParts(wt, { ...read.corpus, docs: read.corpus.docs.filter((d) => keep.has(d)) }, changedDocs, { deleted, readmes, deletedReadmes, change: extras.change, added: scope.added, activated: scope.activated, incremental: { from: usable.event, added: since } }, s.reviewMaxPromptBytes);
         if (!small.ok) return err("invalid", small.error.message);
         const smallParts = partsNote(small.value.parts);
         if (smallParts) say(`review: ${smallParts}`);

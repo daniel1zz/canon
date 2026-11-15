@@ -6,7 +6,8 @@ import { git } from "../../../kernel/git.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import type { Corpus, Doc } from "../../../knowledge/documents/model.ts";
 import { ARCHITECTURE_FILE, hasContent, overviewText } from "../../../knowledge/check/architecture.ts";
-import { duplicatePrompt, SKILL_FILE, standingText, type AddedLines, type DeletedDoc } from "../../../knowledge/review/review.ts";
+import { duplicatePrompt, SKILL_FILE, standingText, type Activation, type AddedLines, type DeletedDoc } from "../../../knowledge/review/review.ts";
+import { parseDocFile } from "../../../knowledge/documents/docfile.ts";
 import { addedLines, restatementIndex, restatementsIn, type Restatement } from "../../../knowledge/check/restatement/restatement.ts";
 import { textAt } from "../../../knowledge/check/restatement/work.ts";
 import { reviewKeys } from "../../../knowledge/review/config-keys.ts";
@@ -35,6 +36,8 @@ export interface ReviewScope {
   readonly added: readonly AddedLines[];
   /** The restatements the text test finds in those lines, and in new rules and decisions, as hints for the review (BR-2405). */
   readonly restatements: readonly Restatement[];
+  /** Rules this landing makes active whose planned version at `base` declared `will_amend`, with those targets (BR-2496). */
+  readonly activated: readonly Activation[];
 }
 
 /**
@@ -100,7 +103,18 @@ export function reviewScope(wt: string, base: string, head: string, corpus: Corp
     }
     restatements.push(...restatementsIn(index, d, now, lines));
   }
-  return { entries, renamed, linksOnly, changedDocs, deleted, readmes, deletedReadmes, reviewed, added, restatements };
+  // reason: the activating landing drops will_amend, and a target in another top domain is not in its review's context, so
+  // the review is given each declared target in full to judge it against the rule now active (BR-2496, D-127)
+  const activated: Activation[] = [];
+  for (const d of changedDocs) {
+    if (d.kind !== "rule" || d.status !== "active") continue;
+    const before = textAt(wt, base, d.path);
+    const parsed = before === undefined ? undefined : parseDocFile(before, d.path);
+    if (!parsed?.ok || parsed.value.meta["status"] !== "planned") continue;
+    const targets = parsed.value.meta["will_amend"];
+    if (Array.isArray(targets) && targets.length > 0) activated.push({ id: d.id, targets: targets.filter((t): t is string => typeof t === "string").map((t) => t.trim()) });
+  }
+  return { entries, renamed, linksOnly, changedDocs, deleted, readmes, deletedReadmes, reviewed, added, restatements, activated };
 }
 
 /**

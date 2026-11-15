@@ -51,6 +51,8 @@ export interface AddedLines {
 
 export interface ReviewExtras {
   readonly deleted?: readonly DeletedDoc[];
+  /** Rules this landing activates with the targets their planned version declared in will_amend (BR-2496). */
+  readonly activated?: readonly Activation[];
   /** Domains whose README the landing changes; the review sees each whole domain. */
   readonly readmes?: readonly string[];
   /** Domain READMEs the landing deletes, with the text they had on main. */
@@ -114,6 +116,12 @@ export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc
   const summaries = changedRuleIds(changed);
   const contexts = contextTops(corpus, changed, extras).map((top) => contextSection(root, corpus, top, summaries));
   return [...promptHead(corpus, changed, extras), ...contexts, ...promptTail(corpus)].join("\n");
+}
+
+/** A rule this landing makes active and the active rules its planned version said it would change (BR-2496). */
+export interface Activation {
+  readonly id: string;
+  readonly targets: readonly string[];
 }
 
 /** One document as the prompt shows it: id, title, kind and status, a decision's links, its body. */
@@ -216,6 +224,12 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
     // reason: the reviewer judges the basis itself, so it is shown even when the change file is not among the changed documents of this call (BR-2493)
     const basis = changeBasis(change);
     if (basis !== undefined) parts.push(`# 方案依据 of ${change.id} ${change.title} (the design basis of the change this landing belongs to)\n\n${basis.trim()}\n`);
+  }
+  // reason: once active the rule no longer carries will_amend and its targets may sit in another domain; the review compares them here (BR-2496, D-127)
+  for (const a of extras.activated ?? []) {
+    const shown = new Set(changed.map((d) => d.id));
+    const targets = a.targets.map((t) => corpus.docs.find((d) => d.id === t)).filter((d): d is Doc => d !== undefined);
+    parts.push(`# ${a.id} becomes active in this landing; while planned it declared it would change ${a.targets.join(", ")}\n\nJudge ${a.targets.join(", ")} against ${a.id} as active rules now: a change ${a.id}'s text says it makes in one of them that its current text does not have is a contradiction.\n\n${targets.map((t) => (shown.has(t.id) ? `## ${t.id} ${t.title} (new text shown above)\n` : docSection(t))).join("\n")}`);
   }
   if (extras.deleted?.length || extras.deletedReadmes?.length) {
     parts.push("# Deleted documents (text on main before this landing; deleting a rule removes a behaviour the product promised, retiring it keeps the record)");
