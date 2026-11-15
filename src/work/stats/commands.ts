@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "./stats.ts";
 import { pendingBlocks, recordVerdict, renderPending, renderVerdictSummary, verdictSummary } from "./verdict.ts";
 import { dirname } from "node:path";
@@ -9,6 +9,7 @@ import { findingsByCriterion, renderFindingsByCriterion, renderReviewCounts, rev
 import { DEFAULT_DAYS, projectsDir, renderUsage, usageReport } from "./usage.ts";
 import { claimsWithState } from "../claims/claims.ts";
 import { batchStats, renderBatchStats } from "./batches.ts";
+import { designStats, renderDesignStats } from "./design.ts";
 import { followEvents } from "./follow.ts";
 import { eventsSince, lastEventId, parseSince, renderEvents, renderWindow, windowSummary } from "./window.ts";
 
@@ -47,6 +48,9 @@ const stats = defineCommand({
     // reason: the batch section is text-only too (BR-2202, BR-2379); `canon events --kind batch.end --json` has the raw rows
     const batches = renderBatchStats(batchStats(ws.db, since ?? 0, until));
     if (batches) say(`\n${batches}`);
+    // reason: text-only like the review counts; whether a class needs a hard gate is read off these numbers (BR-2494, D-124)
+    const design = renderDesignStats(designStats(ws.db, ws.root, corpusOf(ws).corpus, since ?? 0, until));
+    if (design) say(`\n${design}`);
     const searches = searchStats(ws.db, since ?? 0, until);
     if (searches.searches > 0) say(`\n${renderSearchStats(searches)}`);
     // reason: the shared code line is the last one (BR-2121, issue #70)

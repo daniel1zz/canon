@@ -68,6 +68,8 @@ export interface Decision extends Base {
   readonly supersedes: readonly string[];
   /** Decisions this one changes in part without replacing them (BR-2139). */
   readonly amends: readonly string[];
+  /** Why it revises the decisions it amends or supersedes (BR-2492): its `revised_because` front matter, when given. */
+  readonly revisedBecause?: string;
   /** Confirmed references, as on a rule (BR-2425). */
   readonly links?: Readonly<Record<string, string>>;
 }

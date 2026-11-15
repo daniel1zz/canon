@@ -12,6 +12,7 @@ import { addedReferenceStamps } from "../../../knowledge/links/stamp.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import { queueLandedReview, type ReviewNeeds } from "../../../knowledge/review/landed-queue.ts";
 import { startCleanAfterLanding } from "../../session/clean-after-land.ts";
+import { BASIS_HEADING, hasBasis, touchedClasses } from "../../../knowledge/check/design-basis/design-basis.ts";
 import { clean } from "../../session/session.ts";
 
 /** The `canon: close C-n` commit `--finish` made before queuing, so a landing that fails can take it back. */
@@ -150,6 +151,7 @@ export function acceptAddedDecisions(ws: Workspace, wt: string, close: CloseComm
  */
 export function afterLand(ws: Workspace, say: Say, l: { entry: number; subject: string | null; base: string; head: string; branch: string; landed: number; review: ReviewNeeds | undefined }): void {
   if (l.review) queueLandedReview(ws, say, l, l.review);
+  recordDesignBasis(ws, l);
   if (ws.config.hooks.after_land.length === 0) return;
   const env = { CANON_BASE: l.base, CANON_HEAD: l.head, CANON_BRANCH: l.branch };
   const log = runHooksInBackground({ db: ws.db, actor: ws.actor, event: "after_land", change: l.subject, cwd: ws.primary, env, port: changePort(ws, l.subject) }, ws.config.hooks.after_land, logFile(ws.db, `after-land-${l.entry}.log`), l.entry);
@@ -200,4 +202,23 @@ export function moveMain(ws: Workspace, expected: string, next: string): "moved"
   }
   const r = gitEnv(ws.primary, { [LAND_MARKER]: next }, "update-ref", `refs/heads/${main}`, next, expected);
   return r.ok ? "moved" : { reason: "main-moved", message: `${main} moved during the landing; land again (${r.error.message})` };
+}
+
+/**
+ * BR-2494: a landing that touched a one-way-door class records it (`design.basis`: the classes with a few paths each, and
+ * whether its change file had a design basis), so canon stats can count how often the basis was written (D-124).
+ */
+function recordDesignBasis(ws: Workspace, l: { subject: string | null; base: string; head: string; landed: number }): void {
+  const diff = git(ws.primary, "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", l.base, l.head);
+  if (!diff.ok) return;
+  const touched = touchedClasses(diff.value.split("\n").filter((p) => p !== ""), ws.config.designSignals);
+  if (touched.size === 0) return;
+  let basis = false;
+  if (l.subject && !l.subject.startsWith("chore-")) {
+    const files = git(ws.primary, "grep", "-l", `^id: ${l.subject}$`, l.head, "--", "canon/changes");
+    const path = files.ok ? files.value.split("\n")[0]?.replace(/^[^:]+:/, "") : undefined;
+    const text = path ? git(ws.primary, "show", `${l.head}:${path}`) : undefined;
+    basis = text?.ok === true && text.value.includes(BASIS_HEADING) && hasBasis(text.value);
+  }
+  ws.db.event(ws.actor, "design.basis", l.subject, { landed: l.landed, basis, classes: Object.fromEntries([...touched].map(([c, p]) => [c, p.slice(0, 5)])) });
 }

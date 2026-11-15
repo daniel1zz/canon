@@ -13,6 +13,7 @@ import type { TestReports } from "../../work/verify/ledger.ts";
 import { historyOf, pathFindings } from "./paths.ts";
 import { listFindings } from "./lists.ts";
 import { architectureFindings, type ArchitectureBase, type ArchitectureRule } from "./architecture.ts";
+import { revisionReasonFindings } from "./design-basis/design-basis.ts";
 import { businessFindings } from "../domains/business.ts";
 import { domainDecisionFindings } from "../domains/decision.ts";
 import { releaseFindings } from "../releases/check.ts";
@@ -54,6 +55,7 @@ export type CheckRule =
   | "domain-code-declared" // a README lists `code:` where the layout gives the location (BR-2117)
   | "code-layout" // with code_root: a domain without its directory, or a directory no domain or shared entry owns (BR-2118)
   | "decision-options" // a decision's options section shows no real choice (BR-2109)
+  | "decision-revision-reason" // a decision this work adds revises another without a known `revised_because` (BR-2492)
   | "source-malformed" // a source line in a decision's options does not name a target and quote it (BR-2110)
   | "source-quote-missing" // a current decision's source names a repository file that no longer holds its quote (BR-2252)
   | "doc-missing-section" // a document lacks a section its type requires, or the section is empty (BR-2091)
@@ -247,6 +249,7 @@ export function check(input: CheckInput): Finding[] {
   // reason: `architecture.since` is this work's base commit, which is also what "added or changed by this work" means here (BR-2431, BR-2344)
   for (const f of businessFindings(input.root, input.corpus, input.architecture?.since)) findings.push({ path: f.path, rule: "rule-business-unmapped", message: f.message });
   for (const f of commitmentFindings(input.root, input.corpus, input.architecture?.since)) findings.push({ path: f.path, rule: "decision-rule-unlinked", message: f.message });
+  for (const f of revisionReasonFindings(input.root, input.corpus, input.architecture?.since)) findings.push({ path: f.path, rule: "decision-revision-reason", message: f.message });
   // reason: `architecture.refs` is what was there before this work, which is also what "a domain this work adds" means here (BR-2446, BR-2352)
   for (const f of domainDecisionFindings(input.root, input.corpus, input.architecture?.refs)) findings.push({ path: f.path, rule: "domain-no-decision", message: f.message });
   for (const s of staleLinks(input.corpus)) {

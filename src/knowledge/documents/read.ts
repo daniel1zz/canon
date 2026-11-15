@@ -174,7 +174,8 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: links });
           continue;
         }
-        docs.push({ kind: "decision", ...common, status: p.status as DecisionStatus, supersedes, amends: amends as string[], ...(Object.keys(links).length > 0 ? { links } : {}) });
+        const revisedBecause = typeof p.meta["revised_because"] === "string" ? (p.meta["revised_because"] as string).trim() : undefined;
+        docs.push({ kind: "decision", ...common, status: p.status as DecisionStatus, supersedes, amends: amends as string[], ...(revisedBecause ? { revisedBecause } : {}), ...(Object.keys(links).length > 0 ? { links } : {}) });
       } else if (type.name === "change") {
         const rules = p.meta["rules"] ?? [];
         if (!Array.isArray(rules) || rules.some((r) => typeof r !== "string")) {

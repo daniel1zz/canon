@@ -1,5 +1,6 @@
 import { err, ok } from "../../kernel/result.ts";
 import { configKey, REL_DIR, relPath } from "../../invocation/key.ts";
+import { DEFAULT_DESIGN_SIGNALS, DESIGN_CLASSES, type DesignClass } from "./design-basis/design-basis.ts";
 
 /** canon/config.yaml keys of `canon check`: which files are tests and where each domain's code lives (C-135, D-63). */
 export const checkKeys = {
@@ -55,5 +56,23 @@ export const checkKeys = {
     },
     listed: 160,
     checked: 120,
+  }),
+  designSignals: configKey<Readonly<Record<DesignClass, readonly string[]>>>({
+    key: "design_signals",
+    doc: "Globs of the paths of each one-way-door class (persistent, boundary, dependency): a change touching one is asked for its design basis (BR-2491, D-124). A class left out keeps its default; [] turns it off.",
+    default: DEFAULT_DESIGN_SIGNALS,
+    schema: { type: "object", additionalProperties: false, properties: Object.fromEntries(DESIGN_CLASSES.map((c) => [c, { type: "array", items: { type: "string" } }])) },
+    read: (v) => {
+      if (v === null || typeof v !== "object" || Array.isArray(v)) return err("invalid", "`design_signals` must map persistent, boundary or dependency to a list of globs");
+      const out: Record<DesignClass, readonly string[]> = { ...DEFAULT_DESIGN_SIGNALS };
+      for (const [k, globs] of Object.entries(v as Record<string, unknown>)) {
+        if (!(DESIGN_CLASSES as readonly string[]).includes(k)) return err("invalid", `\`design_signals.${k}\` is not a class: use ${DESIGN_CLASSES.join(", ")}`);
+        if (!Array.isArray(globs) || globs.some((g) => typeof g !== "string" || g.trim() === "")) return err("invalid", `\`design_signals.${k}\` must be a list of globs, such as ["game/src/save_game/**"]`);
+        out[k as DesignClass] = globs as string[];
+      }
+      return ok(out);
+    },
+    listed: 165,
+    checked: 125,
   }),
 };

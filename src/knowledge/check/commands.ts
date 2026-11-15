@@ -4,6 +4,7 @@ import { git } from "../../kernel/git.ts";
 import { guideFor } from "../../invocation/guide.ts";
 import { architectureHints } from "./architecture.ts";
 import { backlogNotes, check, domainNameNotes, noteLine, staleReportNotes } from "./check.ts";
+import { designBasisNote } from "./design-basis/design-basis.ts";
 import { reportsFor } from "../../work/verify/changes.ts";
 import { architectureBase, changeIdsOnBranches, listedBefore } from "../../work/session/inflight.ts";
 import { budgetHint, sessionText, sizeLines } from "./session-text.ts";
@@ -49,6 +50,9 @@ const checkCmd = defineCommand({
     if (work) for (const n of deferralNotes(ws.root, must(workBase(ws.root, ws.config.main)), work.changed)) console.error(n);
     // reason: an item naming no rule may commit to no behaviour at all, so it is said and never fails the check (BR-2471, D-112)
     if (work) for (const n of unnamedCommitmentNotes(ws.root, read.corpus, must(workBase(ws.root, ws.config.main)), work.changed)) console.error(n);
+    // reason: a missing design basis is said, never refused: canon cannot tell from paths whether the choice is new (BR-2491, D-124)
+    const basis = designBasisNote(ws.root, read.corpus, input.architecture?.since, ws.config.designSignals);
+    if (basis) console.error(basis);
     // reason: domains the overview never named are old gaps, said and never refused; only a landing that adds one is refused (D-65, D-37)
     for (const h of architectureHints(input)) console.error(h);
     if (args.json) json(findings);
