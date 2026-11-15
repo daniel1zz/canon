@@ -26,7 +26,7 @@ Do not split, or put the tasks in one agent's hands, when:
 
 1. Note where the run starts in the event table: `canon events | tail -1` and take that event's id (call it `<start>`). Everything the subagents do is recorded after it.
    While they run, follow the events with a background monitor instead of polling: `canon events --follow --kind land.ok,land.refuse,handoff.write,human.asked` prints one line per new event, starting after the latest one.
-2. Put the assigned C number and worker name in each brief, using the dispatch sequence in `canon brief`.
+2. Use the worker dispatch sequence in `canon brief`.
 3. List the files each task will likely touch: run `canon context <path>` for the area, and read what the change file plans to change where the change already exists. Two tasks that will edit the same file do not run at the same time: give them to one agent in sequence, or put them in different rounds. Watch for files every feature appends to, such as a central registry of commands or config keys, a guide listing every workflow, or one large shared test file; most conflicts land there.
 4. If two tasks must still touch the same file, say so in both briefs, and name which one lands first.
 5. Estimate the cost before you dispatch, from measured numbers, and tell the user: a subagent that reads an area and lands one change typically uses on the order of 70k to 280k tokens, so ten of them is roughly a million or more. Ask before a run that large; do not guess low.
@@ -37,7 +37,7 @@ Do not split, or put the tasks in one agent's hands, when:
 Copy this list into each brief and fill in the task. A subagent starts with none of your context.
 
 - **The task and why**: what to build, the evidence for the need, what counts as done, which domain or files it covers, and the rules and examples it must implement. For baseline authorship and gaps, follow canon-rules section 0.
-- **Its assigned change**: name the delegated C number and worker name, then run `canon work start C-n` from the primary checkout, with the `--as` that `canon brief` names for a subagent. Worktree path and remaining steps: see `canon brief`. When the owner redelegates, read the changes printed by `canon work accept-design C-n` before continuing work that depends on them.
+- **Its assigned change**: name the delegated C number and worker name. For starting, accepting design updates and the worktree path, follow `canon brief`.
 - **Hands off the others**: never enter or edit another agent's worktree, and never edit the primary checkout.
 - **Test before landing**: as canon-test section 6 says; where `canon work test` does not exist, run each related test file in its own test-runner invocation (several files in one run have hung under load).
 - **Landing**: redirect the output of `canon work land --finish` to a log file outside the worktree (the scratchpad or `/tmp`): an untracked file inside it makes the landing refuse as dirty. After three refusals in a row canon stops the change (reason `stalled`): the subagent stops and reports the refusals; the main agent decides (tell it what to change, `canon work take` it, or drop it) and runs `canon work unstall <C-n> --reason "<why>"` before the subagent lands again.
