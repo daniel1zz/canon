@@ -84,6 +84,11 @@ export interface ReviewExtras {
   readonly part?: { readonly i: number; readonly n: number; readonly others: readonly Doc[] };
   /** In a review split into several calls: the rules and decisions the changed documents name, shown whole in every call (BR-2359, #219). */
   readonly cited?: readonly Doc[];
+  /**
+   * In the calls after the first of a split review: the documents only changed decisions or releases name, whose whole
+   * text the first call carries; here they are listed by id, title and first line (BR-2359, #241).
+   */
+  readonly citedFirst?: readonly Doc[];
   /** Named documents that did not fit in full beside the domain text a call needs: listed by id, title and first line (BR-2488, #229). */
   readonly citedListed?: readonly Doc[];
 }
@@ -180,6 +185,10 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
   if (extras.cited?.length) {
     parts.push("# Documents the changed documents name (whole text, in every call, so a relation to them can be judged here; they are not changed by this landing)");
     for (const d of extras.cited) parts.push(docSection(d));
+  }
+  if (extras.citedFirst?.length) {
+    parts.push("# Documents only the changed decisions or releases name (whole text in call 1 of this review; here only id, title and first line; they are not changed by this landing)", "");
+    parts.push(...extras.citedFirst.map((d) => `- ${d.id} ${d.title} (${d.kind}${"status" in d ? `, ${d.status}` : ""}): ${firstLine(d)}`), "");
   }
   if (extras.citedListed?.length) {
     parts.push("# More documents the changed documents name (only id, title and first line here: their whole text does not fit in a call beside the domain text; they are not changed by this landing)", "");
@@ -762,7 +771,10 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
     }
     extras = { ...extras, cited: byId(kept), citedListed: byId(listed) };
   }
-  const noWording: ReviewExtras = { ...extras, wording: [] };
+  // reason: a changed rule's 按 BR-n needs BR-n beside it in every call (#219), but a decision or release naming dozens of
+  // documents repeated them whole in each call, so the fixed part multiplied the calls (#241): those go whole in call 1 only
+  const ruleNamed = new Set(changed.filter((d) => d.kind === "rule").flatMap((d) => [...referencedIds(d, corpus.types)]));
+  const noWording: ReviewExtras = { ...extras, wording: [], cited: (extras.cited ?? []).filter((d) => ruleNamed.has(d.id)), citedFirst: (extras.cited ?? []).filter((d) => !ruleNamed.has(d.id)) };
   const room = noteRoom(corpus, maxCalls(root, corpus, contextTops(corpus, changed, extras)));
   const fixed = (first: boolean): number => bytes([...promptHead(corpus, changed, first ? extras : noWording), ...tail].join("\n")) + room;
   // the three parts of the smallest prompt, so a refusal can say which one is too large (BR-2359, D-67, #136)

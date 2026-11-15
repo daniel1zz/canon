@@ -12,7 +12,7 @@ import { proseIds } from "../../../knowledge/links/links.ts";
 import { addedLines, restatementIndex, restatementsIn, type Restatement } from "../../../knowledge/check/restatement/restatement.ts";
 import { textAt } from "../../../knowledge/check/restatement/work.ts";
 import { reviewKeys } from "../../../knowledge/review/config-keys.ts";
-import { linksOnlyText } from "../../../knowledge/links/links-only.ts";
+import { linksOnlyText, sourcesOnlyText } from "../../../knowledge/links/links-only.ts";
 import { shippedUnedited } from "../../../install/install.ts";
 
 /**
@@ -27,6 +27,8 @@ export interface ReviewScope {
   readonly renamed: readonly string[];
   /** Files whose only change is the `links` reference records (BR-2425): not reviewed (BR-2009). */
   readonly linksOnly: readonly string[];
+  /** Decisions whose only change is in their 来源 lines, which the landing verifies: not reviewed (BR-2009, #240). */
+  readonly sourcesOnly: readonly string[];
   readonly changedDocs: readonly Doc[];
   readonly deleted: readonly DeletedDoc[];
   readonly readmes: readonly string[];
@@ -48,7 +50,7 @@ export interface ReviewScope {
  * for the review: files only moved with identical content and files whose only change is their `links` records are left out
  * (BR-2009). `canon accept` asks it per landed commit (BR-2462).
  */
-export function reviewEntries(wt: string, base: string, head: string): { entries: { status: string; path: string }[]; renamed: string[]; linksOnly: string[] } {
+export function reviewEntries(wt: string, base: string, head: string): { entries: { status: string; path: string }[]; renamed: string[]; linksOnly: string[]; sourcesOnly: string[] } {
   // core.quotePath=false: git otherwise prints non-ASCII paths quoted and octal-escaped, which match no document.
   // A file only moved, with identical content, is neither changed nor deleted: moving 74 rules into
   // subdomains must not re-review all of them (BR-2009). git pairs exact renames; the blobs are compared too.
@@ -72,11 +74,22 @@ export function reviewEntries(wt: string, base: string, head: string): { entries
     }
   }
   linksOnly.reverse();
-  return { entries, renamed, linksOnly };
+  // reason: a decision whose only edit is in its 来源 lines (the quoted code moved) is evidence the landing verifies,
+  // not a design change; reviewing it pulled in every document and domain it names (BR-2009, #240)
+  const sourcesOnly: string[] = [];
+  for (let i = entries.length - 1; i >= 0; i--) {
+    const e = entries[i]!;
+    if (e.status === "M" && e.path.startsWith("canon/decisions/") && sourcesOnlyEdit(wt, base, head, e.path)) {
+      sourcesOnly.push(e.path);
+      entries.splice(i, 1);
+    }
+  }
+  sourcesOnly.reverse();
+  return { entries, renamed, linksOnly, sourcesOnly };
 }
 
 export function reviewScope(wt: string, base: string, head: string, corpus: Corpus): ReviewScope {
-  const { entries, renamed, linksOnly } = reviewEntries(wt, base, head);
+  const { entries, renamed, linksOnly, sourcesOnly } = reviewEntries(wt, base, head);
   const live = new Set(entries.filter((e) => e.status !== "D").map((e) => e.path));
   const changedDocs = corpus.docs.filter((d) => live.has(d.path));
   const deleted: DeletedDoc[] = entries
@@ -130,7 +143,7 @@ export function reviewScope(wt: string, base: string, head: string, corpus: Corp
     const targets = parsed.value.meta["will_amend"];
     if (Array.isArray(targets) && targets.length > 0) activated.push({ id: d.id, targets: targets.filter((t): t is string => typeof t === "string").map((t) => t.trim()) });
   }
-  return { entries, renamed, linksOnly, changedDocs, deleted, readmes, deletedReadmes, reviewed, added, namedInAdded, restatements, activated };
+  return { entries, renamed, linksOnly, sourcesOnly, changedDocs, deleted, readmes, deletedReadmes, reviewed, added, namedInAdded, restatements, activated };
 }
 
 /**
@@ -217,6 +230,12 @@ function linksOnlyEdit(wt: string, base: string, head: string, path: string): bo
   const a = git(wt, "show", `${base}:${path}`);
   const b = git(wt, "show", `${head}:${path}`);
   return a.ok && b.ok && linksOnlyText(path, a.value, b.value);
+}
+
+function sourcesOnlyEdit(wt: string, base: string, head: string, path: string): boolean {
+  const a = git(wt, "show", `${base}:${path}`);
+  const b = git(wt, "show", `${head}:${path}`);
+  return a.ok && b.ok && sourcesOnlyText(path, a.value, b.value);
 }
 
 function sameBlob(wt: string, a: string, b: string): boolean {
