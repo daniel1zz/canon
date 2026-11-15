@@ -69,7 +69,7 @@ function startedBefore(ws: Workspace, id: string): boolean {
   return refs.ok && refs.value.trim() !== "";
 }
 
-export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] } }, say: Say, opts: { fixMain?: boolean; settles?: readonly number[] } = {}): Result<Started> {
+export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] } }, say: Say, opts: { fixMain?: boolean; settles?: readonly number[]; urgent?: string } = {}): Result<Started> {
   const main = ws.config.main;
   // reason: a change that settles named open findings is paying the debt, not new work: some findings need a rule edit a
   // project lets only a change make (BR-2464, #209); every number must be an open finding, so a stale or made-up one opens nothing
@@ -111,12 +111,12 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     }
     // reason: new work waits while findings or failed reviews are owed; a change already started goes on, a chore settles them (BR-2464)
     const owed = opts.fixMain || settling || existing || startedBefore(ws, doc.id) ? [] : workDebt(ws);
-    if (owed.length > 0) return refuseForDebt(ws, doc.id, owed);
+    if (owed.length > 0 && !waived(ws, doc.id, owed, opts.urgent, say)) return refuseForDebt(ws, doc.id, owed);
     changeId = doc.id;
     slug = slugify(doc.title);
   } else {
     const owed = opts.fixMain || settling ? [] : workDebt(ws);
-    if (owed.length > 0) return refuseForDebt(ws, null, owed);
+    if (owed.length > 0 && !waived(ws, null, owed, opts.urgent, say)) return refuseForDebt(ws, null, owed);
     // reason: checked before an id is allocated, so a refused start leaves no number, worktree or claim behind (BR-2376, BR-2002)
     const bad = target.plan ? planProblem(onMain.value, ws.config.main, target.plan) : undefined;
     if (bad) {
@@ -473,7 +473,18 @@ export function describeOccupants(list: readonly Occupant[]): string {
   return list.map((o) => `pid ${o.pid} (${o.command})`).join(", ");
 }
 
+/**
+ * BR-2489: the owner's urgent work starts while review work is owed. The owner's words are kept on the record and said, as
+ * for any relayed human word (D-6): canon cannot check them, so the flag is for the owner's request only. The debt stays.
+ */
+function waived(ws: Workspace, subject: string | null, owed: readonly string[], urgent: string | undefined, say: Say): boolean {
+  if (urgent === undefined) return false;
+  ws.db.event(ws.actor, "start.urgent", subject, { relayed: urgent, owed: owed.map((l) => l.slice(0, 300)) });
+  say(`urgent (relayed by ${ws.actor}: "${urgent}"): starts although review work is owed (BR-2489); it stays owed:\n${owed.map((l) => `  - ${l}`).join("\n")}`);
+  return true;
+}
+
 function refuseForDebt(ws: Workspace, subject: string | null, owed: readonly string[]): Result<never> {
   ws.db.event(ws.actor, "start.refuse", subject, { reason: "debt", owed: owed.map((l) => l.slice(0, 300)) });
-  return err("refused", `no new change while review work is owed (BR-2464):\n${owed.map((l) => `  - ${l}`).join("\n")}\nSettle it first: in a chore (canon chore start "<title>"), in the change it belongs to, or in a new change that names them (canon work start --title "<title>" --settles <n>[,<n>]); a change already started, canon work start --fix-main and chores are not held back.`);
+  return err("refused", `no new change while review work is owed (BR-2464):\n${owed.map((l) => `  - ${l}`).join("\n")}\nSettle it first: in a chore (canon chore start "<title>"), in the change it belongs to, or in a new change that names them (canon work start --title "<title>" --settles <n>[,<n>]); a change already started, canon work start --fix-main and chores are not held back; work the owner asked for now in the conversation starts with --urgent --relayed "<the owner's own words>" (BR-2489).`);
 }

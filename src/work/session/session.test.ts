@@ -875,6 +875,35 @@ describe("no new change while review work is owed", () => {
     expect(start(ws(root), { title: "fix main" }, quiet, { fixMain: true }).ok).toBe(true);
   });
 
+  test("BR-2489, BR-2464: the owner's urgent work starts with --urgent and their words, which are said and kept with what stays owed; the refusal names the flag", () => {
+    const root = project();
+    const db = owe(root);
+    const refused = start(ws(root), { title: "Ordinary" }, quiet);
+    expect(refused.ok ? "" : refused.error.message).toContain('--urgent --relayed "<the owner\'s own words>"');
+    const said: string[] = [];
+    const r = start(ws(root), { title: "Hotfix" }, (l) => said.push(l), { urgent: "先修这个线上 bug" });
+    expect(r.ok ? "" : r.error.message).toBe("");
+    expect(said.join("\n")).toContain('urgent (relayed by agent:a: "先修这个线上 bug"): starts although review work is owed (BR-2489)');
+    expect(said.join("\n")).toContain("2 open review finding(s) (#1, #2)");
+    const ev = db.db.query<{ subject: string | null; relayed: string; owed: string }, []>("SELECT subject, json_extract(detail, '$.relayed') AS relayed, json_extract(detail, '$.owed') AS owed FROM events WHERE kind = 'start.urgent'").all();
+    expect(ev).toHaveLength(1);
+    expect(ev[0]!.relayed).toBe("先修这个线上 bug");
+    expect(ev[0]!.owed).toContain("2 open review finding(s)");
+    expect(start(ws(root), { title: "Next ordinary" }, quiet).ok).toBe(false); // the findings are still owed
+  });
+
+  test("BR-2489: --urgent without the owner's words, or --relayed alone, is a usage error (exit 2) that starts nothing", () => {
+    const root = project();
+    owe(root);
+    const run = (...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", ...args], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const noWords = run("--title", "Hotfix", "--urgent");
+    expect(noWords.exitCode).toBe(2);
+    expect(noWords.stderr.toString()).toContain("--urgent needs --relayed");
+    expect(run("--title", "Hotfix", "--urgent", "--relayed", "  ").exitCode).toBe(2);
+    expect(run("--title", "Hotfix", "--relayed", "now").exitCode).toBe(2);
+    expect(changesIn(root).trim()).toBe("");
+  });
+
   test("BR-2464: a change on main not started yet is new work too, and only the first 10 finding numbers are listed", () => {
     const root = project();
     mkdirSync(join(root, "canon/changes"), { recursive: true });

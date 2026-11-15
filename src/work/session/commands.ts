@@ -48,6 +48,8 @@ const startCmd = defineCommand({
     step: { type: "string", description: "With --plan: the plan's step names this change does, comma separated (BR-2376)" },
     "fix-main": { type: "boolean", description: "Open the one change that fixes main's failing background floor (floor_timing: after, BR-2221)" },
     settles: { type: "string", description: "Open review finding numbers this change settles, comma separated: it starts while findings are open (BR-2464)" },
+    urgent: { type: "boolean", description: "The owner asked for this work now: it starts while review findings are open; needs --relayed (BR-2489)" },
+    relayed: { type: "string", description: "With --urgent: the owner's own words asking for it, kept on the record (BR-2489)" },
     ...AS_ARG,
   },
   run({ args }) {
@@ -64,7 +66,11 @@ const startCmd = defineCommand({
     const settles = list(args.settles).map((v) => v.replace(/^#/, ""));
     if (settles.some((v) => !/^[1-9]\d*$/.test(v))) fail({ code: "invalid", message: `--settles takes review finding numbers, comma separated (got ${String(args.settles)})` });
     if (fixMain && settles.length > 0) fail({ code: "invalid", message: "--fix-main opens its own change; give no --settles with it" });
-    const s = must(fixMain ? startFixMain(ws, say) : start(ws, target, say, { settles: settles.map(Number) }));
+    const urgent = Boolean(args.urgent);
+    if (args.relayed !== undefined && !urgent) fail({ code: "invalid", message: "--relayed goes with --urgent" });
+    if (urgent && fixMain) fail({ code: "invalid", message: "--fix-main is never held back; give no --urgent with it" });
+    if (urgent && (typeof args.relayed !== "string" || args.relayed.trim() === "")) fail({ code: "invalid", message: "--urgent needs --relayed \"<the owner's own words>\": use it only when the owner asked for this work now in the conversation (BR-2489)" });
+    const s = must(fixMain ? startFixMain(ws, say) : start(ws, target, say, { settles: settles.map(Number), ...(urgent ? { urgent: String(args.relayed) } : {}) }));
     for (const line of startHint(ws.db, machineNow(), { fixMain, created: s.created })) say(line);
     // A step another unfinished change is doing is said, never refused: a step may take several changes (BR-2385, D-77).
     if ("plan" in target && target.plan) for (const line of stepsTaken(ws, target.plan, s.change)) say(line);
