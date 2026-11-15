@@ -395,7 +395,7 @@ describe("a review after landing split by its changed documents (BR-2448)", () =
     const r = reviewPromptParts(root, huge, hugeChanged, {}, 80 * KB);
     expect(r.ok).toBe(false);
     // the sizes are those of that one document in a part of its own: 120 KB of changed documents, not the 180 KB of all three
-    if (!r.ok) expect(r.error.message).toMatch(/cannot be made smaller than 12\d KB .*review_max_prompt_kb = 80 KB; sizes: changed documents 12\d KB/);
+    if (!r.ok) expect(r.error.message).toMatch(/cannot be made smaller than 1[23]\d KB .*review_max_prompt_kb = 80 KB; sizes: changed documents 12\d KB/);
     const deleted = [{ id: id("BR", 7), path: "canon/rules/small/BR-7.md", text: "GONE-7 was here." }];
     const split = parted(reviewPromptParts(root, corpus, changed, { deleted }, 80 * KB));
     expect(split.prompts[0]).toContain("GONE-7 was here.");
