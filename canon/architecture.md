@@ -21,7 +21,7 @@ title: 架构总览
 ## 容器：canon 做的
 
 **CLI 二进制 `canon`**
-- 职责：全部命令；没有常驻进程（后台部件见下）；唯一一直运行的命令是前台的 `canon events --follow`，它是被调用方停止的长命令，不是后台部件（BR-2357）；跟随后台合入的 `canon work land` 也可能运行很久，它跟随的后台合入进程只活到这次合入结束（BR-2390）；`canon work test` 同样只跟随一个后台测试进程，它在自己的进程组里跑到测试结束，跟随的命令被终止时测试继续，再运行就接上，`--stop` 停下，事件记 `test.spawn`（BR-2467）。多数命令读运行它的 checkout 里的 `canon/config.yaml`；合入时及合入后评审的命令、时限、提示预算 `review_max_prompt_kb`、同时运行的调用数 `review_parallel`、总调用数和总提示预算（BR-2490）和常驻说明清单例外，取自合入前 main 上已合入的配置（BR-2074；用 `--again` 重新排的评审取重排时 main 的配置，BR-2449、D-117；挑选命令 `related_pick_command` 和它的时限也取自 main，BR-2443；`canon check` 的评审大小提示在 worktree 里也读 main 上的预算，D-76），所以在一次合入里改它们只对之后的合入生效；预览的设置按 BR-2358、BR-2490 取预览时的 main。canon 仓库的发布评审（`scripts/release.ts`）读被发布提交自己的配置。
+- 职责：全部命令；没有常驻进程（后台部件见下）；唯一一直运行的命令是前台的 `canon events --follow`，它是被调用方停止的长命令，不是后台部件（BR-2357）；跟随后台合入的 `canon work land` 也可能运行很久，它跟随的后台合入进程只活到这次合入结束（BR-2390）；`canon work test` 同样只跟随一个后台测试进程，它在自己的进程组里跑到测试结束，跟随的命令被终止时测试继续，再运行就接上，`--stop` 停下，事件记 `test.spawn`（BR-2467）。多数命令读运行它的 checkout 里的 `canon/config.yaml`；合入时及合入后评审的命令、时限、单份提示预算 `review_max_prompt_kb`、同时运行的调用数 `review_parallel` 和常驻说明清单例外，取自合入前 main 上已合入的配置（BR-2074；用 `--again` 重新排的评审取重排时 main 的配置，BR-2449、D-117；挑选命令 `related_pick_command` 和它的时限也取自 main，BR-2443；`canon check` 的评审大小提示在 worktree 里也读 main 上的预算，D-76），所以在一次合入里改它们只对之后的合入生效；预览的设置按 BR-2358 取预览时的 main；总调用数和总提示预算的闸门仅适用于预览及合入后评审，配置来源和批准边界见 BR-2490。canon 仓库的发布评审（`scripts/release.ts`）读被发布提交自己的配置。
 - 数据：无。
 - 代码：`src/invocation`（命令声明、退出码、配置读取；`tree.ts` 汇总各领域的 `commands.ts`）、`src/invocation/reference`（配置项参考和 schema）；共享的 git、进程、结果类型在 `src/kernel`，不属于任何领域。
 - 决策：D-2、D-3、D-4、D-15、D-28、D-63。
