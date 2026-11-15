@@ -91,8 +91,8 @@ export const reviewKeys = {
     default: 4096 * 1024,
     schema: positiveNumber(4096),
     read: (v) => typeof v === "number" && v > 0 && Number.isFinite(v * 1024) ? ok(v * 1024) : err("invalid", "`review_max_total_prompt_kb` must be a positive finite number of KB whose byte budget is finite"),
-    listed: 70,
-    checked: 50,
+    listed: 71,
+    checked: 51,
   }),
   instructions: configKey<readonly string[]>({
     key: "instructions",
