@@ -848,11 +848,11 @@ describe("start and clean leave nothing half made", () => {
 });
 
 describe("no new change while review work is owed", () => {
-  const owe = (root: string) => {
+  // reason: two findings opened 5 hours ago are over the default 4-hour limit, so they hold a new change back (BR-2464)
+  const owe = (root: string, ageHours = 5, count = 2) => {
     const db = ws(root).db;
-    const add = (id: number) => db.db.query("INSERT INTO review_findings(identity, criterion, ids, docs, text, change, event, sha, opened_at) VALUES (?, 'contradiction', '[]', '[]', 'x contradicts y', 'C-9', 1, 'abc', ?)").run(`identity-${id}`, new Date().toISOString());
-    add(1);
-    add(2);
+    const add = (id: number) => db.db.query("INSERT INTO review_findings(identity, criterion, ids, docs, text, change, event, sha, opened_at) VALUES (?, 'contradiction', '[]', '[]', 'x contradicts y', 'C-9', 1, 'abc', ?)").run(`identity-${id}`, new Date(Date.now() - ageHours * 3_600_000).toISOString());
+    for (let i = 1; i <= count; i++) add(i);
     return db;
   };
   const changesIn = (root: string) => sh(root, "for-each-ref", "--format=%(refname:short)", "refs/heads/change/");
@@ -873,6 +873,32 @@ describe("no new change while review work is owed", () => {
     expect(again.ok ? "" : again.error.message).toBe(""); // already started: it goes on
     expect(startChore(ws(root), { title: "settle the findings" }, quiet).ok).toBe(true);
     expect(start(ws(root), { title: "fix main" }, quiet, { fixMain: true }).ok).toBe(true);
+  });
+
+  test("BR-2464: owed findings hold a new change back only when there are more than debt_max_findings or the oldest is older than debt_max_age_hours; under both it starts with a note", () => {
+    const fresh = project();
+    owe(fresh, 0.5, 2);
+    const said: string[] = [];
+    const r = start(ws(fresh), { title: "Goes on" }, (l) => said.push(l), {});
+    expect(r.ok ? "" : r.error.message).toBe("");
+    expect(said.join("\n")).toContain("note: review work is owed; it holds new changes back once over the limits (BR-2464)");
+    expect(said.join("\n")).toContain("2 open review finding(s) (#1, #2), within debt_max_findings (5) and debt_max_age_hours (4h)");
+    const five = project();
+    owe(five, 0.5, 5);
+    expect(start(ws(five), { title: "Five is still fine" }, quiet).ok).toBe(true);
+    const six = project();
+    owe(six, 0.5, 6);
+    const many = start(ws(six), { title: "Six is too many" }, quiet);
+    expect(many.ok ? "" : many.error.message).toContain("6 open review finding(s) (#1, #2, #3, #4, #5, #6), more than debt_max_findings (5)");
+    const old = project();
+    owe(old, 4.5, 1);
+    const late = start(ws(old), { title: "One left too long" }, quiet);
+    expect(late.ok ? "" : late.error.message).toContain("over debt_max_age_hours (4h)");
+    const strict = project();
+    writeFileSync(join(strict, "canon/config.yaml"), `${readFileSync(join(strict, "canon/config.yaml"), "utf8")}debt_max_findings: 0\ndebt_max_age_hours: 1\n`);
+    sh(strict, "commit", "-qam", "strict debt");
+    owe(strict, 0.5, 1);
+    expect(start(ws(strict), { title: "Any finding holds" }, quiet).ok).toBe(false);
   });
 
   test("BR-2489, BR-2464: the owner's urgent work starts with --urgent and their words, which are said and kept with what stays owed; the refusal names the flag", () => {

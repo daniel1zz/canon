@@ -57,10 +57,25 @@ export interface Started {
  * up): open review findings it can settle; one waiting on the owner's verdict is the owner's, not the agent's. A failed review
  * is not owed here: it fails when the review command's quota runs out, and holding every start until then helps nobody.
  */
-export function workDebt(ws: Workspace): string[] {
+/**
+ * BR-2464: the review work owed, and whether it holds a new change back: more open findings than `debt_max_findings`, or
+ * one open longer than `debt_max_age_hours`. Findings waiting on the owner's answer are not owed (BR-2461).
+ */
+export function workDebt(ws: Workspace, now = Date.now()): { readonly owed: string[]; readonly holds: boolean } {
   const unanswered = new Set(ws.db.db.query<{ id: number }, []>("SELECT f.id FROM review_findings f JOIN questions q ON q.id = f.question WHERE f.closed_at IS NULL AND q.answer IS NULL").all().map((r) => r.id));
   const open = openFindings(ws.db).filter((f) => !unanswered.has(f.id));
-  return open.length > 0 ? [`${open.length} open review finding(s) (${open.slice(0, 10).map((f) => `#${f.id}`).join(", ")}${open.length > 10 ? ", …" : ""}): settle each with canon finding close; canon context <id> shows them`] : [];
+  if (open.length === 0) return { owed: [], holds: false };
+  const oldest = Math.min(...open.map((f) => Date.parse(f.openedAt)));
+  const hours = (ms: number) => `${Math.round((ms / 3_600_000) * 10) / 10}h`;
+  const tooMany = open.length > ws.config.debtMaxFindings;
+  const tooOld = now - oldest > ws.config.debtMaxAgeMs;
+  const why = tooMany ? `more than debt_max_findings (${ws.config.debtMaxFindings})` : tooOld ? `the oldest open for ${hours(now - oldest)}, over debt_max_age_hours (${hours(ws.config.debtMaxAgeMs)})` : `within debt_max_findings (${ws.config.debtMaxFindings}) and debt_max_age_hours (${hours(ws.config.debtMaxAgeMs)})`;
+  return { owed: [`${open.length} open review finding(s) (${open.slice(0, 10).map((f) => `#${f.id}`).join(", ")}${open.length > 10 ? ", …" : ""}), ${why}: settle each with canon finding close; canon context <id> shows them`], holds: tooMany || tooOld };
+}
+
+/** Owed review work under the limits does not hold the start back; it is said so it gets settled (BR-2464). */
+function remind(debt: { readonly owed: readonly string[] }, say: Say): void {
+  say(`note: review work is owed; it holds new changes back once over the limits (BR-2464):\n${debt.owed.map((l) => `  - ${l}`).join("\n")}`);
 }
 
 /** Whether a change was started before: it has a branch of its own (BR-2464 lets it go on). */
@@ -110,13 +125,15 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
       return err("invalid", `${doc.id} is ${doc.status}`);
     }
     // reason: new work waits while findings or failed reviews are owed; a change already started goes on, a chore settles them (BR-2464)
-    const owed = opts.fixMain || settling || existing || startedBefore(ws, doc.id) ? [] : workDebt(ws);
-    if (owed.length > 0 && !waived(ws, doc.id, owed, opts.urgent, say)) return refuseForDebt(ws, doc.id, owed);
+    const debt = opts.fixMain || settling || existing || startedBefore(ws, doc.id) ? { owed: [], holds: false } : workDebt(ws);
+    if (debt.holds && !waived(ws, doc.id, debt.owed, opts.urgent, say)) return refuseForDebt(ws, doc.id, debt.owed);
+    if (!debt.holds && debt.owed.length > 0) remind(debt, say);
     changeId = doc.id;
     slug = slugify(doc.title);
   } else {
-    const owed = opts.fixMain || settling ? [] : workDebt(ws);
-    if (owed.length > 0 && !waived(ws, null, owed, opts.urgent, say)) return refuseForDebt(ws, null, owed);
+    const debt = opts.fixMain || settling ? { owed: [], holds: false } : workDebt(ws);
+    if (debt.holds && !waived(ws, null, debt.owed, opts.urgent, say)) return refuseForDebt(ws, null, debt.owed);
+    if (!debt.holds && debt.owed.length > 0) remind(debt, say);
     // reason: checked before an id is allocated, so a refused start leaves no number, worktree or claim behind (BR-2376, BR-2002)
     const bad = target.plan ? planProblem(onMain.value, ws.config.main, target.plan) : undefined;
     if (bad) {
