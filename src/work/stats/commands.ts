@@ -1,10 +1,11 @@
 import { defineCommand } from "citty";
-import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { computeStats, renderSearchStats, renderSharedShare, renderStats, searchStats, sharedShare } from "./stats.ts";
 import { pendingBlocks, recordVerdict, renderPending, renderVerdictSummary, verdictSummary } from "./verdict.ts";
 import { dirname } from "node:path";
 import { CoordDb } from "../db.ts";
-import { worktreesDir } from "../session/session.ts";
+import { corpusOf as corpusAtRef, worktreesDir } from "../session/session.ts";
+import { git } from "../../kernel/git.ts";
 import { findingsByCriterion, renderFindingsByCriterion, renderReviewCounts, reviewCounts } from "./reviews.ts";
 import { DEFAULT_DAYS, projectsDir, renderUsage, usageReport } from "./usage.ts";
 import { claimsWithState } from "../claims/claims.ts";
@@ -49,7 +50,9 @@ const stats = defineCommand({
     const batches = renderBatchStats(batchStats(ws.db, since ?? 0, until));
     if (batches) say(`\n${batches}`);
     // reason: text-only like the review counts; whether a class needs a hard gate is read off these numbers (BR-2494, D-124)
-    const design = renderDesignStats(designStats(ws.db, ws.root, corpusOf(ws).corpus, since ?? 0, until));
+    // reason: revisions are counted on main as committed, never on this checkout's HEAD or uncommitted text (BR-2494)
+    const mainSha = must(git(ws.primary, "rev-parse", "--verify", `refs/heads/${ws.config.main}^{commit}`)).trim();
+    const design = renderDesignStats(designStats(ws.db, ws.primary, must(corpusAtRef(ws, mainSha)), mainSha, since ?? 0, until));
     if (design) say(`\n${design}`);
     const searches = searchStats(ws.db, since ?? 0, until);
     if (searches.searches > 0) say(`\n${renderSearchStats(searches)}`);

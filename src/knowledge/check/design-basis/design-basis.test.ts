@@ -85,6 +85,20 @@ describe("the review's note on a design basis (BR-2493)", () => {
     expect(prompt).toContain("a new choice hidden behind the reuse");
     expect(prompt).toContain("no result that would prove the choice wrong");
   });
+
+  test("BR-2493: the change's 方案依据 itself is in the prompt, also when the change file is not among the changed documents; a placeholder basis is not", () => {
+    const root = project();
+    const s = startNew(root, "Basis shown");
+    const file = changeFile(s.worktree, s.change);
+    writeFileSync(file, readFileSync(file, "utf8") + "\n## 方案依据\n\n<what it reuses>\n");
+    const placeholder = corpusAt(s.worktree).docs.find((d) => d.id === s.change)!;
+    expect(reviewPrompt(s.worktree, corpusAt(s.worktree), [], { change: placeholder })).not.toContain(`# 方案依据 of ${s.change}`);
+    writeFileSync(file, readFileSync(file, "utf8").replace("\n## 方案依据\n\n<what it reuses>\n", BASIS.replace("证伪：", "证伪：SENTINEL-basis-7f3 ")));
+    const change = corpusAt(s.worktree).docs.find((d) => d.id === s.change)!;
+    const prompt = reviewPrompt(s.worktree, corpusAt(s.worktree), [], { change });
+    expect(prompt).toContain(`# 方案依据 of ${s.change}`);
+    expect(prompt).toContain("SENTINEL-basis-7f3");
+  });
 });
 
 describe("design basis on the record (BR-2494)", () => {
@@ -107,7 +121,7 @@ describe("design basis on the record (BR-2494)", () => {
     const db = ws(root).db;
     const rows = db.db.query<{ subject: string; basis: number }, []>("SELECT subject, json_extract(detail, '$.basis') AS basis FROM events WHERE kind = 'design.basis' ORDER BY id").all();
     expect(rows).toEqual([{ subject: withBasis.change, basis: 1 }, { subject: without.change, basis: 0 }]);
-    const s = designStats(db, root, corpusAt(root), 0, Number.MAX_SAFE_INTEGER);
+    const s = designStats(db, root, corpusAt(root), "main", 0, Number.MAX_SAFE_INTEGER);
     expect(s.classes.dependency).toEqual({ landings: 2, withBasis: 1 });
     expect(renderDesignStats(s)).toContain("dependency: 2 landing(s), 1 with a basis");
   });
@@ -123,8 +137,48 @@ describe("design basis on the record (BR-2494)", () => {
     writeFileSync(join(root, "canon/decisions/D-3.md"), d("D-3", "amends:\n  - D-1\nrevised_because: requirement\n"));
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "revisions");
-    const s = designStats(ws(root).db, root, corpusAt(root), 0, Number.MAX_SAFE_INTEGER);
+    const s = designStats(ws(root).db, root, corpusAt(root), "main", 0, Number.MAX_SAFE_INTEGER);
     expect(s.revisions).toEqual([{ reason: "premise", count: 1, within7Days: 1 }, { reason: "requirement", count: 1, within7Days: 1 }]);
     expect(renderDesignStats(s)).toContain("decisions revised, by revised_because: premise 1 (1 within 7 days), requirement 1 (1 within 7 days)");
+  });
+
+  test("BR-2494: the 7 days run from the revised decision's first commit under its id: exactly 7 days is within, a second more is not, a copy of the old file under a new id is not dated as the old one, and a re-add of the same id keeps the first date", () => {
+    const root = project();
+    const dir = join(root, "canon/decisions");
+    Bun.spawnSync(["mkdir", "-p", dir]);
+    const d = (id: string, extra: string) => `---\nid: ${id}\ntitle: ${id}\nstatus: accepted\n${extra}---\n\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
+    const T0 = 1_768_000_000;
+    const commitAt = (t: number, msg: string) => {
+      sh(root, "add", "-A");
+      const env = { ...process.env, GIT_AUTHOR_DATE: `@${t} +0000`, GIT_COMMITTER_DATE: `@${t} +0000` };
+      expect(Bun.spawnSync(["git", "commit", "-qm", msg], { cwd: root, env }).exitCode).toBe(0);
+    };
+    writeFileSync(join(dir, "D-1.md"), d("D-1", ""));
+    commitAt(T0, "d1");
+    writeFileSync(join(dir, "D-2.md"), d("D-2", "amends:\n  - D-1\nrevised_because: premise\n"));
+    commitAt(T0 + 7 * 86_400, "d2 at exactly 7 days");
+    writeFileSync(join(dir, "D-3.md"), d("D-3", "amends:\n  - D-1\nrevised_because: premise\n"));
+    commitAt(T0 + 7 * 86_400 + 1, "d3 a second later");
+    sh(root, "rm", "-q", "canon/decisions/D-1.md");
+    commitAt(T0 + 20 * 86_400, "drop d1");
+    writeFileSync(join(dir, "D-1.md"), d("D-1", ""));
+    commitAt(T0 + 30 * 86_400, "d1 again");
+    const s = designStats(ws(root).db, root, corpusAt(root), "main", 0, Number.MAX_SAFE_INTEGER);
+    expect(s.revisions).toEqual([{ reason: "premise", count: 2, within7Days: 1 }]);
+  });
+
+  test("BR-2494: canon stats reads main as committed: a revising decision only on a work branch, uncommitted, is not counted", () => {
+    const root = project();
+    Bun.spawnSync(["mkdir", "-p", join(root, "canon/decisions")]);
+    const d = (id: string, extra: string) => `---\nid: ${id}\ntitle: ${id}\nstatus: accepted\n${extra}---\n\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
+    writeFileSync(join(root, "canon/decisions/D-1.md"), d("D-1", ""));
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "d1");
+    const s = startNew(root, "Propose a revision");
+    Bun.spawnSync(["mkdir", "-p", join(s.worktree, "canon/decisions")]);
+    writeFileSync(join(s.worktree, "canon/decisions/D-2.md"), d("D-2", "amends:\n  - D-1\nrevised_because: premise\n").replace("status: accepted", "status: proposed"));
+    const r = Bun.spawnSync(["bun", join(import.meta.dir, "../../../invocation/main.ts"), "stats"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    expect(r.exitCode).toBe(0);
+    expect(r.stdout.toString()).not.toContain("premise");
   });
 });

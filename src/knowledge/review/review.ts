@@ -2,6 +2,7 @@ import { namedIds, quotedSpans } from "./findings/quotes.ts";
 import { findDoc } from "../query/query.ts";
 import { SKILL_DIRS, standingInstructions } from "../../kernel/agent.ts";
 import { restatementLine, type Restatement } from "../check/restatement/restatement.ts";
+import { BASIS_HEADING, hasBasis } from "../check/design-basis/design-basis.ts";
 import { realpathSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse } from "yaml";
@@ -54,7 +55,7 @@ export interface ReviewExtras {
   readonly readmes?: readonly string[];
   /** Domain READMEs the landing deletes, with the text they had on main. */
   readonly deletedReadmes?: readonly { readonly path: string; readonly text: string }[];
-  /** The change this landing belongs to; the review reads its lessons (BR-2162). */
+  /** The change this landing belongs to; the review reads its lessons (BR-2162) and its design basis (BR-2493). */
   readonly change?: Doc | undefined;
   /** Rules the closing change recorded as wording-only edits; the review must judge each (BR-2239). */
   readonly wording?: readonly WordingQuestion[];
@@ -209,6 +210,9 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
   if (change?.kind === "change") {
     const lessons = section(change.body, LESSONS_SECTION);
     if (lessons !== undefined) parts.push(`# Lessons of ${change.id} ${change.title} (the change this landing belongs to)\n\n${lessons.trim()}\n`);
+    // reason: the reviewer judges the basis itself, so it is shown even when the change file is not among the changed documents of this call (BR-2493)
+    const basis = hasBasis(change.body) ? section(change.body, BASIS_HEADING) : undefined;
+    if (basis !== undefined) parts.push(`# 方案依据 of ${change.id} ${change.title} (the design basis of the change this landing belongs to)\n\n${basis.trim()}\n`);
   }
   if (extras.deleted?.length || extras.deletedReadmes?.length) {
     parts.push("# Deleted documents (text on main before this landing; deleting a rule removes a behaviour the product promised, retiring it keeps the record)");

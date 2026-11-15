@@ -17,15 +17,32 @@ export interface DesignStats {
 
 const DAY = 86_400;
 
-/** The time the file was first committed, seconds since the epoch; undefined when git does not know it. */
-function addedAt(root: string, path: string): number | undefined {
-  const r = git(root, "log", "--diff-filter=A", "--follow", "--format=%ct", "--", path);
-  if (!r.ok) return undefined;
-  const last = r.value.trim().split("\n").filter((l) => l !== "").at(-1);
-  return last === undefined ? undefined : Number(last);
+/**
+ * When each decision id first appeared in the history of `ref`, seconds since the epoch, from the decision files' names.
+ * reason: not `git log --follow`: it follows copies too, so a decision written from a copy of another would take that
+ * one's date; with renames off, a renamed file is a new add of the same id, and the earliest add is the first (BR-2494)
+ */
+function firstAdded(root: string, ref: string, dirs: readonly string[]): Map<string, number> {
+  const out = new Map<string, number>();
+  if (dirs.length === 0) return out;
+  const r = git(root, "-c", "core.quotePath=false", "log", "--no-renames", "--diff-filter=A", "--format=%x00%ct", "--name-only", ref, "--", ...dirs);
+  if (!r.ok) return out;
+  for (const commit of r.value.split("\0").slice(1)) {
+    const [time, ...files] = commit.split("\n").filter((l) => l.trim() !== "");
+    const at = Number(time);
+    for (const f of files) {
+      const id = /^([A-Za-z]+-\d+)(?=[-.])/.exec(f.slice(f.lastIndexOf("/") + 1))?.[1];
+      if (id !== undefined && (out.get(id) ?? Infinity) > at) out.set(id, at);
+    }
+  }
+  return out;
 }
 
-export function designStats(db: CoordDb, root: string, corpus: Corpus, since: number, until: number): DesignStats {
+/**
+ * `corpus` and `ref` are main as committed (the caller reads the corpus at `ref`): a decision only proposed on a work
+ * branch or left uncommitted is not a revision that happened (BR-2494).
+ */
+export function designStats(db: CoordDb, root: string, corpus: Corpus, ref: string, since: number, until: number): DesignStats {
   const classes = Object.fromEntries(DESIGN_CLASSES.map((c) => [c, { landings: 0, withBasis: 0 }])) as Record<DesignClass, { landings: number; withBasis: number }>;
   const rows = db.db.query<{ detail: string }, [number, number]>("SELECT detail FROM events WHERE id > ? AND id <= ? AND kind = 'design.basis'").all(since, until);
   for (const r of rows) {
@@ -37,6 +54,8 @@ export function designStats(db: CoordDb, root: string, corpus: Corpus, since: nu
     }
   }
   const byId = new Map(corpus.docs.map((d) => [d.id, d]));
+  const decisions = corpus.docs.filter((d) => d.kind === "decision");
+  const added = firstAdded(root, ref, [...new Set(decisions.map((d) => d.path.slice(0, d.path.lastIndexOf("/"))))]);
   const tally = new Map<string, { count: number; within7Days: number }>();
   for (const d of corpus.docs) {
     if (d.kind !== "decision" || d.revisedBecause === undefined) continue;
@@ -44,9 +63,9 @@ export function designStats(db: CoordDb, root: string, corpus: Corpus, since: nu
     if (revised.length === 0) continue;
     const t = tally.get(d.revisedBecause) ?? { count: 0, within7Days: 0 };
     t.count++;
-    const at = addedAt(root, d.path);
-    // reason: "soon" is measured from the revised decision's first commit; a decision git cannot date is not counted as soon (BR-2494)
-    if (at !== undefined && revised.some((r) => { const was = addedAt(root, r.path); return was !== undefined && at - was <= 7 * DAY; })) t.within7Days++;
+    const at = added.get(d.id);
+    // reason: "soon" is measured from the revised decision's first commit under its id; a decision git cannot date is not counted as soon (BR-2494)
+    if (at !== undefined && revised.some((r) => { const was = added.get(r.id); return was !== undefined && at - was <= 7 * DAY; })) t.within7Days++;
     tally.set(d.revisedBecause, t);
   }
   const order = [...REVISION_REASONS, ...[...tally.keys()].filter((k) => !(REVISION_REASONS as readonly string[]).includes(k)).sort()];
