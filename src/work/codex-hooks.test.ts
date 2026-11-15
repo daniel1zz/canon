@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { project } from "./testkit.ts";
@@ -23,9 +23,7 @@ test("BR-2023 BR-2340: Codex PreToolUse refuses a missing/wrong child identity, 
   expect(JSON.parse(hook("canon work land --as child-1").out).hookSpecificOutput.permissionDecision).toBe("deny");
   expect(hook("echo harmless", "child-1").out).toBe("");
   // The denied shell command has not invoked the CLI or created its claim.
-  const db = new Database(join(root, ".git/canon/state.db"), { readonly: true });
-  expect(db.query("SELECT * FROM claims").all()).toEqual([]);
-  db.close();
+  expect(existsSync(join(root, ".git/canon/state.db"))).toBe(false);
 });
 
 test("BR-2182: Codex's Bash snapshot includes the caller's claimed tree and excludes siblings", () => {
