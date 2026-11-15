@@ -207,7 +207,7 @@ describe("canon finding close (BR-2453)", () => {
   const input = (root: string, n: number | string, more: { fixed?: string; spurious?: string; reason?: string }) => ({ cwd: root, main: "main", actor: "agent:test", id: String(n), reason: "why", caller: { key: "human:test", root: "human:test", human: true }, ...more });
   const row = (db: CoordDb, n: number) => db.db.query<{ closed_how: string | null; closed_event: number | null }, [number]>("SELECT closed_how, closed_event FROM review_findings WHERE id = ?").get(n)!;
 
-  test("BR-2502: a worker (agent:<session>:<name>) cannot tier, close or amend a finding; it stays open; a main session still can", () => {
+  test("BR-2502, BR-2477, BR-2478: a worker (agent:<session>:<name>) cannot tier, close or amend a finding; it stays open; a main session still can", () => {
     const { root, db, n, commit } = opened();
     const fix = commit(`canon/rules/billing/${BR(1)}.md`, ruleFile(1).replace("Rule 1.", "Rule 1, only overseas."));
     const worker = "agent:s7:w1";
