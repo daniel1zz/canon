@@ -353,9 +353,12 @@ export class Slots {
     }
   }
   give(): void {
-    const next = this.waiting.shift();
-    if (next) next();
-    else this.free++;
+    // reason: after resize lowered the size below the calls running, free is negative; a freed slot first pays that back (BR-2487, #231)
+    this.free++;
+    while (this.free > 0 && this.waiting.length > 0) {
+      this.free--;
+      this.waiting.shift()!();
+    }
   }
 }
 

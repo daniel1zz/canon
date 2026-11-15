@@ -4,7 +4,7 @@ import { mkdirSync, mkdtempSync, realpathSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readCorpus } from "../documents/read.ts";
-import { DUPLICATE_CRITERIA, RULE_CRITERIA, duplicatePrompt, onlyChangedBlock, outsideNote, reviewPrompt, runReview, standingText } from "./review.ts";
+import { DUPLICATE_CRITERIA, RULE_CRITERIA, Slots, duplicatePrompt, onlyChangedBlock, outsideNote, reviewPrompt, runReview, standingText } from "./review.ts";
 
 const id = (p: string, n: number) => [p, n].join("-");
 
@@ -319,5 +319,37 @@ describe("blocking findings outside the landing", () => {
     const f = `[contradiction] ${id("D", 89)} 「a」 vs ${id("D", 99)} 「b」`;
     expect(onlyChangedBlock({ verdict: "block", findings: [f] }, new Set())).toEqual({ verdict: "block", findings: [f] });
     expect(onlyChangedBlock({ verdict: "block", findings: [`${id("D", 89)} is vague`] }, changed)).toEqual({ verdict: "block", findings: [`${id("D", 89)} is vague`] });
+  });
+});
+
+describe("calls shared by reviews running at once", () => {
+  test("BR-2487: after review_parallel is lowered below the calls running, a waiting call starts only once the running ones are within the new limit (#231)", async () => {
+    const slots = new Slots(4);
+    for (let i = 0; i < 4; i++) await slots.take();
+    slots.resize(1);
+    let started = false;
+    const waiting = slots.take().then(() => (started = true));
+    for (let i = 0; i < 3; i++) {
+      slots.give();
+      await Bun.sleep(0);
+      expect(started).toBe(false);
+    }
+    slots.give();
+    await waiting;
+    expect(started).toBe(true);
+  });
+
+  test("BR-2487: a freed slot goes to the call waiting longest, and raising the size starts waiting calls at once", async () => {
+    const slots = new Slots(1);
+    await slots.take();
+    const order: number[] = [];
+    const a = slots.take().then(() => order.push(1));
+    const b = slots.take().then(() => order.push(2));
+    slots.resize(2);
+    await a;
+    expect(order).toEqual([1]);
+    slots.give();
+    await b;
+    expect(order).toEqual([1, 2]);
   });
 });

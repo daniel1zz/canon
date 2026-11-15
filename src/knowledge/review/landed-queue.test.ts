@@ -124,6 +124,21 @@ describe("the queue of reviews after landing (BR-2441)", () => {
     expect([a!.state, b!.state]).toEqual(["done", "done"]);
   });
 
+  test("BR-2487: two reviews that change AGENTS.md, which instructions does not list, keep queue order (#230)", async () => {
+    const { root, seen } = queueProject("landed_review_parallel: 2\nreview_parallel: 2\n");
+    for (const n of [1, 2]) {
+      const s = startNew(root, `Agents ${n}`);
+      writeFileSync(join(s.worktree, "AGENTS.md"), `Agents instructions, version ${n}.\n`);
+      sh(s.worktree, "add", "-A");
+      sh(s.worktree, "commit", "-qm", `agents ${n}`);
+      expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    }
+    expect(jobs(root)).toHaveLength(2);
+    const r = await runLandedReviews(ws(root), quiet, undefined);
+    expect(r.ok && r.value).toBe(2);
+    expect(seen()).toEqual(["start", "end", "start", "end"]);
+  });
+
   test("BR-2441: with a reviewer alive, a landing that queues a review starts no second one; with none alive and the variable unset, it starts one", async () => {
     const { root } = queueProject();
     expect((await land(ws(ruleChange(root, 1).worktree), FAST, quiet)).kind).toBe("landed");

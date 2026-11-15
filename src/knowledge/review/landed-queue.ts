@@ -11,7 +11,8 @@ import { removeReviewTree } from "../../work/land/checks/review-tree.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { REVIEW_NONE, REVIEW_WAYS_OUT } from "./config-keys.ts";
 import { reviewLanded } from "./landed.ts";
-import { Slots } from "./review.ts";
+import { SKILL_FILE, Slots } from "./review.ts";
+import { standingInstructions } from "../../kernel/agent.ts";
 import { reviewSettingsOn } from "../../work/land/checks/review-scope.ts";
 
 /**
@@ -168,7 +169,10 @@ function pathsOf(ws: Workspace, job: Job, standing: readonly string[]): Readonly
   const diff = git(ws.primary, "diff", "--name-only", "--no-renames", job.base, job.head);
   // reason: when the diff cannot be read, the review overlaps everything, so it keeps queue order with every other (BR-2487)
   if (!diff.ok) return new Set(["*"]);
-  return new Set(diff.value.split("\n").filter((p) => p !== "" && (p.startsWith("canon/") || standing.includes(p))));
+  // reason: every file the duplicate review reads counts, as standingTouched picks them: the configured instructions, the root
+  // instruction files (AGENTS.md and the rest) and every SKILL.md (BR-2143, BR-2487, #230)
+  const reviewed = new Set(standingInstructions(standing));
+  return new Set(diff.value.split("\n").filter((p) => p !== "" && (p.startsWith("canon/") || reviewed.has(p) || SKILL_FILE.test(p))));
 }
 
 const overlaps = (a: ReadonlySet<string>, b: ReadonlySet<string>): boolean => a.has("*") || b.has("*") || [...a].some((p) => b.has(p));
