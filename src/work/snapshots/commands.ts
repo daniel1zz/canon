@@ -1,3 +1,4 @@
+import { launcherSubagent } from "../workspace.ts";
 import { effectiveAgentSession } from "../agent-session.ts";
 import { readRuntime } from "../../kernel/agent.ts";
 import { readFileSync, realpathSync } from "node:fs";
@@ -35,7 +36,9 @@ const take = defineCommand({
     // reason: a claims table that cannot be read must not cost the cwd snapshot the hook always took; the error is reported after the snapshots (BR-2182, P4)
     let claimsError: Parameters<typeof fail>[0] | undefined;
     if (args.hook) {
-      const claimed = claimedWorktrees(cwd, session, agentId, runtime, runtime === "codex" ? process.env["CANON_ACTOR"]?.trim() : undefined);
+      // reason: a worker its launcher named claims under that name, so with no native agent id it is looked up by it (BR-2495)
+      const launched = launcherSubagent(process.env);
+      const claimed = claimedWorktrees(cwd, session, agentId ?? (launched.ok ? launched.value : undefined), runtime, runtime === "codex" ? process.env["CANON_ACTOR"]?.trim() : undefined);
       if (!claimed.ok) claimsError = claimed.error;
       const real = (p: string) => {
         try {

@@ -172,6 +172,17 @@ describe("taking a snapshot", () => {
       expect(snapshots(root, "C-16")).toHaveLength(0);
     });
 
+    test("BR-2182 BR-2495: a worker its launcher named with CANON_SUBAGENT, with no agent id, snapshots the worktree held under that name", () => {
+      const root = project();
+      claimedSibling(root, "C-17", "agent:abcd1234:worker-w6");
+      claimedSibling(root, "C-18", "agent:abcd1234");
+      const input = JSON.stringify({ cwd: root, session_id: "abcd1234-0000-4000-8000-000000000000", tool_name: "Bash", tool_input: { command: "cd ../x && git checkout -- ." } });
+      const r = canonWith({ CANON_SUBAGENT: "worker-w6", CANON_ACTOR: "" }, root, input, "snapshot", "take", "--hook");
+      expect([r.code, r.out]).toEqual([0, ""]);
+      expect(snapshots(root, "C-17")).toHaveLength(1);
+      expect(snapshots(root, "C-18")).toHaveLength(0);
+    });
+
     test("BR-2182: a changed worktree claimed by another session is not snapshotted", () => {
       const root = project();
       claimedSibling(root, "C-21", "agent:ffff0000");
