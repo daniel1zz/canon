@@ -79,8 +79,9 @@ export const reviewKeys = {
   reviewMaxCalls: configKey<number>({
     key: "review_max_calls",
     doc: "The most reviewer invocations one preview or post-land review may plan without one owner approval (BR-2490, D-123), counting rule and duplicate prompts together after reuse. A larger plan asks the owner before any call.",
-    default: 16,
-    schema: { type: "integer", minimum: 1, default: 16 },
+    // reason: the owner set 6 on 2026-11-15 ("6次就很多了"); more calls ask first (BR-2490, D-123)
+    default: 6,
+    schema: { type: "integer", minimum: 1, default: 6 },
     read: (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 1 ? ok(v) : err("invalid", "`review_max_calls` must be a whole number of at least 1"),
     listed: 69,
     checked: 49,

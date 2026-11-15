@@ -46,11 +46,11 @@ function fixture(extra = "review_max_calls: 1\n", duplicate = true) {
   return { root, ...change, rule, seen, fail, questions, answer, configure, db };
 }
 
-test("BR-2490 BR-2045: configuration exposes finite review totals and rejects invalid budgets", () => {
+test("BR-2490 BR-2045: configuration exposes finite review totals with a default of 6 calls and rejects invalid budgets", () => {
   const root = project();
   const defaults = cli(root, "config");
   expect(defaults.code).toBe(0);
-  expect(defaults.out).toContain("review_max_calls");
+  expect(defaults.out).toContain("review_max_calls = 6 (default)");
   expect(defaults.out).toContain("review_max_total_prompt_kb");
   writeFileSync(join(root, "canon/config.yaml"), "floor: 'true'\nreview: none\nreview_max_calls: 16\nreview_max_total_prompt_kb: 0.5\n");
   expect(cli(root, "config").code).toBe(0);
