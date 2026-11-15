@@ -532,6 +532,8 @@ describe("code layout (D-15)", () => {
       "src/.cache/x": "",
     });
     rmSync(join(root, "src/billing"), { recursive: true });
+    mkdirSync(join(root, "src/work/drop/empty"), { recursive: true }); // a directory with no file is not landed by git (#236)
+    writeFileSync(join(root, "src/work/drop/empty/.DS_Store"), "");
     expect(kinds(root, { codeRoot: "src", shared: ["src/lib/kernel", "src/gone"] })).toEqual([
       "code-layout canon/config.yaml", // shared src/gone does not exist
       "code-layout canon/rules/billing/README.md",

@@ -279,7 +279,8 @@ function layoutFindings(root: string, corpus: Corpus): Finding[] {
   const out: Finding[] = [];
   for (const dom of corpus.domains) {
     const dir = `${codeRoot}/${dom.name}`;
-    if (!isDir(join(root, dir))) out.push({ path: dom.path, rule: "code-layout", message: `domain ${dom.name} has no code directory ${dir}` });
+    // reason: git keeps no empty directory, so one with no file passes here and is gone once landed (#236, BR-2118)
+    if (!holdsFile(join(root, dir))) out.push({ path: dom.path, rule: "code-layout", message: `domain ${dom.name} has no code directory ${dir}${isDir(join(root, dir)) ? " (it exists but holds no file, and git does not keep an empty directory)" : ""}` });
   }
   for (const s of shared) {
     if (!existsSync(join(root, s))) out.push({ path: "canon/config.yaml", rule: "code-layout", message: `shared path ${s} does not exist` });
@@ -317,6 +318,12 @@ function layoutFindings(root: string, corpus: Corpus): Finding[] {
   };
   walk("", undefined, false);
   return out;
+}
+
+/** A directory with at least one file somewhere under it, names starting with a dot left out (BR-2118). */
+function holdsFile(full: string): boolean {
+  if (!isDir(full)) return false;
+  return readdirSync(full).some((name) => !name.startsWith(".") && (isDir(join(full, name)) ? holdsFile(join(full, name)) : true));
 }
 
 function isDir(full: string): boolean {
