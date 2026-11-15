@@ -1,5 +1,5 @@
 import { agentSession, sessionActor, type AgentRuntime } from "../../kernel/agent.ts";
-import { currentActor } from "../workspace.ts";
+import { currentActor, launcherSubagent } from "../workspace.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import type { CoordDb } from "../db.ts";
 
@@ -269,7 +269,10 @@ function parseCodexAsked(data: Record<string, unknown>, session: string): Return
 export function recordActor(session: string | null, env: Record<string, string | undefined> = process.env, runtime: AgentRuntime = agentSession(env)?.runtime ?? "claude", childId?: string): Result<string> {
   // reason: CLAUDECODE is not consulted when the data names a session: it comes from Claude Code's hook, so an agent wrote it (BR-2275)
   if (env["CANON_ACTOR"]?.trim() || !session) return currentActor(runtime === "codex" && session ? { ...env, CODEX_SESSION_ID: session } : env);
-  return ok(sessionActor(runtime, session, runtime === "codex" ? childId : undefined));
+  // reason: a worker its launcher named records the owner's answers under the same name as its other commands (BR-2495)
+  const launched = launcherSubagent(env);
+  if (!launched.ok) return launched;
+  return ok(sessionActor(runtime, session, runtime === "codex" && childId !== undefined ? childId : launched.value));
 }
 
 /** Writes one `human.asked` event: what the human answered in Claude Code's question tool (BR-2275). */

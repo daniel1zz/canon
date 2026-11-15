@@ -32,8 +32,10 @@ export interface HookFailure {
 }
 
 function envFor(ctx: HookContext, port: number | undefined): Record<string, string> {
+  // reason: CANON_ACTOR below already carries the worker's name; an inherited CANON_SUBAGENT beside it would be refused as two names (BR-2495)
+  const { CANON_SUBAGENT: _launched, ...inherited } = process.env as Record<string, string>;
   return {
-    ...(process.env as Record<string, string>),
+    ...inherited,
     CANON_EVENT: ctx.event,
     CANON_CHANGE: isChore(ctx.change) ? "" : ctx.change ?? "",
     CANON_SUBJECT: ctx.change ?? "",

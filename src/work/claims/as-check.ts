@@ -46,7 +46,7 @@ export function checkCommand(command: string, agentId: string | undefined, worke
   // reason: a worker its launcher named with CANON_SUBAGENT is that subagent without reading the process table; canon fills in its --as (BR-2495)
   if (agentId === undefined && launched !== undefined) {
     for (const f of found) {
-      const d = decideLaunched(f, launched);
+      const d = anyActor ? decide(f, undefined, true) : decideLaunched(f, launched);
       if (d) return { kind: "deny", reason: d };
     }
     return skipped === undefined ? { kind: "allow" } : { kind: "skip", reason: "unparsable", sub: skipped };

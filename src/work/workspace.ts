@@ -40,10 +40,12 @@ export function currentActor(env: Record<string, string | undefined> = process.e
   if (given !== undefined && !AS_NAME.test(given)) return err("invalid", `--as ${JSON.stringify(given)}: a name is letters, digits, - and _ only`);
   const launched = launcherSubagent(env);
   if (!launched.ok) return launched;
-  // reason: the launcher names its worker once, so every canon command of that worker is recorded under the name without the worker passing --as (BR-2495, D-125)
-  if (launched.value !== undefined && given !== undefined && given !== launched.value) return err("invalid", `--as ${given} does not match ${SUBAGENT_ENV}=${launched.value} that started this worker; pass no --as or --as ${launched.value}`);
   if (launched.value !== undefined && env["CANON_ACTOR"]?.trim()) return err("invalid", `${SUBAGENT_ENV}=${launched.value} and CANON_ACTOR=${env["CANON_ACTOR"]!.trim()} both name the actor; a launcher sets only ${SUBAGENT_ENV}`);
-  const as = given ?? launched.value;
+  // reason: the launcher names its worker once, so its commands are recorded under that name without --as; an explicit --as (a native
+  // subagent of the worker, checked by the hook as BR-2023 leaves --as to it) or a Codex child thread names someone more specific (BR-2495, D-125)
+  const native = launched.value !== undefined && given === undefined ? effectiveAgentSession(env, cwd) : undefined;
+  if (native && !native.ok) return native;
+  const as = given ?? (native?.value?.child !== undefined ? undefined : launched.value);
   const override = env["CANON_ACTOR"]?.trim();
   if (override && as === undefined) {
     const host = agentSession(env);

@@ -85,6 +85,13 @@ describe("how a hook command runs", () => {
     expect(readFileSync(join(r.value.worktree, "who.txt"), "utf8").trim()).toBe(`agent:a ${r.value.worktree}`);
   });
 
+  test("BR-2495: a hook command gets the whole actor in CANON_ACTOR and no CANON_SUBAGENT, so a worker's hooks can run canon", () => {
+    const root = project();
+    const ctx = ctxFor(root); // canon itself resolved the actor before running the hooks
+    withEnv({ CANON_SUBAGENT: "worker-w6" }, () => runHooksSync(ctx, ['printf "[%s]" "$CANON_SUBAGENT" > s.txt', 'printf "%s" "$CANON_ACTOR" > a.txt'], quiet));
+    expect([readFileSync(join(root, "s.txt"), "utf8"), readFileSync(join(root, "a.txt"), "utf8")]).toEqual(["[]", "agent:a"]);
+  });
+
   test("BR-2199: every event sets CANON_EVENT, CANON_CHANGE and CANON_PORT, keeps the caller's environment, and canon's values win", () => {
     const root = project();
     withEnv({ CANON_HOOK_TEST_FOO: "1", CANON_EVENT: "x", CANON_PORT: "9999" }, () =>

@@ -8,6 +8,7 @@ import { CHECK_AS_COMMAND } from "../../install/hook.ts";
 import { checkCommand } from "./as-check.ts";
 import { nestedIn } from "./liveness.ts";
 import { currentActor } from "../workspace.ts";
+import { recordActor } from "../humans/questions.ts";
 import { mkdirSync, symlinkSync, writeFileSync } from "node:fs";
 import { project } from "../testkit.ts";
 
@@ -259,20 +260,28 @@ describe("a worker session started by another session", () => {
 });
 
 describe("a worker its launcher named with CANON_SUBAGENT (BR-2495)", () => {
-  test("BR-2495: CANON_SUBAGENT acts as --as; a different --as, CANON_ACTOR beside it, a bad name or no session is a usage error", () => {
+  test("BR-2495: CANON_SUBAGENT acts as --as unless an explicit --as or a Codex child names someone; CANON_ACTOR beside it, a bad name or no session is a usage error", () => {
     const env = { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "a69bb94c-570e-4fcb", CANON_SUBAGENT: "worker-w6" };
     const text = (r: ReturnType<typeof currentActor>) => (r.ok ? r.value : r.error.message);
     expect(text(currentActor(env))).toBe("agent:a69bb94c:worker-w6");
     expect(text(currentActor(env, "worker-w6"))).toBe("agent:a69bb94c:worker-w6");
-    const other = currentActor(env, "w1");
-    expect(other.ok ? "" : `${other.error.code} ${other.error.message}`).toContain("invalid --as w1 does not match CANON_SUBAGENT=worker-w6");
+    // an explicit --as names someone more specific (a native subagent of the worker); the hook checks it, as BR-2023 leaves --as to it
+    expect(text(currentActor(env, "agent7"))).toBe("agent:a69bb94c:agent7");
+    // a Codex child thread is a native subagent: it wins over the launcher's name
+    const codex = { CODEX_SESSION_ID: "root", CODEX_THREAD_ID: "native-child", CANON_SUBAGENT: "worker-w6" };
+    expect(text(currentActor(codex))).toBe("agent:codex-root:native-child");
+    expect(text(currentActor(codex, "native-child"))).toBe("agent:codex-root:native-child");
+    expect(text(currentActor({ ...env, CANON_SUBAGENT: "  worker-w6 " }))).toBe("agent:a69bb94c:worker-w6"); // trimmed
     expect(text(currentActor({ ...env, CANON_ACTOR: "agent:x" }))).toContain("both name the actor");
     expect(text(currentActor({ ...env, CANON_SUBAGENT: "a:b" }))).toContain('CANON_SUBAGENT="a:b"');
     expect(text(currentActor({ CANON_SUBAGENT: "w1" }))).toContain("CANON_SUBAGENT is only for workers");
     expect(text(currentActor({ ...env, CANON_SUBAGENT: "  " }))).toBe("agent:a69bb94c"); // blank is unset
+    // the owner's answers it relays are recorded under the same name as its other commands
+    const rec = recordActor("a69bb94c-570e-4fcb", env, "claude");
+    expect(rec.ok ? rec.value : rec.error.message).toBe("agent:a69bb94c:worker-w6");
   });
 
-  test("BR-2495: the hook lets a named worker's claim commands through without --as or with its own, and refuses another --as, take and a bad name", async () => {
+  test("BR-2495: the hook lets a named worker's claim commands through without --as or with its own, and refuses another --as, CANON_ACTOR, take and a bad name", async () => {
     const root = project();
     const named = { CANON_SUBAGENT: "worker-w6" };
     const reason = async (command: string, env: Record<string, string> = named) => denied((await hook(input(command, root), root, env)).out)?.permissionDecisionReason;
@@ -281,6 +290,9 @@ describe("a worker its launcher named with CANON_SUBAGENT (BR-2495)", () => {
     expect(await reason("canon work land --as w1")).toContain("started with CANON_SUBAGENT=worker-w6");
     expect(await reason("canon work take C-5 --from x")).toContain("canon work take is for the main session only");
     expect(await reason("canon work land", { CANON_SUBAGENT: "a:b" })).toContain('CANON_SUBAGENT="a:b"');
+    expect(await reason("CANON_ACTOR=agent:x canon work land")).toContain("do not set CANON_ACTOR");
+    // a native subagent of the worker carries its own agent id, as BR-2340 asks of any subagent
+    expect(denied((await hook(input("canon work land --as agent7", root, "agent7"), root, named)).out)).toBeUndefined();
     let asked = 0;
     expect(checkCommand("canon work land", undefined, () => { asked++; return true; }, "worker-w6")).toEqual({ kind: "allow" });
     expect(asked).toBe(0); // the process table is not read
