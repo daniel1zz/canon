@@ -1,7 +1,7 @@
 import { git } from "../../../kernel/git.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import type { CoordDb } from "../../../work/db.ts";
-import { mainAt, tierGate, type Caller } from "./tier.ts";
+import { isWorker, mainAt, tierGate, workerRefusal, type Caller } from "./tier.ts";
 import { attachedDocs, docsAt, pathOn } from "./docs.ts";
 
 export { pathOn };
@@ -78,6 +78,7 @@ export function amendFinding(db: CoordDb, input: CloseInput): Result<Closed> {
 }
 
 function settle(db: CoordDb, input: CloseInput, mode: "close" | "amend"): Result<Closed> {
+  if (isWorker(input.actor)) return workerRefusal(input.actor, mode);
   const raw = input.id.replace(/^#/, "");
   const n = Number(raw);
   if (!/^\d+$/.test(raw) || !Number.isSafeInteger(n) || n <= 0) return err("invalid", `the finding number must be a positive whole number, got ${JSON.stringify(input.id)}`);

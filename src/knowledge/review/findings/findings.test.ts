@@ -6,7 +6,7 @@ import { recordVerdict } from "../../../work/stats/verdict.ts";
 import type { CoordDb } from "../../../work/db.ts";
 import { FAST, project, reviewLandings, sh, startNew, ws } from "../../../work/testkit.ts";
 import { amendFinding, closeFinding, renderClosed } from "./close.ts";
-import { APPROVE, REJECT, advise, askOwner, callerOf, setTier, type Caller } from "./tier.ts";
+import { APPROVE, REJECT, advise, askOwner, callerOf, isWorker, setTier, type Caller } from "./tier.ts";
 import { ask } from "../../../work/humans/questions.ts";
 import { closeRetired, findingOf, identityOf, namedIds, openFindings, quotedSpans, recordFindings, renderFinding, type Finding } from "./findings.ts";
 
@@ -206,6 +206,26 @@ describe("canon finding close (BR-2453)", () => {
   }
   const input = (root: string, n: number | string, more: { fixed?: string; spurious?: string; reason?: string }) => ({ cwd: root, main: "main", actor: "agent:test", id: String(n), reason: "why", caller: { key: "human:test", root: "human:test", human: true }, ...more });
   const row = (db: CoordDb, n: number) => db.db.query<{ closed_how: string | null; closed_event: number | null }, [number]>("SELECT closed_how, closed_event FROM review_findings WHERE id = ?").get(n)!;
+
+  test("BR-2502: a worker (agent:<session>:<name>) cannot tier, close or amend a finding; it stays open; a main session still can", () => {
+    const { root, db, n, commit } = opened();
+    const fix = commit(`canon/rules/billing/${BR(1)}.md`, ruleFile(1).replace("Rule 1.", "Rule 1, only overseas."));
+    const worker = "agent:s7:w1";
+    const closed = closeFinding(db, { ...input(root, n, { fixed: fix }), actor: worker });
+    expect(!closed.ok && closed.error.code).toBe("invalid");
+    expect(!closed.ok && closed.error.message).toContain("canon work need-design");
+    const tiered = setTier(db, { actor: worker, caller: { key: "claude:s7:w1", root: "claude:s7", human: false }, id: String(n), tier: "A", reason: "x" });
+    expect(!tiered.ok && tiered.error.code).toBe("invalid");
+    const amended = amendFinding(db, { ...input(root, n, { fixed: fix }), actor: worker });
+    expect(!amended.ok && amended.error.code).toBe("invalid");
+    expect(row(db, n).closed_how).toBeNull();
+    expect(db.db.query<{ n: number }, []>("SELECT count(*) AS n FROM events WHERE kind IN ('finding.close', 'finding.tier', 'finding.amend')").get()!.n).toBe(0);
+    expect(isWorker("agent:s1")).toBe(false);
+    expect(isWorker("agent:codex-abc:thread-1")).toBe(true);
+    expect(isWorker("human:owner")).toBe(false);
+    const main = setTier(db, { actor: "agent:s1", caller: { key: "claude:s1", root: "claude:s1", human: false }, id: String(n), tier: "A", reason: "a fix settles it" });
+    expect(main.ok).toBe(true);
+  });
 
   test("BR-2453: --fixed with a later commit on main that changed a document it is attached to closes it with a finding.close event; again is a conflict", () => {
     const { root, db, n, commit } = opened();

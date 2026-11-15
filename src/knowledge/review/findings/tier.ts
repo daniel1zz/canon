@@ -3,6 +3,8 @@ import { git } from "../../../kernel/git.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import type { CoordDb } from "../../../work/db.ts";
 import { ask } from "../../../work/humans/questions.ts";
+import { isWorker } from "../../../work/delegation/worker.ts";
+export { isWorker };
 import { attachedDocs, docsAt } from "./docs.ts";
 
 /**
@@ -29,6 +31,11 @@ export interface Caller {
   readonly root: string;
   /** Why this caller cannot advise, when it cannot: a subagent, a delegated worker, or a session canon cannot name. */
   readonly notIndependent?: string;
+}
+
+/** The refusal BR-2502 gives a worker that tries to tier, close or amend a finding. */
+export function workerRefusal(actor: string, verb: string): Result<never> {
+  return err("invalid", `${actor} is a worker and cannot ${verb} review findings: they sit on design documents and belong to the design owner; hand the ones you think matter to it with canon work need-design (BR-2502, D-128)`);
 }
 
 /** The session an advice key belongs to: its first two parts, `<runtime>:<session>` (#225). */
@@ -71,6 +78,7 @@ function findingRow(db: CoordDb, raw: string): Result<FindingRow> {
 
 /** `canon finding tier` (BR-2477): sets or raises a finding's tier with a reason; only a person outside an agent session lowers one. */
 export function setTier(db: CoordDb, input: { readonly actor: string; readonly caller: Caller; readonly id: string; readonly tier: string; readonly reason: string }): Result<{ id: number; from: Tier | null; to: Tier }> {
+  if (isWorker(input.actor)) return workerRefusal(input.actor, "tier");
   const to = input.tier.toUpperCase();
   if (!(TIERS as readonly string[]).includes(to)) return err("invalid", `the tier is A, B or C, got ${JSON.stringify(input.tier)}`);
   const reason = input.reason.trim();
