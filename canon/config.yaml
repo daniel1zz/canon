@@ -69,8 +69,8 @@ setup: "bun install"
 # 规则和决策文字的评审：从 stdin 读提示，在 stdout 输出 JSON 结论
 # gpt-6.1-terra 经 OpenAI chat API 直接调用（负责人 2026-11-15，照 zhushenkongjian；地址、key、模型在主 checkout 的 .claude/review.local.json，不进 git）
 review: "scripts/review-api.sh"
-# gpt-6.1-terra reads far more than the 250 KB default; a review of D-51 with BR-2009 needed 251 KB in one call (2026-11-15)
-review_max_prompt_kb: 400
+# gpt-6.1-terra reads far more than the 250 KB default; 600 KB as zhushenkongjian: C-514's review was 131 calls at 400 KB and would be 6 at 600 KB (owner 2026-11-15, #233)
+review_max_prompt_kb: 600
 # 合入移动 main 之后把 main 推到这个 git 远端（D-38、BR-2259）；推送失败不改变合入结果，canon brief 提示没推上去的提交数
 remote: origin
 # 生命周期 hook（D-2、D-3）：每项是一条命令或命令列表
