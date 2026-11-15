@@ -54,7 +54,7 @@ describe("one-way-door classes (BR-2491)", () => {
 describe("why a decision revises another (BR-2492)", () => {
   const decision = (id: string, extra: string) => `---\nid: ${id}\ntitle: ${id}\nstatus: proposed\n${extra}---\n\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
 
-  test("BR-2492: a decision this work adds that amends or supersedes another existing decision needs a known revised_because; a reference to itself or to nothing is not asked for one; one already on main is not checked", () => {
+  test("BR-2492: a decision this work adds that amends or supersedes another existing decision needs a known revised_because, undetermined included; a reference to itself or to nothing is not asked for one; one already on main is not checked", () => {
     const root = project();
     const s = startNew(root, "Revise");
     const dir = join(s.worktree, "canon/decisions");
@@ -67,11 +67,13 @@ describe("why a decision revises another (BR-2492)", () => {
     writeFileSync(join(dir, "D-3.md"), decision("D-3", "supersedes: D-1\nrevised_because: typo\n"));
     writeFileSync(join(dir, "D-4.md"), decision("D-4", "amends:\n  - D-1\nrevised_because: premise\n"));
     writeFileSync(join(dir, "D-5.md"), decision("D-5", "amends:\n  - D-5\n  - D-99\n")); // itself and a missing one: their own findings, no reason asked
+    writeFileSync(join(dir, "D-6.md"), decision("D-6", "supersedes: D-1\nrevised_because: undetermined\n"));
     const found = revisionReasonFindings(s.worktree, corpusAt(s.worktree), onlyD1);
     expect(found.map((f) => f.path)).toEqual(["canon/decisions/D-2.md", "canon/decisions/D-3.md"]);
     expect(found[0]!.message).toContain("names no `revised_because`");
     expect(found[1]!.message).toContain("names an unknown `revised_because` (typo)");
-    expect(found[0]!.message).toContain("premise, requirement, external, experience, implementation");
+    expect(found[0]!.message).toContain("premise, requirement, external, experience, implementation, undetermined");
+    expect(found[0]!.message).toContain("undetermined (it cannot be told yet, or several are mixed: say why in the decision)");
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "revisions");
     expect(revisionReasonFindings(s.worktree, corpusAt(s.worktree), sh(s.worktree, "rev-parse", "HEAD"))).toEqual([]); // already there before this work
@@ -127,7 +129,7 @@ describe("design basis on the record (BR-2494)", () => {
     expect(renderDesignStats(s)).toContain("dependency: 2 landing(s), 1 with a basis");
   });
 
-  test("BR-2494: canon stats counts revising decisions by revised_because and how many came within 7 days of the decision they revise", () => {
+  test("BR-2494: canon stats counts revising decisions by revised_because and how many came within 7 days of the decision they revise, and lists the undetermined ones apart by id", () => {
     const root = project();
     Bun.spawnSync(["mkdir", "-p", join(root, "canon/decisions")]);
     const d = (id: string, extra: string) => `---\nid: ${id}\ntitle: ${id}\nstatus: accepted\n${extra}---\n\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
@@ -136,11 +138,15 @@ describe("design basis on the record (BR-2494)", () => {
     sh(root, "commit", "-qm", "d1");
     writeFileSync(join(root, "canon/decisions/D-2.md"), d("D-2", "amends:\n  - D-1\nrevised_because: premise\n"));
     writeFileSync(join(root, "canon/decisions/D-3.md"), d("D-3", "amends:\n  - D-1\nrevised_because: requirement\n"));
+    writeFileSync(join(root, "canon/decisions/D-10.md"), d("D-10", "amends:\n  - D-1\nrevised_because: undetermined\n"));
+    writeFileSync(join(root, "canon/decisions/D-4.md"), d("D-4", "supersedes: D-1\nrevised_because: undetermined\n"));
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "revisions");
     const s = designStats(ws(root).db, root, corpusAt(root), "main", 0, Number.MAX_SAFE_INTEGER);
     expect(s.revisions).toEqual([{ reason: "premise", count: 1, within7Days: 1 }, { reason: "requirement", count: 1, within7Days: 1 }]);
+    expect(s.undetermined).toEqual(["D-4", "D-10"]);
     expect(renderDesignStats(s)).toContain("decisions revised, by revised_because: premise 1 (1 within 7 days), requirement 1 (1 within 7 days)");
+    expect(renderDesignStats(s)).toContain("decisions revised with revised_because undetermined, counted in no reason: 2 (D-4, D-10)");
   });
 
   test("BR-2494: the 7 days run from the revised decision's first commit under its id: exactly 7 days is within, a second more is not, a copy of the old file under a new id is not dated as the old one, a re-add of the same id keeps the first date, and one dated before the decision it revises is not within", () => {

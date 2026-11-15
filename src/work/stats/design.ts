@@ -1,7 +1,7 @@
 import { git } from "../../kernel/git.ts";
 import type { CoordDb } from "../db.ts";
 import type { Corpus } from "../../knowledge/documents/model.ts";
-import { DESIGN_CLASSES, REVISION_REASONS, type DesignClass } from "../../knowledge/check/design-basis/design-basis.ts";
+import { DESIGN_CLASSES, REVISION_REASONS, UNDETERMINED, type DesignClass } from "../../knowledge/check/design-basis/design-basis.ts";
 
 /**
  * BR-2494: how often one-way-door landings wrote a design basis, and why decisions were revised, so the owner can see
@@ -13,6 +13,8 @@ export interface DesignStats {
   readonly classes: Readonly<Record<DesignClass, { readonly landings: number; readonly withBasis: number }>>;
   /** Per `revised_because`: decisions on main that revise another, and how many came within 7 days of the one they revise. */
   readonly revisions: readonly { readonly reason: string; readonly count: number; readonly within7Days: number }[];
+  /** Decisions on main that revise another with `revised_because: undetermined`, by id; counted in no reason. */
+  readonly undetermined: readonly string[];
 }
 
 const DAY = 86_400;
@@ -57,10 +59,16 @@ export function designStats(db: CoordDb, root: string, corpus: Corpus, ref: stri
   const decisions = corpus.docs.filter((d) => d.kind === "decision");
   const added = firstAdded(root, ref, [...new Set(decisions.map((d) => d.path.slice(0, d.path.lastIndexOf("/"))))]);
   const tally = new Map<string, { count: number; within7Days: number }>();
+  const undetermined: string[] = [];
   for (const d of corpus.docs) {
     if (d.kind !== "decision" || d.revisedBecause === undefined) continue;
     const revised = [...d.amends, ...d.supersedes].map((id) => byId.get(id)).filter((x) => x !== undefined);
     if (revised.length === 0) continue;
+    // reason: a revision nobody could attribute is shown apart, so it neither swells nor hides the premise count (BR-2494)
+    if (d.revisedBecause === UNDETERMINED) {
+      undetermined.push(d.id);
+      continue;
+    }
     const t = tally.get(d.revisedBecause) ?? { count: 0, within7Days: 0 };
     t.count++;
     const at = added.get(d.id);
@@ -69,15 +77,16 @@ export function designStats(db: CoordDb, root: string, corpus: Corpus, ref: stri
     tally.set(d.revisedBecause, t);
   }
   const order = [...REVISION_REASONS, ...[...tally.keys()].filter((k) => !(REVISION_REASONS as readonly string[]).includes(k)).sort()];
-  return { classes, revisions: order.filter((r) => tally.has(r)).map((reason) => ({ reason, ...tally.get(reason)! })) };
+  return { classes, revisions: order.filter((r) => tally.has(r)).map((reason) => ({ reason, ...tally.get(reason)! })), undetermined: undetermined.sort((a, b) => a.localeCompare(b, "en", { numeric: true })) };
 }
 
-/** The lines `canon stats` prints; undefined when no landing touched a class and no decision gave a revision reason. */
+/** The lines `canon stats` prints; undefined when no landing touched a class and no decision gave a revision reason, undetermined included. */
 export function renderDesignStats(s: DesignStats): string | undefined {
   const touched = DESIGN_CLASSES.filter((c) => s.classes[c].landings > 0);
-  if (touched.length === 0 && s.revisions.length === 0) return undefined;
+  if (touched.length === 0 && s.revisions.length === 0 && s.undetermined.length === 0) return undefined;
   const lines = ["design basis (BR-2494):"];
   for (const c of touched) lines.push(`  ${c}: ${s.classes[c].landings} landing(s), ${s.classes[c].withBasis} with a basis`);
   if (s.revisions.length > 0) lines.push(`  decisions revised, by revised_because: ${s.revisions.map((r) => `${r.reason} ${r.count} (${r.within7Days} within 7 days)`).join(", ")}`);
+  if (s.undetermined.length > 0) lines.push(`  decisions revised with revised_because undetermined, counted in no reason: ${s.undetermined.length} (${s.undetermined.join(", ")})`);
   return lines.join("\n");
 }

@@ -33,7 +33,10 @@ export const DEFAULT_DESIGN_SIGNALS: Readonly<Record<DesignClass, readonly strin
 export const BASIS_HEADING = "## 方案依据";
 
 /** Why a decision revises another, as its `revised_because` front matter says (BR-2492). */
-export const REVISION_REASONS = ["premise", "requirement", "external", "experience", "implementation"] as const;
+export const REVISION_REASONS = ["premise", "requirement", "external", "experience", "implementation", "undetermined"] as const;
+
+/** The reason that attributes a revision to none of the others; canon stats lists it apart (BR-2492, BR-2494). */
+export const UNDETERMINED = "undetermined";
 
 /** The classes a set of changed paths touches, each with the paths that touched it; canon's own documents never count. */
 export function touchedClasses(paths: readonly string[], signals: Readonly<Record<DesignClass, readonly string[]>>): Map<DesignClass, string[]> {
@@ -122,7 +125,7 @@ export function revisionReasonFindings(root: string, corpus: Corpus, base: strin
     if (why !== undefined && (REVISION_REASONS as readonly string[]).includes(why)) continue;
     out.push({
       path: d.path,
-      message: `${d.id} revises ${revised.join(", ")} but ${why === undefined ? "names no" : `names an unknown`} \`revised_because\`${why === undefined ? "" : ` (${why})`}: write one of ${REVISION_REASONS.join(", ")} in its front matter: premise (the first choice was wrong under its own premises), requirement (a new need), external (an outside thing changed), experience (the owner's experience feedback), implementation (a bug, not the design) (BR-2492)`,
+      message: `${d.id} revises ${revised.join(", ")} but ${why === undefined ? "names no" : `names an unknown`} \`revised_because\`${why === undefined ? "" : ` (${why})`}: write one of ${REVISION_REASONS.join(", ")} in its front matter: premise (the first choice was wrong under its own premises), requirement (a new need), external (an outside thing changed), experience (the owner's experience feedback), implementation (a bug, not the design), undetermined (it cannot be told yet, or several are mixed: say why in the decision) (BR-2492)`,
     });
   }
   return out;
