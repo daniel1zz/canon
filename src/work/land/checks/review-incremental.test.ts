@@ -81,8 +81,10 @@ describe("reviewing a landing whose changed documents already passed (D-81)", ()
     expect(t.prompt(2)).toContain("Refunds are logged.");
     for (const n of [1, 2]) {
       const prompt = t.prompt(n);
-      expect(prompt.split("Refunds are fine.").length - 1).toBe(1);
-      expect(prompt.slice(prompt.indexOf("# Current context for"))).not.toContain("Refunds are fine.");
+      const at = prompt.indexOf("# Current context for");
+      expect(at).toBeGreaterThan(0);
+      expect(prompt.slice(0, at)).toContain("## 规则\n\nRefunds are fine.");
+      expect(prompt.slice(at)).not.toContain("Refunds are fine.");
     }
     expect(t.prompt(1)).not.toContain("# Incremental review");
     expect(t.prompt(1)).toContain(`Refunds ${old}`); // the full review sees the whole domain and the index
