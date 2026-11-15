@@ -63,5 +63,8 @@ test("BR-2410: native shipped skills skip duplicate review but AGENTS and locall
   expect(shown).not.toContain("Shipped full text");
   writeFileSync(join(change.worktree, skill), text + "Locally modified\n");
   expect((await previewReview(ws(change.worktree), "workflow")).kind).toBe("ok");
-  expect(readFileSync(prompt, "utf8")).toContain("Locally modified");
+  const modified = readFileSync(prompt, "utf8");
+  expect(modified).toContain("Locally modified");
+  expect(modified).toContain(skill);
+  expect(modified).not.toContain("Native shipped description (shipped by canon)");
 });

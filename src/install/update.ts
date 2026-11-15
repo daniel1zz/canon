@@ -232,7 +232,10 @@ export type UpdateOutcome =
  * canon check, review), so the project's main only ever gets it the way it gets any other work.
  */
 export async function updateProject(ws: Workspace, source: string, force: boolean, timeoutMs: number, say: Say, requested?: string): Promise<Result<UpdateOutcome>> {
-  // Someone else's git hook refuses before any other check, a broken settings.json included (BR-2124).
+  // reason: an invalid --agent is a usage error even when the git hook belongs to the user (BR-2459, BR-2124).
+  const targets = selectedTargets(ws.root, requested);
+  if (!targets.ok) return targets;
+  // After argument validation, someone else's git hook refuses before asset checks, a broken settings.json included.
   const g = guardStatus(ws.root, ws.config.main);
   if (!g.ok) return g;
   if (g.value.state === "foreign") return foreignGuard(g.value.path);

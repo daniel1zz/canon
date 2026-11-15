@@ -34,7 +34,7 @@ describe("Codex coordination identity", () => {
     expect(currentActor(envFor(), "child-1").ok).toBe(false);
   });
 
-  test("BR-2023 BR-2104: the CLI persists a Codex child identity and another session cannot stop its work", () => {
+  test("BR-2023 BR-2104 BR-2131: a Codex child retains its claim without --as and records its distinct actor and worktree", () => {
     const root = project();
     const child = envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "child-1" });
     const started = cli(root, child, "work", "start", "--title", "Codex child", "--as", "child-1");
@@ -46,6 +46,14 @@ describe("Codex coordination identity", () => {
     const other = cli(claim.worktree, envFor({ CODEX_THREAD_ID: "session-b" }), "work", "stop", "--next", "attempt");
     expect(other.code).toBe(5);
     expect(other.err).toContain("claimed by agent:codex-session-a:child-1");
+    const parent = cli(claim.worktree, envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "session-a" }), "work", "stop", "--next", "parent attempt");
+    expect(parent.code).toBe(5);
+    expect(cli(claim.worktree, child, "work", "stop", "--next", "continue without --as").code).toBe(0);
+    const after = new Database(join(root, ".git/canon/state.db"), { readonly: true });
+    const event = after.query<{ actor: string; worktree: string }, []>("SELECT actor, worktree FROM events ORDER BY id DESC LIMIT 1").get()!;
+    expect(event.actor).toBe("agent:codex-session-a:child-1");
+    expect(event.worktree).toBe(claim.worktree);
+    after.close();
   });
 
   test("BR-2023: a Codex human override and a wrong child id refuse before writing coordination state", () => {
@@ -81,11 +89,15 @@ describe("Codex coordination identity", () => {
     const root = project();
     expect(cli(root, envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "child-1" }), "work", "start", "--title", "Child").code).toBe(0);
     const db = new Database(join(root, ".git/canon/state.db"), { readonly: true });
-    const subject = db.query<{ subject: string }, []>("SELECT subject FROM claims").get()!.subject;
+    const claim = db.query<{ subject: string; worktree: string }, []>("SELECT subject, worktree FROM claims").get()!;
+    const { subject } = claim;
     expect(cli(root, envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "child-2" }), "work", "take", subject, "--from", "child-1").code).toBe(2);
     expect(cli(root, envFor({ CODEX_THREAD_ID: "session-b" }), "work", "take", subject, "--from", "child-1").code).toBe(5);
     expect(cli(root, envFor({ CODEX_THREAD_ID: "session-a" }), "work", "take", subject, "--from", "child-1").code).toBe(0);
     expect(db.query<{ holder: string }, []>("SELECT holder FROM claims").get()!.holder).toBe("agent:codex-session-a");
+    const formerChild = cli(claim.worktree, envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "child-1" }), "work", "stop", "--next", "still a child without --as");
+    expect(formerChild.code).toBe(5);
+    expect(formerChild.err).toContain("claimed by agent:codex-session-a");
     db.close();
   });
 

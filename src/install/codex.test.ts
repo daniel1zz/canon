@@ -141,6 +141,57 @@ describe("Codex project assets through the CLI", () => {
     expect(existsSync(join(root, ".agents"))).toBe(false);
   });
 
+  test("BR-2459 BR-2124: an invalid target refuses before a foreign git hook without changing assets", () => {
+    const { root, source } = fixture();
+    expect(cli(root, source, "init", "--agent", "codex", "--floor", "true").code).toBe(0);
+    commit(root);
+    const foreign = "#!/bin/sh\nexit 0\n";
+    writeFileSync(join(root, ".git/hooks/reference-transaction"), foreign);
+    for (const args of [["init"], ["install"], ["update"], ["update", "--check"]]) {
+      const refused = cli(root, source, ...args, "--agent", "typo");
+      expect(refused.code).toBe(2);
+      expect(refused.err).toContain("--agent must be claude, codex, or all");
+      expect(read(root, ".git/hooks/reference-transaction")).toBe(foreign);
+      expect(sh(root, "status", "--porcelain")).toBe("");
+    }
+    // A valid target must still preserve and refuse the foreign hook.
+    expect(cli(root, source, "install", "--agent", "codex").code).toBe(5);
+    expect(read(root, ".git/hooks/reference-transaction")).toBe(foreign);
+  });
+
+  test("BR-2459 BR-2032: invalid target syntax precedes detached HEAD, which still refuses a valid target", () => {
+    const { root, source } = fixture();
+    sh(root, "commit", "--allow-empty", "-qm", "anchor");
+    sh(root, "checkout", "--detach", "-q");
+    const invalid = cli(root, source, "init", "--agent", "typo");
+    expect(invalid.code).toBe(2);
+    expect(invalid.err).toContain("--agent must be claude, codex, or all");
+    const detached = cli(root, source, "init", "--agent", "codex");
+    expect(detached.code).toBe(4);
+    expect(detached.err).toContain("HEAD is detached");
+    expect(existsSync(join(root, "canon"))).toBe(false);
+    expect(existsSync(join(root, ".agents"))).toBe(false);
+  });
+
+  test("BR-2460: moving the active instruction entry removes its old managed block and preserves user text", () => {
+    const { root, source } = fixture();
+    const fallback = "Fallback instructions.\n";
+    const active = "Active instructions.\n";
+    writeFileSync(join(root, "AGENTS.md"), fallback);
+    expect(cli(root, source, "init", "--agent", "codex").code).toBe(0);
+    expect(read(root, "AGENTS.md")).toContain("<!-- canon:begin -->");
+    writeFileSync(join(root, "AGENTS.override.md"), active);
+    expect(cli(root, source, "install").code).toBe(0);
+    expect(read(root, "AGENTS.md")).toBe(fallback);
+    expect(read(root, "AGENTS.override.md")).toStartWith(active);
+    expect(read(root, "AGENTS.override.md")).toContain("<!-- canon:begin -->");
+    writeFileSync(join(root, "AGENTS.override.md"), "");
+    expect(cli(root, source, "install").code).toBe(0);
+    expect(read(root, "AGENTS.md")).toStartWith(fallback);
+    expect(read(root, "AGENTS.md")).toContain("<!-- canon:begin -->");
+    expect(read(root, "AGENTS.override.md")).toBe("");
+  });
+
   test("BR-2460: the active override receives the managed block and uninstall keeps both user files", () => {
     const { root, source } = fixture();
     writeFileSync(join(root, "AGENTS.md"), "Fallback instructions.\n");

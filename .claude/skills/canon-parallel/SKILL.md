@@ -38,7 +38,7 @@ Do not split, or put the tasks in one agent's hands, when:
 Copy this list into each brief and fill in the task. A subagent starts with none of your context.
 
 - **The task and why**: what to build, the evidence for the need, what counts as done, which domain or files it covers, and the rules and examples it must implement. For baseline authorship and gaps, follow canon-rules section 0.
-- **Its own change**: run `canon work start --title "<title>"` (or `canon work start C-n`) from the primary checkout, with the `--as` that `canon brief` names for a subagent,, then `cd` into the worktree it prints and do every edit there. The rest of the workflow is in `canon brief`: tell the subagent to run it.
+- **Its own change**: run `canon work start --title "<title>"` (or `canon work start C-n`) from the primary checkout, with the `--as` that `canon brief` names for a subagent. Worktree path and remaining steps: see `canon brief`.
 - **Hands off the others**: never enter or edit another agent's worktree, and never edit the primary checkout.
 - **Test before landing**: as canon-test section 6 says; where `canon work test` does not exist, run each related test file in its own test-runner invocation (several files in one run have hung under load).
 - **Landing**: redirect the output of `canon work land --finish` to a log file outside the worktree (the scratchpad or `/tmp`): an untracked file inside it makes the landing refuse as dirty. After three refusals in a row canon stops the change (reason `stalled`): the subagent stops and reports the refusals; the main agent decides (tell it what to change, `canon work take` it, or drop it) and runs `canon work unstall <C-n> --reason "<why>"` before the subagent lands again.
