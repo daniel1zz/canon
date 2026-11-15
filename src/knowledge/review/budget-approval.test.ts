@@ -93,6 +93,19 @@ test("BR-2490: explicit approval permits one exact plan; an approved failed atte
   expect(t.seen()).toEqual(["preview"]);
 });
 
+test("BR-2490 BR-2021: a literal short assent is stored verbatim and grants one attempt; a negative assent grants none", () => {
+  for (const answer of ["同意", "不同意"]) {
+    const t = fixture();
+    expect(cli(t.worktree, "work", "review").code).toBe(1);
+    t.answer(t.questions()[0]!.id, answer);
+    expect(t.questions()[0]!.answer).toBe(answer);
+    writeFileSync(t.fail, "fail");
+    expect(cli(t.worktree, "work", "review").code).toBe(answer === "同意" ? 4 : 1);
+    expect(t.seen()).toEqual(answer === "同意" ? ["preview"] : []);
+    expect(cli(t.worktree, "work", "review").code).toBe(1);
+  }
+});
+
 test("BR-2490: UTF-8 totals and call counts allow equality and stop at one byte or call over", () => {
   const w = ws(project());
   const plan = { kind: "preview" as const, subject: "C-1", reviewer: "commit", command: "review", maxCalls: 2, maxBytes: 7, prompts: ["中", "文a"] };

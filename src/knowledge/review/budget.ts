@@ -36,7 +36,8 @@ export function reviewBudget(db: CoordDb, actor: string, plan: ReviewPlan): Resu
         "SELECT q.id, q.answer FROM events e JOIN questions q ON q.id = json_extract(e.detail, '$.question') WHERE e.kind = 'review.budget.ask' AND json_extract(e.detail, '$.hash') = ? ORDER BY e.id DESC LIMIT 1",
       ).get(hash);
       const consumed = previous && db.db.query("SELECT 1 FROM events WHERE kind = 'review.budget.consume' AND json_extract(detail, '$.question') = ? LIMIT 1").get(previous.id);
-      if (previous?.answer === APPROVE && !consumed) {
+      // reason: preserve a human's literal short assent instead of rewriting it as an option (BR-2021).
+      if ((previous?.answer === APPROVE || previous?.answer === "同意") && !consumed) {
         db.event(actor, "review.budget.consume", plan.subject, { ...detail, question: previous.id });
         return ok({ allowed: true });
       }
