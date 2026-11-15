@@ -103,6 +103,9 @@ export function collapse(s: string): string {
   return s.replace(/\s+/g, " ").trim();
 }
 
+/** A page quote compared without backticks and without any whitespace (BR-2111). */
+const loose = (s: string): string => s.replace(/`/g, "").replace(/\s+/g, "");
+
 const ENTITIES: Record<string, string> = { amp: "&", lt: "<", gt: ">", quot: '"', apos: "'", nbsp: " " };
 
 /** The visible text of an HTML page: scripts, styles and tags dropped, entities decoded. */
@@ -143,7 +146,8 @@ export async function verify(root: string, list: readonly Source[], fetcher: Fet
         continue;
       }
       if (got.status < 200 || got.status >= 300) failures.push(`${s.target} answered HTTP ${got.status}`);
-      else if (!collapse(pageText(got.text)).includes(want)) failures.push(`${s.target} does not contain “${want}”`);
+      // reason: a page renders `code` as a tag, which becomes a space and loses its backticks, so the page reads "x , y" for "`x`, y" (BR-2111)
+      else if (!loose(pageText(got.text)).includes(loose(s.quote))) failures.push(`${s.target} does not contain “${want}”`);
       continue;
     }
     const failure = fileSourceFailure(root, s);

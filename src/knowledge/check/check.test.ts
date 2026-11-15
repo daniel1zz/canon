@@ -455,18 +455,18 @@ describe("source quotes", () => {
 });
 
 describe("source verification", () => {
-  test("BR-2111: a real HTTP page is fetched and its visible text, not its markup or scripts, must hold the quote", async () => {
+  test("BR-2111: a real HTTP page is fetched and its visible text, not its markup or scripts, must hold the quote; backticks and whitespace do not count, so a rendered `code` span matches", async () => {
     const server = Bun.serve({
       port: 0,
       fetch: (req) =>
         new URL(req.url).pathname === "/p"
-          ? new Response("<html><script>var q = 'hidden quote text';</script><p>LLMs struggle to <b>self-correct</b>\n their responses &amp; more</p></html>", { headers: { "content-type": "text/html" } })
+          ? new Response("<html><script>var q = 'hidden quote text';</script><p>LLMs struggle to <b>self-correct</b>\n their responses &amp; more</p><p>A hook, <code>tools/check.py</code>, refuses it</p></html>", { headers: { "content-type": "text/html" } })
           : new Response("gone", { status: 404 }),
     });
     try {
       const at = (path: string, quote: string) => ({ target: `http://localhost:${server.port}${path}`, quote, line: "" });
-      const got = await verify(repo({}), [at("/p", "struggle to self-correct their responses & more"), at("/p", "hidden quote text"), at("/x", "struggle to self-correct")]);
-      expect(got.map((m) => m.replace(/localhost:\d+/, "host"))).toEqual(["http://host/p does not contain “hidden quote text”", "http://host/x answered HTTP 404"]);
+      const got = await verify(repo({}), [at("/p", "struggle to self-correct their responses & more"), at("/p", "A hook, `tools/check.py`, refuses it"), at("/p", "A hook, tools/check.py, refuses it"), at("/p", "hidden quote text"), at("/p", "A hook, `tools/other.py`, refuses it"), at("/x", "struggle to self-correct")]);
+      expect(got.map((m) => m.replace(/localhost:\d+/, "host"))).toEqual(["http://host/p does not contain “hidden quote text”", "http://host/p does not contain “A hook, `tools/other.py`, refuses it”", "http://host/x answered HTTP 404"]);
     } finally {
       server.stop(true);
     }
