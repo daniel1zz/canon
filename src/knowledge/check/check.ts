@@ -320,10 +320,10 @@ function layoutFindings(root: string, corpus: Corpus): Finding[] {
   return out;
 }
 
-/** A directory with at least one file somewhere under it, names starting with a dot left out (BR-2118). */
+/** A directory with at least one file somewhere under it, a dot file such as `.keep` included: git keeps those (BR-2118). */
 function holdsFile(full: string): boolean {
   if (!isDir(full)) return false;
-  return readdirSync(full).some((name) => !name.startsWith(".") && (isDir(join(full, name)) ? holdsFile(join(full, name)) : true));
+  return readdirSync(full).some((name) => (isDir(join(full, name)) ? holdsFile(join(full, name)) : true));
 }
 
 function isDir(full: string): boolean {

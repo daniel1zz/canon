@@ -512,6 +512,7 @@ describe("code layout (D-15)", () => {
     const root = repo({ "canon/rules/billing/README.md": readme("billing", "src/billing"), "canon/rules/billing/refunds/README.md": readme("billing/refunds", "src/billing") });
     expect(kinds(root)).toEqual(["domain-code-declared canon/rules/billing/refunds/README.md"]);
     mkdirSync(join(root, "src/billing/refunds"), { recursive: true });
+    writeFileSync(join(root, "src/billing/refunds/r.ts"), "");
     expect(kinds(root, { codeRoot: "src", shared: ["src/auth"] })).toEqual(["domain-code-declared canon/rules/billing/README.md", "domain-code-declared canon/rules/billing/refunds/README.md"]);
   });
 
@@ -533,7 +534,6 @@ describe("code layout (D-15)", () => {
     });
     rmSync(join(root, "src/billing"), { recursive: true });
     mkdirSync(join(root, "src/work/drop/empty"), { recursive: true }); // a directory with no file is not landed by git (#236)
-    writeFileSync(join(root, "src/work/drop/empty/.DS_Store"), "");
     expect(kinds(root, { codeRoot: "src", shared: ["src/lib/kernel", "src/gone"] })).toEqual([
       "code-layout canon/config.yaml", // shared src/gone does not exist
       "code-layout canon/rules/billing/README.md",
@@ -547,6 +547,8 @@ describe("code layout (D-15)", () => {
     ]);
     expect(kinds(root).filter((k) => k.startsWith("code-layout"))).toEqual([]); // no code_root: none of the above is reported
     expect(kinds(root, { codeRoot: "src", shared: ["src/lib/kernel", "src/gone", "src/index.ts"] })).not.toContain("code-layout src/index.ts"); // a shared file
+    writeFileSync(join(root, "src/work/drop/empty/.keep"), ""); // a dot file is kept by git, so the directory now counts
+    expect(kinds(root, { codeRoot: "src", shared: ["src/lib/kernel", "src/gone"] })).not.toContain("code-layout canon/rules/work/drop/README.md");
     const overlap = (shared: string[]) => check({ root, ...readCorpus(root, undefined, { codeRoot: "src", shared }), testFiles: [] }).filter((f) => f.message.includes("overlaps")).map((f) => f.message);
     expect(overlap(["src/work"])).toEqual(["work", "work/drop", "work/land"].map((n) => `shared path src/work overlaps the directory src/${n} of domain ${n}`));
     expect(overlap(["src/work/land/k"])).toEqual(["shared path src/work/land/k overlaps the directory src/work of domain work", "shared path src/work/land/k overlaps the directory src/work/land of domain work/land"]);
