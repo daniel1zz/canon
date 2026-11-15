@@ -125,7 +125,7 @@ export const CRITERION_TEXT: Readonly<Record<string, string>> = {
 export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras = {}): string {
   const summaries = changedRuleIds(changed);
   const contexts = contextTops(corpus, changed, extras).map((top) => contextSection(root, corpus, top, summaries));
-  return [...promptHead(corpus, changed, extras), ...contexts, ...promptTail(corpus)].join("\n");
+  return assemble(promptHead(corpus, changed, extras), contexts, promptTail(corpus));
 }
 
 /** A rule this landing makes active and the active rules its planned version said it would change (BR-2496). */
@@ -144,6 +144,21 @@ function docSection(d: Doc): string {
 }
 
 /** Everything in the prompt before the affected domains' text; `note` is a line for the reviewer after the answer format. */
+/**
+ * Where promptHead's fixed instructions end. The prompt is sent as: those instructions, the rule index and the accepted
+ * decisions' titles, then what this review and this call add (answer format, notes, changed documents, domain text): the
+ * part every call of every review shares comes first, so the endpoint's prefix cache can reuse it (C-576). The marker is
+ * an empty line, so the parts and their byte counts are the same as in the old order.
+ */
+const STATIC_END = "";
+
+/** The prompt in send order: fixed instructions, the indexes, then the rest of the head and the domain text. */
+function assemble(head: readonly string[], groups: readonly string[], tail: readonly string[]): string {
+  const at = head.indexOf(STATIC_END);
+  if (at < 0) throw new Error("canon bug: the review prompt head lost its fixed-instructions marker");
+  return [...head.slice(0, at + 1), ...tail, ...head.slice(at + 1), ...groups].join("\n");
+}
+
 function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras, note?: string): string[] {
   const parts: string[] = [
     "You review changes to a project's rules and decisions. Rules are the current truth of what the product must do; decisions record why.",
@@ -168,6 +183,7 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
     "A planned rule (status planned, marked [规划中]) may list in will_amend (shown as [生效时改 ...]) the active rules the change that activates it will also change. Between such a planned rule and a rule it lists, a difference its own text says it will make in that rule when it becomes active is a declared future change: do not report it as a contradiction. Report any other conflict between them as usual, and any conflict with a rule it does not list.",
     // reason: whether a design basis is good enough is a judgement; it is never a blocking criterion, only a note (BR-2493, D-124)
     "When the change shown below has a section 方案依据 (its design basis), add a note (never block) naming the change id for each of these: a decision it says it reuses does not decide a choice the change makes (a new choice hidden behind the reuse); it names no worst failure or no result that would prove the choice wrong; its evidence for persisted data, an outside boundary or a dependency is a link or a claim with no answer to the question that kind of choice raises (how the data evolves and recovers; the outside thing's own configuration and limits; why this dependency and its limits where it runs).",
+    STATIC_END,
     extras.wording?.length
       ? `Answer with JSON only: ${ANSWER_FORMAT_RULE}, "wording":{"<rule id>":"wording"|"behaviour"}}, with one wording entry per rule under # Wording judgements`
       : `Answer with JSON only: ${ANSWER_FORMAT_RULE}}`,
@@ -837,7 +853,7 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   const prompts = calls.map((call, i) => {
     const note = calls.length > 1 ? callNote(i + 1, calls.length) : undefined;
     const groups = [...call.groups].map(([top, g]) => `${contextHeader(top)}${g.blocks.join("\n")}`);
-    return [...promptHead(corpus, changed, i === 0 ? extras : noWording, note), ...groups, ...tail].join("\n");
+    return assemble(promptHead(corpus, changed, i === 0 ? extras : noWording, note), groups, tail);
   });
   const worst = Math.max(...prompts.map(bytes));
   // reason: every piece fits and the note room is its measured size, so this is a defect of the packer, not something raising the budget fixes (BR-2359, #160)

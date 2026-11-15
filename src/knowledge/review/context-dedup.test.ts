@@ -19,7 +19,7 @@ function fixture(texts: string[]) {
   for (const [i, text] of texts.entries()) writeFileSync(join(root, `canon/rules/billing/BR-${i + 1}.md`), rule(i + 1, text));
   return { root, corpus: readCorpus(root).corpus };
 }
-const context = (p: string) => p.slice(p.indexOf("# Current context for "), p.lastIndexOf("# Rule index"));
+const context = (p: string) => p.slice(p.indexOf("# Current context for ")); // the domain text is the last part of the prompt (C-576)
 const occurrences = (p: string, text: string) => p.split(text).length - 1;
 
 describe("review context uses changed text once", () => {

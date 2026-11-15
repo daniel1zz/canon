@@ -19,7 +19,10 @@ TIMEOUT_SECONDS = 900
 
 
 def request_body(prompt, model, effort):
-    body = {"model": model, "stream": True, "messages": [{"role": "user", "content": prompt}]}
+    # stream_options.include_usage: the last chunk reports the tokens, cached ones included, so each call's cost is in the
+    # log; prompt_cache_key: one key for every review call, so calls sharing the fixed head reach the same cache (C-576)
+    body = {"model": model, "stream": True, "stream_options": {"include_usage": True}, "prompt_cache_key": "canon-rule-review",
+            "messages": [{"role": "user", "content": prompt}]}
     if effort:
         body["reasoning_effort"] = effort
     return body
@@ -30,6 +33,9 @@ def endpoint(base_url):
     if base.endswith("/v1"):
         base = base[: -len("/v1")]
     return base + "/v1/chat/completions"
+
+
+USAGE = {}
 
 
 def read_stream(lines):
@@ -48,6 +54,8 @@ def read_stream(lines):
             done = True
             break
         event = json.loads(data)
+        if event.get("usage"):
+            USAGE.update(event["usage"])
         if event.get("error"):
             raise RuntimeError(f"the endpoint sent an error: {json.dumps(event['error'], ensure_ascii=False)}")
         for choice in event.get("choices") or []:
@@ -95,6 +103,9 @@ def main():
     except (urllib.error.URLError, OSError, RuntimeError, ValueError) as e:
         sys.stderr.write(f"review_openai.py: {e}\n")
         return 1
+    if USAGE:
+        cached = (USAGE.get("prompt_tokens_details") or {}).get("cached_tokens", 0)
+        sys.stderr.write(f"review_openai.py: tokens: prompt {USAGE.get('prompt_tokens')}, cached {cached}, completion {USAGE.get('completion_tokens')}\n")
     sys.stdout.write(text)
     if not text.endswith("\n"):
         sys.stdout.write("\n")
