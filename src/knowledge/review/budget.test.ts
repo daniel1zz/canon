@@ -176,7 +176,7 @@ describe("rule review prompt budget", () => {
     }
   });
 
-  test("BR-2488: named documents that fit stay whole in every call, and none is listed", () => {
+  test("BR-2488, BR-2359: named documents that fit stay whole in every call, and none is listed", () => {
     const { root, corpus } = bigDomain(30);
     const six = corpus.docs.find((d) => d.id === id("BR", 6))!;
     const citing = [{ ...six, body: `${six.body}\n按 ${id("BR", 1)}。\n` }] as typeof corpus.docs;
