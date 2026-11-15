@@ -25,9 +25,25 @@ export interface Workspace {
 /** What `--as` may be: a Claude Code agent id or any other plain name (BR-2023). */
 const AS_NAME = /^[A-Za-z0-9_-]+$/;
 
-/** BR-2023: explicit override, otherwise host session/child identity, otherwise the OS user. */
-export function currentActor(env: Record<string, string | undefined> = process.env, as?: string, cwd = process.cwd()): Result<string> {
-  if (as !== undefined && !AS_NAME.test(as)) return err("invalid", `--as ${JSON.stringify(as)}: a name is letters, digits, - and _ only`);
+/** The environment variable a launcher sets on a worker session it starts: the worker's name (BR-2495, D-125). */
+export const SUBAGENT_ENV = "CANON_SUBAGENT";
+
+/** The worker name the launcher set, undefined when it set none; an invalid one is an error (BR-2495). */
+export function launcherSubagent(env: Record<string, string | undefined>): Result<string | undefined> {
+  const name = env[SUBAGENT_ENV]?.trim();
+  if (!name) return ok(undefined);
+  return AS_NAME.test(name) ? ok(name) : err("invalid", `${SUBAGENT_ENV}=${JSON.stringify(name)}: a worker name is letters, digits, - and _ only`);
+}
+
+/** BR-2023: explicit override, otherwise host session/child identity, otherwise the OS user; a launcher's CANON_SUBAGENT acts as --as (BR-2495). */
+export function currentActor(env: Record<string, string | undefined> = process.env, given?: string, cwd = process.cwd()): Result<string> {
+  if (given !== undefined && !AS_NAME.test(given)) return err("invalid", `--as ${JSON.stringify(given)}: a name is letters, digits, - and _ only`);
+  const launched = launcherSubagent(env);
+  if (!launched.ok) return launched;
+  // reason: the launcher names its worker once, so every canon command of that worker is recorded under the name without the worker passing --as (BR-2495, D-125)
+  if (launched.value !== undefined && given !== undefined && given !== launched.value) return err("invalid", `--as ${given} does not match ${SUBAGENT_ENV}=${launched.value} that started this worker; pass no --as or --as ${launched.value}`);
+  if (launched.value !== undefined && env["CANON_ACTOR"]?.trim()) return err("invalid", `${SUBAGENT_ENV}=${launched.value} and CANON_ACTOR=${env["CANON_ACTOR"]!.trim()} both name the actor; a launcher sets only ${SUBAGENT_ENV}`);
+  const as = given ?? launched.value;
   const override = env["CANON_ACTOR"]?.trim();
   if (override && as === undefined) {
     const host = agentSession(env);
@@ -41,7 +57,7 @@ export function currentActor(env: Record<string, string | undefined> = process.e
   const explicit = env["CANON_ACTOR"]?.trim();
   if (as !== undefined) {
     if (!AS_NAME.test(as)) return err("invalid", `--as ${JSON.stringify(as)}: a name is letters, digits, - and _ only`);
-    if (!session) return err("invalid", "--as is only for agents running in a Claude Code or Codex session; it is not set outside one");
+    if (!session) return err("invalid", given === undefined ? `${SUBAGENT_ENV} is only for workers running in a Claude Code or Codex session; it is set outside one` : "--as is only for agents running in a Claude Code or Codex session; it is not set outside one");
     if (explicit) return err("invalid", `--as ${as} and CANON_ACTOR=${explicit} both name the actor; give one of them`);
     if (session.runtime === "codex" && session.child && session.child !== as) return err("invalid", `--as ${as} does not match this Codex subagent's thread id ${session.child}`);
     return ok(sessionActor(session.runtime, session.id, as));

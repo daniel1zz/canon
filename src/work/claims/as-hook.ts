@@ -1,6 +1,6 @@
 import { effectiveAgentSession } from "../agent-session.ts";
 import { agentSession, type AgentRuntime } from "../../kernel/agent.ts";
-import { openWorkspace } from "../workspace.ts";
+import { launcherSubagent, openWorkspace } from "../workspace.ts";
 import { checkCommand } from "./as-check.ts";
 import { startedBySession } from "./liveness.ts";
 
@@ -27,7 +27,9 @@ export function runAsCheck(raw: string, fallbackCwd: string, runtime: AgentRunti
   const context = runtime === "codex" ? effectiveAgentSession(process.env, cwd) : undefined;
   const agentId = typeof input?.["agent_id"] === "string" && input["agent_id"] !== "" ? input["agent_id"] : context?.ok ? context.value?.child : undefined;
   // reason: a Codex session gets its subagent from the session context; only a Claude Code session can be a worker started by another (BR-2468)
-  const v = checkCommand(command, agentId, () => (runtime === "codex" ? false : workerByEnv(process.env) || startedBySession()));
+  const launched = launcherSubagent(process.env);
+  if (!launched.ok) return `${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: launched.error.message } })}\n`;
+  const v = checkCommand(command, agentId, () => (runtime === "codex" ? false : workerByEnv(process.env) || startedBySession()), launched.value);
   if (v.kind === "deny") return `${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: v.reason } })}\n`;
   if (v.kind === "skip") return skip(v.reason, v.sub, cwd, agentId);
   return "";

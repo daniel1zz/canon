@@ -33,7 +33,7 @@ interface Found {
  * started by another session or the main session (BR-2468). `worker` is asked only when a claim command without an
  * agent id is found, since it reads the process table; undefined from it means the table could not be read.
  */
-export function checkCommand(command: string, agentId: string | undefined, worker: () => boolean | undefined = () => false): Verdict {
+export function checkCommand(command: string, agentId: string | undefined, worker: () => boolean | undefined = () => false, launched?: string): Verdict {
   const segments = segmentsOf(command);
   let skipped: string | undefined;
   const found: Found[] = [];
@@ -42,6 +42,14 @@ export function checkCommand(command: string, agentId: string | undefined, worke
     const f = claimCommandOf(seg);
     if (f === "unparsable") skipped ??= firstWordAfterCanonWork(seg);
     else if (f) found.push(f);
+  }
+  // reason: a worker its launcher named with CANON_SUBAGENT is that subagent without reading the process table; canon fills in its --as (BR-2495)
+  if (agentId === undefined && launched !== undefined) {
+    for (const f of found) {
+      const d = decideLaunched(f, launched);
+      if (d) return { kind: "deny", reason: d };
+    }
+    return skipped === undefined ? { kind: "allow" } : { kind: "skip", reason: "unparsable", sub: skipped };
   }
   let isWorker: boolean | undefined = false;
   if (agentId === undefined && found.length > 0 && !anyActor) {
@@ -53,6 +61,14 @@ export function checkCommand(command: string, agentId: string | undefined, worke
     if (d) return { kind: "deny", reason: d };
   }
   return skipped === undefined ? { kind: "allow" } : { kind: "skip", reason: "unparsable", sub: skipped };
+}
+
+/** A worker its launcher named (BR-2495): canon records it under that name, so --as may be left out but never differ. */
+function decideLaunched(f: Found, name: string): string | undefined {
+  if (f.sub === "take" || f.sub === "unstall") return decideWorker(f);
+  const wrong = f.as.find((v) => v !== name);
+  if (wrong === undefined) return undefined;
+  return `this worker was started with CANON_SUBAGENT=${name}, so canon records its commands as the subagent ${name}: re-run without --as, or with --as ${name}. Got --as '${wrong}'.`;
 }
 
 /** A worker session started by another session (BR-2468): a subagent of it whose name is its own to choose. */

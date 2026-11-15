@@ -16,7 +16,7 @@ const CLI = join(import.meta.dir, "../../invocation/main.ts");
 const SESSION = "s1abcdef-0000";
 
 async function hook(stdin: string, cwd: string, env: Record<string, string> = {}) {
-  const base: Record<string, string | undefined> = { ...process.env, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SESSION, CLAUDE_PID: undefined, CLAUDE_DELEGATE_CHILD: undefined, ...env };
+  const base: Record<string, string | undefined> = { ...process.env, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SESSION, CLAUDE_PID: undefined, CLAUDE_DELEGATE_CHILD: undefined, CANON_SUBAGENT: undefined, ...env };
   delete base["CANON_ACTOR"];
   const p = Bun.spawn(["bun", CLI, "work", "check-as", "--hook"], { cwd, stdin: new Response(stdin), stdout: "pipe", stderr: "pipe", env: base as Record<string, string> });
   const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
@@ -255,5 +255,34 @@ describe("a worker session started by another session", () => {
     };
     expect((await run("canon work land --finish"))?.permissionDecisionReason).toContain("--as <your worker name>");
     expect(await run("canon work land --finish --as worker-w6")).toBeUndefined();
+  }, 20_000);
+});
+
+describe("a worker its launcher named with CANON_SUBAGENT (BR-2495)", () => {
+  test("BR-2495: CANON_SUBAGENT acts as --as; a different --as, CANON_ACTOR beside it, a bad name or no session is a usage error", () => {
+    const env = { CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "a69bb94c-570e-4fcb", CANON_SUBAGENT: "worker-w6" };
+    const text = (r: ReturnType<typeof currentActor>) => (r.ok ? r.value : r.error.message);
+    expect(text(currentActor(env))).toBe("agent:a69bb94c:worker-w6");
+    expect(text(currentActor(env, "worker-w6"))).toBe("agent:a69bb94c:worker-w6");
+    const other = currentActor(env, "w1");
+    expect(other.ok ? "" : `${other.error.code} ${other.error.message}`).toContain("invalid --as w1 does not match CANON_SUBAGENT=worker-w6");
+    expect(text(currentActor({ ...env, CANON_ACTOR: "agent:x" }))).toContain("both name the actor");
+    expect(text(currentActor({ ...env, CANON_SUBAGENT: "a:b" }))).toContain('CANON_SUBAGENT="a:b"');
+    expect(text(currentActor({ CANON_SUBAGENT: "w1" }))).toContain("CANON_SUBAGENT is only for workers");
+    expect(text(currentActor({ ...env, CANON_SUBAGENT: "  " }))).toBe("agent:a69bb94c"); // blank is unset
+  });
+
+  test("BR-2495: the hook lets a named worker's claim commands through without --as or with its own, and refuses another --as, take and a bad name", async () => {
+    const root = project();
+    const named = { CANON_SUBAGENT: "worker-w6" };
+    const reason = async (command: string, env: Record<string, string> = named) => denied((await hook(input(command, root), root, env)).out)?.permissionDecisionReason;
+    expect(await reason("canon work land --finish")).toBeUndefined();
+    expect(await reason("canon work land --as worker-w6")).toBeUndefined();
+    expect(await reason("canon work land --as w1")).toContain("started with CANON_SUBAGENT=worker-w6");
+    expect(await reason("canon work take C-5 --from x")).toContain("canon work take is for the main session only");
+    expect(await reason("canon work land", { CANON_SUBAGENT: "a:b" })).toContain('CANON_SUBAGENT="a:b"');
+    let asked = 0;
+    expect(checkCommand("canon work land", undefined, () => { asked++; return true; }, "worker-w6")).toEqual({ kind: "allow" });
+    expect(asked).toBe(0); // the process table is not read
   }, 20_000);
 });
