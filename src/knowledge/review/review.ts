@@ -70,6 +70,11 @@ export interface ReviewExtras {
   readonly incremental?: { readonly from: number; readonly added: readonly Doc[] };
   /** The lines this landing adds or changes in the changed rules and decisions that were already on main (BR-2405). */
   readonly added?: readonly AddedLines[];
+  /**
+   * For a changed decision or release that was already on main: the ids named in the lines this landing adds or
+   * changes. Its context is the top-level domains of those rules, not of every rule its whole text names (BR-2009, #237).
+   */
+  readonly namedInAdded?: readonly { readonly id: string; readonly ids: readonly string[] }[];
   /** Restatements the text test finds in the added lines, given to the review as hints (BR-2405). */
   readonly restatements?: readonly Restatement[];
   /**
@@ -289,7 +294,9 @@ function contextTops(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtr
   for (const d of changed) {
     // reason: the review reads the whole top-level domain, so a contradiction across its subdomains is still seen (BR-2113);
     // a decision or release brings the top-level domains of the rules it names, each given once however many name it (BR-2009, #133)
-    for (const top of d.kind === "rule" ? [d.domain.split("/")[0]!] : namedTops(corpus, d)) out.add(top);
+    // and only those its added or changed lines name when it was already on main, so a one-line edit of a long release stays small (#237)
+    const added = extras.namedInAdded?.find((n) => n.id === d.id);
+    for (const top of d.kind === "rule" ? [d.domain.split("/")[0]!] : namedTops(corpus, added ? new Set(added.ids) : referencedIds(d, corpus.types))) out.add(top);
   }
   // reason: a deletion affects the domain it leaves, so the review sees what remains there (BR-2009, #74):
   // a deleted rule's top-level domain, and the top-level domains of the rules a deleted decision named on main
@@ -317,9 +324,8 @@ function promptTail(corpus: Corpus): string[] {
   return parts;
 }
 
-/** Top-level domains of the current rules a changed document names, in corpus order. */
-function namedTops(corpus: Corpus, doc: Doc): string[] {
-  const named = referencedIds(doc, corpus.types);
+/** Top-level domains of the current rules among `named`, in corpus order. */
+function namedTops(corpus: Corpus, named: ReadonlySet<string>): string[] {
   const tops = new Set(corpus.docs.filter((x): x is Rule => x.kind === "rule" && named.has(x.id)).map((r) => r.domain.split("/")[0]!));
   return corpus.domains.filter((d) => !d.parent && tops.has(d.name)).map((d) => d.name);
 }
@@ -858,6 +864,7 @@ export function reviewPromptParts(root: string, corpus: Corpus, changed: readonl
       ...(i === 1 ? extras : { change: undefined, wording: [] }),
       ...(extras.architecture ? { architecture: extras.architecture } : {}),
       added: (extras.added ?? []).filter((a) => ids.has(a.id)),
+      namedInAdded: (extras.namedInAdded ?? []).filter((a) => ids.has(a.id)),
       restatements: (extras.restatements ?? []).filter((r) => ids.has(r.id)),
       // reason: the activated rule's targets go with the part that shows the rule in full, or no call could compare them (BR-2496)
       activated: (extras.activated ?? []).filter((x) => ids.has(x.id)),

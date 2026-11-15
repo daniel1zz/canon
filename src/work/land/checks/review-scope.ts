@@ -8,6 +8,7 @@ import type { Corpus, Doc } from "../../../knowledge/documents/model.ts";
 import { ARCHITECTURE_FILE, hasContent, overviewText } from "../../../knowledge/check/architecture.ts";
 import { duplicatePrompt, SKILL_FILE, standingText, type Activation, type AddedLines, type DeletedDoc } from "../../../knowledge/review/review.ts";
 import { parseDocFile } from "../../../knowledge/documents/docfile.ts";
+import { proseIds } from "../../../knowledge/links/links.ts";
 import { addedLines, restatementIndex, restatementsIn, type Restatement } from "../../../knowledge/check/restatement/restatement.ts";
 import { textAt } from "../../../knowledge/check/restatement/work.ts";
 import { reviewKeys } from "../../../knowledge/review/config-keys.ts";
@@ -34,6 +35,8 @@ export interface ReviewScope {
   readonly reviewed: readonly string[];
   /** The lines each changed rule or decision that existed at `base` adds or changes; a new one is not listed (BR-2405). */
   readonly added: readonly AddedLines[];
+  /** Ids named in the added or changed lines of each changed decision or release already on main (BR-2009, #237). */
+  readonly namedInAdded: readonly { readonly id: string; readonly ids: readonly string[] }[];
   /** The restatements the text test finds in those lines, and in new rules and decisions, as hints for the review (BR-2405). */
   readonly restatements: readonly Restatement[];
   /** Rules this landing makes active whose planned version at `base` declared `will_amend`, with those targets (BR-2496). */
@@ -103,6 +106,17 @@ export function reviewScope(wt: string, base: string, head: string, corpus: Corp
     }
     restatements.push(...restatementsIn(index, d, now, lines));
   }
+  // reason: a decision or release already on main brings only the domains its added or changed lines name, not every
+  // domain its whole text names: a one-line edit of a release naming 116 rules planned 127 calls (BR-2009, #237)
+  const namedInAdded: { id: string; ids: string[] }[] = [];
+  for (const d of changedDocs.filter((x) => x.kind === "decision" || x.kind === "release")) {
+    const now = readFileSync(join(wt, d.path), "utf8");
+    const before = textAt(wt, base, d.path);
+    if (before === undefined) continue; // a new document: every line is new, so its whole text counts
+    const text = now.split("\n");
+    const lines = [...addedLines(now, before)].map((n) => text[n - 1]!).join("\n");
+    namedInAdded.push({ id: d.id, ids: [...proseIds(corpus.types, d.id, lines)].sort() });
+  }
   // reason: the activating landing drops will_amend, and a target in another top domain is not in its review's context, so
   // the review is given each declared target in full to judge it against the rule now active (BR-2496, D-127)
   const activated: Activation[] = [];
@@ -116,7 +130,7 @@ export function reviewScope(wt: string, base: string, head: string, corpus: Corp
     const targets = parsed.value.meta["will_amend"];
     if (Array.isArray(targets) && targets.length > 0) activated.push({ id: d.id, targets: targets.filter((t): t is string => typeof t === "string").map((t) => t.trim()) });
   }
-  return { entries, renamed, linksOnly, changedDocs, deleted, readmes, deletedReadmes, reviewed, added, restatements, activated };
+  return { entries, renamed, linksOnly, changedDocs, deleted, readmes, deletedReadmes, reviewed, added, namedInAdded, restatements, activated };
 }
 
 /**

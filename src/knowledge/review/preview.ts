@@ -70,7 +70,7 @@ export function thisWorkChanges(ws: Workspace, corpus: Corpus): Result<{ readonl
   if (!architecture.ok) return architecture;
   const subject = claimOfWorktree(ws.db, ws.root)?.subject ?? null;
   const change = subject === null ? undefined : findDoc(corpus, subject);
-  return ok({ changed: scope.changedDocs, extras: { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change, added: scope.added, restatements: scope.restatements, activated: scope.activated, ...(architecture.value ? { architecture: architecture.value } : {}) } });
+  return ok({ changed: scope.changedDocs, extras: { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change, added: scope.added, namedInAdded: scope.namedInAdded, restatements: scope.restatements, activated: scope.activated, ...(architecture.value ? { architecture: architecture.value } : {}) } });
 }
 
 /**
@@ -113,7 +113,7 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
   if (scope.reviewed.length > 0 || wording.questions.length > 0) {
     const architecture = architectureOf(ws.root, base.value, head.value);
     if (!architecture.ok) return { kind: "failed", message: architecture.error.message };
-    const prompts = reviewPromptParts(ws.root, read.corpus, scope.changedDocs, { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change: findDoc(read.corpus, subject), wording: wording.questions, added: scope.added, restatements: scope.restatements, activated: scope.activated, ...(architecture.value ? { architecture: architecture.value } : {}) }, onMain.reviewMaxPromptBytes);
+    const prompts = reviewPromptParts(ws.root, read.corpus, scope.changedDocs, { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change: findDoc(read.corpus, subject), wording: wording.questions, added: scope.added, namedInAdded: scope.namedInAdded, restatements: scope.restatements, activated: scope.activated, ...(architecture.value ? { architecture: architecture.value } : {}) }, onMain.reviewMaxPromptBytes);
     if (!prompts.ok) return { kind: "failed", message: prompts.error.message };
     // reason: decide reuse before counting actual calls; preview and land caches remain distinct (BR-2490, BR-2361).
     const hash = reviewKey("preview", onMain.review, onMain.reviewMaxPromptBytes, prompts.value.prompts);
