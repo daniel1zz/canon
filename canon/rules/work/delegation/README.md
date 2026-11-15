@@ -15,5 +15,8 @@
 
 - **worker**：执行者带名字一级的会话，即 `agent:<会话>:<名字>`（`--as <名字>` 或 `CANON_SUBAGENT`，BR-2023、BR-2495）。
 - **设计负责人**：运行 `canon work delegate` 把变更派出去的执行者；它不是 worker。
-- **设计版本**：派发时 main 的提交；worker 按这个提交上的规则和决策执行。
+- **设计版本**：派发时 main 的提交；worker 按这个提交上的契约清单执行。
+- **契约清单**：派发时固定的、约束这个变更的设计文档清单和各自的内容哈希（BR-2497）。
+- **代次**：派发每次创建、重新派发、被 `take` 都加 1；带着旧代次的认领合入不了（BR-2501）。
+- **接受者**：第一个认领这个派发的 worker 执行者；同名的另一个会话不算。
 - **设计文档**：`canon/decisions/`、`canon/rules/`、`canon/product.md`、`canon/releases/`、`canon/config.yaml`、`canon/backlog.md`、变更文件的 `## 为什么` 和 `## 要改什么` 两段，以及 main 上配置 `design_paths` 列出的路径。
