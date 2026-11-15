@@ -2,9 +2,12 @@
 id: C-559
 title: "D-122: a split rule review carries named documents in full only as far
   as they fit (amends D-119)"
-status: open
+status: done
 rules:
   - BR-2488
+passes:
+  BR-2359: acee1e5f63082bf0 test
+  BR-2488: 85a0e6c2ad233a17 test
 ---
 
 ## 为什么
