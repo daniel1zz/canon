@@ -138,6 +138,7 @@ describe("review context uses changed text once", () => {
     const p = Bun.spawn(["bun", CLI, "context", "billing", "--full"], { cwd: root, stdout: "pipe", stderr: "pipe" });
     const [out, err, code] = await Promise.all([new Response(p.stdout).text(), new Response(p.stderr).text(), p.exited]);
     expect({ code, err }).toEqual({ code: 0, err: "" });
+    expect(out).toContain("## BR-1 Rule 1 [business: x]");
     expect(out).toContain("First body stays.");
     expect(out).toContain("Second body stays.");
   });
