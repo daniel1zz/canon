@@ -281,7 +281,7 @@ describe("a worker its launcher named with CANON_SUBAGENT (BR-2495)", () => {
     expect(rec.ok ? rec.value : rec.error.message).toBe("agent:a69bb94c:worker-w6");
   });
 
-  test("BR-2495: the hook lets a named worker's claim commands through without --as or with its own, and refuses another --as, CANON_ACTOR, take and a bad name", async () => {
+  test("BR-2495 BR-2468: the hook lets a named worker's claim commands through without --as or with its own, and refuses another --as, CANON_ACTOR, take and a bad name", async () => {
     const root = project();
     const named = { CANON_SUBAGENT: "worker-w6" };
     const reason = async (command: string, env: Record<string, string> = named) => denied((await hook(input(command, root), root, env)).out)?.permissionDecisionReason;
