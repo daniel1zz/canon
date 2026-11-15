@@ -73,7 +73,7 @@ describe("why a decision revises another (BR-2492)", () => {
     expect(found[0]!.message).toContain("names no `revised_because`");
     expect(found[1]!.message).toContain("names an unknown `revised_because` (typo)");
     expect(found[0]!.message).toContain("premise, requirement, external, experience, implementation, undetermined");
-    expect(found[0]!.message).toContain("undetermined (it cannot be told yet, or several are mixed: say why in the decision)");
+    for (const f of found) expect(f.message).toContain("undetermined (it cannot be told yet, or several are mixed: say why in the decision)"); // a missing and an unknown reason both say it
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "revisions");
     expect(revisionReasonFindings(s.worktree, corpusAt(s.worktree), sh(s.worktree, "rev-parse", "HEAD"))).toEqual([]); // already there before this work
