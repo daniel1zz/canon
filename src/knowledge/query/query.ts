@@ -234,7 +234,10 @@ export function renderContext(root: string, ctx: Context, opts: { readonly full:
 }
 
 /** One rule's heading and, by default, whole text; a review can read the body in its changed documents instead (BR-2009). */
-export const ruleSection = (r: Rule, full = true): string => `## ${r.id}${plannedMark(r)}${releaseMark(r)} ${r.title}${businessMark(r)}\n${full ? `\n${r.body.trim()}\n` : ""}`;
+export const ruleSection = (r: Rule, full = true): string => `## ${r.id}${plannedMark(r)}${willAmendMark(r)}${releaseMark(r)} ${r.title}${businessMark(r)}
+${full ? `
+${r.body.trim()}
+` : ""}`;
 
 /** ` [release R-1]` or ` [release R-1, changed in R-2, R-3]` after a tagged rule's id, nothing for a rule that belongs to no release (D-61). */
 export const releaseMark = (d: Doc): string => (d.kind === "rule" && d.release !== undefined ? ` [release ${d.release}${d.changedIn?.length ? `, changed in ${d.changedIn.join(", ")}` : ""}]` : "");
@@ -244,6 +247,9 @@ export const businessMark = (d: Doc): string => (d.kind === "rule" && d.business
 
 /** ` [规划中]` after a planned rule's id, nothing otherwise (BR-2238). */
 export const plannedMark = (d: Doc): string => (d.kind === "rule" && d.status === "planned" ? " [规划中]" : "");
+
+/** ` [生效时改 BR-x, BR-y]` after a planned rule that declares the active rules it will change (BR-2496). */
+export const willAmendMark = (d: Doc): string => (d.kind === "rule" && d.willAmend?.length ? ` [生效时改 ${d.willAmend.join(", ")}]` : "");
 
 /** Reads a document's raw file text (for `show`). */
 export function rawText(root: string, doc: Doc): string {

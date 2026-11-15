@@ -52,6 +52,8 @@ export interface Rule extends Base {
   readonly changedIn?: readonly string[];
   /** Confirmed references (`links`): named document id → its fingerprint when confirmed; only `canon links confirm` writes it (BR-2425). */
   readonly links?: Readonly<Record<string, string>>;
+  /** A planned rule's `will_amend`: the active rules the change that activates it will also change (BR-2496, D-127). */
+  readonly willAmend?: readonly string[];
 }
 
 /** A rule's `lists` entry: the constant `name` in `file` holds each of `items` as a string literal (BR-2180). */

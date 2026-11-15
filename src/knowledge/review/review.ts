@@ -8,7 +8,7 @@ import { dirname, join } from "node:path";
 import { parse } from "yaml";
 import { stripCode, type Corpus, type Doc, type Domain, type Rule } from "../documents/model.ts";
 import { idsIn } from "../documents/types.ts";
-import { contextFor, referencedIds, renderContext, ruleSection, type Context } from "../query/query.ts";
+import { contextFor, referencedIds, renderContext, ruleSection, willAmendMark, type Context } from "../query/query.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { LESSONS_SECTION, section } from "../documents/templates.ts";
 import { shippedUnedited } from "../../install/install.ts";
@@ -121,7 +121,7 @@ function docSection(d: Doc): string {
   // reason: the body has no front matter, so the reviewer could not see what a decision supersedes or amends (BR-2141),
   // reason: nor which business a rule draws a boundary of, which `business-overlap` has to judge (BR-2447)
   // reason: nor the untested: reason that says how a person accepts a rule, which `untestable` has to read (BR-2473, D-115)
-  const links = d.kind === "decision" ? [...(d.supersedes.length ? [`supersedes: ${d.supersedes.join(", ")}`] : []), ...(d.amends.length ? [`amends: ${d.amends.join(", ")}`] : [])] : d.kind === "rule" ? [...(d.business !== undefined ? [`business: ${d.business}`] : []), ...(d.untested !== undefined ? [`untested: ${d.untested}`] : [])] : [];
+  const links = d.kind === "decision" ? [...(d.supersedes.length ? [`supersedes: ${d.supersedes.join(", ")}`] : []), ...(d.amends.length ? [`amends: ${d.amends.join(", ")}`] : [])] : d.kind === "rule" ? [...(d.business !== undefined ? [`business: ${d.business}`] : []), ...(d.untested !== undefined ? [`untested: ${d.untested}`] : []), ...(d.willAmend?.length ? [`will_amend: ${d.willAmend.join(", ")}`] : [])] : [];
   return `## ${d.id} ${d.title} (${d.kind}${"status" in d ? `, ${d.status}` : ""})\n\n${links.map((l) => `${l}\n`).join("")}${links.length ? "\n" : ""}${d.body.trim()}\n`;
 }
 
@@ -146,6 +146,8 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
     // reason: turning a lesson into a mechanism needs the owner's confirmation; the review only reminds, never blocks (BR-2162, D-24);
     // a change's own rules and tests for its own feature or fix are not lessons and need no confirmation (D-78)
     "When the change's lessons section is shown below, add a note (never block for it) naming the change id: for a lesson marked text-only (只靠文字) without a reason although a rule, check or command could enforce it; and for a lesson about the process or tools whose mechanism is a rule, check or command this landing adds (in the changed documents) when the lesson does not say the owner confirmed it. A rule, test or check the change writes for its own feature or fix is not a lesson: give no note asking for the owner's confirmation of it.",
+    // reason: a planned rule describes a later state; the change it declares it will make to an active rule is not a contradiction now, any other conflict is (BR-2496, D-127)
+    "A planned rule (status planned, marked [规划中]) may list in will_amend (shown as [生效时改 ...]) the active rules the change that activates it will also change. Between such a planned rule and a rule it lists, a difference its own text says it will make in that rule when it becomes active is a declared future change: do not report it as a contradiction. Report any other conflict between them as usual, and any conflict with a rule it does not list.",
     // reason: whether a design basis is good enough is a judgement; it is never a blocking criterion, only a note (BR-2493, D-124)
     "When the change shown below has a section 方案依据 (its design basis), add a note (never block) naming the change id for each of these: a decision it says it reuses does not decide a choice the change makes (a new choice hidden behind the reuse); it names no worst failure or no result that would prove the choice wrong; its evidence for persisted data, an outside boundary or a dependency is a link or a claim with no answer to the question that kind of choice raises (how the data evolves and recovers; the outside thing's own configuration and limits; why this dependency and its limits where it runs).",
     extras.wording?.length
@@ -295,7 +297,7 @@ function promptTail(corpus: Corpus): string[] {
   const parts: string[] = [];
   // reason: planned rules constrain execution too, so a contradiction with one is found as well (BR-2036, BR-2235)
   const index = corpus.docs.filter((d) => d.kind === "rule" && d.status !== "retired");
-  parts.push(`# Rule index (every active and planned rule, all domains)\n\n${index.map((r) => `- ${r.id} [${r.kind === "rule" ? r.domain : ""}]${r.kind === "rule" && r.status === "planned" ? " [规划中]" : ""}${r.kind === "rule" && r.release ? ` [${r.release}]` : ""} ${r.title}`).join("\n")}`);
+  parts.push(`# Rule index (every active and planned rule, all domains)\n\n${index.map((r) => `- ${r.id} [${r.kind === "rule" ? r.domain : ""}]${r.kind === "rule" && r.status === "planned" ? " [规划中]" : ""}${willAmendMark(r)}${r.kind === "rule" && r.release ? ` [${r.release}]` : ""} ${r.title}`).join("\n")}`);
   const accepted = corpus.docs.filter((d) => d.kind === "decision" && d.status === "accepted");
   if (accepted.length) parts.push(`# Accepted decisions\n\n${accepted.map((d) => `- ${d.id} ${d.title}`).join("\n")}`);
   return parts;

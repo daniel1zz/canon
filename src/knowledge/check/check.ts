@@ -37,6 +37,7 @@ export type CheckRule =
   | "id-duplicate" // two files claim one id
   | "ref-dangling" // a document or test names an id that does not exist
   | "amends-not-decision" // a decision's `amends` names a document that is not a decision, or itself (BR-2139)
+  | "will-amend-target" // a planned rule's `will_amend` names something that is not another active rule (BR-2496)
   | "supersedes-not-decision" // a decision's `supersedes` names a document that is not a decision, or itself (BR-2230)
   | "instructions-missing" // a file `instructions` lists in canon/config.yaml does not exist (BR-2231)
   | "rule-untested" // an active rule has no test and no `untested:` reason (a planned one needs none, BR-2235)
@@ -156,6 +157,13 @@ export function check(input: CheckInput): Finding[] {
     // Ids written as code (`BR-12` or inside a fenced block) are examples, not references.
     for (const ref of idsIn(stripCode(d.body) + (d.kind === "change" ? ` ${d.rules.join(" ")} ${Object.keys(d.passes).join(" ")}` : "") + (d.kind === "decision" ? ` ${d.supersedes.join(" ")}` : "") + (d.kind === "decision" ? ` ${d.amends.join(" ")}` : ""))) {
       if (ref !== d.id && !byId.has(ref)) findings.push({ path: d.path, rule: "ref-dangling", message: `names ${ref}, which does not exist` });
+    }
+    if (d.kind === "rule" && d.willAmend) {
+      for (const a of d.willAmend) {
+        const target = input.corpus.docs.find((x) => x.id === a);
+        const why = a === d.id ? "itself" : !target ? `${a}, which does not exist` : target.kind !== "rule" ? `${a}, which is a ${target.kind}, not a rule` : target.status !== "active" ? `${a}, which is ${target.status}, not active` : undefined;
+        if (why) findings.push({ path: d.path, rule: "will-amend-target", message: `will_amend names ${why}: list only the active rules this rule will change when it becomes active (BR-2496)` });
+      }
     }
     if (d.kind === "decision") {
       for (const a of d.amends) {

@@ -122,6 +122,16 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         problems.push({ path: rel(full), message: links });
         continue;
       }
+      // reason: a declared future change is part of the planned rule only; once active it is plain text again (BR-2496, D-127)
+      const willAmend = p.meta["will_amend"];
+      if (willAmend !== undefined && (!Array.isArray(willAmend) || willAmend.length === 0 || willAmend.some((x) => typeof x !== "string" || x.trim() === ""))) {
+        problems.push({ path: rel(full), message: "`will_amend` must be a non-empty list of the active rule ids this rule will change when it becomes active (BR-2496)" });
+        continue;
+      }
+      if (willAmend !== undefined && p.status !== "planned") {
+        problems.push({ path: rel(full), message: "`will_amend` is only for a planned rule: remove it in the change that makes the rule active, which also changes the rules it names (BR-2496)" });
+        continue;
+      }
       docs.push({
         kind: "rule",
         id,
@@ -136,6 +146,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         ...(tags.release !== undefined ? { release: tags.release } : {}),
         ...(tags.changedIn.length > 0 ? { changedIn: tags.changedIn } : {}),
         ...(Object.keys(links).length > 0 ? { links } : {}),
+        ...(willAmend !== undefined ? { willAmend: (willAmend as string[]).map((x) => x.trim()) } : {}),
       });
     }
     for (const sub of listDirs(dir)) walk(`${domain}/${sub}`, domain);
