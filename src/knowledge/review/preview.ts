@@ -12,6 +12,7 @@ import { reviewTree } from "../../work/land/checks/review-tree.ts";
 import type { Running } from "../../work/land/outcome.ts";
 import { readCorpus } from "../documents/read.ts";
 import { findDoc } from "../query/query.ts";
+import { reviewBudget } from "./budget.ts";
 import { REVIEW_NONE } from "./config-keys.ts";
 import { passedReview, reviewKey } from "../../work/land/checks/review-reuse.ts";
 import type { Doc, Corpus } from "../documents/model.ts";
@@ -24,7 +25,7 @@ export type PreviewOutcome =
   | { readonly kind: "off"; readonly behind: number; readonly main: string; readonly related: readonly string[]; readonly wording: readonly string[] }
   | { readonly kind: "nothing"; readonly behind: number; readonly main: string }
   | { readonly kind: "unconfigured"; readonly needs: readonly string[]; readonly main: string }
-  | { readonly kind: "usage" | "failed"; readonly message: string };
+  | { readonly kind: "usage" | "failed" | "budget"; readonly message: string };
 
 /**
  * The tree of everything in `root` as it is now: committed, uncommitted and untracked files, made with a scratch index so
@@ -104,10 +105,31 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
   const needs = [...new Set([...scope.reviewed, ...wording.questions.map((q) => q.id), ...standing])];
   if (needs.length === 0) return { kind: "nothing", behind, main: main.value };
   if (!onMain.review) return { kind: "unconfigured", needs, main: main.value };
-  // The live rules and decisions most related to the changed ones: a hint, never part of the verdict (BR-2387).
-  // With related_pick_command on main, its picks from the fused top 50 come first (BR-2443).
-  const related = await relatedSections({ root: ws.root, db: ws.db, actor: ws.actor, main: main.value, corpus: read.corpus }, scope.changedDocs.filter((d) => d.kind === "rule" || d.kind === "decision"));
-  if (onMain.review === REVIEW_NONE) return { kind: "off", behind, main: main.value, related, wording: wording.questions.map((q) => q.id) };
+  const relatedTo = scope.changedDocs.filter((d) => d.kind === "rule" || d.kind === "decision");
+  const pickRelated = () => relatedSections({ root: ws.root, db: ws.db, actor: ws.actor, main: main.value, corpus: read.corpus }, relatedTo);
+  if (onMain.review === REVIEW_NONE) return { kind: "off", behind, main: main.value, related: await pickRelated(), wording: wording.questions.map((q) => q.id) };
+
+  let plannedRule: { prompts: readonly string[]; hash: string; earlier: ReturnType<typeof passedReview> } | undefined;
+  if (scope.reviewed.length > 0 || wording.questions.length > 0) {
+    const architecture = architectureOf(ws.root, base.value, head.value);
+    if (!architecture.ok) return { kind: "failed", message: architecture.error.message };
+    const prompts = reviewPromptParts(ws.root, read.corpus, scope.changedDocs, { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change: findDoc(read.corpus, subject), wording: wording.questions, added: scope.added, restatements: scope.restatements, ...(architecture.value ? { architecture: architecture.value } : {}) }, onMain.reviewMaxPromptBytes);
+    if (!prompts.ok) return { kind: "failed", message: prompts.error.message };
+    // reason: decide reuse before counting actual calls; preview and land caches remain distinct (BR-2490, BR-2361).
+    const hash = reviewKey("preview", onMain.review, onMain.reviewMaxPromptBytes, prompts.value.prompts);
+    plannedRule = { prompts: prompts.value.prompts, hash, earlier: passedReview(ws.db, "preview", hash) };
+  }
+  let duplicate: string | undefined;
+  if (standing.length > 0) {
+    const prompt = duplicateReviewPrompt(ws.root, base.value, head.value, standing, onMain.instructions, guide);
+    if (!prompt.ok) return { kind: "failed", message: prompt.error.message };
+    duplicate = prompt.value;
+  }
+  const budget = reviewBudget(ws.db, ws.actor, { kind: "preview", subject, reviewer: main.value, command: onMain.review, maxCalls: onMain.reviewMaxCalls, maxBytes: onMain.reviewMaxTotalPromptBytes, prompts: [...(plannedRule && !plannedRule.earlier ? plannedRule.prompts : []), ...(duplicate !== undefined ? [duplicate] : [])] });
+  if (!budget.ok) return { kind: "failed", message: budget.error.message };
+  if (!budget.value.allowed) return { kind: "budget", message: budget.value.message };
+  // reason: a paid picker must not run before the complete review plan passes its budget (BR-2490).
+  const related = await pickRelated();
 
   const running: Running = {};
   const tree = reviewTree(ws, running, main.value);
@@ -125,15 +147,8 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
   let reusedFrom: number | undefined;
   let rule: { hash: string; verdict: "ok" | "block"; findings: readonly string[]; wording?: Readonly<Record<string, string>> } | undefined;
   try {
-    if (scope.reviewed.length > 0 || wording.questions.length > 0) {
-      const architecture = architectureOf(ws.root, base.value, head.value);
-      if (!architecture.ok) return { kind: "failed", message: architecture.error.message };
-      // reason: the preview is the review after landing on this text, so it splits the changed documents the same way (BR-2358, BR-2448)
-      const prompts = reviewPromptParts(ws.root, read.corpus, scope.changedDocs, { deleted: scope.deleted, readmes: scope.readmes, deletedReadmes: scope.deletedReadmes, change: findDoc(read.corpus, subject), wording: wording.questions, added: scope.added, restatements: scope.restatements, ...(architecture.value ? { architecture: architecture.value } : {}) }, onMain.reviewMaxPromptBytes);
-      if (!prompts.ok) return { kind: "failed", message: prompts.error.message };
-      // reason: a preview reuses only a passing preview of the same prompts, command and budget, never a landing's pass: the reviewer may be another model for a preview (BR-2361, D-70)
-      const hash = reviewKey("preview", onMain.review, onMain.reviewMaxPromptBytes, prompts.value.prompts);
-      const earlier = passedReview(ws.db, "preview", hash);
+    if (plannedRule) {
+      const { hash, earlier, prompts } = plannedRule;
       let v: ReviewVerdict;
       if (earlier) {
         ws.db.event(ws.actor, "review.reused", subject, { review: "preview", docs: scope.reviewed, hash, from: earlier.event, tree: head.value });
@@ -142,7 +157,7 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
       } else {
         const at = tree.get();
         if (!at.ok) return { kind: "failed", message: at.error.message };
-        const run = await runReviews(onMain.review, at.value, prompts.value.prompts, limits, onMain.reviewParallel);
+        const run = await runReviews(onMain.review, at.value, prompts, limits, onMain.reviewParallel);
         if (!run.ok) return { kind: "failed", message: couldNotRun("rule", run.error.message, at.value, main.value) };
         v = run.value;
       }
@@ -152,12 +167,10 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
       findings.push(...v.findings.map((text) => ({ review: "rule" as const, text })));
       blocked ||= v.verdict === "block";
     }
-    if (standing.length > 0) {
-      const prompt = duplicateReviewPrompt(ws.root, base.value, head.value, standing, onMain.instructions, guide);
-      if (!prompt.ok) return { kind: "failed", message: prompt.error.message };
+    if (duplicate !== undefined) {
       const at = tree.get();
       if (!at.ok) return { kind: "failed", message: at.error.message };
-      const v = await runReview(onMain.review, at.value, prompt.value, limits);
+      const v = await runReview(onMain.review, at.value, duplicate, limits);
       if (!v.ok) return { kind: "failed", message: couldNotRun("duplicate", v.error.message, at.value, main.value) };
       findings.push(...v.value.findings.map((text) => ({ review: "duplicate" as const, text })));
       blocked ||= v.value.verdict === "block";

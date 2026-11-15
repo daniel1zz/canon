@@ -4,9 +4,10 @@ import { err, ok, type Result } from "../../kernel/result.ts";
 import type { Say, Workspace } from "../../work/workspace.ts";
 import type { Running } from "../../work/land/outcome.ts";
 import { readCorpus } from "../documents/read.ts";
-import type { Corpus, Doc } from "../documents/model.ts";
+import type { Doc } from "../documents/model.ts";
 import { findDoc } from "../query/query.ts";
-import { partsNote, reviewPromptParts, runReview, runReviews, splitNote, type ReviewLimits, type ReviewVerdict, onlyChangedBlock, type Slots } from "./review.ts";
+import { partsNote, reviewPromptParts, runReviews, splitNote, type ReviewLimits, type ReviewVerdict, onlyChangedBlock, type Slots } from "./review.ts";
+import { reviewBudget } from "./budget.ts";
 import { REVIEW_NONE } from "./config-keys.ts";
 import { reviewTree } from "../../work/land/checks/review-tree.ts";
 import { architectureOf, couldNotRun, duplicateReviewPrompt, reviewScope, reviewSettingsOn, standingTouched, type ReviewSettings } from "../../work/land/checks/review-scope.ts";
@@ -80,6 +81,8 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
   const docIds = [...changedDocs.map((d) => d.id), ...deleted.map((d) => d.id)];
   // reason: a finding naming no document is attached to every reviewed one; a review of README text only has its domains (BR-2434)
   const attachTo = docIds.length > 0 ? docIds : readmes;
+  let rulePrompts: readonly string[] = [];
+  let runRule: (() => Promise<Result<unknown>>) | undefined;
   if (reviewed.length > 0) {
     say(`review: ${reviewed.join(", ")}`);
     const overview = architectureOf(wt, base, head);
@@ -106,49 +109,62 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
     const usable = reused ? undefined : passedDocs(ws.db, change, docs_hash);
     const since = usable ? landedSince(wt, usable.base, base, read.corpus, new Set(changedDocs.map((d) => d.path))) : undefined;
     const common = { landed: job.landed, docs: reviewed, reviewed: docIds, commit: head, base };
-    if (reused) {
-      say(`review: reused the passing review of the same prompts (event ${reused.event}, hash ${hash.slice(0, 12)}); the review command was not run`);
-      ws.db.event(ws.actor, "review.reused", change, { review: "land", ...common, notes: reused.findings, hash, from: reused.event });
-      for (const f of reused.findings) say(`review note: ${f}`);
-    } else if (usable && since && since.length === 0) {
-      say(`review: the changed documents are the ones that passed review event ${usable.event}, and no rule or decision landed on main since; the review command was not run`);
-      ws.db.event(ws.actor, "review.reused", change, { review: "land", by: "docs", ...common, notes: usable.findings, docs_hash, from: usable.event });
-      for (const f of usable.findings) say(`review note: ${f}`);
-    } else {
-      let verdict: ReviewVerdict;
-      let incremental: { from: number; added: string[] } | undefined;
-      const at = tree.get();
-      if (!at.ok) return at;
+    let incremental: { from: number; added: string[] } | undefined;
+    if (!reused && !(usable && since && since.length === 0)) {
+      rulePrompts = prompts;
       if (usable && since) {
         say(`review: the changed documents are the ones that passed review event ${usable.event}; reviewing them only against what landed on main since: ${since.map((d) => d.id).join(", ")}`);
         const keep = new Set<Doc>([...changedDocs, ...since]);
-        // reason: without its added lines a changed document already on main would read as new, so its old restatements could block (BR-2405, D-84)
+        // reason: retain added lines so old restatements cannot block an incremental review (BR-2405, D-84).
         const small = reviewPromptParts(wt, { ...read.corpus, docs: read.corpus.docs.filter((d) => keep.has(d)) }, changedDocs, { deleted, readmes, deletedReadmes, change: extras.change, added: scope.added, incremental: { from: usable.event, added: since } }, s.reviewMaxPromptBytes);
         if (!small.ok) return err("invalid", small.error.message);
         const smallParts = partsNote(small.value.parts);
         if (smallParts) say(`review: ${smallParts}`);
-        const r = await runReviews(reviewer, at.value, small.value.prompts, limits, s.reviewParallel);
-        if (!r.ok) return err("io", couldNotRun("rule", r.error.message, at.value, job.reviewer ?? base, job.reviewer ? "main" : "before"));
-        // reason: the earlier pass's notes are kept with the new ones (BR-2145)
-        verdict = onlyChangedBlock({ verdict: r.value.verdict, findings: [...usable.findings, ...r.value.findings] }, new Set(docIds));
+        rulePrompts = small.value.prompts;
         incremental = { from: usable.event, added: since.map((d) => d.id) };
-      } else {
-        const r = await runReviews(reviewer, at.value, prompts, limits, s.reviewParallel);
-        if (!r.ok) return err("io", couldNotRun("rule", r.error.message, at.value, job.reviewer ?? base, job.reviewer ? "main" : "before"));
-        verdict = onlyChangedBlock(r.value, new Set(docIds));
       }
-      const done = settle(ws, job, say, verdict, attachTo, "rule", { ...common, docs_hash, ...(incremental ? { incremental } : { hash }) });
-      if (!done.ok) return done;
     }
+    // reason: defer both calls and reuse events until the complete plan passes its budget (BR-2490).
+    runRule = async () => {
+      if (reused) {
+        say(`review: reused the passing review of the same prompts (event ${reused.event}, hash ${hash.slice(0, 12)}); the review command was not run`);
+        ws.db.event(ws.actor, "review.reused", change, { review: "land", ...common, notes: reused.findings, hash, from: reused.event });
+        for (const f of reused.findings) say(`review note: ${f}`);
+      } else if (usable && since && since.length === 0) {
+        say(`review: the changed documents are the ones that passed review event ${usable.event}, and no rule or decision landed on main since; the review command was not run`);
+        ws.db.event(ws.actor, "review.reused", change, { review: "land", by: "docs", ...common, notes: usable.findings, docs_hash, from: usable.event });
+        for (const f of usable.findings) say(`review note: ${f}`);
+      } else {
+        const at = tree.get();
+        if (!at.ok) return at;
+        const r = await runReviews(reviewer, at.value, rulePrompts, limits, s.reviewParallel);
+        if (!r.ok) return err("io", couldNotRun("rule", r.error.message, at.value, job.reviewer ?? base, job.reviewer ? "main" : "before"));
+        // reason: incremental reviews keep the earlier passing notes (BR-2145).
+        const verdict = onlyChangedBlock(incremental && usable ? { verdict: r.value.verdict, findings: [...usable.findings, ...r.value.findings] } : r.value, new Set(docIds));
+        return settle(ws, job, say, verdict, attachTo, "rule", { ...common, docs_hash, ...(incremental ? { incremental } : { hash }) });
+      }
+      return ok(undefined);
+    };
   }
+  let duplicate: string | undefined;
   if (standing.length > 0) {
+    const prompt = duplicateReviewPrompt(wt, base, head, standing, s.instructions, guide);
+    if (!prompt.ok) return prompt;
+    duplicate = prompt.value;
+  }
+  const budget = reviewBudget(ws.db, ws.actor, { kind: "land", subject: change ?? head, reviewer: job.reviewer ?? base, command: reviewer, maxCalls: s.reviewMaxCalls, maxBytes: s.reviewMaxTotalPromptBytes, prompts: [...rulePrompts, ...(duplicate !== undefined ? [duplicate] : [])] });
+  if (!budget.ok) return budget;
+  if (!budget.value.allowed) return err("refused", budget.value.message);
+  if (runRule) {
+    const done = await runRule();
+    if (!done.ok) return done;
+  }
+  if (duplicate !== undefined) {
     say(`review: standing instructions ${standing.join(", ")}`);
     const at = tree.get();
     if (!at.ok) return at;
-    const prompt = duplicateReviewPrompt(wt, base, head, standing, s.instructions, guide);
-    if (!prompt.ok) return prompt;
     // reason: through runReviews so the call takes one of the slots shared with the reviews running at once (BR-2487)
-    const v = await runReviews(reviewer, at.value, [prompt.value], limits, 1);
+    const v = await runReviews(reviewer, at.value, [duplicate], limits, 1);
     if (!v.ok) return err("io", couldNotRun("duplicate", v.error.message, at.value, job.reviewer ?? base, job.reviewer ? "main" : "before"));
     const done = settle(ws, job, say, v.value, standing, "duplicate", { landed: job.landed, docs: standing, reviewed: standing, commit: head, base });
     if (!done.ok) return done;

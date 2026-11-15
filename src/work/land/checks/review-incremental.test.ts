@@ -59,10 +59,10 @@ function relanding(verdicts: string[] = ["ok"]) {
 }
 
 describe("reviewing a landing whose changed documents already passed (D-81)", () => {
-  test("BR-2396 BR-2009 BR-2036 BR-2359: a rule that landed on main since the pass is reviewed with the unchanged rule in a small review, whose index holds only those two, and which records incremental", async () => {
+  test("BR-2490 BR-2396 BR-2009 BR-2036 BR-2359: a rule that landed on main since the pass is reviewed with the unchanged rule in a small review, whose index holds only those two, and which records incremental", async () => {
     const t = relanding();
     const old = ["BR", 3].join("-");
-    t.onMain(`canon/rules/billing/${old}.md`, ruleText(old, "Old refunds stay."));
+    t.onMain(`canon/rules/billing/${old}.md`, ruleText(old, "Old refunds stay. ".repeat(6000)));
     const s = t.start();
     await t.landReviewed(s.worktree);
     const full = t.events("review.ok")[0]!;
@@ -70,9 +70,13 @@ describe("reviewing a landing whose changed documents already passed (D-81)", ()
     expect(full["base"]).toMatch(/^[0-9a-f]{40}$/);
     t.onMain(`canon/rules/billing/${one}.md`, ruleText(one, "Refunds are slow."));
     t.onMain(`canon/rules/billing/${two}.md`, ruleText(two, "Refunds are logged."));
+    t.onMain("canon/config.yaml", readFileSync(join(t.root, "canon/config.yaml"), "utf8") + "review_max_total_prompt_kb: 64\n");
     t.rewrite(s.worktree, "Refunds are fine.");
     const said = await t.landReviewed(s.worktree);
     expect(t.runs()).toBe(2);
+    expect(Buffer.byteLength(t.prompt(1))).toBeGreaterThan(64 * 1024);
+    expect(Buffer.byteLength(t.prompt(2))).toBeLessThan(64 * 1024);
+    expect(t.events("review.budget.ask")).toEqual([]);
     expect(t.prompt(2)).toContain("# Incremental review");
     expect(t.prompt(2)).toContain("Refunds are logged.");
     expect(t.prompt(1)).not.toContain("# Incremental review");
@@ -85,16 +89,18 @@ describe("reviewing a landing whose changed documents already passed (D-81)", ()
     expect(small["hash"]).toBeUndefined();
   }, 60_000);
 
-  test("BR-2396: when no other rule or decision landed on main since, the pass is reused by its documents and the review command does not run", async () => {
+  test("BR-2490 BR-2396: when no other rule or decision landed on main since, the pass is reused by its documents and the review command does not run", async () => {
     const t = relanding();
     const s = t.start();
     await t.landReviewed(s.worktree);
     t.onMain(`canon/rules/billing/${one}.md`, ruleText(one, "Refunds are slow.")); // the changed document itself does not count
     // a domain README is not a rule or a decision: the full prompt changes, the documents that landed do not
     t.onMain("canon/rules/billing/README.md", "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回给客户\n\n## 业务\n\n- **x**：y\n");
+    t.onMain("canon/config.yaml", readFileSync(join(t.root, "canon/config.yaml"), "utf8") + "review_max_total_prompt_kb: 0.001\n");
     t.rewrite(s.worktree, "Refunds are fine.");
     const said = await t.landReviewed(s.worktree);
     expect(t.runs()).toBe(1);
+    expect(t.events("review.budget.ask")).toEqual([]);
     expect(said).toContain("no rule or decision landed on main since; the review command was not run");
     expect(t.events("review.reused")).toMatchObject([{ review: "land", by: "docs", from: t.events("review.ok")[0]!.id }]);
   }, 60_000);

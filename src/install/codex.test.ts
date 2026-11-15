@@ -89,6 +89,10 @@ describe("Codex project assets through the CLI", () => {
     expect(cli(root, source, "init", "--agent", "codex").code).toBe(0);
     const first = read(root, "AGENTS.md");
     expect(first).toStartWith("# Team\n\nKeep these rules.\n");
+    const managed = first.split("<!-- canon:begin -->\n")[1]!.split("\n<!-- canon:end -->")[0]!;
+    expect(managed.split("\n")).toHaveLength(2);
+    expect(managed).toContain("canon brief");
+    expect(managed).toContain("skills");
     expect(cli(root, source, "install").code).toBe(0);
     expect(read(root, "AGENTS.md")).toBe(first);
     for (const text of ["<!-- canon:begin -->", "<!-- canon:end -->\n<!-- canon:begin -->", "<!-- canon:begin --><!-- canon:begin --><!-- canon:end -->"]) {

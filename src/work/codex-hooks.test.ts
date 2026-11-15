@@ -11,7 +11,7 @@ function cli(root: string, input: unknown, child: string | undefined, ...args: s
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
 }
 
-test("BR-2340: Codex PreToolUse refuses a missing/wrong child identity, allows its own id and refuses --as on the main thread", () => {
+test("BR-2023 BR-2340: Codex PreToolUse refuses a missing/wrong child identity, allows its own id and refuses --as on the main thread", () => {
   const root = project();
   const hook = (command: string, child?: string) => cli(root, { session_id: "session-a", cwd: root, tool_name: "Bash", tool_input: { command } }, child, "work", "check-as", "--hook", "--runtime", "codex");
   for (const command of ["canon work land", "canon work land --as sibling"]) {
@@ -22,6 +22,10 @@ test("BR-2340: Codex PreToolUse refuses a missing/wrong child identity, allows i
   expect(hook("canon work land --as child-1", "child-1").out).toBe("");
   expect(JSON.parse(hook("canon work land --as child-1").out).hookSpecificOutput.permissionDecision).toBe("deny");
   expect(hook("echo harmless", "child-1").out).toBe("");
+  // The denied shell command has not invoked the CLI or created its claim.
+  const db = new Database(join(root, ".git/canon/state.db"), { readonly: true });
+  expect(db.query("SELECT * FROM claims").all()).toEqual([]);
+  db.close();
 });
 
 test("BR-2182: Codex's Bash snapshot includes the caller's claimed tree and excludes siblings", () => {

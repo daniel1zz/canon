@@ -22,6 +22,9 @@ const review = defineCommand({
       case "failed":
         console.error(`canon: ${out.message}`);
         process.exit(EXIT.env);
+      case "budget":
+        console.error(`canon: ${out.message}`);
+        process.exit(EXIT.refused);
       case "unconfigured":
         console.error(`canon: review: not configured: ${out.needs.join(", ")} need a review and canon/config.yaml on main sets no \`review\`; set \`review\` (or \`review: none\` to turn it off) in a change of its own first`);
         process.exit(EXIT.usage);
