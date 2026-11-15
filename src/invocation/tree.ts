@@ -22,6 +22,7 @@ import { issueCommands } from "../work/issues/commands.ts";
 import { landCommands } from "../work/land/commands.ts";
 import { urgentCommands } from "../work/land/queue/commands.ts";
 import { sessionCommands } from "../work/session/commands.ts";
+import { delegationCommands } from "../work/delegation/commands.ts";
 import { snapshotCommands } from "../work/snapshots/commands.ts";
 import { statsCommands } from "../work/stats/commands.ts";
 import { verifyCommands } from "../work/verify/commands.ts";
@@ -52,6 +53,7 @@ export const main = defineCommand({
     executionCommands,
     workCommands,
     sessionCommands,
+    delegationCommands,
     landCommands,
     urgentCommands,
     verifyCommands,

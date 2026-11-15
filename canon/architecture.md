@@ -27,7 +27,7 @@ title: 架构总览
 - 决策：D-2、D-3、D-4、D-15、D-28、D-63。
 
 **协调数据库 `state.db`**
-- 职责：多个会话同时工作时的共享状态：认领、合入队列、负责人标的优先合入（`canon backlog urgent`）、交接记录、留给人的问题、编号、端口、事件表（每次写入和拒绝，每条记下写它的 canon 构建提交，源码运行记 `dev`，BR-2475）、后台部件的登记、排队的合入后评审（`landed_reviews`）、未处理的评审意见（`review_findings`，含 reconcile 互记的 `question` 列，见合入后的命令和评审）、挑选命令回答的缓存（`related_picks`，BR-2444）。
+- 职责：多个会话同时工作时的共享状态：认领、派发快照（`delegations`，固定设计负责人、版本、契约和接受者；历史在事件表中）、合入队列、负责人标的优先合入（`canon backlog urgent`）、交接记录、留给人的问题、编号、端口、事件表（每次写入和拒绝，每条记下写它的 canon 构建提交，源码运行记 `dev`，BR-2475）、后台部件的登记、排队的合入后评审（`landed_reviews`）、未处理的评审意见（`review_findings`，含 reconcile 互记的 `question` 列，见合入后的命令和评审）、挑选命令回答的缓存（`related_picks`，BR-2444）。
 - 数据：`<git 公共目录>/canon/state.db`（SQLite），本机所有 worktree 共用，不提交、不跨机器。知识（规则、决策）不放这里。
 - 代码：`src/work`（`db.ts`、`workspace.ts`），各子领域读写自己的表；`src/work/humans`（留给人的问题）、`src/work/stats`（从事件表算统计，`canon stats`、`canon events`、`canon usage`）。
 - 决策：D-6、D-11、D-18、D-33、D-41、D-45、D-47、D-73、D-116。

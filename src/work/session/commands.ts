@@ -7,6 +7,7 @@ import { defineCommand } from "citty";
 import { writeSchemaFile } from "../../invocation/reference/reference.ts";
 import { AS_ARG, RUNTIME_ARG, corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { takesMany } from "../../invocation/strict.ts";
+import { delegationNotice } from "../delegation/records.ts";
 import { guideFor, WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { noticeUpdates } from "../../install/commands.ts";
 import { backgroundNotice, settleBackgroundHooks } from "../hooks/hooks.ts";
@@ -112,6 +113,7 @@ const status = defineCommand({
     const chores = must(choresInFlight(ws));
     const data = { chores, ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), ...(failedReviews.length > 0 ? { failed_reviews: failedReviews } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending"), urgent: marks(ws.db) };
     if (args.json) return json(data);
+    for (const row of ws.db.db.query<{ subject: string }, []>("SELECT subject FROM delegations ORDER BY subject").all()) for (const line of delegationNotice(ws.db, row.subject)) say(line);
     for (const line of [...untested, ...unreviewed, ...failedReviews]) say(line);
     if (chores.length) say(`Unfinished chores: ${chores.map((c) => `${c.subject} (${c.branch})`).join(", ")}`);
     say("Claims:");
@@ -231,6 +233,7 @@ function briefState(ws: Workspace): Result<void> {
   // The last batch of a burst has no later landing to review it (BR-2316).
   startTrailingReview(ws, say);
   if (mine) {
+    for (const line of delegationNotice(ws.db, mine.subject)) say(line);
     say(isChore(mine.subject)
       ? `You are in chore ${mine.subject} (${ws.root}); its record is its commits. Land with canon chore land.`
       : `You are in ${mine.subject} (${ws.root}). Read it: canon show ${mine.subject}; context: canon context ${mine.subject}`);

@@ -1,12 +1,14 @@
 import { afterEach } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openWorkspace, type Workspace } from "./workspace.ts";
 import { git } from "../kernel/git.ts";
-import { start } from "./session/session.ts";
+import { start, type Started } from "./session/session.ts";
 import { NO_START_ENV, runLandedReviews } from "../knowledge/review/landed-queue.ts";
 import { CLEAN_AFTER_LAND_ENV } from "./session/clean-after-land.ts";
+import { delegate } from "./delegation/delegate.ts";
+import { isWorker } from "./delegation/worker.ts";
 
 /** Fixtures shared by the work and hook tests: throwaway repositories and workspaces. */
 export const quiet = () => {};
@@ -63,7 +65,15 @@ export function ws(cwd: string, actor = "agent:a"): Workspace {
 }
 
 /** Starts a change and fills its required sections, as an agent must before landing (BR-2035, BR-2091). */
-export function startNew(root: string, title: string, actor = "agent:a") {
+export function startNew(root: string, title: string, actor = "agent:a"): Started {
+  // reason: worker fixtures use the real owner→delegate→worker workflow; workers cannot allocate new work (BR-2498).
+  if (isWorker(actor)) {
+    const owner = actor.split(":").slice(0, 2).join(":");
+    const s = prepareDelegation(root, title, owner, actor.split(":").slice(2).join(":"));
+    const claimed = start(ws(root, actor), { change: s.change }, quiet);
+    if (!claimed.ok) throw new Error(claimed.error.message);
+    return claimed.value;
+  }
   const r = start(ws(root, actor), { title }, quiet);
   if (!r.ok) throw new Error(r.error.message);
   const dir = join(r.value.worktree, "canon/changes");
@@ -72,6 +82,18 @@ export function startNew(root: string, title: string, actor = "agent:a") {
   writeFileSync(join(dir, file), text.slice(0, text.indexOf("---\n", 4) + 4) + `\n## 为什么\n\n${title}.\n\n## 要改什么\n\n${title}.\n\n## 教训\n\n无。\n\n## 任务\n\n- [ ] ${title}\n`);
   sh(r.value.worktree, "commit", "-q", "--amend", "--no-edit", "-a");
   return r.value;
+}
+
+/** Publish the minimal contract, create an execution Change as its owner, and release it through delegate. */
+export function prepareDelegation(root: string, title: string, owner: string, worker: string): Started {
+  if (!existsSync(join(root, "canon/product.md"))) {
+    writeFileSync(join(root, "canon/product.md"), "# Product\n\nTest project.\n");
+    sh(root, "add", "canon/product.md"); sh(root, "commit", "-qm", "fixture: published product");
+  }
+  const s = startNew(root, title, owner);
+  const dispatched = delegate(ws(root, owner), s.change, worker, [], quiet);
+  if (!dispatched.ok) throw new Error(dispatched.error.message);
+  return s;
 }
 
 

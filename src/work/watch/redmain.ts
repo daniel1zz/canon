@@ -8,6 +8,8 @@ import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { isGone, selfProcess } from "../claims/liveness.ts";
 import { start, type Started } from "../session/session.ts";
+import { isWorker } from "../delegation/worker.ts";
+import { workerNewWorkError } from "../delegation/access.ts";
 
 /**
  * "main is failing" (D-31): one record in the coordination DB from the background floor's failure until a later
@@ -121,6 +123,7 @@ export const fixTitle = (sha: string) => `修复 main 上没通过的 floor（${
  * transaction, so of two sessions running it at once only one opens a change.
  */
 export function startFixMain(ws: Workspace, say: Say): Result<Started> {
+  if (isWorker(ws.actor)) return workerNewWorkError();
   const self = selfProcess();
   if (!self) return err("io", "cannot read this process's start time from ps, so the fix change cannot be reserved");
   const reserved = ws.db.db

@@ -39,6 +39,16 @@ CREATE TABLE IF NOT EXISTS claims (
   expires_at TEXT NOT NULL,
   version    INTEGER NOT NULL DEFAULT 1
 );
+CREATE TABLE IF NOT EXISTS delegations (
+  subject    TEXT PRIMARY KEY,
+  worker     TEXT NOT NULL,
+  owner      TEXT NOT NULL,
+  revision   TEXT NOT NULL,
+  epoch      INTEGER NOT NULL,
+  acceptor   TEXT,
+  manifest   TEXT NOT NULL,
+  task_hash  TEXT NOT NULL
+);
 CREATE TABLE IF NOT EXISTS queue (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   worktree    TEXT NOT NULL,
@@ -180,6 +190,7 @@ CREATE TABLE IF NOT EXISTS finding_asks (
 
 /** Columns added after the first schema, as `table`, `column definition`. */
 const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
+  ["claims", "delegation_epoch INTEGER"],
   ["questions", "relayed TEXT"],
   // The process behind a claim (its Claude Code session) and behind a queue entry (the lander), by pid and start time (D-11).
   ["claims", "pid INTEGER"],

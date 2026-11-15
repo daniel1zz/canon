@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, symlinkSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
 import { currentActor } from "./workspace.ts";
-import { project } from "./testkit.ts";
+import { prepareDelegation, project } from "./testkit.ts";
 
 const MAIN = join(import.meta.dir, "../invocation/main.ts");
 const envFor = (values: Record<string, string> = {}) => ({ ...process.env, CANON_ACTOR: "", CLAUDECODE: "", CLAUDE_CODE_SESSION_ID: "", CLAUDE_PID: "", CODEX_SESSION_ID: "", CODEX_THREAD_ID: "", ...values });
@@ -37,7 +37,8 @@ describe("Codex coordination identity", () => {
   test("BR-2023 BR-2104 BR-2131: a Codex child retains its claim without --as and records its distinct actor and worktree", () => {
     const root = project();
     const child = envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "child-1" });
-    const started = cli(root, child, "work", "start", "--title", "Codex child", "--as", "child-1");
+    const s = prepareDelegation(root, "Codex child", "agent:codex-session-a", "child-1");
+    const started = cli(root, child, "work", "start", s.change, "--as", "child-1");
     expect(started.code).toBe(0);
     const db = new Database(join(root, ".git/canon/state.db"), { readonly: true });
     const claim = db.query<{ holder: string; worktree: string }, []>("SELECT holder, worktree FROM claims").get()!;
@@ -87,7 +88,8 @@ describe("Codex coordination identity", () => {
 
   test("BR-2336: the Codex parent can take over its child's claim, but siblings and other sessions cannot", () => {
     const root = project();
-    expect(cli(root, envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "child-1" }), "work", "start", "--title", "Child").code).toBe(0);
+    const s = prepareDelegation(root, "Child", "agent:codex-session-a", "child-1");
+    expect(cli(root, envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "child-1" }), "work", "start", s.change).code).toBe(0);
     const db = new Database(join(root, ".git/canon/state.db"), { readonly: true });
     const claim = db.query<{ subject: string; worktree: string }, []>("SELECT subject, worktree FROM claims").get()!;
     const { subject } = claim;
@@ -97,7 +99,7 @@ describe("Codex coordination identity", () => {
     expect(db.query<{ holder: string }, []>("SELECT holder FROM claims").get()!.holder).toBe("agent:codex-session-a");
     const formerChild = cli(claim.worktree, envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "child-1" }), "work", "stop", "--next", "still a child without --as");
     expect(formerChild.code).toBe(5);
-    expect(formerChild.err).toContain("claimed by agent:codex-session-a");
+    expect(formerChild.err).toContain("nothing changed");
     db.close();
   });
 
@@ -121,7 +123,8 @@ describe("Codex coordination identity", () => {
     }
     const repeat = Bun.spawnSync([process.execPath, MAIN, "brief", "--hook", "--runtime", "codex"], { cwd: root, env: envFor(), stdin: Buffer.from(JSON.stringify({ hook_event_name: "SessionStart", session_id: "native-root" })), stdout: "pipe", stderr: "pipe" });
     expect(repeat.exitCode).toBe(0);
-    expect(cli(root, envFor({ CODEX_THREAD_ID: "native-child" }), "work", "start", "--title", "Native child", "--as", "native-child").code).toBe(0);
+    const s = prepareDelegation(root, "Native child", "agent:codex-native-root", "native-child");
+    expect(cli(root, envFor({ CODEX_THREAD_ID: "native-child" }), "work", "start", s.change, "--as", "native-child").code).toBe(0);
     const db = new Database(join(root, ".git/canon/state.db"), { readonly: true });
     const claim = db.query<{ holder: string; subject: string }, []>("SELECT holder, subject FROM claims").get()!;
     expect(claim.holder).toBe("agent:codex-native-root:native-child");

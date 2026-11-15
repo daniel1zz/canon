@@ -1,6 +1,7 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
 import type { CoordDb } from "../db.ts";
 import { isGone, selfProcess, type Proc } from "./liveness.ts";
+import { workerMayUseClaim } from "../delegation/access.ts";
 
 /**
  * Live coordination operations (design §2). Each is one transaction on the shared DB, so two sessions
@@ -27,7 +28,7 @@ export interface Claim {
 const INSERT_CLAIM =
   "INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start, version) VALUES (?, ?, ?, ?, ?, ?, " +
   "COALESCE((SELECT MAX(json_extract(detail, '$.version')) FROM events WHERE subject = ? AND kind IN ('claim.expired', 'claim.holder-gone')), 0) + 1) " +
-  "ON CONFLICT(subject) DO UPDATE SET holder = excluded.holder, worktree = excluded.worktree, expires_at = excluded.expires_at, pid = excluded.pid, pid_start = excluded.pid_start, version = version + 1";
+  "ON CONFLICT(subject) DO UPDATE SET holder = excluded.holder, worktree = excluded.worktree, expires_at = excluded.expires_at, pid = excluded.pid, pid_start = excluded.pid_start, delegation_epoch = NULL, version = version + 1";
 
 /**
  * Takes or refreshes the claim on a change. The holder is the worktree: one change, one worktree, one actor.
@@ -81,6 +82,8 @@ export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs
       .query<ClaimRow, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start, version FROM claims WHERE worktree = ?")
       .get(worktree);
     if (!cur) return ok(undefined);
+    const allowed = workerMayUseClaim(db, cur.subject, actor);
+    if (!allowed.ok) return allowed;
     if (cur.holder !== actor && bindsStill(db, cur)) {
       db.event(actor, "claim.refuse", cur.subject, { reason: "held", by: worktree, actor: cur.holder, until: cur.expires_at });
       const sub = subagentOf(actor, cur.holder);
@@ -148,6 +151,7 @@ interface ClaimRow {
   readonly pid: number | null;
   readonly pid_start: string | null;
   readonly version: number;
+  readonly delegation_epoch?: number | null;
 }
 
 /**
@@ -159,7 +163,7 @@ interface ClaimRow {
  * it is not work, and `canon stats` counts claim events (BR-2067).
  */
 export function holdClaim(db: CoordDb, subject: string, worktree: string, actor: string, leaseMs = CLAIM_LEASE_MS): Result<Hold> {
-  const read = () => db.db.query<ClaimRow, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start, version FROM claims WHERE subject = ?").get(subject) ?? null;
+  const read = () => db.db.query<ClaimRow, [string]>("SELECT subject, holder, worktree, expires_at, pid, pid_start, version, delegation_epoch FROM claims WHERE subject = ?").get(subject) ?? null;
   // reason: the process probe runs outside the write transaction (as in tryTurn); the transaction re-reads and
   // only proceeds when the row is still the one probed.
   const seen = read();
@@ -169,6 +173,8 @@ export function holdClaim(db: CoordDb, subject: string, worktree: string, actor:
   const self = selfProcess();
   const mark = holdMark(worktree);
   const tx = db.db.transaction((): Result<Hold> => {
+    const allowed = workerMayUseClaim(db, subject, actor);
+    if (!allowed.ok) return allowed;
     const cur = read();
     const same = JSON.stringify(cur) === JSON.stringify(seen);
     if (cur && (!same || binds)) {
@@ -210,7 +216,7 @@ export function unholdClaim(db: CoordDb, hold: Hold): void {
     const gone = db.db.query("DELETE FROM claims WHERE subject = ? AND worktree = ?").run(hold.subject, hold.mark).changes > 0;
     const p = hold.prior;
     // reason: the restored row is the same claim, so it keeps its version and a lapse already recorded for it is not written again (BR-2360).
-    if (gone && p) db.db.query("INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start, version) VALUES (?, ?, ?, ?, ?, ?, ?)").run(p.subject, p.holder, p.worktree, p.expires_at, p.pid, p.pid_start, p.version);
+    if (gone && p) db.db.query("INSERT INTO claims(subject, holder, worktree, expires_at, pid, pid_start, version, delegation_epoch) VALUES (?, ?, ?, ?, ?, ?, ?, ?)").run(p.subject, p.holder, p.worktree, p.expires_at, p.pid, p.pid_start, p.version, p.delegation_epoch ?? null);
   });
   tx.immediate();
 }
@@ -219,8 +225,13 @@ export function unholdClaim(db: CoordDb, hold: Hold): void {
  * Extends the lease only while this actor still holds the claim in this worktree: a landing keeps its claim alive
  * while it waits and runs, without ever touching a claim another session has taken over since (BR-2108).
  */
-export function keepClaim(db: CoordDb, worktree: string, actor: string, leaseMs = CLAIM_LEASE_MS): void {
-  db.db.query("UPDATE claims SET expires_at = ?, version = version + 1 WHERE worktree = ? AND holder = ?").run(iso(new Date(now().getTime() + leaseMs)), worktree, actor);
+export function keepClaim(db: CoordDb, worktree: string, actor: string, leaseMs = CLAIM_LEASE_MS): Result<void> {
+  return db.db.transaction((): Result<void> => {
+    const c = db.db.query<{ subject: string }, [string]>("SELECT subject FROM claims WHERE worktree=?").get(worktree);
+    if (c) { const allowed = workerMayUseClaim(db, c.subject, actor); if (!allowed.ok) return allowed; }
+    db.db.query("UPDATE claims SET expires_at = ?, version = version + 1 WHERE worktree = ? AND holder = ?").run(iso(new Date(now().getTime() + leaseMs)), worktree, actor);
+    return ok(undefined);
+  }).immediate();
 }
 
 /** The session process a claim named before a landing bound it to the lander; what `unbindFromLander` puts back. */

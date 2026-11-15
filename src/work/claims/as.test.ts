@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { CHECK_AS_COMMAND } from "../../install/hook.ts";
 import { CoordDb } from "../db.ts";
-import { project, sh, startNew, ws } from "../testkit.ts";
+import { prepareDelegation, project, sh, startNew, ws } from "../testkit.ts";
 
 // reason: these tests drive the real command line (`bun src/invocation/main.ts`) the way a Claude Code session does: CLAUDECODE=1 and a session id, no CANON_ACTOR (BR-2023, D-62).
 const CLI = join(import.meta.dir, "../../invocation/main.ts");
@@ -32,7 +32,8 @@ const events = (root: string, kind: string) => db(root).db.query<{ actor: string
 /** A repo with C-1 started by the subagent `abc`; returns the root and the change's worktree. */
 async function claimedBy(name: string | undefined) {
   const root = project();
-  const r = await canon(root, {}, "work", "start", "--title", "Sub work", ...(name ? ["--as", name] : []));
+  const prepared = name ? prepareDelegation(root, "Sub work", S, name) : undefined;
+  const r = await canon(root, {}, "work", "start", ...(prepared ? [prepared.change, "--as", name!] : ["--title", "Sub work"]));
   expect(r.code).toBe(0);
   const id = r.out.match(/(C-\d+) →/)?.[1] ?? "C-1";
   const wt = join(root + ".worktrees", id);
@@ -85,12 +86,11 @@ describe("a claim held by a subagent refuses the main session and other subagent
     expect(holderOf(root, id)).toBe(`${S}:abc`);
   });
 
-  test("BR-2011: a change the main session released is started by a subagent with --as, in the same worktree", async () => {
+  test("BR-2011 BR-2498: a change the main session delegated is started by a subagent with --as, in the same worktree", async () => {
     const root = project();
-    const first = await canon(root, {}, "work", "start", "--title", "Handed");
-    const id = first.out.match(/(C-\d+) →/)![1]!;
-    const wt = join(root + ".worktrees", id);
-    expect((await canon(wt, {}, "work", "stop", "--release", "--next", "go on")).code).toBe(0);
+    const first = prepareDelegation(root, "Handed", S, "abc");
+    const id = first.change;
+    const wt = first.worktree;
     const r = await canon(root, {}, "work", "start", id, "--as", "abc");
     expect(r.code).toBe(0);
     expect(r.out).toMatch(new RegExp(`cd [^\\n]*/${id}\\n`));
@@ -144,7 +144,7 @@ describe("canon work take (BR-2336)", () => {
     const ev = events(root, "claim.handover");
     expect(ev.length).toBe(1);
     expect([ev[0]!.actor, ev[0]!.subject, JSON.parse(ev[0]!.detail)]).toEqual([S, s.change, { from: "abc", by: "main-session", worktree: s.worktree }]);
-    expect(events(root, "claim.take").length).toBe(1); // only the start: handover is not claim.take
+    expect(events(root, "claim.take").length).toBe(2); // owner and worker starts: handover is not claim.take
     expect((await canon(s.worktree, {}, "work", "stop", "--next", "go on")).code).toBe(0);
     expect((await canon(s.worktree, {}, "work", "land", "--finish")).code).toBe(0);
   }, TIMED);

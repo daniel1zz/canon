@@ -2,7 +2,7 @@ import { expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Database } from "bun:sqlite";
-import { project } from "./testkit.ts";
+import { prepareDelegation, project } from "./testkit.ts";
 
 const MAIN = join(import.meta.dir, "../invocation/main.ts");
 const host = (child?: string) => ({ ...process.env, CANON_ACTOR: "", CLAUDECODE: "", CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: child ?? "session-a" });
@@ -29,7 +29,8 @@ test("BR-2023 BR-2340: Codex PreToolUse refuses a missing/wrong child identity, 
 test("BR-2182: Codex's Bash snapshot includes the caller's claimed tree and excludes siblings", () => {
   const root = project();
   for (const child of ["child-1", "child-2"]) {
-    const started = cli(root, {}, child, "work", "start", "--title", child, "--as", child);
+    const s = prepareDelegation(root, child, "agent:codex-session-a", child);
+    const started = cli(root, {}, child, "work", "start", s.change, "--as", child);
     expect(started.code).toBe(0);
   }
   const db = new Database(join(root, ".git/canon/state.db"), { readonly: true });

@@ -21,6 +21,9 @@ import { noPort, portFor, type PortLookup } from "../hooks/ports.ts";
 import { firstCommitStep, mainIsUnborn, addWorktree, git, ignoredPaths, isClean, listWorktreesLocked, removeWorktree, unregenerable, type WorktreeInfo } from "../../kernel/git.ts";
 import { GENERATED_DIR } from "../../invocation/reference/reference.ts";
 import { processesIn, type Occupant } from "../../kernel/process.ts";
+import { isWorker } from "../delegation/worker.ts";
+import { workerMayStart, workerNewWorkError } from "../delegation/access.ts";
+import { delegationNotice } from "../delegation/records.ts";
 
 /**
  * The work flow (design §6): one change, one worktree, one agent from start to land. This part starts,
@@ -85,6 +88,8 @@ function startedBefore(ws: Workspace, id: string): boolean {
 }
 
 export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] } }, say: Say, opts: { fixMain?: boolean; settles?: readonly number[]; urgent?: string } = {}): Result<Started> {
+  if (isWorker(ws.actor) && "title" in target) return workerNewWorkError();
+  if ("change" in target) { const allowed = workerMayStart(ws.db, target.change.toUpperCase(), ws.actor); if (!allowed.ok) return allowed; }
   const main = ws.config.main;
   // reason: a change that settles named open findings is paying the debt, not new work: some findings need a rule edit a
   // project lets only a change make (BR-2464, #209); every number must be an open finding, so a stale or made-up one opens nothing
@@ -153,6 +158,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
 
 /** Start or resume document-free work, sharing the same ownership and setup path (BR-2457). */
 export function startChore(ws: Workspace, target: { title: string } | { subject: string }, say: Say): Result<Started> {
+  if (isWorker(ws.actor)) return workerNewWorkError();
   if (mainIsUnborn(ws.primary, ws.config.main)) return err("io", `${ws.config.main} has no commit yet: ${firstCommitStep(ws.config.main)}`);
   if ("title" in target && target.title.trim() === "") return err("invalid", "a chore needs a non-empty title");
   const subject = "subject" in target ? normalizeSubject(target.subject) : `chore-${randomUUID()}`;
@@ -185,8 +191,19 @@ function startWorkspace(ws: Workspace, input: { subject: string; branch: string;
       if (!actual.ok || actual.value !== branch) return err("conflict", `${changeId}: worktree identity disagrees with branch ${branch}; nothing was changed`);
     }
   }
-  const claim = takeClaim(ws.db, changeId, path, ws.actor, ws.config.claimLeaseMs, sessionProcess());
+  // reason: binding the first full worker actor and taking its claim must be one write transaction (BR-2498).
+  const claim = ws.db.db.transaction(() => {
+    const allowed = workerMayStart(ws.db, changeId, ws.actor);
+    if (!allowed.ok) return allowed;
+    const taken = takeClaim(ws.db, changeId, path, ws.actor, ws.config.claimLeaseMs, sessionProcess());
+    if (taken.ok && allowed.value) {
+      ws.db.db.query("UPDATE delegations SET acceptor=? WHERE subject=?").run(ws.actor, changeId);
+      ws.db.db.query("UPDATE claims SET delegation_epoch=? WHERE subject=?").run(allowed.value.epoch, changeId);
+    }
+    return taken;
+  }).immediate();
   if (!claim.ok) return claim;
+  for (const line of delegationNotice(ws.db, changeId)) say(line);
   // reason: the branch was read before the claim; a drop that held the claim meanwhile may have deleted it.
   // Seen after the claim, the branch is as a finished or not-yet-started drop leaves it (BR-2136, issue #20).
   if (input.existing && !git(ws.primary, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}`).ok) {
