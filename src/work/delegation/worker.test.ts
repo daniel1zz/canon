@@ -34,7 +34,7 @@ test("BR-2498: only the named worker can claim, binding the first full actor and
   expect(cli(f.root, "agent:s7:w1", "work", "start", f.change).code).toBe(0);
 });
 
-test("BR-2498 BR-2012 BR-2457: workers cannot claim undelegated work or allocate new changes, fixes or chores", () => {
+test("BR-2498 BR-2012 BR-2457 BR-2022: workers cannot claim undelegated work or allocate new changes, fixes or chores", () => {
   const f = fixture(false); const before = sh(f.root, "for-each-ref", "--format=%(refname)", "refs/heads");
   const no = cli(f.root, "agent:s7:w1", "work", "start", f.change); expect(no.code).toBe(1); expect(no.text).toContain("未派发");
   for (const args of [["work", "start", "--title", "x"], ["work", "start", "--fix-main"], ["chore", "start", "tidy"]]) {
