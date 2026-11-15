@@ -104,7 +104,12 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
     const readmePaths = new Set(readmes.map((name) => read.corpus.domains.find((d) => d.name === name)?.path).filter((p): p is string => p !== undefined));
     const docs_hash = docsKey(reviewer, s.reviewMaxPromptBytes, {
       // reason: the change's 方案依据 is reviewed text too, so a new basis is never answered by an older passing review (BR-2493)
-      live: [...[...changedDocs.map((d) => d.path), ...readmePaths].map((path) => ({ path, text: readFileSync(join(wt, path), "utf8") })), ...(basis !== undefined && extras.change ? [{ path: `${extras.change.path}#方案依据`, text: basis }] : [])],
+      live: [
+        ...[...changedDocs.map((d) => d.path), ...readmePaths].map((path) => ({ path, text: readFileSync(join(wt, path), "utf8") })),
+        ...(basis !== undefined && extras.change ? [{ path: `${extras.change.path}#方案依据`, text: basis }] : []),
+        // reason: which rule this landing activates, and its declared targets' text, are reviewed too, so an older pass of the same documents is not reused for them (BR-2496)
+        ...scope.activated.map((a) => ({ path: `${a.id}#activated`, text: a.targets.map((t) => { const doc = read.corpus.docs.find((d) => d.id === t); return `${t}\n${doc ? readFileSync(join(wt, doc.path), "utf8") : ""}`; }).join("\n") })),
+      ],
       deleted: [...deleted, ...deletedReadmes].map((d) => ({ path: d.path, text: d.text })),
       architectureDiff: architecture?.diff ?? "",
     });
@@ -116,7 +121,9 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
       rulePrompts = prompts;
       if (usable && since) {
         say(`review: the changed documents are the ones that passed review event ${usable.event}; reviewing them only against what landed on main since: ${since.map((d) => d.id).join(", ")}`);
-        const keep = new Set<Doc>([...changedDocs, ...since]);
+        // reason: an activated rule's declared targets are compared in the small review too, so they stay in its corpus (BR-2496)
+        const targets = new Set(scope.activated.flatMap((a) => a.targets));
+        const keep = new Set<Doc>([...changedDocs, ...since, ...read.corpus.docs.filter((d) => targets.has(d.id))]);
         // reason: retain added lines so old restatements cannot block an incremental review (BR-2405, D-84).
         const small = reviewPromptParts(wt, { ...read.corpus, docs: read.corpus.docs.filter((d) => keep.has(d)) }, changedDocs, { deleted, readmes, deletedReadmes, change: extras.change, added: scope.added, activated: scope.activated, incremental: { from: usable.event, added: since } }, s.reviewMaxPromptBytes);
         if (!small.ok) return err("invalid", small.error.message);

@@ -367,6 +367,18 @@ describe("a review after landing split by its changed documents (BR-2448)", () =
     expect(partsNote(r.parts)).toBe(`the changed documents do not fit one call, so they are reviewed in ${r.parts.length} parts: ${r.parts.map((g, i) => `${i + 1}: ${g.map((d) => d.id).join(", ")}`).join("; ")}`);
   });
 
+  test("BR-2448 BR-2496: in a split review the section on an activated rule goes with the part that shows that rule in full, with its target in full there even when another part shows the target", () => {
+    const { root, corpus, changed } = decisions(30);
+    const r = parted(reviewPromptParts(root, corpus, changed, { activated: [{ id: id("D", 4), targets: [id("D", 2)] }] }, 80 * KB));
+    expect(r.parts.length).toBeGreaterThan(1);
+    const heading = `# ${id("D", 4)} becomes active in this landing; while planned it declared it would change ${id("D", 2)}`;
+    const withIt = r.prompts.filter((p) => p.includes(heading));
+    expect(withIt).toHaveLength(1);
+    expect(full(withIt[0]!, 4)).toBe(true);
+    const sameCall = r.parts.find((g) => g.some((d) => d.id === id("D", 4)))!.some((d) => d.id === id("D", 2));
+    if (!sameCall) expect(withIt[0]).toContain(`## ${id("D", 2)} Choice 2 (decision, accepted)`);
+  });
+
   test("BR-2448: changed documents that fit one call give BR-2359's prompt, with no part", () => {
     const { root, corpus, changed } = decisions(30);
     const r = parted(reviewPromptParts(root, corpus, changed, {}, 250 * KB));

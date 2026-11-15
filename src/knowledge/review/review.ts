@@ -859,6 +859,8 @@ export function reviewPromptParts(root: string, corpus: Corpus, changed: readonl
       ...(extras.architecture ? { architecture: extras.architecture } : {}),
       added: (extras.added ?? []).filter((a) => ids.has(a.id)),
       restatements: (extras.restatements ?? []).filter((r) => ids.has(r.id)),
+      // reason: the activated rule's targets go with the part that shows the rule in full, or no call could compare them (BR-2496)
+      activated: (extras.activated ?? []).filter((x) => ids.has(x.id)),
       part: { i, n, others },
     };
   };

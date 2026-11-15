@@ -163,6 +163,25 @@ describe("reviewing a landing whose changed documents already passed (D-81)", ()
     expect(t.events("review.reused")).toEqual([]);
   }, 60_000);
 
+  test("BR-2496 BR-2396: the same active text landing again after main made it planned with will_amend is not answered by the older pass; the review compares the declared target", async () => {
+    const t = relanding();
+    t.onMain(`canon/rules/billing/${two}.md`, ruleText(two, "Refunds are logged."));
+    const s = t.start();
+    await t.landReviewed(s.worktree);
+    const planned = ruleText(one, "Refunds are fine.").replace("untested: demo\n", `untested: demo\nstatus: planned\nwill_amend: [${two}]\n`);
+    t.onMain(`canon/rules/billing/${one}.md`, planned);
+    t.rewrite(s.worktree, "Refunds are fine.");
+    // only a change that lists a planned rule in rules: may make it active (BR-2240)
+    const dir = join(s.worktree, "canon/changes");
+    const file = join(dir, readdirSync(dir).find((f) => f.startsWith(s.change))!);
+    writeFileSync(file, readFileSync(file, "utf8").replace(/^rules: \[\]$/m, `rules: [${one}]`));
+    sh(s.worktree, "commit", "-qam", "lists the rule it activates");
+    await t.landReviewed(s.worktree);
+    expect(t.runs()).toBe(2);
+    expect(t.events("review.reused")).toEqual([]);
+    expect(t.prompt(2)).toContain(`# ${one} becomes active in this landing; while planned it declared it would change ${two}`);
+  }, 60_000);
+
   test("BR-2396 BR-2361: a changed rule text, or a pass that was later blocked, is reviewed in full", async () => {
     const t = relanding(["ok", "block", "ok"]);
     const s = t.start();
