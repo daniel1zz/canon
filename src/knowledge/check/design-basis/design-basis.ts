@@ -18,7 +18,7 @@ export type DesignClass = (typeof DESIGN_CLASSES)[number];
 /** The question each class must answer: the uncertainty that, when left open, cost rework in the calibration (D-124). */
 export const CLASS_QUESTION: Readonly<Record<DesignClass, string>> = {
   persistent: "how the persisted data evolves (an old file with a new section, a migration) and how it recovers (corrupt, recovered, then written again): show the smallest failing case was tried",
-  boundary: "what the outside thing's own configuration and limits are (its official docs or source) and one smallest probe in the real topology",
+  boundary: "what the outside thing's own configuration and limits are (its official docs or source), and where the docs leave it open, one smallest probe in the real topology",
   dependency: "why this dependency over building it or another one, and its limits where it will actually run",
 };
 

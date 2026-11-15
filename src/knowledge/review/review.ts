@@ -211,7 +211,7 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
     const lessons = section(change.body, LESSONS_SECTION);
     if (lessons !== undefined) parts.push(`# Lessons of ${change.id} ${change.title} (the change this landing belongs to)\n\n${lessons.trim()}\n`);
     // reason: the reviewer judges the basis itself, so it is shown even when the change file is not among the changed documents of this call (BR-2493)
-    const basis = hasBasis(change.body) ? section(change.body, BASIS_HEADING) : undefined;
+    const basis = changeBasis(change);
     if (basis !== undefined) parts.push(`# 方案依据 of ${change.id} ${change.title} (the design basis of the change this landing belongs to)\n\n${basis.trim()}\n`);
   }
   if (extras.deleted?.length || extras.deletedReadmes?.length) {
@@ -221,6 +221,11 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
   }
   if (extras.readmes?.length) parts.push(`# Domain READMEs changed: ${extras.readmes.join(", ")} (their new text is in the current context below)`);
   return parts;
+}
+
+/** The change's 方案依据 as the review is given it; undefined when it has none or only the template's placeholder (BR-2493). */
+export function changeBasis(change: Doc): string | undefined {
+  return change.kind === "change" && hasBasis(change.body) ? section(change.body, BASIS_HEADING) : undefined;
 }
 
 /** What a part of a review split by its changed documents tells the reviewer (BR-2448). */

@@ -64,8 +64,8 @@ export function designStats(db: CoordDb, root: string, corpus: Corpus, ref: stri
     const t = tally.get(d.revisedBecause) ?? { count: 0, within7Days: 0 };
     t.count++;
     const at = added.get(d.id);
-    // reason: "soon" is measured from the revised decision's first commit under its id; a decision git cannot date is not counted as soon (BR-2494)
-    if (at !== undefined && revised.some((r) => { const was = added.get(r.id); return was !== undefined && at - was <= 7 * DAY; })) t.within7Days++;
+    // reason: "soon" is measured from the revised decision's first commit under its id; a decision git cannot date, or dated before the one it revises (a clock set back), is not counted as soon; one revising several counts once if it is soon after any of them (BR-2494)
+    if (at !== undefined && revised.some((r) => { const was = added.get(r.id); return was !== undefined && at - was >= 0 && at - was <= 7 * DAY; })) t.within7Days++;
     tally.set(d.revisedBecause, t);
   }
   const order = [...REVISION_REASONS, ...[...tally.keys()].filter((k) => !(REVISION_REASONS as readonly string[]).includes(k)).sort()];

@@ -6,7 +6,7 @@ import type { Running } from "../../work/land/outcome.ts";
 import { readCorpus } from "../documents/read.ts";
 import type { Doc } from "../documents/model.ts";
 import { findDoc } from "../query/query.ts";
-import { partsNote, reviewPromptParts, runReviews, splitNote, type ReviewLimits, type ReviewVerdict, onlyChangedBlock, type Slots } from "./review.ts";
+import { changeBasis, partsNote, reviewPromptParts, runReviews, splitNote, type ReviewLimits, type ReviewVerdict, onlyChangedBlock, type Slots } from "./review.ts";
 import { reviewBudget } from "./budget.ts";
 import { REVIEW_NONE } from "./config-keys.ts";
 import { reviewTree } from "../../work/land/checks/review-tree.ts";
@@ -100,9 +100,11 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
     const hash = reviewKey("land", reviewer, s.reviewMaxPromptBytes, prompts);
     const reused = passedReview(ws.db, "land", hash);
     // The changed documents' own key: the same text that passed a full review needs only what landed on main since (BR-2396, D-81).
+    const basis = extras.change ? changeBasis(extras.change) : undefined;
     const readmePaths = new Set(readmes.map((name) => read.corpus.domains.find((d) => d.name === name)?.path).filter((p): p is string => p !== undefined));
     const docs_hash = docsKey(reviewer, s.reviewMaxPromptBytes, {
-      live: [...changedDocs.map((d) => d.path), ...readmePaths].map((path) => ({ path, text: readFileSync(join(wt, path), "utf8") })),
+      // reason: the change's 方案依据 is reviewed text too, so a new basis is never answered by an older passing review (BR-2493)
+      live: [...[...changedDocs.map((d) => d.path), ...readmePaths].map((path) => ({ path, text: readFileSync(join(wt, path), "utf8") })), ...(basis !== undefined && extras.change ? [{ path: `${extras.change.path}#方案依据`, text: basis }] : [])],
       deleted: [...deleted, ...deletedReadmes].map((d) => ({ path: d.path, text: d.text })),
       architectureDiff: architecture?.diff ?? "",
     });

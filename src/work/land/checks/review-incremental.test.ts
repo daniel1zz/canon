@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../land.ts";
 import { FAST, project, quiet, reviewLandings, sh, startNew, ws } from "../../testkit.ts";
@@ -138,6 +138,23 @@ describe("reviewing a landing whose changed documents already passed (D-81)", ()
     expect(n.prompt(2)).toContain("# Incremental review");
     expect(n.prompt(2)).not.toContain(section);
   }, 90_000);
+
+  test("BR-2493 BR-2396: when only the change's 方案依据 is new, the pass of the same documents is not reused and the review sees the basis", async () => {
+    const t = relanding();
+    const s = t.start();
+    await t.landReviewed(s.worktree);
+    t.onMain(`canon/rules/billing/${one}.md`, ruleText(one, "Refunds are slow.")); // as in the reuse case above: the same text lands again
+    t.rewrite(s.worktree, "Refunds are fine.");
+    const dir = join(s.worktree, "canon/changes");
+    const file = join(dir, readdirSync(dir).find((f) => f.startsWith(`${s.change}`))!);
+    writeFileSync(file, `${readFileSync(file, "utf8")}\n## 方案依据\n\n沿用：无。新选择：SENTINEL-basis-c41。\n`);
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "basis");
+    await t.landReviewed(s.worktree);
+    expect(t.runs()).toBe(2);
+    expect(t.prompt(2)).toContain("SENTINEL-basis-c41");
+    expect(t.events("review.reused")).toEqual([]);
+  }, 60_000);
 
   test("BR-2396 BR-2361: a changed rule text, or a pass that was later blocked, is reviewed in full", async () => {
     const t = relanding(["ok", "block", "ok"]);

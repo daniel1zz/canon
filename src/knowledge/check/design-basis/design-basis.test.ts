@@ -142,7 +142,7 @@ describe("design basis on the record (BR-2494)", () => {
     expect(renderDesignStats(s)).toContain("decisions revised, by revised_because: premise 1 (1 within 7 days), requirement 1 (1 within 7 days)");
   });
 
-  test("BR-2494: the 7 days run from the revised decision's first commit under its id: exactly 7 days is within, a second more is not, a copy of the old file under a new id is not dated as the old one, and a re-add of the same id keeps the first date", () => {
+  test("BR-2494: the 7 days run from the revised decision's first commit under its id: exactly 7 days is within, a second more is not, a copy of the old file under a new id is not dated as the old one, a re-add of the same id keeps the first date, and one dated before the decision it revises is not within", () => {
     const root = project();
     const dir = join(root, "canon/decisions");
     Bun.spawnSync(["mkdir", "-p", dir]);
@@ -163,8 +163,10 @@ describe("design basis on the record (BR-2494)", () => {
     commitAt(T0 + 20 * 86_400, "drop d1");
     writeFileSync(join(dir, "D-1.md"), d("D-1", ""));
     commitAt(T0 + 30 * 86_400, "d1 again");
+    writeFileSync(join(dir, "D-4.md"), d("D-4", "amends:\n  - D-1\nrevised_because: external\n"));
+    commitAt(T0 - 86_400, "d4 with a clock set back a day");
     const s = designStats(ws(root).db, root, corpusAt(root), "main", 0, Number.MAX_SAFE_INTEGER);
-    expect(s.revisions).toEqual([{ reason: "premise", count: 2, within7Days: 1 }]);
+    expect(s.revisions).toEqual([{ reason: "premise", count: 2, within7Days: 1 }, { reason: "external", count: 1, within7Days: 0 }]);
   });
 
   test("BR-2494: canon stats reads main as committed: a revising decision only on a work branch, uncommitted, is not counted", () => {
