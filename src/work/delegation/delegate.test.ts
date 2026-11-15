@@ -93,6 +93,12 @@ test("BR-2497: empty or duplicate explicit contract items and repeated options a
   expect(dispatch(f.root, f.change, "agent:s1", "w1", ["--contract", "BR-50", "--contract", "BR-51"]).code).toBe(2);
 });
 
+test("BR-2497: a quoted configured code-review command suppresses the missing-review notice", () => {
+  const f = fixture(); put(f.root, "scripts/code-review.ts", "export {};\n");
+  put(f.root, "canon/config.yaml", readFileSync(join(f.root, "canon/config.yaml"), "utf8") + "hooks:\n  after_land: bun 'scripts/code-review.ts'\n"); commit(f.root);
+  const r = dispatch(f.root, f.change); expect(r).toMatchObject({ code: 0 }); expect(r.text).not.toContain("design-gap review: not configured");
+});
+
 test("BR-2497: redelegation keeps an active acceptor, refuses renaming it and clears it after takeover", () => {
   const f = fixture(); expect(dispatch(f.root, f.change).code).toBe(0);
   const w = ws(f.root); w.db.db.query("UPDATE delegations SET acceptor = ? WHERE subject = ?").run("agent:s7:w1", f.change);

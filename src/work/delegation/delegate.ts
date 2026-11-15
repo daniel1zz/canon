@@ -112,6 +112,7 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
   say(`contract: ${manifest.map((i) => `${i.id ?? i.path} ${i.hash}`).join(", ")}; task ${taskHash}`);
   const hooks = config.hooks as { after_land?: string | string[] } | undefined;
   const afterLand = hooks?.after_land;
-  if (!(Array.isArray(afterLand) ? afterLand : [afterLand ?? ""]).some((c) => /(?:^|[\s/])scripts\/code-review\.ts(?:\s|$)/.test(c))) say("design-gap review: not configured");
+  // reason: match the same configured hooks as startTrailingReview, including quoted script paths (BR-2497).
+  if (!(Array.isArray(afterLand) ? afterLand : [afterLand ?? ""]).some((c) => c.includes("scripts/code-review.ts"))) say("design-gap review: not configured");
   return result;
 }

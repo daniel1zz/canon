@@ -192,10 +192,11 @@ function startWorkspace(ws: Workspace, input: { subject: string; branch: string;
     }
   }
   // reason: binding the first full worker actor and taking its claim must be one write transaction (BR-2498).
+  const owner = sessionProcess();
   const claim = ws.db.db.transaction(() => {
     const allowed = workerMayStart(ws.db, changeId, ws.actor);
     if (!allowed.ok) return allowed;
-    const taken = takeClaim(ws.db, changeId, path, ws.actor, ws.config.claimLeaseMs, sessionProcess());
+    const taken = takeClaim(ws.db, changeId, path, ws.actor, ws.config.claimLeaseMs, owner);
     if (taken.ok && allowed.value) {
       ws.db.db.query("UPDATE delegations SET acceptor=? WHERE subject=?").run(ws.actor, changeId);
       ws.db.db.query("UPDATE claims SET delegation_epoch=? WHERE subject=?").run(allowed.value.epoch, changeId);
