@@ -54,7 +54,7 @@ describe("one-way-door classes (BR-2491)", () => {
 describe("why a decision revises another (BR-2492)", () => {
   const decision = (id: string, extra: string) => `---\nid: ${id}\ntitle: ${id}\nstatus: proposed\n${extra}---\n\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
 
-  test("BR-2492: a decision this work adds that amends or supersedes another needs a known revised_because; one already on main is not checked", () => {
+  test("BR-2492: a decision this work adds that amends or supersedes another existing decision needs a known revised_because; a reference to itself or to nothing is not asked for one; one already on main is not checked", () => {
     const root = project();
     const s = startNew(root, "Revise");
     const dir = join(s.worktree, "canon/decisions");
@@ -66,6 +66,7 @@ describe("why a decision revises another (BR-2492)", () => {
     writeFileSync(join(dir, "D-2.md"), decision("D-2", "amends:\n  - D-1\n"));
     writeFileSync(join(dir, "D-3.md"), decision("D-3", "supersedes: D-1\nrevised_because: typo\n"));
     writeFileSync(join(dir, "D-4.md"), decision("D-4", "amends:\n  - D-1\nrevised_because: premise\n"));
+    writeFileSync(join(dir, "D-5.md"), decision("D-5", "amends:\n  - D-5\n  - D-99\n")); // itself and a missing one: their own findings, no reason asked
     const found = revisionReasonFindings(s.worktree, corpusAt(s.worktree), onlyD1);
     expect(found.map((f) => f.path)).toEqual(["canon/decisions/D-2.md", "canon/decisions/D-3.md"]);
     expect(found[0]!.message).toContain("names no `revised_because`");

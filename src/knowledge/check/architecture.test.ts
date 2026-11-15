@@ -134,7 +134,7 @@ describe("architecture overview lists every domain's code directory", () => {
 describe("architecture overview names only current decisions", () => {
   test("BR-2353: a superseded decision named in the overview is reported, with the decision that replaced it", () => {
     const root = fixture();
-    put(root, { [`canon/decisions/${id("D", 5)}.md`]: decision(5, "superseded"), [`canon/decisions/${id("D", 9)}.md`]: decision(9, "accepted", `supersedes: ${id("D", 5)}\n`) });
+    put(root, { [`canon/decisions/${id("D", 5)}.md`]: decision(5, "superseded"), [`canon/decisions/${id("D", 9)}.md`]: decision(9, "accepted", `supersedes: ${id("D", 5)}\nrevised_because: requirement\n`) });
     const r = canon(root, "check");
     expect(r.code).toBe(1);
     expect(r.out).toContain("architecture-superseded");
@@ -143,7 +143,7 @@ describe("architecture overview names only current decisions", () => {
 
   test("BR-2353: a superseded decision named in the overview is reported when the replacing decision lists it in a supersedes list", () => {
     const root = fixture();
-    put(root, { [`canon/decisions/${id("D", 5)}.md`]: decision(5, "superseded"), [`canon/decisions/${id("D", 9)}.md`]: decision(9, "accepted", `supersedes: [${id("D", 4)}, ${id("D", 5)}]\n`), [`canon/decisions/${id("D", 4)}.md`]: decision(4, "superseded") });
+    put(root, { [`canon/decisions/${id("D", 5)}.md`]: decision(5, "superseded"), [`canon/decisions/${id("D", 9)}.md`]: decision(9, "accepted", `supersedes: [${id("D", 4)}, ${id("D", 5)}]\nrevised_because: requirement\n`), [`canon/decisions/${id("D", 4)}.md`]: decision(4, "superseded") });
     const r = canon(root, "check");
     expect(r.code).toBe(1);
     expect(r.out).toContain(`names ${id("D", 5)}, which is superseded by ${id("D", 9)}`);
@@ -156,17 +156,17 @@ describe("architecture overview names only current decisions", () => {
     put(proposed, { [`canon/decisions/${id("D", 5)}.md`]: decision(5, "proposed") });
     expect(kinds(proposed).kinds).toEqual([]);
     const code = fixture("## 容器\n\n- `src/billing`；编号写成 `D-5`。\n");
-    put(code, { [`canon/decisions/${id("D", 5)}.md`]: decision(5, "superseded"), [`canon/decisions/${id("D", 9)}.md`]: decision(9, "accepted", `supersedes: ${id("D", 5)}\n`) });
+    put(code, { [`canon/decisions/${id("D", 5)}.md`]: decision(5, "superseded"), [`canon/decisions/${id("D", 9)}.md`]: decision(9, "accepted", `supersedes: ${id("D", 5)}\nrevised_because: requirement\n`) });
     expect(kinds(code).kinds).toEqual([]);
     const empty = fixture("");
-    put(empty, { [`canon/decisions/${id("D", 5)}.md`]: decision(5, "superseded"), [`canon/decisions/${id("D", 9)}.md`]: decision(9, "accepted", `supersedes: ${id("D", 5)}\n`) });
+    put(empty, { [`canon/decisions/${id("D", 5)}.md`]: decision(5, "superseded"), [`canon/decisions/${id("D", 9)}.md`]: decision(9, "accepted", `supersedes: ${id("D", 5)}\nrevised_because: requirement\n`) });
     expect(kinds(empty).kinds).toEqual([]);
   });
 
   test("BR-2353: a landing whose tree accepts the replacement while the overview still names the old decision is refused", async () => {
     const root = fixture();
     const s = startNew(root, "Replace D-5");
-    put(s.worktree, { [`canon/decisions/${id("D", 5)}.md`]: decision(5, "superseded"), [`canon/decisions/${id("D", 9)}.md`]: decision(9, "accepted", `supersedes: ${id("D", 5)}\n`) });
+    put(s.worktree, { [`canon/decisions/${id("D", 5)}.md`]: decision(5, "superseded"), [`canon/decisions/${id("D", 9)}.md`]: decision(9, "accepted", `supersedes: ${id("D", 5)}\nrevised_because: requirement\n`) });
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "supersede");
     const out = await land(ws(s.worktree), FAST, () => {});
@@ -176,7 +176,7 @@ describe("architecture overview names only current decisions", () => {
 });
 
 describe("a new link to a decision the overview names needs the overview looked at", () => {
-  const amend = (root: string, target = id("D", 5), status = "accepted") => put(root, { [`canon/decisions/${id("D", 9)}.md`]: decision(9, status, `amends:\n  - ${target}\n`) });
+  const amend = (root: string, target = id("D", 5), status = "accepted") => put(root, { [`canon/decisions/${id("D", 9)}.md`]: decision(9, status, `amends:\n  - ${target}\nrevised_because: requirement\n`) });
   const commit = (root: string) => {
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "work");
@@ -221,7 +221,7 @@ describe("a new link to a decision the overview names needs the overview looked 
 
   test("BR-2354: a proposed superseding decision counts too", () => {
     const root = fixture();
-    put(root, { [`canon/decisions/${id("D", 9)}.md`]: decision(9, "proposed", `supersedes: ${id("D", 5)}\n`) });
+    put(root, { [`canon/decisions/${id("D", 9)}.md`]: decision(9, "proposed", `supersedes: ${id("D", 5)}\nrevised_because: requirement\n`) });
     expect(unreviewed(root)).toBe(true);
   });
 

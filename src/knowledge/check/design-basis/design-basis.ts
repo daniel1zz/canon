@@ -112,9 +112,11 @@ export function revisionReasonFindings(root: string, corpus: Corpus, base: strin
     if (call.ok) for (const l of call.value.split("\n")) if (l.trim() !== "") added.add(l.trim());
   }
   const out: { path: string; message: string }[] = [];
+  const decisions = new Set(corpus.docs.filter((d) => d.kind === "decision").map((d) => d.id));
   for (const d of corpus.docs) {
     if (d.kind !== "decision" || !added.has(d.path)) continue;
-    const revised = [...d.amends, ...d.supersedes];
+    // reason: a reference that names no other decision is already its own finding (BR-2139, BR-2230); it revises nothing to give a reason for
+    const revised = [...d.amends, ...d.supersedes].filter((id) => id !== d.id && decisions.has(id));
     if (revised.length === 0) continue;
     const why = (d as Decision).revisedBecause;
     if (why !== undefined && (REVISION_REASONS as readonly string[]).includes(why)) continue;

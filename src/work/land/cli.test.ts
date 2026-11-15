@@ -203,7 +203,7 @@ describe("a landing that adds a decision still proposed says so", () => {
     const s = startNew(root, "Decides");
     add(s.worktree, [5, "proposed"], [6, "proposed"]);
     const at = (n: number) => join(s.worktree, `canon/decisions/${d(n)}.md`);
-    writeFileSync(at(5), decision(5, "proposed").replace("status: proposed\n", `status: proposed\nsupersedes:\n  - ${d(2)}\n`));
+    writeFileSync(at(5), decision(5, "proposed").replace("status: proposed\n", `status: proposed\nsupersedes:\n  - ${d(2)}\nrevised_because: requirement\n`));
     sh(s.worktree, "commit", "-qam", "supersede");
     const said: string[] = [];
     const out = await land(ws(s.worktree), { ...FAST, finish: true }, (l: string) => void said.push(l));

@@ -75,7 +75,7 @@ describe("canon check output", () => {
       expect([kind, r.code, r.out.split("\n")[0]!.split(/\s+/)[0]]).toEqual([kind, 1, kind]);
     }
     const ok = clean();
-    write(ok, { [`canon/decisions/${id("D", 9)}.md`]: decision(9, ""), [`canon/decisions/${id("D", 10)}.md`]: decision(10, `amends: [${id("D", 9)}]\n`) });
+    write(ok, { [`canon/decisions/${id("D", 9)}.md`]: decision(9, ""), [`canon/decisions/${id("D", 10)}.md`]: decision(10, `amends: [${id("D", 9)}]\nrevised_because: requirement\n`) });
     expect(canon(ok, "check").code).toBe(0);
   });
 
@@ -85,7 +85,7 @@ describe("canon check output", () => {
       write(root, {
         [`canon/decisions/${id("D", 1)}.md`]: decision(1, ""),
         [`canon/changes/${id("C", 9)}.md`]: `---\nid: ${id("C", 9)}\ntitle: C\nstatus: done\n---\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n## 任务\n\n- [x] x\n`,
-        [`canon/decisions/${id("D", 2)}.md`]: decision(2, `supersedes: ${supersedes}\n`),
+        [`canon/decisions/${id("D", 2)}.md`]: decision(2, `supersedes: ${supersedes}\nrevised_because: requirement\n`),
       });
       const r = canon(root, "check", "--json");
       return [r.code, (JSON.parse(r.out) as { rule: string }[]).map((f) => f.rule)];
