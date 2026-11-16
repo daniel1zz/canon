@@ -58,6 +58,46 @@ describe("documents a split review repeats in every call (BR-2359, #241)", () =>
   });
 });
 
+describe("releases in a split review (BR-2359, #242)", () => {
+  test("BR-2359: a release a changed rule is tagged with is whole, with its tagged rules, in call 1 only; later calls list it by id and title", () => {
+    const root = repo();
+    mkdirSync(join(root, "canon/releases"), { recursive: true });
+    writeFileSync(join(root, "canon/releases/R-1.md"), `---\nid: R-1\ntitle: Release one\nstatus: planned\n---\n\n## 范围\n\nRELEASE-SCOPE ${"r".repeat(4 * KB)}\n\n## 不做\n\nnone\n`);
+    writeFileSync(join(root, "canon/rules/game/BR-10.md"), rule("BR-10", "按 BR-91 处理。").replace("untested: demo\n", "untested: demo\nrelease: R-1\n"));
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "tag BR-10 with R-1");
+    const c = corpus(root);
+    const r = reviewPrompts(root, c, c.docs.filter((d) => d.id === "BR-10"), {}, 70 * KB);
+    if (!r.ok) throw new Error(r.error.message);
+    const calls = r.value;
+    expect(calls.length).toBeGreaterThan(1);
+    expect(calls[0]!).toContain("# Release R-1 Release one (planned)");
+    expect(calls[0]!).toContain("RELEASE-SCOPE");
+    expect(calls[0]!).toMatch(/^- BR-10 \[game\] Rule BR-10$/m);
+    for (const p of calls.slice(1)) {
+      expect(p).not.toContain("RELEASE-SCOPE");
+      expect(p).not.toContain("# Release R-1 ");
+      expect(p).toContain("# Releases of this landing (whole text and tagged rules in call 1 of this review; here only id and title)\n\n- R-1 Release one (planned)\n");
+    }
+    for (const p of calls) expect(new TextEncoder().encode(p).length).toBeLessThanOrEqual(70 * KB);
+  });
+
+  test("BR-2359: a review that fits one call shows the release whole and has no listing line", () => {
+    const root = repo();
+    mkdirSync(join(root, "canon/releases"), { recursive: true });
+    writeFileSync(join(root, "canon/releases/R-1.md"), `---\nid: R-1\ntitle: Release one\nstatus: planned\n---\n\n## 范围\n\nRELEASE-SCOPE\n\n## 不做\n\nnone\n`);
+    writeFileSync(join(root, "canon/rules/game/BR-10.md"), rule("BR-10", "按 BR-91 处理。").replace("untested: demo\n", "untested: demo\nrelease: R-1\n"));
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "tag BR-10 with R-1");
+    const c = corpus(root);
+    const r = reviewPrompts(root, c, c.docs.filter((d) => d.id === "BR-10"), {}, 1024 * KB);
+    if (!r.ok) throw new Error(r.error.message);
+    expect(r.value.length).toBe(1);
+    expect(r.value[0]!).toContain("RELEASE-SCOPE");
+    expect(r.value[0]!).not.toContain("# Releases of this landing");
+  });
+});
+
 describe("a decision whose only edit is in its 来源 lines (BR-2009, #240)", () => {
   test("BR-2009: repointing a 来源 line is not a changed decision; any other edit beside it is", () => {
     const root = repo();

@@ -91,6 +91,11 @@ export interface ReviewExtras {
   readonly citedFirst?: readonly Doc[];
   /** Named documents that did not fit in full beside the domain text a call needs: listed by id, title and first line (BR-2488, #229). */
   readonly citedListed?: readonly Doc[];
+  /**
+   * In the calls after the first of a split review: the releases the changed documents bring in are shown whole in call 1,
+   * which holds every changed document; here they are listed by id and title (BR-2359, #242).
+   */
+  readonly releasesFirst?: boolean;
 }
 
 /** The key of each blocking criterion in the prompts, and `note` for a remark that never blocks (BR-2367, D-74). */
@@ -241,9 +246,14 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
     else if (d.kind === "rule" && d.release !== undefined) releaseIds.add(d.release);
   }
   const changedIds = new Set(changed.map((d) => d.id));
-  for (const id of [...releaseIds].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }))) {
-    const release = corpus.docs.find((d) => d.kind === "release" && d.id === id);
-    if (!release || release.kind !== "release") continue;
+  const releases = [...releaseIds].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map((id) => corpus.docs.find((d) => d.kind === "release" && d.id === id)).filter((d): d is Doc => d?.kind === "release");
+  // reason: a release's 范围, 不做 and tagged-rule list only judge the changed documents, and call 1 holds all of them; repeated in every call they took about 90 KB of each (BR-2359, #242)
+  if (extras.releasesFirst && releases.length) {
+    parts.push("# Releases of this landing (whole text and tagged rules in call 1 of this review; here only id and title)", "", ...releases.map((r) => `- ${r.id} ${r.title} (${"status" in r ? r.status : ""})`), "");
+  }
+  for (const release of extras.releasesFirst ? [] : releases) {
+    if (release.kind !== "release") continue;
+    const id = release.id;
     const tagged = corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status !== "retired" && d.release === id);
     parts.push(`# Release ${release.id} ${release.title} (${release.status})${changedIds.has(id) ? " (new text shown above)" : ""}\n\n${changedIds.has(id) ? "" : `${release.body.trim()}\n\n`}Rules tagged ${id}:\n${tagged.length ? tagged.map((r) => `- ${r.id} [${r.domain}]${r.status === "planned" ? " [规划中]" : ""} ${r.title}`).join("\n") : "(none)"}\n`);
   }
@@ -790,7 +800,7 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   // reason: a changed rule's 按 BR-n needs BR-n beside it in every call (#219), but a decision or release naming dozens of
   // documents repeated them whole in each call, so the fixed part multiplied the calls (#241): those go whole in call 1 only
   const ruleNamed = new Set(changed.filter((d) => d.kind === "rule").flatMap((d) => [...referencedIds(d, corpus.types)]));
-  const noWording: ReviewExtras = { ...extras, wording: [], cited: (extras.cited ?? []).filter((d) => ruleNamed.has(d.id)), citedFirst: (extras.cited ?? []).filter((d) => !ruleNamed.has(d.id)) };
+  const noWording: ReviewExtras = { ...extras, wording: [], releasesFirst: true, cited: (extras.cited ?? []).filter((d) => ruleNamed.has(d.id)), citedFirst: (extras.cited ?? []).filter((d) => !ruleNamed.has(d.id)) };
   const room = noteRoom(corpus, maxCalls(root, corpus, contextTops(corpus, changed, extras)));
   const fixed = (first: boolean): number => bytes([...promptHead(corpus, changed, first ? extras : noWording), ...tail].join("\n")) + room;
   // the three parts of the smallest prompt, so a refusal can say which one is too large (BR-2359, D-67, #136)
