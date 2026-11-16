@@ -132,10 +132,21 @@ describe("a claim held by a subagent refuses the main session and other subagent
   }, TIMED);
 });
 
+/**
+ * A subagent claim with no delegation record, as one started before BR-2498 took effect: the only kind BR-2336 still
+ * takes back; a delegated one goes back to its design owner by BR-2500.
+ */
+const legacy = (root: string, change: string) => {
+  const d = db(root);
+  d.db.query("DELETE FROM delegations WHERE subject = ?").run(change);
+  d.db.query("UPDATE claims SET delegation_epoch = NULL WHERE subject = ?").run(change);
+};
+
 describe("canon work take (BR-2336)", () => {
   test("BR-2336: the main session takes over its subagent's claim, a claim.handover is recorded, and it can land there", async () => {
     const root = project();
     const s = startNew(root, "Taken", `${S}:abc`);
+    legacy(root, s.change);
     expect(holderOf(root, s.change)).toBe(`${S}:abc`);
     const r = await canon(root, {}, "work", "take", s.change, "--from", "abc");
     expect(r.code).toBe(0);
@@ -152,6 +163,7 @@ describe("canon work take (BR-2336)", () => {
   test("BR-2336: an expired claim is taken over too; the subagent's later land is refused", async () => {
     const root = project();
     const s = startNew(root, "Expired", `${S}:abc`);
+    legacy(root, s.change);
     db(root).db.query("UPDATE claims SET expires_at = ? WHERE subject = ?").run("2020-01-01T00:00:00.000Z", s.change);
     expect((await canon(root, {}, "work", "take", s.change, "--from", "abc")).code).toBe(0);
     const later = await canon(s.worktree, {}, "work", "land", "--as", "abc");
@@ -162,12 +174,14 @@ describe("canon work take (BR-2336)", () => {
   test("BR-2336: a wrong --from, another session's subagent, a session-level holder and no claim exit 5 and change nothing", async () => {
     const root = project();
     const s = startNew(root, "Refused", `${S}:abc`);
+    legacy(root, s.change);
     const wrong = await canon(root, {}, "work", "take", s.change, "--from", "xyz");
     expect(wrong.code).toBe(5);
     expect(wrong.err).toContain(`${S}:abc`);
     expect(holderOf(root, s.change)).toBe(`${S}:abc`);
     expect(events(root, "claim.refuse").map((e) => JSON.parse(e.detail).reason)).toEqual(["handover"]);
     const other = startNew(root, "Other session", "agent:s2zzzzzz:abc");
+    legacy(root, other.change);
     expect((await canon(root, {}, "work", "take", other.change, "--from", "abc")).code).toBe(5);
     expect(holderOf(root, other.change)).toBe("agent:s2zzzzzz:abc");
     const own = startNew(root, "Session level", S);
@@ -180,6 +194,7 @@ describe("canon work take (BR-2336)", () => {
   test("BR-2336: --as, a bad --from, and a run outside Claude Code exit 2 and write nothing", async () => {
     const root = project();
     const s = startNew(root, "Usage", `${S}:abc`);
+    legacy(root, s.change);
     const before = db(root).db.query("SELECT COUNT(*) AS n FROM events").get();
     expect((await canon(root, {}, "work", "take", s.change, "--from", "abc", "--as", "abc")).code).toBe(2);
     expect((await canon(root, {}, "work", "take", s.change, "--from", "a b")).code).toBe(2);

@@ -93,14 +93,19 @@ describe("Codex coordination identity", () => {
     const db = new Database(join(root, ".git/canon/state.db"), { readonly: true });
     const claim = db.query<{ subject: string; worktree: string }, []>("SELECT subject, worktree FROM claims").get()!;
     const { subject } = claim;
+    db.close();
+    // reason: BR-2336 now covers only a subagent claim with no delegation record (one from before BR-2498); a delegated one goes back by BR-2500
+    const rw = new Database(join(root, ".git/canon/state.db"));
+    rw.query("DELETE FROM delegations WHERE subject = ?").run(subject); rw.query("UPDATE claims SET delegation_epoch = NULL WHERE subject = ?").run(subject); rw.close();
     expect(cli(root, envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "child-2" }), "work", "take", subject, "--from", "child-1").code).toBe(2);
     expect(cli(root, envFor({ CODEX_THREAD_ID: "session-b" }), "work", "take", subject, "--from", "child-1").code).toBe(5);
     expect(cli(root, envFor({ CODEX_THREAD_ID: "session-a" }), "work", "take", subject, "--from", "child-1").code).toBe(0);
-    expect(db.query<{ holder: string }, []>("SELECT holder FROM claims").get()!.holder).toBe("agent:codex-session-a");
+    const after = new Database(join(root, ".git/canon/state.db"), { readonly: true });
+    expect(after.query<{ holder: string }, []>("SELECT holder FROM claims").get()!.holder).toBe("agent:codex-session-a");
+    after.close();
     const formerChild = cli(claim.worktree, envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "child-1" }), "work", "stop", "--next", "still a child without --as");
     expect(formerChild.code).toBe(5);
-    expect(formerChild.err).toContain("nothing changed");
-    db.close();
+    expect(formerChild.err).toContain("claimed by agent:codex-session-a");
   });
 
   test("BR-2342: a Codex landing warns about the native missing identity hook; a terminal does not", () => {
@@ -138,7 +143,7 @@ describe("Codex coordination identity", () => {
     expect(cli(root, envFor({ CODEX_THREAD_ID: "native-child" }), "human", "answer", "1", "yes", "--relayed", "yes").code).toBe(0);
     expect(db.query<{ witness: string }, []>("SELECT witness FROM questions WHERE id=1").get()!.witness).toBe("match");
     expect(cli(root, envFor({ CODEX_THREAD_ID: "native-child" }), "human", "pending", "--all").out).toContain("the human's words match Claude Code's record");
-    expect(cli(root, envFor({ CODEX_THREAD_ID: "native-root" }), "work", "take", claim.subject, "--from", "native-child").code).toBe(0);
+    expect(cli(root, envFor({ CODEX_THREAD_ID: "native-root" }), "work", "take", claim.subject, "--from", "native-child", "--stopped").code).toBe(0);
     db.close();
   });
 

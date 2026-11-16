@@ -56,7 +56,7 @@ describe("canon work status", () => {
     expect(text[5]).toMatch(new RegExp(`^  ${s.change}\\s+next: land it  \\(agent:a, \\S+\\)$`));
     expect(text[6]).toBe("Questions waiting for a human: 1");
     const data = JSON.parse(canon(root, "work", "status", "--json").out);
-    expect(Object.keys(data)).toEqual(["chores", "claims", "queue", "landings", "resolving", "handoffs", "questions", "urgent"]);
+    expect(Object.keys(data)).toEqual(["chores", "claims", "queue", "landings", "resolving", "handoffs", "questions", "design_requests", "urgent"]);
     expect(data.chores).toEqual([]); // a chore shows here only until it completes a landing (BR-2192, BR-2457)
     expect(data.claims.map((c: { subject: string }) => c.subject)).toEqual([s.change]);
     expect(data.handoffs.map((h: { next: string }) => h.next)).toEqual(["land it"]);
