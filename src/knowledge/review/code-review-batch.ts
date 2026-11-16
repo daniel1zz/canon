@@ -6,7 +6,8 @@ import { isGone, selfProcess, type Proc } from "../../work/claims/liveness.ts";
 import { nowMs } from "../../kernel/clock.ts";
 import { git } from "../../kernel/git.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { codeReview, type Env } from "./code-review.ts";
+import type { DelegationSnapshot } from "../../work/land/checks/delegation.ts";
+import { codeReview, type Env, type WorkerLanding } from "./code-review.ts";
 
 /**
  * Post-land code review in batches (D-59, BR-2314, BR-2315, BR-2316): `refs/canon/code-reviewed` is the last commit
@@ -17,17 +18,36 @@ export const REVIEWED_REF = "refs/canon/code-reviewed";
 
 /** A landing: the commit it put on main, the change, and when (ms). */
 export interface Landed {
+  /** The id of its land.ok event. */
+  readonly id: number;
   readonly sha: string;
+  /** Where its own diff starts: the land.ok's base. */
+  readonly base: string | null;
   readonly change: string | null;
   readonly at: number;
+  /** A worker landing's delegation snapshot (BR-2501). */
+  readonly delegation?: DelegationSnapshot;
 }
 
 /** Every landing recorded (land.ok), newest first. */
 export function landedEvents(db: CoordDb): Landed[] {
   return db.db
-    .query<{ sha: string | null; subject: string | null; ts: string }, []>("SELECT json_extract(detail, '$.sha') AS sha, subject, ts FROM events WHERE kind = 'land.ok' ORDER BY id DESC LIMIT 5000")
+    .query<{ id: number; sha: string | null; base: string | null; delegation: string | null; subject: string | null; ts: string }, []>(
+      "SELECT id, json_extract(detail, '$.sha') AS sha, json_extract(detail, '$.base') AS base, json_extract(detail, '$.delegation') AS delegation, subject, ts FROM events WHERE kind = 'land.ok' ORDER BY id DESC LIMIT 5000",
+    )
     .all()
-    .flatMap((r) => (r.sha ? [{ sha: r.sha, change: r.subject, at: Date.parse(r.ts) }] : []));
+    .flatMap((r) => (r.sha ? [{ id: r.id, sha: r.sha, base: r.base, change: r.subject, at: Date.parse(r.ts), ...(r.delegation ? { delegation: JSON.parse(r.delegation) as DelegationSnapshot } : {}) }] : []));
+}
+
+/** The worker landings among `landings`: the ones whose land.ok records a delegation snapshot (BR-2501, BR-2503). */
+export function workerLandings(landings: readonly Landed[]): Result<WorkerLanding[]> {
+  const out: WorkerLanding[] = [];
+  for (const l of landings) {
+    if (!l.delegation) continue;
+    if (!l.base) return err("invalid", `land.ok ${l.id} (${l.change ?? l.sha.slice(0, 9)}) records a delegation but no base, so its own diff is unknown`);
+    out.push({ event: l.id, sha: l.sha, base: l.base, change: l.change, delegation: l.delegation });
+  }
+  return ok(out);
 }
 
 /** The commits `reviewed..head` and the landings among them, oldest first. */
@@ -186,6 +206,8 @@ export async function reviewBatch(i: BatchInput): Promise<Result<void>> {
       i.onDeferred?.();
       return ok(undefined);
     }
+    const workers = workerLandings(p.value.landings);
+    if (!workers.ok) return workers;
     const env: Env = {
       cwd: i.cwd,
       base: p.value.base,
@@ -195,6 +217,7 @@ export async function reviewBatch(i: BatchInput): Promise<Result<void>> {
       gh: i.gh,
       say: i.say,
       owner: ownerOf(i.cwd, i.head, p.value),
+      workers: workers.value,
     };
     const r = codeReview(env);
     // reason: a failed review leaves the ref where it was, so the next run reviews the same range again (BR-2315).
