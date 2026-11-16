@@ -7,6 +7,7 @@ export function workerMayStart(db: CoordDb, subject: string, actor: string): Res
   if (!isWorker(actor)) return ok(undefined);
   const d = delegation(db, subject);
   const name = actor.split(":").slice(2).join(":");
+  if (d?.ended) return err("refused", `${subject}: its delegation to ${d.worker} ended when design owner ${d.owner} took it back at ${d.ended}; ask the design owner to canon work delegate it again`);
   if (!d || d.worker !== name || (d.acceptor !== null && d.acceptor !== actor)) {
     return err("refused", `${subject}: ${d ? `delegated to ${d.worker}; acceptor ${d.acceptor ?? "none"}` : "未派发"}; ask the design owner to canon work delegate it`);
   }
@@ -18,6 +19,8 @@ export function workerMayUseClaim(db: CoordDb, subject: string, actor: string): 
   if (!isWorker(actor)) return ok(undefined);
   const d = delegation(db, subject);
   if (!d) return ok(undefined);
+  // reason: a take ends the delegation and voids every older epoch for good (BR-2500, BR-2498)
+  if (d.ended) return err("conflict", `${subject}: its delegation ended when design owner ${d.owner} took it back at ${d.ended}; this worker's claim no longer counts; nothing changed`);
   const c = db.db.query<{ holder: string; delegation_epoch: number | null }, [string]>("SELECT holder,delegation_epoch FROM claims WHERE subject = ?").get(subject);
   return d.acceptor === actor && c?.holder === actor && c.delegation_epoch === d.epoch
     ? ok(undefined)

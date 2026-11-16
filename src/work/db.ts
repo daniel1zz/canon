@@ -186,11 +186,26 @@ CREATE TABLE IF NOT EXISTS finding_asks (
   how      TEXT NOT NULL CHECK (how IN ('fixed', 'spurious')),
   target   TEXT NOT NULL
 );
+-- Design requests a worker hands back to the change's design owner (BR-2499, D-128): they belong to the change, not to a person.
+CREATE TABLE IF NOT EXISTS design_requests (
+  id          INTEGER PRIMARY KEY AUTOINCREMENT,
+  subject     TEXT NOT NULL,
+  asked_by    TEXT NOT NULL,
+  request     TEXT NOT NULL,
+  status      TEXT NOT NULL CHECK (status IN ('pending', 'answered')),
+  answer      TEXT,
+  answered_by TEXT,
+  main        TEXT,                    -- the main commit when the answer was recorded
+  asked_at    TEXT NOT NULL,
+  answered_at TEXT
+);
 `;
 
 /** Columns added after the first schema, as `table`, `column definition`. */
 const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ["claims", "delegation_epoch INTEGER"],
+  // When the design owner took the change back (BR-2500): the delegation has ended until it is delegated again.
+  ["delegations", "ended TEXT"],
   ["questions", "relayed TEXT"],
   // The process behind a claim (its Claude Code session) and behind a queue entry (the lander), by pid and start time (D-11).
   ["claims", "pid INTEGER"],

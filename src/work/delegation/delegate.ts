@@ -100,8 +100,8 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
     if (claim && claim.holder !== ws.actor && !isWorker(claim.holder)) return err("conflict", `${subject} is claimed by ${claim.holder}`);
     const accepted = claim && claim.holder === previous?.acceptor;
     if (accepted && worker !== previous!.worker) return err("conflict", `${subject} is held by ${claim.holder}; canon work take it before changing the worker`);
-    const d: Delegation = { subject, worker, owner: ws.actor, revision: revision.value, epoch: (previous?.epoch ?? 0) + 1, acceptor: accepted ? previous!.acceptor : null, manifest, taskHash };
-    ws.db.db.query("INSERT INTO delegations(subject,worker,owner,revision,epoch,acceptor,manifest,task_hash) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET worker=excluded.worker,owner=excluded.owner,revision=excluded.revision,epoch=excluded.epoch,acceptor=excluded.acceptor,manifest=excluded.manifest,task_hash=excluded.task_hash")
+    const d: Delegation = { subject, worker, owner: ws.actor, revision: revision.value, epoch: (previous?.epoch ?? 0) + 1, acceptor: accepted ? previous!.acceptor : null, manifest, taskHash, ended: null };
+    ws.db.db.query("INSERT INTO delegations(subject,worker,owner,revision,epoch,acceptor,manifest,task_hash) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET worker=excluded.worker,owner=excluded.owner,revision=excluded.revision,epoch=excluded.epoch,acceptor=excluded.acceptor,manifest=excluded.manifest,task_hash=excluded.task_hash,ended=NULL")
       .run(subject, worker, d.owner, d.revision, d.epoch, d.acceptor, JSON.stringify(manifest), taskHash);
     if (claim?.holder === ws.actor) ws.db.db.query("DELETE FROM claims WHERE subject = ? AND holder = ?").run(subject, ws.actor);
     ws.db.event(ws.actor, previous ? "delegation.update" : "delegation.create", subject, { ...d, ...(previous ? { previous } : {}) });

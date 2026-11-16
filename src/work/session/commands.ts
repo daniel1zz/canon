@@ -8,6 +8,7 @@ import { writeSchemaFile } from "../../invocation/reference/reference.ts";
 import { AS_ARG, RUNTIME_ARG, corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { takesMany } from "../../invocation/strict.ts";
 import { delegationNotice } from "../delegation/records.ts";
+import { changeRequestLines, ownerRequestLines, pendingRequests, statusRequestLines } from "../delegation/requests.ts";
 import { guideFor, WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { noticeUpdates } from "../../install/commands.ts";
 import { backgroundNotice, settleBackgroundHooks } from "../hooks/hooks.ts";
@@ -111,9 +112,12 @@ const status = defineCommand({
     const unreviewed = unreviewedNotice(ws);
     const failedReviews = failedReviewNotice(ws.db);
     const chores = must(choresInFlight(ws));
-    const data = { chores, ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), ...(failedReviews.length > 0 ? { failed_reviews: failedReviews } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending"), urgent: marks(ws.db) };
+    const data = { chores, ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), ...(failedReviews.length > 0 ? { failed_reviews: failedReviews } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending"), design_requests: pendingRequests(ws.db), urgent: marks(ws.db) };
     if (args.json) return json(data);
     for (const row of ws.db.db.query<{ subject: string }, []>("SELECT subject FROM delegations ORDER BY subject").all()) for (const line of delegationNotice(ws.db, row.subject)) say(line);
+    // Pending design requests, each with the design owner who answers it (BR-2499).
+    const requests = statusRequestLines(ws.db);
+    if (requests.length) say(`Design requests waiting for their design owner (canon work design-answer <n> "<answer>"):\n${requests.join("\n")}`);
     for (const line of [...untested, ...unreviewed, ...failedReviews]) say(line);
     if (chores.length) say(`Unfinished chores: ${chores.map((c) => `${c.subject} (${c.branch})`).join(", ")}`);
     say("Claims:");
@@ -229,11 +233,15 @@ function briefState(ws: Workspace): Result<void> {
   // A failing main comes first, in every worktree (BR-2220); then the background floor starts if main's latest commit needs it (BR-2219).
   for (const line of redMainNotice(ws.db, mine?.subject)) say(line);
   ensureWatcher(ws, say);
+  // The design requests this session answers as design owner, in every worktree: a worker waits on them (BR-2499).
+  for (const line of ownerRequestLines(ws.db, ws.actor)) say(line);
   for (const line of [...untestedNotice(ws), ...unreviewedNotice(ws)]) say(line);
   // The last batch of a burst has no later landing to review it (BR-2316).
   startTrailingReview(ws, say);
   if (mine) {
     for (const line of delegationNotice(ws.db, mine.subject)) say(line);
+    // The requests on this change with their answers, next to the latest design revision above (BR-2499).
+    for (const line of changeRequestLines(ws.db, mine.subject)) say(line);
     say(isChore(mine.subject)
       ? `You are in chore ${mine.subject} (${ws.root}); its record is its commits. Land with canon chore land.`
       : `You are in ${mine.subject} (${ws.root}). Read it: canon show ${mine.subject}; context: canon context ${mine.subject}`);

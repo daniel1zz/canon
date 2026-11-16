@@ -2,6 +2,7 @@ import { err, ok, type Result } from "../../kernel/result.ts";
 import type { CoordDb } from "../db.ts";
 import { isGone, selfProcess, type Proc } from "./liveness.ts";
 import { workerMayUseClaim } from "../delegation/access.ts";
+import { lapsedTakeover } from "../delegation/take.ts";
 
 /**
  * Live coordination operations (design §2). Each is one transaction on the shared DB, so two sessions
@@ -60,9 +61,12 @@ export function takeClaim(db: CoordDb, subject: string, holder: string, actor: s
         `${subject} is claimed by ${cur.holder} in ${cur.worktree} until ${cur.expires_at}${own}; it frees when the holder runs \`canon work stop --release\` there or the lease expires`,
       );
     }
+    // reason: a lapsed claim on a change delegated out passes only to its design owner, as a take (BR-2500, BR-2100)
+    const handed = cur ? lapsedTakeover(db, subject, actor, cur) : ok(false);
+    if (!handed.ok) return handed;
     const expires = iso(new Date(now().getTime() + leaseMs));
     db.db.query(INSERT_CLAIM).run(subject, actor, holder, expires, owner?.pid ?? null, owner?.start ?? null, subject);
-    db.event(actor, "claim.take", subject, { worktree: holder, ...(gone ? { from: cur.holder, reason: "holder-process-gone" } : {}) });
+    if (!handed.value) db.event(actor, "claim.take", subject, { worktree: holder, ...(gone ? { from: cur.holder, reason: "holder-process-gone" } : {}) });
     return ok({ subject, holder, actor, expires_at: expires });
   });
   return tx.immediate();
@@ -90,6 +94,9 @@ export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs
       const who = sub !== undefined ? `, a subagent of this session: do not work in this worktree unless you are that subagent; if it has finished, run \`canon work take ${cur.subject} --from ${sub}\`` : "";
       return err("conflict", `${cur.subject} in ${worktree} is claimed by ${cur.holder} until ${cur.expires_at}; only that holder can renew, stop, release or land it${who}`);
     }
+    // reason: a lapsed claim on a change delegated out passes only to its design owner, as a take (BR-2500, BR-2104)
+    const handed = cur.holder !== actor ? lapsedTakeover(db, cur.subject, actor, cur) : ok(false);
+    if (!handed.ok) return handed;
     const expires = iso(new Date(now().getTime() + leaseMs));
     // reason: while a landing of this worktree is in the queue, the claim names that lander, and the holder's own
     // work commands (a `canon work stop` while it waits) leave it so, or the session exiting would free it (BR-2142, issue #30).
@@ -105,7 +112,8 @@ export function renewClaim(db: CoordDb, worktree: string, actor: string, leaseMs
     const pid = landing ? cur.pid : (owner?.pid ?? (own ? cur.pid : null));
     const pidStart = landing ? cur.pid_start : (owner?.start ?? (own ? cur.pid_start : null));
     db.db.query("UPDATE claims SET holder = ?, expires_at = ?, pid = ?, pid_start = ?, version = version + 1 WHERE subject = ?").run(actor, expires, pid, pidStart, cur.subject);
-    db.event(actor, cur.holder === actor ? "claim.renew" : "claim.take", cur.subject, { worktree, ...(cur.holder === actor ? {} : { from: cur.holder }) });
+    if (handed.value) db.db.query("UPDATE claims SET delegation_epoch = NULL WHERE subject = ?").run(cur.subject);
+    else db.event(actor, cur.holder === actor ? "claim.renew" : "claim.take", cur.subject, { worktree, ...(cur.holder === actor ? {} : { from: cur.holder }) });
     return ok({ subject: cur.subject, holder: worktree, actor, expires_at: expires });
   });
   return tx.immediate();

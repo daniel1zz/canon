@@ -27,15 +27,15 @@ title: 架构总览
 - 决策：D-2、D-3、D-4、D-15、D-28、D-63。
 
 **协调数据库 `state.db`**
-- 职责：多个会话同时工作时的共享状态：认领、派发快照（`delegations`，固定设计负责人、版本、契约和接受者；历史在事件表中）、合入队列、负责人标的优先合入（`canon backlog urgent`）、交接记录、留给人的问题、编号、端口、事件表（每次写入和拒绝，每条记下写它的 canon 构建提交，源码运行记 `dev`，BR-2475）、后台部件的登记、排队的合入后评审（`landed_reviews`）、未处理的评审意见（`review_findings`，含 reconcile 互记的 `question` 列，见合入后的命令和评审）、挑选命令回答的缓存（`related_picks`，BR-2444）。
+- 职责：多个会话同时工作时的共享状态：认领、派发快照（`delegations`，固定设计负责人、版本、契约和接受者，`take` 之后记下派发结束的时间；历史在事件表中）、设计请求（`design_requests`，属于变更，跟着设计负责人走）、合入队列、负责人标的优先合入（`canon backlog urgent`）、交接记录、留给人的问题、编号、端口、事件表（每次写入和拒绝，每条记下写它的 canon 构建提交，源码运行记 `dev`，BR-2475）、后台部件的登记、排队的合入后评审（`landed_reviews`）、未处理的评审意见（`review_findings`，含 reconcile 互记的 `question` 列，见合入后的命令和评审）、挑选命令回答的缓存（`related_picks`，BR-2444）。
 - 数据：`<git 公共目录>/canon/state.db`（SQLite），本机所有 worktree 共用，不提交、不跨机器。知识（规则、决策）不放这里。
 - 代码：`src/work`（`db.ts`、`workspace.ts`），各子领域读写自己的表；`src/work/humans`（留给人的问题）、`src/work/stats`（从事件表算统计，`canon stats`、`canon events`、`canon usage`）。
 - 决策：D-6、D-11、D-18、D-33、D-41、D-45、D-47、D-73、D-116。
 
 **主 checkout 与工作 worktree**
-- 职责：主 checkout 签出 main，main 只通过共享合入流水线前移；业务变更有 worktree `<仓库名>.worktrees/C-n`、分支 `change/C-n`、Change 文档和认领；杂务由 `canon chore start` 开工，工作树以 `chore-<UUID>` 命名，分支为 `chore/<UUID>-<slug>`，没有 Change 文档或 C 编号。分支是杂务身份和类型的恢复源，事件保存标题，认领只负责所有权；双方共用租约、交接、队列、端口和快照（D-100）。认领的持有者是会话，子 agent 的名字写在后面（`agent:<会话>:<名字>`）：子 agent 的认领类命令（`work start`、`land`、`stop`、`drop`，以及 `chore start`、`chore land`）带 `--as <自己的 agent_id>`，别的会话启动的 worker 会话由派发方设 `CANON_SUBAGENT` 给出名字（BR-2495），没设时自己带 `--as`（BR-2468），主会话不带；主会话用 `canon work take <工作身份> --from <agent_id>` 接手子 agent 的工作，`take` 和 `unstall` 不给子 agent（BR-2340）；`take` 只在 Claude Code 或 Codex 的主会话里运行（BR-2336），`unstall` 主会话和人都能运行（BR-2455）。快照（每次 Bash 前给 hook 的 `cwd` 所在 worktree 和调用者自己认领的其他 worktree 各做一个，D-71）和归档是 git ref：`refs/canon/snapshots/*`、`refs/canon/archive/*`。
+- 职责：主 checkout 签出 main，main 只通过共享合入流水线前移；业务变更有 worktree `<仓库名>.worktrees/C-n`、分支 `change/C-n`、Change 文档和认领；杂务由 `canon chore start` 开工，工作树以 `chore-<UUID>` 命名，分支为 `chore/<UUID>-<slug>`，没有 Change 文档或 C 编号。分支是杂务身份和类型的恢复源，事件保存标题，认领只负责所有权；双方共用租约、交接、队列、端口和快照（D-100）。认领的持有者是会话，子 agent 的名字写在后面（`agent:<会话>:<名字>`）：子 agent 的认领类命令（`work start`、`land`、`stop`、`drop`，以及 `chore start`、`chore land`）带 `--as <自己的 agent_id>`，别的会话启动的 worker 会话由派发方设 `CANON_SUBAGENT` 给出名字（BR-2495），没设时自己带 `--as`（BR-2468），主会话不带；主会话用 `canon work take <工作身份> --from <agent_id>` 接手子 agent 的工作，`take` 和 `unstall` 不给子 agent（BR-2340）；派发出去的变更由设计负责人 `take`，不论 worker 在哪个进程（BR-2500），没有派发记录的子 agent 认领才按 BR-2336 只在 Claude Code 或 Codex 的主会话里 `take`，`unstall` 主会话和人都能运行（BR-2455）。快照（每次 Bash 前给 hook 的 `cwd` 所在 worktree 和调用者自己认领的其他 worktree 各做一个，D-71）和归档是 git ref：`refs/canon/snapshots/*`、`refs/canon/archive/*`。
 - 数据：worktree 里的代码和 `canon/changes/C-n.md`；每个 worktree 的 `.canon/`（生成的 schema，被 git 忽略）。
-- 代码：`src/work/session`（开始、停下、交接、`canon brief`；没认领变更时 brief 列出 proposed 超过 24 小时的决策，BR-2476）、`src/work/claims`（认领、`--as` 的解析、`check-as` hook 的检查）、`src/work/delegation`（派发给 worker、接受设计版本，BR-2497、BR-2498、D-128；设计请求和收回派发仍在规划中）、`src/work/drop`、`src/work/snapshots`。
+- 代码：`src/work/session`（开始、停下、交接、`canon brief`；没认领变更时 brief 列出 proposed 超过 24 小时的决策，BR-2476）、`src/work/claims`（认领、`--as` 的解析、`check-as` hook 的检查）、`src/work/delegation`（派发给 worker、接受设计版本、设计请求 `need-design` / `design-answer`、设计负责人用 `take` 收回派发，BR-2497 到 BR-2500、D-128；设计请求在协调数据库的 `design_requests` 表）、`src/work/drop`、`src/work/snapshots`。
 - 决策：D-11、D-13、D-18、D-30、D-62、D-71、D-100。
 
 **合入流水线（`canon work land`、`canon chore land`）**
