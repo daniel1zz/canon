@@ -1,7 +1,6 @@
 import { basename } from "node:path";
 import { git } from "../../../kernel/git.ts";
 import { parseDocFile } from "../../../knowledge/documents/docfile.ts";
-import { section } from "../../../knowledge/documents/templates.ts";
 import type { CoordDb } from "../../db.ts";
 import { activationOnly, blob, configAt, designPathsOf, hash, taskHashOf } from "../../delegation/delegate.ts";
 import { delegation, type ContractItem, type Delegation } from "../../delegation/records.ts";
