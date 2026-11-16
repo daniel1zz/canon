@@ -209,7 +209,7 @@ async function landTogether(root: string, landers: readonly { wt: string; actor:
   return { out: await Promise.all(runs), said };
 }
 
-test("BR-2501 BR-2172: in a batch, a worker member is checked on the chain before it: the owner's BR-50 edit ahead lands, the worker's change on the old BR-50 is refused", async () => {
+test("BR-2501 BR-2172: in a batch, a worker member is checked on the chain before it: the owner's rule edit ahead lands, the worker's change on the old rule is refused", async () => {
   const f = fixture({ config: "land_batch_max: 3\n" }); code(f);
   const g = startNew(f.root, "Owner edits BR-50", OWNER);
   put(g.worktree, "canon/rules/task/BR-50.md", read(g.worktree, "canon/rules/task/BR-50.md").replace("Use D-40.", "Use D-40 and more.")); commit(g.worktree);
@@ -220,7 +220,7 @@ test("BR-2501 BR-2172: in a batch, a worker member is checked on the chain befor
   expect(worker).toStartWith("delegation: "); expect(worker).toContain("2. design changed since the delegation"); expect(worker).toContain("BR-50");
 }, 120_000);
 
-test("BR-2501 BR-2172: the owner leading a batch is not checked, and a worker member that changed D-40 is refused while the leader lands", async () => {
+test("BR-2501 BR-2172: the owner leading a batch is not checked, and a worker member that changed a decision is refused while the leader lands", async () => {
   const f = fixture({ config: "land_batch_max: 3\n" });
   put(f.worktree, "canon/decisions/D-40.md", read(f.worktree, "canon/decisions/D-40.md") + "\nWorker's choice.\n"); commit(f.worktree);
   const g = startNew(f.root, "Owner's code", OWNER);
