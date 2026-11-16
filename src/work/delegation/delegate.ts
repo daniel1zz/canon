@@ -14,10 +14,10 @@ import { delegation, delegationNotice, type ContractItem, type Delegation } from
 import { parseDocFile } from "../../knowledge/documents/docfile.ts";
 import { isDeepStrictEqual } from "node:util";
 
-const hash = (s: string | Uint8Array) => createHash("sha256").update(s).digest("hex");
+export const hash = (s: string | Uint8Array) => createHash("sha256").update(s).digest("hex");
 
 /** Read exact blob bytes, including the final newline (BR-2497's full content hash). */
-function blob(ws: Workspace, revision: string, path: string): Buffer | undefined {
+export function blob(ws: Workspace, revision: string, path: string): Buffer | undefined {
   const r = Bun.spawnSync(["git", "show", `${revision}:${path}`], { cwd: ws.primary, stdout: "pipe", stderr: "pipe" });
   return r.exitCode === 0 ? r.stdout : undefined;
 }
@@ -32,6 +32,18 @@ export function activationOnly(before: string | undefined, after: string | undef
   delete old.status; delete next.status; delete old.will_amend;
   return isDeepStrictEqual(old, next);
 }
+
+/** The hash of a change file's 为什么 and 要改什么 sections: the task a delegation fixes (BR-2497) and a worker landing compares (BR-2501). */
+export const taskHashOf = (body: string): string => hash(JSON.stringify([section(body, "## 为什么") ?? "", section(body, "## 要改什么") ?? ""]));
+
+/** `canon/config.yaml` as it is at `revision`; empty when it has none. */
+export function configAt(ws: Workspace, revision: string): Record<string, unknown> {
+  const text = blob(ws, revision, "canon/config.yaml");
+  return text === undefined ? {} : ((parse(text.toString()) ?? {}) as Record<string, unknown>);
+}
+
+/** The `design_paths` of a config read from main (BR-2497, BR-2501). */
+export const designPathsOf = (ws: Workspace, config: Record<string, unknown>): Result<readonly string[]> => delegationKeys.designPaths.read(config.design_paths ?? [], { root: ws.primary, raw: config });
 
 function changeAt(ws: Workspace, revision: string, subject: string): Result<{ corpus: Corpus; change: Change }> {
   const corpus = corpusOf(ws, revision);
@@ -58,9 +70,8 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
   if (!main.ok) return main;
   const closed = main.value.docs.find((d) => d.id === subject && d.kind === "change" && d.status !== "open");
   if (closed || task.value.change.status !== "open") return err("not_found", `${subject} is closed`);
-  const configText = blob(ws, revision.value, "canon/config.yaml");
-  const config = configText === undefined ? {} : (parse(configText.toString()) ?? {}) as Record<string, unknown>;
-  const paths = delegationKeys.designPaths.read(config.design_paths ?? [], { root: ws.primary, raw: config });
+  const config = configAt(ws, revision.value);
+  const paths = designPathsOf(ws, config);
   if (!paths.ok) return paths;
   const wanted = new Map<string, string | undefined>();
   const unpublished = new Set<string>();
@@ -93,7 +104,7 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
     manifest.push({ path, ...(id ? { id } : {}), hash: hash(text) });
   }
   if (unpublished.size) return err("refused", `publish these contract items to ${ws.config.main} first: ${[...unpublished].join(", ")}`);
-  const taskHash = hash(JSON.stringify([section(task.value.change.body, "## 为什么") ?? "", section(task.value.change.body, "## 要改什么") ?? ""]));
+  const taskHash = taskHashOf(task.value.change.body);
   const result = ws.db.db.transaction((): Result<Delegation> => {
     const previous = delegation(ws.db, subject);
     const claim = ws.db.db.query<{ holder: string }, [string]>("SELECT holder FROM claims WHERE subject = ?").get(subject);

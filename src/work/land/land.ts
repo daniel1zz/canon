@@ -3,7 +3,8 @@ import { existsSync } from "node:fs";
 import type { Say, Workspace } from "../workspace.ts";
 import { type Finding } from "../../knowledge/check/check.ts";
 import { bindToLander, claimOfWorktree, keepClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
-import { batchRefusal, enter, failKeepingPlace, failIfActive, finishEntry, heartbeat, holdsTurn, keptUntil, settleLocked, tryTurn } from "./queue/queue.ts";
+import { batchRefusal, enter, failKeepingPlace, failIfActive, finishEntry, heartbeat, holdsTurn, keptUntil, landerOf, settleLocked, tryTurn } from "./queue/queue.ts";
+import { moveMainGuarded, snapshotDetail, workerLandingRefusal, type WorkerLanding } from "./checks/delegation.ts";
 import { selfProcess, sessionProcess } from "../claims/liveness.ts";
 import { noticeOverlaps } from "../session/overlap.ts";
 import { choreIn, isChore } from "../session/subject.ts";
@@ -22,7 +23,7 @@ import { keptNote, lostTurn, predictedConflicts, priorityNow, waitPollMs } from 
 import { removeReviewTree } from "./checks/review-tree.ts";
 import { findingDetail, verifyChange } from "./checks/steps.ts";
 import { floorScope, floorSkip, runFloor } from "./checks/floor.ts";
-import { afterLand, closeLeftNote, closeSubject, finishLanding, moveMain, reopen, acceptAddedDecisions, stampAddedReferences, type CloseCommit } from "./finish/finish.ts";
+import { afterLand, closeLeftNote, closeSubject, finishLanding, reopen, acceptAddedDecisions, stampAddedReferences, type CloseCommit } from "./finish/finish.ts";
 import { batchDir, landBatch, landedInBatch } from "./batch/batch.ts";
 import { pushMain } from "../remote/remote.ts";
 import { settleInterrupted } from "./queue/interrupted.ts";
@@ -382,6 +383,11 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   // The commit the floor, canon check, the review and before_land prove; only this commit may become main (BR-2106).
   const tested = git(wt, "rev-parse", "HEAD");
   if (!tested.ok) return refuse("environment", tested.error.message);
+  // A worker's landing changed no design, the design is as delegated, no design request is pending and its epoch is
+  // current (BR-2501, D-128); before the batch, so a leader refused here takes no members with it.
+  const me: WorkerLanding = { subject, actor: ws.actor, epoch: landerOf(ws.db, entry)?.epoch ?? null };
+  const delegated = workerLandingRefusal(ws, me, { base: base.value, head: tested.value, main: base.value });
+  if (delegated) return refuse("delegation", delegated);
 
   // With floor_timing after, the floor runs on main in the background once main has moved, so this landing runs
   // only its own steps and joins no batch; the landing tree decides, as it decides the floor command (BR-2218, D-31).
@@ -444,11 +450,12 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   const turn = holdsTurn(ws.db, entry);
   if (!turn.held) return lostTurn(ws, subject, wt, turn.state, "before-main");
   const fingerprint = ownDiffId(wt, main); // before main moves: afterwards the merge base is HEAD itself
-  const moved = moveMain(ws, base.value, head.value);
-  if (moved !== "moved") return refuse(moved.reason, moved.message);
+  const moved = moveMainGuarded(ws, base.value, head.value, [me]);
+  if (moved.kind === "stale") return refuse("delegation", moved.message);
+  if (moved.kind === "failed") return refuse(moved.reason, moved.message);
 
   finishEntry(ws.db, entry, "landed", head.value);
-  const landed = ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, base: base.value, branch: t.branch, diff: fingerprint, ...(floorSkipped ? { floor_skipped: true } : {}), ...(floorDeferred ? { floor_deferred: true } : {}) });
+  const landed = ws.db.event(ws.actor, "land.ok", subject, { sha: head.value, base: base.value, branch: t.branch, diff: fingerprint, ...(floorSkipped ? { floor_skipped: true } : {}), ...(floorDeferred ? { floor_deferred: true } : {}), ...snapshotDetail(subject !== null ? moved.snapshots.get(subject) : undefined) });
   // Open review findings naming a document now retired or superseded on main are closed by this landing (BR-2435).
   closeRetired(ws.db, new Set(steps.retired), landed);
   say(`landed ${head.value.slice(0, 9)} on ${main}`);

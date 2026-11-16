@@ -239,6 +239,9 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   // The versions on main of the finding's documents that advice or an owner question judged, `doc=blob` lines (#226).
   ["finding_advice", "docs_at TEXT"],
   ["finding_asks", "docs_at TEXT"],
+  // Who queued the landing and the delegation epoch its claim had then, read once at enqueue (BR-2501, D-128).
+  ["queue", "actor TEXT"],
+  ["queue", "epoch INTEGER"],
 ];
 
 /**

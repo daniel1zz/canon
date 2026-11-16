@@ -63,6 +63,16 @@ export function lapsedTakeover(db: CoordDb, subject: string, actor: string, cur:
   }
   const landing = landingInProgress(db, subject, cur.worktree);
   if (landing) return refuse(`${subject}: ${landing}; take it over once that landing ends; nothing changed`, { landing });
+  // reason: an automatic takeover needs the worker stopped, as `canon work take` does: a lease that expired while its
+  // process still runs is no stopped worker. With no process to look at, an expired lease is the only signal (BR-2500, #153, #155).
+  const gone = cur.pid !== null && cur.pid_start !== null ? isGone({ pid: cur.pid, start: cur.pid_start }) : undefined;
+  if (gone === false) {
+    const other = sessionOf(cur.holder) !== sessionOf(actor);
+    return refuse(
+      `${subject} is held by ${cur.holder}, whose session process ${cur.pid} is still running${other ? " in another session" : ""}, although its lease has lapsed; stop that worker through the dispatch tool or its host first, then run canon work take ${subject} --from ${nameOf(cur.holder) || "<name>"} --stopped${other ? " (while that process runs in another session, --stopped is refused too)" : ""}; nothing changed`,
+      { process: "alive" },
+    );
+  }
   endDelegation(db, d, actor, cur.holder, cur.worktree, { lapsed: true });
   return ok(true);
 }

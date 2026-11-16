@@ -45,6 +45,9 @@ export interface Entered {
 export function enter(db: CoordDb, worktree: string, subject: string | null, actor: string, lander?: Proc, scoped = false): Entered {
   const tx = db.db.transaction((): Entered => {
     const t = iso(now());
+    // reason: the landing's epoch is read from the claim once, here, and never again: a worker that accepts a new design
+    // while this landing waits does not make it count as the new epoch's landing (BR-2501).
+    const epoch = db.db.query<{ e: number | null }, [string | null, string]>("SELECT delegation_epoch AS e FROM claims WHERE subject IS ? AND holder = ?").get(subject, actor)?.e ?? null;
     const kept = db.db
       .query<{ id: number; heartbeat: string; result: string | null }, [string, string | null, string]>(
         "SELECT id, heartbeat, result FROM queue WHERE worktree = ? AND subject IS ? AND state IN ('failed','abandoned') AND keep_until IS NOT NULL AND keep_until >= ? ORDER BY id DESC LIMIT 1",
@@ -53,8 +56,8 @@ export function enter(db: CoordDb, worktree: string, subject: string | null, act
     if (kept) {
       // reason: the row keeps its id, and queue order is id order, so it is back where it was (BR-2177); it is a fresh attempt otherwise (solo, batch reset).
       db.db
-        .query("UPDATE queue SET state = 'waiting', result = NULL, heartbeat = ?, pid = ?, pid_start = ?, solo = ?, batch = NULL, head = NULL, keep_until = NULL, scoped = ? WHERE id = ? AND state IN ('failed','abandoned')")
-        .run(t, lander?.pid ?? null, lander?.start ?? null, scoped ? 1 : 0, scoped ? 1 : null, kept.id);
+        .query("UPDATE queue SET state = 'waiting', result = NULL, heartbeat = ?, pid = ?, pid_start = ?, solo = ?, batch = NULL, head = NULL, keep_until = NULL, scoped = ?, actor = ?, epoch = ? WHERE id = ? AND state IN ('failed','abandoned')")
+        .run(t, lander?.pid ?? null, lander?.start ?? null, scoped ? 1 : 0, scoped ? 1 : null, actor, epoch, kept.id);
       // The heartbeat of a failed entry is the time it was refused (finishEntry), of an abandoned one the last time its lander beat, so this is how long the stop took to resolve.
       const resolveMs = Date.parse(t) - Date.parse(kept.heartbeat);
       // reason: the row's result says why the place was kept: `conflict: ...`, `timeout`, `killed` (BR-2368) or an abandoned entry's `lander process gone` / `no heartbeat` (BR-2380); stats count them apart (BR-2155).
@@ -65,8 +68,8 @@ export function enter(db: CoordDb, worktree: string, subject: string | null, act
     const r = db.db
       // reason: solo = 0 says this lander understands batches; an older canon leaves it NULL and is never batched (BR-2172).
       // reason: a scoped entry is solo, so no batch takes it as a member: its floor is not the batch's (BR-2399, BR-2172)
-      .query("INSERT INTO queue(worktree, subject, state, enqueued_at, heartbeat, pid, pid_start, solo, scoped) VALUES (?, ?, 'waiting', ?, ?, ?, ?, ?, ?)")
-      .run(worktree, subject, t, t, lander?.pid ?? null, lander?.start ?? null, scoped ? 1 : 0, scoped ? 1 : null);
+      .query("INSERT INTO queue(worktree, subject, state, enqueued_at, heartbeat, pid, pid_start, solo, scoped, actor, epoch) VALUES (?, ?, 'waiting', ?, ?, ?, ?, ?, ?, ?, ?)")
+      .run(worktree, subject, t, t, lander?.pid ?? null, lander?.start ?? null, scoped ? 1 : 0, scoped ? 1 : null, actor, epoch);
     db.event(actor, "queue.enter", subject, { worktree, ...(scoped ? { scoped: true } : {}) });
     return { id: Number(r.lastInsertRowid) };
   });
@@ -257,6 +260,12 @@ export function heartbeat(db: CoordDb, entryId: number): boolean {
 export function holdsTurn(db: CoordDb, entryId: number): { readonly held: boolean; readonly state: string } {
   const r = db.db.query<{ state: string; result: string | null }, [number]>("SELECT state, result FROM queue WHERE id = ?").get(entryId);
   return { held: r?.state === "landing", state: r ? `${r.state}${r.result ? `: ${r.result}` : ""}` : "no such queue entry" };
+}
+
+/** Who queued an entry and the delegation epoch its claim had then (BR-2501); undefined for an entry an older canon queued. */
+export function landerOf(db: CoordDb, entryId: number): { readonly actor: string; readonly epoch: number | null } | undefined {
+  const r = db.db.query<{ actor: string | null; epoch: number | null }, [number]>("SELECT actor, epoch FROM queue WHERE id = ?").get(entryId);
+  return r?.actor ? { actor: r.actor, epoch: r.epoch } : undefined;
 }
 
 export function finishEntry(db: CoordDb, entryId: number, state: "landed" | "failed", result: string): void {

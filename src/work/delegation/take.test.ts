@@ -130,3 +130,33 @@ test("BR-2500 BR-2100: an expired lease on a delegated change goes to the owner'
   expect(state(f.root, f.change)).toMatchObject({ claim: { holder: "agent:s1", delegation_epoch: null }, delegation: { epoch: 2 } });
   expect(events(f.root, "claim.handover")).toEqual([expect.objectContaining({ from: "agent:s7:w1", by: "design-owner" })]);
 });
+
+test("BR-2500 BR-2100 BR-2104: a lapsed lease whose worker process still runs in another session is not taken over automatically, and --stopped is refused too", () => {
+  const f = fixture(); setClaim(f.root, f.change, ALIVE(), "2000-01-01T00:00:00.000Z");
+  const before = state(f.root, f.change);
+  for (const [cwd, args] of [[f.root, ["work", "start", f.change]], [f.worktree, ["work", "land"]], [f.worktree, ["work", "stop", "--next", "x", "--release"]]] as const) {
+    const r = cli(cwd, "agent:s1", ...args);
+    expect(r.code).toBe(5); expect(r.text).toContain("still running"); expect(r.text).toContain(`canon work take ${f.change} --from w1 --stopped`);
+  }
+  expect(cli(f.root, "agent:s1", "work", "take", f.change, "--from", "w1", "--stopped").code).toBe(5);
+  expect(state(f.root, f.change)).toEqual(before); expect(events(f.root, "claim.handover")).toEqual([]);
+  expect(events(f.root, "claim.refuse").filter((e) => e.reason === "delegated")).toEqual(expect.arrayContaining([expect.objectContaining({ actor: "agent:s1", process: "alive" })]));
+});
+
+test("BR-2500 BR-2100: a lapsed lease of the owner's own subagent whose shared process still runs needs take --stopped, not an automatic takeover", () => {
+  const f = fixture("agent:s1:w1"); setClaim(f.root, f.change, ALIVE(), "2000-01-01T00:00:00.000Z");
+  const r = cli(f.root, "agent:s1", "work", "start", f.change);
+  expect(r.code).toBe(5); expect(r.text).toContain(`canon work take ${f.change} --from w1 --stopped`);
+  expect(state(f.root, f.change)).toMatchObject({ claim: { holder: "agent:s1:w1" }, delegation: { epoch: 1, ended: null } });
+  expect(cli(f.root, "agent:s1", "work", "take", f.change, "--from", "w1", "--stopped").code).toBe(0);
+  expect(state(f.root, f.change)).toMatchObject({ claim: { holder: "agent:s1" }, delegation: { epoch: 2 } });
+});
+
+test("BR-2500: a claim whose recorded process is gone is taken over automatically even before its lease ends; with no recorded process only an expired lease counts as stopped", () => {
+  const f = fixture(); setClaim(f.root, f.change, null);
+  expect(cli(f.root, "agent:s1", "work", "start", f.change).code).toBe(5);
+  expect(state(f.root, f.change).claim?.holder).toBe("agent:s7:w1");
+  setClaim(f.root, f.change, GONE);
+  expect(cli(f.root, "agent:s1", "work", "start", f.change).code).toBe(0);
+  expect(state(f.root, f.change)).toMatchObject({ claim: { holder: "agent:s1" }, delegation: { epoch: 2 } });
+});

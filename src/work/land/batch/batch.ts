@@ -5,9 +5,10 @@ import { addWorktree, type BranchMoveFailure, git, isClean, moveBranch, pruneWor
 import { isGone } from "../../claims/liveness.ts";
 import { runFloor, floorSkip } from "../checks/floor.ts";
 import { verifyChange, type StepFailure, type Steps } from "../checks/steps.ts";
-import { afterLand, closeSubject, finishLanding, moveMain, reopen } from "../finish/finish.ts";
+import { afterLand, closeSubject, finishLanding, reopen } from "../finish/finish.ts";
+import { moveMainGuarded, snapshotDetail, staleEpoch, workerLandingRefusal, type WorkerLanding } from "../checks/delegation.ts";
 import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
-import { batchCandidates, finishEntry, holdsTurn, inBatch, joinBatch, landBatched, leaveBatch, lockBatch, refuseInBatch, unlockBatch } from "../queue/queue.ts";
+import { batchCandidates, finishEntry, holdsTurn, inBatch, joinBatch, landBatched, landerOf, leaveBatch, lockBatch, refuseInBatch, unlockBatch } from "../queue/queue.ts";
 import { lostTurn, priorityNow } from "../queue/wait.ts";
 import { ownDiffId, rebaseInProgress } from "../worktree-state.ts";
 import { closeRetired } from "../../../knowledge/review/findings/findings.ts";
@@ -130,6 +131,9 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
       if (code !== 0) return giveUp(`setup exited ${code} in the batch worktree`, "setup");
     }
 
+    // Who queued each entry and at which delegation epoch (BR-2501); the leader is this lander.
+    const lander = (l: { entry: number; subject: string | null }): WorkerLanding =>
+      l.entry === t.entry ? { subject: l.subject, actor: ws.actor, epoch: landerOf(ws.db, l.entry)?.epoch ?? null } : { subject: l.subject, actor: landerOf(ws.db, l.entry)?.actor ?? "", epoch: landerOf(ws.db, l.entry)?.epoch ?? null };
     const notes = new Map<number, Steps>();
     const check = async (l: Link): Promise<Steps> => {
       const co = git(dir, "checkout", "-q", "--detach", l.head);
@@ -163,6 +167,14 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
         continue;
       }
       const link: Link = { entry: m.id, subject: m.subject, worktree: m.worktree, branch: m.branch, joined: m.joined, before: m.joined, base: prev, head: top.value };
+      // reason: each member is checked as its own lander's landing against its own delegation, attached to the chain
+      // before it, never as the leader's (BR-2501); it goes back and is refused on its own turn.
+      const delegated = workerLandingRefusal(ws, lander(link), { base: prev, head: top.value, main: t.base });
+      if (delegated) {
+        say(`batch: ${name(m)} was refused in the batch (delegation); it goes back to the queue, the others go on\n${delegated}`);
+        sendBack([m], "steps", { step: "delegation" });
+        continue;
+      }
       const steps = await check(link);
       if (!steps.ok) {
         // reason: its refusal here may depend on changes ahead of it that are not on main yet, and the review is a sample;
@@ -240,7 +252,7 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
       const changed = links.slice(1, n).findIndex((l) => {
         const now = git(l.worktree, "rev-parse", "HEAD");
         const clean = isClean(l.worktree);
-        return !now.ok || now.value !== l.joined || !clean.ok || !clean.value || !inBatch(ws.db, l.entry, t.entry);
+        return !now.ok || now.value !== l.joined || !clean.ok || !clean.value || !inBatch(ws.db, l.entry, t.entry) || staleEpoch(ws.db, lander(l)) !== undefined;
       });
       if (changed === -1) break;
       const at = changed + 1;
@@ -266,15 +278,22 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
     if (!lockBatch(ws.db, t.entry, memberIds)) {
       return giveUp("a member left the batch (its lander stopped)", "lock");
     }
-    const moved = moveMain(ws, t.base, tip);
-    if (moved !== "moved") {
+    const moved = moveMainGuarded(ws, t.base, tip, landing.map(lander));
+    if (moved.kind === "stale" && moved.subject !== t.subject) {
+      // reason: a member's delegation was redelegated or taken back after the last check: the batch cannot land as tested,
+      // so its members go back and this landing goes on alone, as when the lock fails (BR-2501)
+      unlockBatch(ws.db, t.entry, memberIds);
+      return giveUp(`${moved.subject}'s delegation epoch changed just before ${main} moved`, "delegation");
+    }
+    if (moved.kind !== "moved") {
       unlockBatch(ws.db, t.entry, memberIds);
       for (const l of landing.slice(1)) {
         reopenForGoneLander(ws, l, say);
-        noteDrop({ entry: l.entry }, "main-not-moved");
+        noteDrop({ entry: l.entry }, moved.kind === "stale" ? "leader-refused" : "main-not-moved");
       }
-      end("refused", moved.reason);
-      return { kind: "refused", reason: moved.reason, message: moved.message };
+      const reason = moved.kind === "stale" ? "delegation" : moved.reason;
+      end("refused", reason);
+      return { kind: "refused", reason, message: moved.message };
     }
     // reason: members are recorded landed before the leader, so a member never sees its leader done while it is still batched (BR-2172).
     for (const l of landing.slice(1)) landBatched(ws.db, l.entry, l.head);
@@ -284,7 +303,7 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
     const landedAt = new Map<number, number>();
     for (const l of landing) {
       const s = notes.get(l.entry);
-      const landed = ws.db.event(ws.actor, "land.ok", l.subject, { sha: l.head, base: l.base, branch: l.branch, diff: fingerprints.get(l.entry) ?? null, ...(skipped ? { floor_skipped: true } : {}), ...(l.entry !== t.entry ? { batched_by: t.entry } : { batch: landing.slice(1).map((x) => x.entry), floors: run }) });
+      const landed = ws.db.event(ws.actor, "land.ok", l.subject, { sha: l.head, base: l.base, branch: l.branch, diff: fingerprints.get(l.entry) ?? null, ...(skipped ? { floor_skipped: true } : {}), ...(l.entry !== t.entry ? { batched_by: t.entry } : { batch: landing.slice(1).map((x) => x.entry), floors: run }), ...snapshotDetail(l.subject !== null ? moved.snapshots.get(l.subject) : undefined) });
       // Open review findings naming a document retired or superseded on this member's tree are closed by its landing (BR-2435).
       if (s?.ok) closeRetired(ws.db, new Set(s.retired), landed);
       landedAt.set(l.entry, landed);
