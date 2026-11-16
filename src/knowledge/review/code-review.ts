@@ -315,8 +315,19 @@ function fileFindings(e: Env, findings: readonly Finding[], open: readonly OpenI
       e.say(`created ${r.value.trim()}: ${f.title}`);
     }
   }
-  // reason: one issue per design gap, for the design owner of the landing it names, never the worker (BR-2503)
+  // reason: one issue per design gap, for the design owner of the landing it names, never the worker (BR-2503); an open
+  // canon-design-gap issue with the same title gets a comment, so a range reviewed again after a failed gh step does not
+  // open the same gap twice (BR-2072, findings #156, #157)
   for (const { finding: f, landing } of gaps) {
+    const same = sameRootCause(e, { ...f, existing: null }, [], DESIGN_GAP_LABEL);
+    if (!same.ok) return same;
+    if (same.value !== null) {
+      const r = run(e.gh, ["issue", "comment", String(same.value), "--body", gapBody(e, f, landing)], e.cwd);
+      if (!r.ok) return r;
+      commented.push(same.value);
+      e.say(`commented on #${same.value}: ${f.title} (design owner ${landing.delegation.owner})`);
+      continue;
+    }
     const r = run(e.gh, ["issue", "create", "--title", f.title, "--label", DESIGN_GAP_LABEL, "--body", gapBody(e, f, landing)], e.cwd);
     if (!r.ok) return r;
     created.push(r.value.trim());

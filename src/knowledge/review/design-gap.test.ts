@@ -41,13 +41,15 @@ function tools(answer: unknown) {
   writeFileSync(join(dir, "ai.sh"), `echo x >> ${dir}/ai-calls\ncat > ${dir}/prompt.txt\ncat ${dir}/answer.json\n`);
   writeFileSync(
     join(dir, "gh.ts"),
-    `import { appendFileSync } from "node:fs";\nconst a = process.argv.slice(2);\nappendFileSync(${JSON.stringify(join(dir, "gh.log"))}, JSON.stringify(a) + "\\n");\nif (a[0] === "issue" && a[1] === "list") console.log("[]");\nif (a[0] === "issue" && a[1] === "create") console.log("https://github.com/o/r/issues/77");\n`,
+    `import { appendFileSync } from "node:fs";\nconst a = process.argv.slice(2);\nappendFileSync(${JSON.stringify(join(dir, "gh.log"))}, JSON.stringify(a) + "\\n");\nif (a[0] === "issue" && a[1] === "list") { if (!a.includes("canon-design-gap")) { console.log("[]"); process.exit(0); } const f = ${JSON.stringify(join(dir, "open.json"))}; console.log(require("node:fs").existsSync(f) ? require("node:fs").readFileSync(f, "utf8") : "[]"); }\nif (a[0] === "issue" && a[1] === "create") console.log("https://github.com/o/r/issues/77");\n`,
   );
   return {
     dir,
     answer: (a: unknown) => writeFileSync(join(dir, "answer.json"), JSON.stringify(a)),
     prompt: () => readFileSync(join(dir, "prompt.txt"), "utf8"),
     aiCalls: () => (existsSync(join(dir, "ai-calls")) ? readFileSync(join(dir, "ai-calls"), "utf8").trim().split("\n").length : 0),
+    open: (issues: unknown) => writeFileSync(join(dir, "open.json"), JSON.stringify(issues)),
+    comments: () => (existsSync(join(dir, "gh.log")) ? readFileSync(join(dir, "gh.log"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as string[]).filter((c) => c[1] === "comment") : []),
     creates: () => (existsSync(join(dir, "gh.log")) ? readFileSync(join(dir, "gh.log"), "utf8").trim().split("\n").map((l) => JSON.parse(l) as string[]).filter((c) => c[1] === "create") : []),
   };
 }
@@ -239,6 +241,19 @@ describe("post-land code review: design gaps of worker landings", () => {
     s.t.answer({ findings: [gap({ landing: String(l.id) }), { kind: "concurrency", title: "race", root_cause: "no lock", file: "src/enemy.ts", line: 1, scenario: "two sessions at once", existing: null }] });
     expect(review(s.root, s.t, s.start).code).toBe(0);
     expect(s.t.creates().map(label).sort()).toEqual(["canon-design-gap", "canon-review"]);
+  });
+
+  it("BR-2503 BR-2072: a design-gap whose title matches an open canon-design-gap issue comments on it instead of opening another", () => {
+    const s = synthetic();
+    const l = s.land("C-9", { "src/enemy.ts": "export const patrolAfterMs = 2000;\n" }, s.snapshot());
+    s.t.open([{ number: 41, title: "lost target returns to patrol after 2 seconds" }]);
+    s.t.answer({ findings: [gap({ landing: String(l.id) })] });
+    const r = review(s.root, s.t, s.start);
+    expect([r.code, r.err]).toEqual([0, ""]);
+    expect(s.t.creates()).toEqual([]);
+    const [c] = s.t.comments();
+    expect(c!.slice(0, 3)).toEqual(["issue", "comment", "41"]);
+    expect(r.out).toContain("commented on #41");
   });
 
   it("BR-2503: the same change landed at two epochs; a design-gap naming the second land.ok carries the second snapshot's design owner and landing", () => {
