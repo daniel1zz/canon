@@ -59,7 +59,7 @@ describe("documents a split review repeats in every call (BR-2359, #241)", () =>
 });
 
 describe("releases in a split review (BR-2359, #242)", () => {
-  test("BR-2359: a release a changed rule is tagged with is whole, with its tagged rules, in call 1 only; later calls list it by id and title", () => {
+  test("BR-2359 BR-2327: a release a changed rule is tagged with is whole, with its tagged rules, in call 1 only; later calls list it by id and title", () => {
     const root = repo();
     mkdirSync(join(root, "canon/releases"), { recursive: true });
     writeFileSync(join(root, "canon/releases/R-1.md"), `---\nid: R-1\ntitle: Release one\nstatus: planned\n---\n\n## 范围\n\nRELEASE-SCOPE ${"r".repeat(4 * KB)}\n\n## 不做\n\nnone\n`);
@@ -82,7 +82,7 @@ describe("releases in a split review (BR-2359, #242)", () => {
     for (const p of calls) expect(new TextEncoder().encode(p).length).toBeLessThanOrEqual(70 * KB);
   });
 
-  test("BR-2359: a review that fits one call shows the release whole and has no listing line", () => {
+  test("BR-2359 BR-2327: a review that fits one call shows the release whole and has no listing line", () => {
     const root = repo();
     mkdirSync(join(root, "canon/releases"), { recursive: true });
     writeFileSync(join(root, "canon/releases/R-1.md"), `---\nid: R-1\ntitle: Release one\nstatus: planned\n---\n\n## 范围\n\nRELEASE-SCOPE\n\n## 不做\n\nnone\n`);
