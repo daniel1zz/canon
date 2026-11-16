@@ -98,7 +98,7 @@ test("BR-2500: a landing still queued blocks the take until it ends", () => {
   expect(cli(f.root, "agent:s1", "work", "take", f.change, "--from", "w1").code).toBe(0);
 });
 
-test("BR-2500: anyone but the current design owner is refused with a claim.refuse, and an invalid --from is a usage error", () => {
+test("BR-2500 BR-2022: anyone but the current design owner is refused with a claim.refuse, and an invalid --from is a usage error", () => {
   const f = fixture(); setClaim(f.root, f.change, GONE);
   const before = state(f.root, f.change);
   expect(cli(f.root, "agent:s2", "work", "take", f.change, "--from", "w1").code).toBe(5);

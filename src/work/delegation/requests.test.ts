@@ -72,7 +72,7 @@ test("BR-2499: a request follows the change to a new design owner; only the curr
   expect(cli(f.root, "agent:s2", "work", "design-answer", "9", "x").code).toBe(3);
 });
 
-test("BR-2499: need-design refuses the main session, an empty request and an undelegated change", () => {
+test("BR-2499 BR-2022: need-design refuses the main session, an empty request and an undelegated change", () => {
   const f = fixture();
   expect(cli(f.root, "agent:s1", "work", "need-design", f.change, "x").code).toBe(2);
   expect(cli(f.worktree, "agent:s7:w1", "work", "need-design", f.change, "").code).toBe(2);
