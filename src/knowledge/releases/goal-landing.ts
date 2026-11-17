@@ -42,7 +42,8 @@ export function goalChanges(before: GoalDoc | undefined, now: GoalDoc | undefine
   const is = now?.criteria ?? [];
   for (const c of is) if (!was.some((w) => w.text === c.text)) out.push(`${id}: success criterion added or reworded: ${c.text}`);
   for (const w of was) if (!is.some((c) => c.text === w.text)) out.push(`${id}: success criterion removed or reworded: ${w.text}`);
-  for (const w of was) if (w.owner && is.some((c) => c.text === w.text && !c.owner)) out.push(`${id}: success criterion no longer waits for the owner: ${w.text}`);
+  // reason: matched by its exact text and state, so rewording it at the same time does not slip past the owner (BR-2510)
+  for (const w of was) if (w.owner && !is.some((c) => c.text === w.text && c.owner)) out.push(`${id}: success criterion no longer waits for the owner: ${w.text}`);
   const a = new Set(before?.features ?? []);
   const b = new Set(now?.features ?? []);
   if (a.size !== b.size || [...a].some((f) => !b.has(f))) out.push(`${id}: features [${[...a].join(", ")}] → [${[...b].join(", ")}]`);

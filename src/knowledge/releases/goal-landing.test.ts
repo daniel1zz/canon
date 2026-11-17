@@ -77,7 +77,7 @@ describe("the goal: the AI may change it, the owner sees it", () => {
     expect([reasonOf(marks.outcome), marks.said.includes("goal:")]).toEqual(["landed", false]);
   });
 
-  test("BR-2510: leaving 待负责人 needs an answered question asked for this change: none, unanswered or asked for another change is refused", async () => {
+  test("BR-2510: leaving 待负责人 needs an answered question asked for this change: none, unanswered or asked for another change is refused, and so is rewording or removing it", async () => {
     const root = fixture();
     const accept = { [`canon/releases/${R(5)}.md`]: R5(undefined, ACCEPTED) };
     const none = await attempt(root, "验收", accept);
@@ -86,6 +86,10 @@ describe("the goal: the AI may change it, the owner sees it", () => {
     expect(reasonOf((await attempt(root, "验收 2", accept, () => `[${old}]`)).outcome)).toBe("release");
     const pending = await attempt(root, "验收 3", accept, (c) => `[${question(root, c, false)}]`);
     expect(reasonOf(pending.outcome)).toBe("release");
+    const reworded = await attempt(root, "改字验收", { [`canon/releases/${R(5)}.md`]: R5(undefined, `- 负责人玩通了主线。（已满足：${F(1)}）\n- 没人解释也能玩。`) });
+    expect(reasonOf(reworded.outcome)).toBe("release");
+    const removed = await attempt(root, "删掉", { [`canon/releases/${R(5)}.md`]: R5(undefined, "- 没人解释也能玩。") });
+    expect(reasonOf(removed.outcome)).toBe("release");
     const yes = await attempt(root, "验收 4", accept, (c) => `[${question(root, c, true)}]`);
     expect(reasonOf(yes.outcome)).toBe("landed");
   });
