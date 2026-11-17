@@ -165,10 +165,12 @@ describe("canon brief: the overall progress summary", () => {
     expect(canon(started.worktree, "brief").out).not.toContain("Overall progress");
   });
 
-  test("BR-2506: with no release the summary is one line", () => {
-    const lines = canon(project(), "brief").out.split("\n");
+  test("BR-2506: with nothing at all there is no summary; with no release but a question waiting, the release line says so", () => {
+    const root = project();
+    expect(canon(root, "brief").out).not.toContain("Overall progress");
+    ask(ws(root).db, "agent:a", null, "要不要发布？", ["是", "否"]);
+    const lines = canon(root, "brief").out.split("\n");
     const at = lines.indexOf("Overall progress (canon overview):");
-    expect(lines[at + 1]).toBe("  no release in progress");
-    expect(lines[at + 2]).not.toStartWith("  ");
+    expect(lines.slice(at + 1, at + 3)).toEqual(["  no release in progress", "  waiting for the owner: 1 question(s), 0 tier-C finding(s), 0 criterion(s)"]);
   });
 });

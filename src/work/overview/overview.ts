@@ -150,12 +150,14 @@ export function overviewJson(o: Overview): Record<string, unknown> {
 
 /** The brief's summary of the first three sections, where no change is claimed (BR-2506). */
 export function briefSummary(o: Overview): string[] {
+  const notDone = o.plans.filter((p) => p.counts.done < p.steps.length);
+  const { questions: q, findings: f, criteria: c } = o.waiting;
+  // reason: with nothing to say the brief stays the bare guide (BR-2024, BR-2506)
+  if (!o.release && notDone.length === 0 && q.length + f.length + c.length === 0) return [];
   const out = ["Overall progress (canon overview):"];
   if (o.release) out.push(`  ${headLine(o.release.doc)}${o.release.fallback ? "  (no release is active: the lowest planned one)" : ""}`, `  ${criteriaCountLine(o.release.criteria)}`);
   else out.push("  no release in progress");
-  const notDone = o.plans.filter((p) => p.counts.done < p.steps.length);
   if (notDone.length > 0) out.push(`  plans not done: ${notDone.map((p) => `${p.change.id} ${p.counts.done}/${p.steps.length} (${p.percent}%)`).join(", ")}`);
-  const { questions: q, findings: f, criteria: c } = o.waiting;
   if (q.length + f.length + c.length > 0) out.push(`  waiting for the owner: ${q.length} question(s), ${f.length} tier-C finding(s), ${c.length} criterion(s)`);
   return out;
 }
