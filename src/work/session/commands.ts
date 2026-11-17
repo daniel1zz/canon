@@ -37,6 +37,7 @@ import { startTrailingReview, unreviewedNotice } from "../../knowledge/review/co
 import { failedReviewNotice } from "../../knowledge/review/landed-queue.ts";
 import { unpushedNotice } from "../remote/remote.ts";
 import { briefLine, othersDoing, planStatuses } from "../../knowledge/plans/status.ts";
+import { briefSummary, overview } from "../overview/overview.ts";
 
 /** `canon brief` and `canon work start`, `stop`, `status`, `clean`: a session and its change's worktree. */
 
@@ -264,6 +265,11 @@ function briefState(ws: Workspace): Result<void> {
   } else {
     // reason: other sessions' handoffs and the question queue are shown only where no change is claimed; injected
     // into a change's session they draw it into work that is not its own (BR-2024)
+    // The whole progress first, so a session starts from the release and not from the latest small change (BR-2506);
+    // a failure is said in one line, never fatal: the rest of the brief still comes.
+    const progress = overview(ws, { ruleCounts: false });
+    if (progress.ok) for (const line of briefSummary(progress.value)) say(line);
+    else say(`Overall progress unavailable: ${progress.error.message}`);
     // Commits on main the remote lacks, counted locally; like the handoffs, only where no change is claimed (BR-2261, BR-2024).
     for (const line of unpushedNotice(ws)) say(line);
     if (hs.length) say(`Unfinished changes with handoffs: ${hs.map((h) => h.subject).join(", ")} (canon work status)`);
