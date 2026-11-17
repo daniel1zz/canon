@@ -64,6 +64,8 @@ export type CheckRule =
   | "list-mismatch" // a rule's `lists` front matter disagrees with its text or with the code (BR-2180)
   | "link-stale" // a rule's or decision's `links` names a document its prose does not name (BR-2426)
   | "release-frozen" // a shipped release's 目标, 范围, 不做 or its set of tagged rules differs from what it was at `shipped_at` (D-61)
+  | "release-composition" // a release not shipped or dropped lists a dropped feature or one another such release lists (BR-2512, D-130)
+  | "release-dropped" // a rule or open plan still names a dropped release or feature (BR-2512, D-130)
   | ArchitectureRule // the architecture overview and the domains and decisions it must follow (D-65)
   | "template-unfilled"; // a rule, decision, change, declared-type document or domain README still holds a template placeholder line
 

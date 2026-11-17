@@ -7,6 +7,7 @@ import { realpathSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFi
 import { dirname, join } from "node:path";
 import { parse } from "yaml";
 import { stripCode, type Corpus, type Doc, type Domain, type Rule } from "../documents/model.ts";
+import { inRelease } from "../releases/features.ts";
 import { idsIn } from "../documents/types.ts";
 import { contextFor, referencedIds, renderContext, ruleSection, willAmendMark, type Context } from "../query/query.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
@@ -254,7 +255,7 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
   for (const release of extras.releasesFirst ? [] : releases) {
     if (release.kind !== "release") continue;
     const id = release.id;
-    const tagged = corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status !== "retired" && d.release === id);
+    const tagged = corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status !== "retired" && inRelease(d, release));
     parts.push(`# Release ${release.id} ${release.title} (${release.status})${changedIds.has(id) ? " (new text shown above)" : ""}\n\n${changedIds.has(id) ? "" : `${release.body.trim()}\n\n`}Rules tagged ${id}:\n${tagged.length ? tagged.map((r) => `- ${r.id} [${r.domain}]${r.status === "planned" ? " [规划中]" : ""} ${r.title}`).join("\n") : "(none)"}\n`);
   }
   const change = extras.change;
@@ -353,7 +354,7 @@ function promptTail(corpus: Corpus): string[] {
   const parts: string[] = [];
   // reason: planned rules constrain execution too, so a contradiction with one is found as well (BR-2036, BR-2235)
   const index = corpus.docs.filter((d) => d.kind === "rule" && d.status !== "retired");
-  parts.push(`# Rule index (every active and planned rule, all domains)\n\n${index.map((r) => `- ${r.id} [${r.kind === "rule" ? r.domain : ""}]${r.kind === "rule" && r.status === "planned" ? " [规划中]" : ""}${willAmendMark(r)}${r.kind === "rule" && r.release ? ` [${r.release}]` : ""} ${r.title}`).join("\n")}`);
+  parts.push(`# Rule index (every active and planned rule, all domains)\n\n${index.map((r) => `- ${r.id} [${r.kind === "rule" ? r.domain : ""}]${r.kind === "rule" && r.status === "planned" ? " [规划中]" : ""}${willAmendMark(r)}${r.kind === "rule" && r.release ? ` [${r.release}]` : ""}${r.kind === "rule" && r.feature ? ` [${r.feature}]` : ""} ${r.title}`).join("\n")}`);
   const accepted = corpus.docs.filter((d) => d.kind === "decision" && d.status === "accepted");
   if (accepted.length) parts.push(`# Accepted decisions\n\n${accepted.map((d) => `- ${d.id} ${d.title}`).join("\n")}`);
   return parts;

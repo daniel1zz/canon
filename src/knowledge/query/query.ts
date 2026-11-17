@@ -240,7 +240,13 @@ ${r.body.trim()}
 ` : ""}`;
 
 /** ` [release R-1]` or ` [release R-1, changed in R-2, R-3]` after a tagged rule's id, nothing for a rule that belongs to no release (D-61). */
-export const releaseMark = (d: Doc): string => (d.kind === "rule" && d.release !== undefined ? ` [release ${d.release}${d.changedIn?.length ? `, changed in ${d.changedIn.join(", ")}` : ""}]` : "");
+export const releaseMark = (d: Doc): string => {
+  if (d.kind !== "rule") return "";
+  const changed = d.changedIn?.length ? `, changed in ${d.changedIn.join(", ")}` : "";
+  if (d.release !== undefined) return ` [release ${d.release}${changed}]`;
+  // reason: a feature's release is whichever release lists it, read from the corpus; the mark names the feature itself (BR-2509)
+  return d.feature !== undefined ? ` [feature ${d.feature}${changed}]` : "";
+};
 
 /** ` [business: <name>]` after a rule that names one, in a domain whose listing is not grouped (BR-2007, BR-2430). */
 export const businessMark = (d: Doc): string => (d.kind === "rule" && d.business !== undefined ? ` [business: ${d.business}]` : "");

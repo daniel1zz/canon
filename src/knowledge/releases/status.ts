@@ -1,5 +1,6 @@
 import type { Change, Corpus, Release, Rule } from "../documents/model.ts";
 import { planStatuses, type PlanStatus } from "../plans/status.ts";
+import { inRelease } from "./features.ts";
 import { STATE_LABEL, STATE_ORDER, type ExecutionState } from "../../work/execution/state.ts";
 
 /** `canon release status` (D-61): the rules tagged with each release, grouped by the execution state D-32 derives. */
@@ -28,7 +29,7 @@ export interface ReleaseStatus {
 
 /** One status per release, by number; every release in the corpus. */
 export function releaseStatuses(corpus: Corpus, states: ReadonlyMap<string, ExecutionState>): ReleaseStatus[] {
-  const rules = corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status !== "retired" && d.release !== undefined);
+  const rules = corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status !== "retired" && (d.release !== undefined || d.feature !== undefined));
   // reason: a step is done only by a change done on main, so the corpus alone (main's, or the landing's tree) decides
   // done; changes still on their branches would only add working steps, which a release does not count (D-79, BR-2372)
   const plans = planStatuses(corpus, corpus.docs.filter((d): d is Change => d.kind === "change").map((change) => ({ change, onMain: true })));
@@ -37,7 +38,7 @@ export function releaseStatuses(corpus: Corpus, states: ReadonlyMap<string, Exec
     .sort((a, b) => number(a.id) - number(b.id))
     .map((release) => {
       const lines = rules
-        .filter((r) => r.release === release.id)
+        .filter((r) => inRelease(r, release))
         .sort((a, b) => number(a.id) - number(b.id))
         .map((r): RuleLine => {
           const s = states.get(r.id);

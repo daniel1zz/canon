@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import { parseDocFile, parseReadme } from "./docfile.ts";
 import { parseLinks, parsePasses } from "./behaviour.ts";
 import { planLink } from "./planlink.ts";
-import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type DecisionStatus, type Doc, type Domain, type Layout, type ReleaseStatus, type RuleStatus } from "./model.ts";
+import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type DecisionStatus, type Doc, type FeatureStatus, type Domain, type Layout, type ReleaseStatus, type RuleStatus } from "./model.ts";
 import { BUILTIN_TYPES, type DocType } from "./types.ts";
 
 /** A file under canon/ that does not fit the model. `canon check` reports these; reading never stops on one. */
@@ -65,6 +65,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
 
   const ruleType = types.find((t) => t.name === "rule")!;
   const releasePrefix = types.find((t) => t.name === "release")?.prefix ?? "R";
+  const featurePrefix = types.find((t) => t.name === "feature")?.prefix ?? "F";
   const rulesDir = join(base, ruleType.dir);
   const ruleFile = new RegExp(`^${ruleType.prefix}-\\d+\\.md$`);
   // reason: a domain may hold subdomains as subdirectories; each level is a domain of its own (BR-2113)
@@ -112,7 +113,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         problems.push({ path: rel(full), message: lists });
         continue;
       }
-      const tags = releaseTags(p.meta, releasePrefix);
+      const tags = releaseTags(p.meta, releasePrefix, featurePrefix);
       if (typeof tags === "string") {
         problems.push({ path: rel(full), message: tags });
         continue;
@@ -145,6 +146,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         ...(lists.length > 0 ? { lists } : {}),
         ...(tags.release !== undefined ? { release: tags.release } : {}),
         ...(tags.changedIn.length > 0 ? { changedIn: tags.changedIn } : {}),
+        ...(tags.feature !== undefined ? { feature: tags.feature } : {}),
         ...(Object.keys(links).length > 0 ? { links } : {}),
         ...(willAmend !== undefined ? { willAmend: (willAmend as string[]).map((x) => x.trim()) } : {}),
       });
@@ -209,7 +211,12 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: `\`release\` must be one release id such as ${releasePrefix}-1: the release this change's plan belongs to (D-79)` });
           continue;
         }
-        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...link, ...(release !== undefined ? { release: release as string } : {}) });
+        const answers = p.meta["owner_answers"];
+        if (answers !== undefined && (!Array.isArray(answers) || answers.length === 0 || answers.some((a) => typeof a !== "number" || !Number.isInteger(a) || a <= 0))) {
+          problems.push({ path, message: "`owner_answers` must be a non-empty list of canon human question numbers, such as [51] (BR-2510)" });
+          continue;
+        }
+        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...link, ...(release !== undefined ? { release: release as string } : {}), ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}) });
       } else if (type.name === "release") {
         const shippedAt = p.meta["shipped_at"];
         const shipped = p.status === "shipped";
@@ -222,7 +229,19 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: `\`shipped_at\` is only for a shipped release; ${id} is ${String(p.status)} (D-61)` });
           continue;
         }
-        docs.push({ kind: "release", ...common, status: p.status as ReleaseStatus, ...(shipped ? { shippedAt: shippedAt as string } : {}) });
+        const features = p.meta["features"] ?? [];
+        if (!Array.isArray(features) || features.some((f) => typeof f !== "string" || !new RegExp(`^${featurePrefix}-\\d+$`).test(f))) {
+          problems.push({ path, message: `\`features\` must be a list of feature ids such as [${featurePrefix}-1] (BR-2512)` });
+          continue;
+        }
+        const mergedInto = p.meta["merged_into"];
+        if (mergedInto !== undefined && (typeof mergedInto !== "string" || !new RegExp(`^${releasePrefix}-\\d+$`).test(mergedInto) || mergedInto === id || p.status !== "dropped")) {
+          problems.push({ path, message: `\`merged_into\` is one other release id, only on a dropped release (BR-2512)` });
+          continue;
+        }
+        docs.push({ kind: "release", ...common, status: p.status as ReleaseStatus, ...(shipped ? { shippedAt: shippedAt as string } : {}), features: features as string[], ...(mergedInto !== undefined ? { mergedInto: mergedInto as string } : {}) });
+      } else if (type.name === "feature") {
+        docs.push({ kind: "feature", ...common, status: p.status as FeatureStatus });
       } else if (type.name === "note") {
         docs.push({ kind: "note", ...common });
       } else {
@@ -250,20 +269,23 @@ function listFiles(dir: string): string[] {
 }
 
 /** A rule's `release` and `changed_in` front matter (D-61), or the problem with it; whether the ids name releases is `canon check`'s to say. */
-function releaseTags(meta: Record<string, unknown>, prefix: string): { release: string | undefined; changedIn: string[] } | string {
+function releaseTags(meta: Record<string, unknown>, prefix: string, featurePrefix: string): { release: string | undefined; changedIn: string[]; feature: string | undefined } | string {
   const id = new RegExp(`^${prefix}-\\d+$`);
   const release = meta["release"];
   const changed = meta["changed_in"];
+  const feature = meta["feature"];
   if (release !== undefined && (typeof release !== "string" || !id.test(release))) return `\`release\` must be one release id such as ${prefix}-1 (D-61)`;
+  if (feature !== undefined && (typeof feature !== "string" || !new RegExp(`^${featurePrefix}-\\d+$`).test(feature))) return `\`feature\` must be one feature id such as ${featurePrefix}-1 (BR-2509)`;
+  if (feature !== undefined && release !== undefined) return "a rule names its release through `release` or through `feature`, not both: the feature's release is the one listing it (BR-2509)";
   if (changed !== undefined && (!Array.isArray(changed) || changed.length === 0 || changed.some((c) => typeof c !== "string" || !id.test(c)))) {
     return `\`changed_in\` must be a non-empty list of release ids such as [${prefix}-2] (D-61)`;
   }
-  if (changed !== undefined && release === undefined) return "`changed_in` needs `release`: a rule that belongs to no release has no later release to change it (D-61)";
+  if (changed !== undefined && release === undefined && feature === undefined) return "`changed_in` needs `release`: a rule that belongs to no release has no later release to change it (D-61)";
   // reason: a release is changed only by a later one: R-2 may change R-1's rule, R-1 may not change its own (D-61, BR-2322)
   const num = (v: string) => Number(v.split("-")[1]);
   const early = release !== undefined ? (changed as string[] | undefined)?.find((c) => num(c) <= num(release)) : undefined;
   if (early !== undefined) return `\`changed_in\` names ${early}, which is not later than \`release\` ${release as string}: a release is changed only by a later one (D-61)`;
-  return { release: release as string | undefined, changedIn: (changed as string[] | undefined) ?? [] };
+  return { release: release as string | undefined, changedIn: (changed as string[] | undefined) ?? [], feature: feature as string | undefined };
 }
 
 /** A rule's `lists` front matter (BR-2180), or the problem with it. */

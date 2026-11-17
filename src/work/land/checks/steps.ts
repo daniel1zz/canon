@@ -16,6 +16,7 @@ import { retryPrompt, runReview, wordingPrompt } from "../../../knowledge/review
 import { REVIEW_NONE } from "../../../knowledge/review/config-keys.ts";
 import type { ReviewNeeds } from "../../../knowledge/review/landed-queue.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
+import { landingGoal } from "../../../knowledge/releases/goal-landing.ts";
 import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
 import { landingAllocations } from "./allocated.ts";
 import { noticeProposedDecisions } from "./proposed.ts";
@@ -114,6 +115,9 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   // A release becomes shipped only through `canon release ship`, and stays shipped (BR-2332, D-61).
   const releases = landingReleases({ primary: ws.primary, timing: ws.config.floorTiming, db: ws.db, wt, base: base.value, head: head.value, corpus: read.corpus, subject });
   if (!releases.ok) return refuse("release", releases.message);
+  // Success criteria, what a release is made of and what is dropped are the owner's to change (BR-2510, D-130).
+  const goal = landingGoal({ db: ws.db, wt, base: base.value, head: head.value, corpus: read.corpus, subject });
+  if (!goal.ok) return refuse("release", goal.message);
 
   // Every added, edited or deleted file under canon/rules, canon/decisions or canon/releases is reviewed after the landing
   // (BR-2009, BR-2441): rule, release and decision documents by their new text, deleted ones by their text on main, domain READMEs whole.

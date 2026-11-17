@@ -4,6 +4,7 @@ import { readPlan } from "../plans/parse.ts";
 import { section } from "../documents/templates.ts";
 import { git } from "../../kernel/git.ts";
 import type { Finding } from "../check/check.ts";
+import { compositionFindings, releasesListing } from "./features.ts";
 
 /** The sections of a shipped release that never change (D-61): what it aims at, what it delivers, what it leaves out. */
 export const FROZEN_SECTIONS: readonly string[] = ["目标", "范围", "不做"];
@@ -35,7 +36,17 @@ export function releaseFindings(root: string, corpus: Corpus): Finding[] {
     // reason: `release` on a change says which release its plan belongs to; without a plan it says nothing (D-79)
     if (readPlan(change.body).kind !== "plan") out.push({ path: change.path, rule: "file-invalid", message: `${change.id} has \`release: ${change.release!}\` but no valid ## 计划: \`release\` on a change names the release its plan belongs to (D-79)` });
   }
-  for (const release of corpus.docs.filter((d): d is Release => d.kind === "release" && d.status === "shipped")) out.push(...frozenFindings(root, release, rules), ...frozenPlans(root, release, plans, corpus));
+  for (const rule of rules) {
+    if (rule.feature === undefined) continue;
+    if (!corpus.docs.some((d) => d.id === rule.feature)) out.push({ path: rule.path, rule: "ref-dangling", message: `${rule.id} \`feature\` names ${rule.feature}, which does not exist` });
+    // reason: a feature's release is the one listing it, so changed_in is checked here, not when the rule is read (BR-2509, BR-2322)
+    for (const r of releasesListing(corpus, rule.feature)) {
+      const early = (rule.changedIn ?? []).find((c) => num(c) <= num(r.id));
+      if (early) out.push({ path: rule.path, rule: "file-invalid", message: `${rule.id} \`changed_in\` names ${early}, which is not later than ${r.id}, the release listing its feature ${rule.feature}: a release is changed only by a later one (D-61)` });
+    }
+  }
+  out.push(...compositionFindings(corpus));
+  for (const release of corpus.docs.filter((d): d is Release => d.kind === "release" && d.status === "shipped")) out.push(...frozenFindings(root, release, rules, corpus), ...frozenPlans(root, release, plans, corpus));
   return out;
 }
 
@@ -44,7 +55,7 @@ function frozenPlans(root: string, release: Release, tagged: readonly Change[], 
   const at = release.shippedAt!;
   // reason: a shipped_at the repository does not know is reported once, by the release's own freeze check (BR-2325)
   if (!git(root, "cat-file", "-e", `${at}^{commit}`).ok) return [];
-  const then = taggedAt(root, at, release.id, "canon/changes");
+  const then = taggedAt(root, at, "release", release.id, "canon/changes");
   if (typeof then === "string") return [{ path: release.path, rule: "release-frozen", message: then }];
   const out: Finding[] = [];
   for (const id of then) {
@@ -57,7 +68,9 @@ function frozenPlans(root: string, release: Release, tagged: readonly Change[], 
   return out;
 }
 
-function frozenFindings(root: string, release: Release, rules: readonly Rule[]): Finding[] {
+const num = (id: string) => Number(id.split("-")[1]);
+
+function frozenFindings(root: string, release: Release, rules: readonly Rule[], corpus: Corpus): Finding[] {
   const at = release.shippedAt!;
   const frozen = (message: string, path = release.path): Finding => ({ path, rule: "release-frozen", message });
   const then = git(root, "show", `${at}:${release.path}`);
@@ -70,7 +83,8 @@ function frozenFindings(root: string, release: Release, rules: readonly Rule[]):
       out.push(frozen(`${release.id} shipped at ${at.slice(0, 9)}: its ## ${name} changed since; a shipped release's ${FROZEN_SECTIONS.map((s) => `## ${s}`).join(", ")} do not change (D-61)`));
     }
   }
-  const tagged = taggedAt(root, at, release.id, "canon/rules");
+  out.push(...frozenFeatures(root, release, old.value.meta["features"], rules, corpus));
+  const tagged = taggedAt(root, at, "release", release.id, "canon/rules");
   if (typeof tagged === "string") return [...out, frozen(tagged)];
   const byId = new Map(rules.map((r) => [r.id, r]));
   for (const id of tagged) {
@@ -83,9 +97,40 @@ function frozenFindings(root: string, release: Release, rules: readonly Rule[]):
   return out;
 }
 
-/** The ids of the documents under `dir` tagged `release` in the tree of commit `at`, or why that cannot be read. */
-function taggedAt(root: string, at: string, release: string, dir: string): Set<string> | string {
-  const pattern = `^release:[[:space:]]*["']?${release}["']?[[:space:]]*$`;
+/**
+ * A shipped release's features stay as they shipped (BR-2515, D-130): the same members of `features`, none of them
+ * dropped, and the rules attached to each the same ones, compared like the release's own tags (BR-2326).
+ */
+function frozenFeatures(root: string, release: Release, then: unknown, rules: readonly Rule[], corpus: Corpus): Finding[] {
+  const at = release.shippedAt!;
+  const frozen = (message: string, path = release.path): Finding => ({ path, rule: "release-frozen", message });
+  const was = Array.isArray(then) ? then.filter((f): f is string => typeof f === "string") : [];
+  const out: Finding[] = [];
+  const same = new Set(was).size === new Set(release.features).size && was.every((f) => release.features.includes(f));
+  if (!same) out.push(frozen(`${release.id} shipped at ${at.slice(0, 9)} with features [${was.join(", ")}]; it lists [${release.features.join(", ")}] now, and a shipped release's features do not change (D-130)`));
+  for (const f of was) {
+    const doc = corpus.docs.find((d) => d.kind === "feature" && d.id === f);
+    if (doc?.kind === "feature" && doc.status === "dropped") out.push(frozen(`${f} is in ${release.id}, shipped at ${at.slice(0, 9)}; a shipped release's feature is not dropped (D-130)`, doc.path));
+    const attached = taggedAt(root, at, "feature", f, "canon/rules");
+    if (typeof attached === "string") {
+      out.push(frozen(attached));
+      continue;
+    }
+    for (const id of attached) {
+      const now = rules.find((r) => r.id === id);
+      if (now && now.feature !== f) out.push(frozen(`${id} was attached to ${f} when ${release.id} shipped (${at.slice(0, 9)}); its \`feature\` is ${now.feature ?? "gone"} now, and the rules of a shipped release do not change (D-130)`, now.path));
+    }
+    for (const rule of rules) {
+      if (rule.feature === f && !attached.has(rule.id)) out.push(frozen(`${rule.id} is attached to ${f}, but it was not when ${release.id} shipped (${at.slice(0, 9)}); attach it to a feature of a later release, and write \`changed_in\` for a rule that release changes (D-130)`, rule.path));
+    }
+  }
+  return out;
+}
+
+/** The ids of the documents under `dir` whose front matter `key` is `value` in the tree of commit `at`, or why that cannot be read. */
+function taggedAt(root: string, at: string, key: "release" | "feature", value: string, dir: string): Set<string> | string {
+  const release = value;
+  const pattern = `^${key}:[[:space:]]*["']?${value}["']?[[:space:]]*$`;
   // reason: git grep exits 1 for "no match", which git() reports as a failure; only exit 0 and 1 are answers (D-61)
   const r = Bun.spawnSync(["git", "grep", "-l", "-E", pattern, at, "--", dir], { cwd: root, stdout: "pipe", stderr: "pipe" });
   if (r.exitCode !== 0 && r.exitCode !== 1) return `${release} shipped at ${at}, but git cannot read that commit's ${dir}: ${r.stderr.toString().trim().split("\n")[0]}`;
@@ -96,7 +141,7 @@ function taggedAt(root: string, at: string, release: string, dir: string): Set<s
     if (id === undefined) continue;
     const text = git(root, "show", `${at}:${file}`);
     const meta = text.ok ? parseDocFile(text.value, file) : undefined;
-    if (meta?.ok && meta.value.meta["release"] === release) ids.add(id);
+    if (meta?.ok && meta.value.meta[key] === release) ids.add(id);
   }
   return ids;
 }

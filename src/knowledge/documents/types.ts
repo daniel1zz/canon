@@ -29,11 +29,13 @@ export const BUILTIN_TYPES: readonly DocType[] = [
   { name: "change", prefix: "C", dir: "changes", statuses: ["open", "done", "dropped"], defaultStatus: "open", fields: [], sections: ["为什么", "要改什么"], builtin: true },
   { name: "note", prefix: "N", dir: "notes", statuses: undefined, defaultStatus: undefined, fields: [], sections: [], builtin: true },
   // reason: built in, not declared, because only canon's code can write `shipped_at`, run `canon release` and freeze a shipped release (D-61)
-  { name: "release", prefix: "R", dir: "releases", statuses: ["planned", "active", "shipped"], defaultStatus: "planned", fields: [], sections: ["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"], builtin: true },
+  { name: "release", prefix: "R", dir: "releases", statuses: ["planned", "active", "shipped", "dropped"], defaultStatus: "planned", fields: [], sections: ["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"], builtin: true },
+  // reason: built in beside release, because a release lists its features and the release checks read both (D-130)
+  { name: "feature", prefix: "F", dir: "features", statuses: ["active", "dropped"], defaultStatus: "active", fields: [], sections: ["目标", "范围", "不做", "成功标准"], builtin: true },
 ];
 
 /** Front-matter keys canon itself owns; a declared field may not reuse one. */
-export const RESERVED_FIELDS = new Set(["id", "title", "status", "untested", "lists", "supersedes", "rules", "code", "passes", "release", "changed_in", "shipped_at", "plan", "steps", "links"]);
+export const RESERVED_FIELDS = new Set(["id", "title", "status", "untested", "lists", "supersedes", "rules", "code", "passes", "release", "changed_in", "shipped_at", "plan", "steps", "links", "feature", "features", "merged_into", "owner_answers"]);
 
 /** Directories under canon/ that are not document types. */
 export const RESERVED_DIRS = new Set(["templates"]);

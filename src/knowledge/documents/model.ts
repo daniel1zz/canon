@@ -19,14 +19,16 @@
 import type { DocType } from "./types.ts";
 
 /** Built-in kinds; a document of a type declared in config (D-2 §2) has kind "extra" and names its type. */
-export type Kind = "rule" | "decision" | "change" | "note" | "release" | "extra";
+export type Kind = "rule" | "decision" | "change" | "note" | "release" | "feature" | "extra";
 
 /** `planned`: designed, not yet executed; needs no test, so a missing test blocks no landing (BR-2235, D-32). */
 export type RuleStatus = "active" | "retired" | "planned";
 export type DecisionStatus = "proposed" | "accepted" | "superseded";
 export type ChangeStatus = "open" | "done" | "dropped";
 /** `shipped`: the release was sent out; `shipped_at` then names the main commit it was (D-61). */
-export type ReleaseStatus = "planned" | "active" | "shipped";
+export type ReleaseStatus = "planned" | "active" | "shipped" | "dropped";
+/** `dropped`: the feature is not built (D-130). */
+export type FeatureStatus = "active" | "dropped";
 
 interface Base {
   readonly id: string;
@@ -50,6 +52,8 @@ export interface Rule extends Base {
   readonly release?: string;
   /** Later releases that change this behaviour (`changed_in`); only with `release` (D-61). */
   readonly changedIn?: readonly string[];
+  /** The feature this behaviour belongs to (`feature: F-n`); never with `release` (BR-2509, D-130). */
+  readonly feature?: string;
   /** Confirmed references (`links`): named document id → its fingerprint when confirmed; only `canon links confirm` writes it (BR-2425). */
   readonly links?: Readonly<Record<string, string>>;
   /** A planned rule's `will_amend`: the active rules the change that activates it will also change (BR-2496, D-127). */
@@ -89,6 +93,8 @@ export interface Change extends Base {
   readonly steps?: readonly string[];
   /** The release the plan in this change belongs to (`release: R-n`); only on a change holding a plan (D-79). */
   readonly release?: string;
+  /** Questions the owner answered that confirm the goal changes this change lands (`owner_answers`, BR-2510). */
+  readonly ownerAnswers?: readonly number[];
 }
 
 /** How a rule's execution was verified (BR-2237): a test the change touched (down to the test, or only to its file when the report has no line numbers), an acceptance line, or a test that existed at migration. */
@@ -110,6 +116,16 @@ export interface Release extends Base {
   readonly kind: "release";
   readonly status: ReleaseStatus;
   readonly shippedAt?: string;
+  /** The features the release is made of (`features`), as written (BR-2509, D-130). */
+  readonly features: readonly string[];
+  /** For a dropped release: the release it went into (`merged_into`, BR-2511). */
+  readonly mergedInto?: string;
+}
+
+/** A feature: a part of a release with its own goal and success criteria (`canon/features/F-n.md`, D-130). */
+export interface Feature extends Base {
+  readonly kind: "feature";
+  readonly status: FeatureStatus;
 }
 
 /** A document of a type the project declared in `canon/config.yaml` (BR-2050). */
@@ -120,7 +136,7 @@ export interface Extra extends Base {
   readonly status: string | undefined;
 }
 
-export type Doc = Rule | Decision | Change | Note | Release | Extra;
+export type Doc = Rule | Decision | Change | Note | Release | Feature | Extra;
 
 /** The type name of a document: its kind for built-ins, the declared name otherwise. */
 export const typeNameOf = (d: Doc): string => (d.kind === "extra" ? d.type : d.kind);
