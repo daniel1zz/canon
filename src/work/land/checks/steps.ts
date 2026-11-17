@@ -17,6 +17,9 @@ import { REVIEW_NONE } from "../../../knowledge/review/config-keys.ts";
 import type { ReviewNeeds } from "../../../knowledge/review/landed-queue.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
 import { landingGoal } from "../../../knowledge/releases/goal-landing.ts";
+import { advancesNotice } from "../../../knowledge/releases/features.ts";
+import { isChore } from "../../session/subject.ts";
+import type { Change } from "../../../knowledge/documents/model.ts";
 import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
 import { landingAllocations } from "./allocated.ts";
 import { noticeProposedDecisions } from "./proposed.ts";
@@ -119,6 +122,9 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   const goal = landingGoal({ db: ws.db, wt, base: base.value, head: head.value, corpus: read.corpus, subject });
   if (!goal.ok) return refuse("release", goal.message);
   for (const line of goal.notices) say(line);
+  // A change says which success criteria it advances, or why none; a missing or none answer is said, never refused (BR-2517, D-131).
+  const advances = subject === null || isChore(subject) ? undefined : advancesNotice(read.corpus.docs.find((d): d is Change => d.kind === "change" && d.id === subject));
+  if (advances) say(advances);
 
   // Every added, edited or deleted file under canon/rules, canon/decisions or canon/releases is reviewed after the landing
   // (BR-2009, BR-2441): rule, release and decision documents by their new text, deleted ones by their text on main, domain READMEs whole.

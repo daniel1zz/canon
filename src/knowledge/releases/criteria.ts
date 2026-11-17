@@ -12,7 +12,9 @@ export const CRITERION_ORDER: readonly CriterionState[] = ["met", "unmet", "owne
 export const CRITERION_LABEL: Readonly<Record<CriterionState, string>> = { met: "已满足", unmet: "未满足", owner: "待负责人", unproven: "未证明" };
 
 export interface Criterion {
-  /** The first line without its list marker and its state marker. */
+  /** Its `S<n>` id, written first on its line (BR-2504); undefined when it has none. */
+  readonly id?: string;
+  /** The first line without its list marker, its id and its state marker. */
   readonly text: string;
   readonly state: CriterionState;
   /** The document ids a met criterion cites; empty for any other state. */
@@ -24,6 +26,9 @@ const HEADING = "## 成功标准";
 const ITEM = /^(?:[-*]|\d+\.)\s+(.*)$/;
 /** The state marker closing a criterion's first line; brackets and colon either full-width or ASCII. */
 const MARKER = /[（(]\s*(已满足|未满足|待负责人)\s*(?:[:：]([^（()）]*))?[）)]\s*$/;
+
+/** A criterion's id: `S` and digits, then a space, at the start of its first line (BR-2504). */
+const CRITERION_ID = /^(S\d+) +/;
 
 const STATE_OF: Readonly<Record<string, CriterionState>> = { 已满足: "met", 未满足: "unmet", 待负责人: "owner" };
 
@@ -41,14 +46,17 @@ export function criteriaOf(body: string, types: readonly DocType[]): Criterion[]
   return out;
 
   function criterionOf(first: string): Criterion {
-    const m = MARKER.exec(first);
-    const text = (m ? first.slice(0, m.index) : first).trimEnd();
-    if (!m) return { text, state: "unproven", evidence: [] };
+    const named = CRITERION_ID.exec(first);
+    const rest = named ? first.slice(named[0].length) : first;
+    const id = named ? { id: named[1]! } : {};
+    const m = MARKER.exec(rest);
+    const text = (m ? rest.slice(0, m.index) : rest).trimEnd();
+    if (!m) return { ...id, text, state: "unproven", evidence: [] };
     const state = STATE_OF[m[1]!]!;
-    if (state !== "met") return { text, state, evidence: [] };
+    if (state !== "met") return { ...id, text, state, evidence: [] };
     // reason: ids in backticks are examples, as canon check reads references; a met criterion needs a real one (BR-2504)
     const evidence = [...idsIn(types, stripCode(m[2] ?? ""))];
-    return evidence.length > 0 ? { text, state, evidence } : { text, state: "unproven", evidence: [] };
+    return evidence.length > 0 ? { ...id, text, state, evidence } : { ...id, text, state: "unproven", evidence: [] };
   }
 }
 

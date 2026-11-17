@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import { parseDocFile, parseReadme } from "./docfile.ts";
 import { parseLinks, parsePasses } from "./behaviour.ts";
 import { planLink } from "./planlink.ts";
-import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type DecisionStatus, type Doc, type FeatureStatus, type Domain, type Layout, type ReleaseStatus, type RuleStatus } from "./model.ts";
+import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type Advances, type DecisionStatus, type Doc, type FeatureStatus, type Domain, type Layout, type ReleaseStatus, type RuleStatus } from "./model.ts";
 import { BUILTIN_TYPES, type DocType } from "./types.ts";
 
 /** A file under canon/ that does not fit the model. `canon check` reports these; reading never stops on one. */
@@ -216,7 +216,12 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: "`owner_answers` must be a non-empty list of canon human question numbers, such as [51] (BR-2510)" });
           continue;
         }
-        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...link, ...(release !== undefined ? { release: release as string } : {}), ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}) });
+        const advances = advancesOf(p.meta["advances"], releasePrefix, featurePrefix);
+        if (typeof advances === "string") {
+          problems.push({ path, message: advances });
+          continue;
+        }
+        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...link, ...(release !== undefined ? { release: release as string } : {}), ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}), ...(advances !== undefined ? { advances } : {}) });
       } else if (type.name === "release") {
         const shippedAt = p.meta["shipped_at"];
         const shipped = p.status === "shipped";
@@ -286,6 +291,19 @@ function releaseTags(meta: Record<string, unknown>, prefix: string, featurePrefi
   const early = release !== undefined ? (changed as string[] | undefined)?.find((c) => num(c) <= num(release)) : undefined;
   if (early !== undefined) return `\`changed_in\` names ${early}, which is not later than \`release\` ${release as string}: a release is changed only by a later one (D-61)`;
   return { release: release as string | undefined, changedIn: (changed as string[] | undefined) ?? [], feature: feature as string | undefined };
+}
+
+/** A change's `advances` (BR-2517): undefined when absent, the problem with it as a string. */
+function advancesOf(v: unknown, releasePrefix: string, featurePrefix: string): Advances | undefined | string {
+  if (v === undefined) return undefined;
+  const bad = `\`advances\` is a non-empty list of success criteria such as [${releasePrefix}-5/S1, ${featurePrefix}-3/S2], or "none: <reason>" (BR-2517)`;
+  if (typeof v === "string") {
+    const m = /^none:\s*(.*)$/s.exec(v.trim());
+    return m && m[1]!.trim() !== "" ? { kind: "none", reason: m[1]!.trim() } : bad;
+  }
+  const ref = new RegExp(`^(?:${releasePrefix}|${featurePrefix})-\\d+/S\\d+$`);
+  if (!Array.isArray(v) || v.length === 0 || v.some((x) => typeof x !== "string" || !ref.test(x))) return bad;
+  return { kind: "criteria", refs: v as string[] };
 }
 
 /** A rule's `lists` front matter (BR-2180), or the problem with it. */

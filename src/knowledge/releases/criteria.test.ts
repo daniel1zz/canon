@@ -36,6 +36,12 @@ describe("release success criteria", () => {
     expect(criteriaOf("## 成功标准\n\n内容\n", BUILTIN_TYPES)).toEqual([]);
   });
 
+  test("BR-2504: an S<n> id and a space open the line: the id is kept apart from the text; without the space it is text", () => {
+    expect(one("- S3 五个体系各有构筑通关。（未满足）")).toEqual([{ id: "S3", text: "五个体系各有构筑通关。", state: "unmet", evidence: [] }]);
+    expect(one("- S3五个体系各有构筑通关。")).toEqual([{ text: "S3五个体系各有构筑通关。", state: "unproven", evidence: [] }]);
+    expect(one(`- S12 规则全过。（已满足：${C(4)}）`)[0]).toMatchObject({ id: "S12", text: "规则全过。", state: "met" });
+  });
+
   test("BR-2504: the count line names every state, zeros included", () => {
     const got = criteriaOf(body(`- a（已满足：${C(1)}）`, "- b（待负责人）", "- c"), BUILTIN_TYPES);
     expect(criteriaCountLine(got)).toBe("成功标准 3 条：已满足 1  未满足 0  待负责人 1  未证明 1");

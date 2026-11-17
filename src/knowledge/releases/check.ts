@@ -4,7 +4,7 @@ import { readPlan } from "../plans/parse.ts";
 import { section } from "../documents/templates.ts";
 import { git } from "../../kernel/git.ts";
 import type { Finding } from "../check/check.ts";
-import { compositionFindings, releasesListing } from "./features.ts";
+import { compositionFindings, criteriaFindings, releasesListing } from "./features.ts";
 
 /** The sections of a shipped release that never change (D-61): what it aims at, what it delivers, what it leaves out. */
 export const FROZEN_SECTIONS: readonly string[] = ["目标", "范围", "不做"];
@@ -45,7 +45,7 @@ export function releaseFindings(root: string, corpus: Corpus): Finding[] {
       if (early) out.push({ path: rule.path, rule: "file-invalid", message: `${rule.id} \`changed_in\` names ${early}, which is not later than ${r.id}, the release listing its feature ${rule.feature}: a release is changed only by a later one (D-61)` });
     }
   }
-  out.push(...compositionFindings(corpus));
+  out.push(...compositionFindings(corpus), ...criteriaFindings(corpus));
   for (const release of corpus.docs.filter((d): d is Release => d.kind === "release" && d.status === "shipped")) out.push(...frozenFindings(root, release, rules, corpus), ...frozenPlans(root, release, plans, corpus));
   return out;
 }

@@ -92,8 +92,8 @@ describe("canon overview", () => {
       "… 还有 2 个（canon change list）",
       "",
       "## 最近合入",
-      `${C(9)} 变更9 2026-11-16 07:42 UTC`,
-      `${C(4)} 变更4 2026-11-16 05:32 UTC`,
+      `${C(9)} 变更9 2026-11-16 07:42 UTC （没写 advances）`,
+      `${C(4)} 变更4 2026-11-16 05:32 UTC （没写 advances）`,
     ]);
   });
 
@@ -127,20 +127,21 @@ describe("canon overview", () => {
 
   test("BR-2505: --json holds the same content", () => {
     const o = JSON.parse(canon(fixture(), "overview", "--json").out);
-    expect(o.release).toMatchObject({ id: R(3), status: "active", counts: { planned: 1, passed: 0 } });
-    expect(o.release.criteria).toEqual([
-      { text: "规则全过。", state: "met", evidence: [C(4)] },
-      { text: "负责人玩通。", state: "owner", evidence: [] },
-      { text: "没人解释也能玩。", state: "unproven", evidence: [] },
+    expect(o.releases).toHaveLength(1);
+    expect(o.releases[0]).toMatchObject({ id: R(3), status: "active", fallback: false, counts: { planned: 1, passed: 0 }, features: [] });
+    expect(o.releases[0].criteria).toEqual([
+      { id: null, text: "规则全过。", state: "met", evidence: [C(4)], advanced_by: [] },
+      { id: null, text: "负责人玩通。", state: "owner", evidence: [], advanced_by: [] },
+      { id: null, text: "没人解释也能玩。", state: "unproven", evidence: [], advanced_by: [] },
     ]);
     expect(o.plans).toEqual([{ id: C(5), title: "变更5", total: 2, done: 0, percent: 0 }]);
     expect(o.waiting.questions.map((q: { id: number }) => q.id)).toEqual([1]);
     expect(o.waiting.findings.map((f: { id: number }) => f.id)).toEqual([1]);
-    expect(o.waiting.criteria).toEqual([{ release: R(3), text: "负责人玩通。" }]);
+    expect(o.waiting.criteria).toEqual([{ doc: R(3), text: "负责人玩通。" }]);
     expect(o.backlog.map((b: { id: string }) => b.id)).toEqual([5, 6, 7, 8, 9].map(C));
     expect(o.backlog_more).toBe(2);
-    expect(o.landed).toEqual([{ id: C(9), title: "变更9", at: "2026-11-16T07:42:40.496Z" }, { id: C(4), title: "变更4", at: "2026-11-16T05:32:56.142Z" }]);
-    expect(JSON.parse(canon(project(), "overview", "--json").out).release).toBeNull();
+    expect(o.landed).toEqual([{ id: C(9), title: "变更9", at: "2026-11-16T07:42:40.496Z", advances: null }, { id: C(4), title: "变更4", at: "2026-11-16T05:32:56.142Z", advances: null }]);
+    expect(JSON.parse(canon(project(), "overview", "--json").out).releases).toEqual([]);
   });
 });
 
@@ -149,9 +150,8 @@ describe("canon brief: the overall progress summary", () => {
     const lines = canon(fixture(), "brief").out.split("\n");
     const at = lines.indexOf("Overall progress (canon overview):");
     expect(at).toBeGreaterThan(-1);
-    expect(lines.slice(at + 1, at + 5)).toEqual([
-      `  ${R(3)}  active  版本3`,
-      "  成功标准 3 条：已满足 1  未满足 0  待负责人 1  未证明 1",
+    expect(lines.slice(at + 1, at + 4)).toEqual([
+      `  ${R(3)}  active  版本3  成功标准 3 条：已满足 1  未满足 0  待负责人 1  未证明 1`,
       `  plans not done: ${C(5)} 0/2 (0%)`,
       "  waiting for the owner: 1 question(s), 1 tier-C finding(s), 1 criterion(s)",
     ]);
@@ -163,7 +163,7 @@ describe("canon brief: the overall progress summary", () => {
     write(root, { [`canon/releases/${R(2)}.md`]: release(2, "planned"), [`canon/changes/${C(4)}.md`]: change(4, "done", PLAN.replace("| 2 | 接口 | 1 |\n", "")), [`canon/changes/${C(5)}.md`]: change(5, "done", "", `plan: ${C(4)}\nsteps: [1]\n`) });
     const lines = canon(root, "brief").out.split("\n");
     const at = lines.indexOf("Overall progress (canon overview):");
-    expect(lines.slice(at + 1, at + 4)).toEqual([`  ${R(2)}  planned  版本2  (no release is active: the lowest planned one)`, "  成功标准 0 条：已满足 0  未满足 0  待负责人 0  未证明 0", expect.not.stringMatching(/^ {2}(plans|waiting)/)]);
+    expect(lines.slice(at + 1, at + 3)).toEqual([`  ${R(2)}  planned  版本2  成功标准 0 条：已满足 0  未满足 0  待负责人 0  未证明 0  (no release is active: the lowest planned one)`, expect.not.stringMatching(/^ {2}(plans|waiting)/)]);
     const started = startNew(root, "做点事");
     expect(canon(started.worktree, "brief").out).not.toContain("Overall progress");
   });
@@ -205,5 +205,51 @@ describe("recent changes to the goal", () => {
     const sha = sh(root, "rev-parse", "--short=9", "HEAD").trim();
     expect(canon(root, "brief").out).toContain(`  goal changed in the last 7 days: ${sha} (canon overview)`);
     expect(JSON.parse(canon(root, "overview", "--json").out).goal_changes).toHaveLength(1);
+  });
+});
+
+describe("releases made of features", () => {
+  const F = (n: number) => id("F", n);
+  const feature = (n: number, status: string, criteria: string) => `---\nid: ${F(n)}\ntitle: 模块${n}\nstatus: ${status}\n---\n\n## 目标\n\n内容\n\n## 范围\n\n内容\n\n## 不做\n\n内容\n\n## 成功标准\n\n${criteria}\n`;
+  const advancing = (n: number, status: string, advances: string) => `---\nid: ${C(n)}\ntitle: 变更${n}\nstatus: ${status}\nrules: []\nadvances: ${advances}\n---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n`;
+
+  test("BR-2505 BR-2506: every active release with its features' criteria, the changes advancing each, and what each landing advanced; the brief counts a release with its features", () => {
+    const root = project();
+    write(root, {
+      [`canon/releases/${R(3)}.md`]: release(3, "active", "- S1 负责人玩通。（待负责人）").replace("status: active\n", `status: active\nfeatures: [${F(1)}, ${F(2)}]\n`),
+      [`canon/releases/${R(5)}.md`]: release(5, "active", "- 甲"),
+      [`canon/features/${F(1)}.md`]: feature(1, "active", "- S1 五个分支各有构筑通关。（未满足）\n- S2 有引导。"),
+      [`canon/features/${F(2)}.md`]: feature(2, "dropped", "- S1 不做了"),
+      [`canon/changes/${C(7)}.md`]: advancing(7, "done", `[${F(1)}/S1]`),
+      [`canon/changes/${C(9)}.md`]: advancing(9, "open", `[${F(1)}/S1, ${R(3)}/S1]`),
+      [`canon/changes/${C(10)}.md`]: advancing(10, "dropped", `[${F(1)}/S1]`),
+      [`canon/changes/${C(11)}.md`]: advancing(11, "done", '"none: 修 YAML"'),
+    });
+    const land = ws(root).db.db.query("INSERT INTO events(ts, actor, kind, subject, detail) VALUES (?, 'agent:a', 'land.ok', ?, '{}')");
+    land.run("2026-11-16T05:00:00.000Z", C(7));
+    land.run("2026-11-16T06:00:00.000Z", C(11));
+    const lines = canon(root, "overview").out.split("\n");
+    const end = lines.indexOf("## 计划");
+    expect(lines.slice(1, end - 1).map(squash)).toEqual([
+      `${R(3)} active 版本3 规划中 0 已通过 0 待 main 测试 0 待重新执行 0`,
+      "成功标准 1 条：已满足 0 未满足 0 待负责人 1 未证明 0",
+      ` [待负责人] S1 负责人玩通。 推进：${C(9)}`,
+      ` 模块 ${F(1)} 模块1 成功标准 2 条：已满足 0 未满足 1 待负责人 0 未证明 1`,
+      ` [未满足] S1 五个分支各有构筑通关。 推进：${C(9)}, ${C(7)}`,
+      " [未证明] S2 有引导。",
+      `${R(5)} active 版本5 规划中 0 已通过 0 待 main 测试 0 待重新执行 0`,
+      "成功标准 1 条：已满足 0 未满足 0 待负责人 0 未证明 1",
+      " [未证明] 甲",
+    ]);
+    expect(lines).toContain(`成功标准 ${R(3)}: 负责人玩通。`);
+    expect(lines.map(squash)).toContain(`${C(11)} 变更11 2026-11-16 06:00 UTC （不推进：修 YAML）`);
+    expect(lines.map(squash)).toContain(`${C(7)} 变更7 2026-11-16 05:00 UTC → ${F(1)}/S1`);
+    const brief = canon(root, "brief").out.split("\n");
+    const at = brief.indexOf("Overall progress (canon overview):");
+    expect(brief.slice(at + 1, at + 3)).toEqual([`  ${R(3)}  active  版本3  成功标准 3 条：已满足 0  未满足 1  待负责人 1  未证明 1`, `  ${R(5)}  active  版本5  成功标准 1 条：已满足 0  未满足 0  待负责人 0  未证明 1`]);
+    const json = JSON.parse(canon(root, "overview", "--json").out);
+    expect(json.releases.map((r: { id: string }) => r.id)).toEqual([R(3), R(5)]);
+    expect(json.releases[0].features[0].criteria[0]).toEqual({ id: "S1", text: "五个分支各有构筑通关。", state: "unmet", evidence: [], advanced_by: [C(9), C(7)] });
+    expect(json.landed[0].advances).toEqual({ none: "修 YAML" });
   });
 });

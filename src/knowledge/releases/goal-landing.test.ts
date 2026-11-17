@@ -43,13 +43,13 @@ function question(root: string, subject: string | null, answered: boolean): numb
 }
 
 /** Starts a change writing `files`, with `owner_answers` from `answers(change id)` when given; lands it, keeping what it said. */
-async function attempt(root: string, title: string, files: Record<string, string>, answers?: (change: string) => string) {
+async function attempt(root: string, title: string, files: Record<string, string>, answers?: (change: string) => string, front = "") {
   const s = startNew(root, title);
   write(s.worktree, files);
-  if (answers !== undefined) {
+  if (answers !== undefined || front !== "") {
     const dir = join(s.worktree, "canon/changes");
     const file = join(dir, readdirSync(dir).find((f) => f.startsWith(`${s.change}`))!);
-    writeFileSync(file, readFileSync(file, "utf8").replace("status: open\n", `status: open\nowner_answers: ${answers(s.change)}\n`));
+    writeFileSync(file, readFileSync(file, "utf8").replace("status: open\n", `status: open\n${answers !== undefined ? `owner_answers: ${answers(s.change)}\n` : ""}${front}`));
   }
   sh(s.worktree, "add", "-A");
   sh(s.worktree, "commit", "-qm", title);
@@ -108,5 +108,23 @@ describe("the goal: the AI may change it, the owner sees it", () => {
   test("BR-2510: owner_answers that is not a list of question numbers makes the change file invalid", async () => {
     const root = fixture();
     expect(reasonOf((await attempt(root, "坏字段", {}, () => "[abc]")).outcome)).toBe("check");
+  });
+});
+
+describe("what a landing says about advances", () => {
+  test("BR-2517: a change without advances or with none is said at landing and lands; one naming criteria says nothing; a chore says nothing", async () => {
+    const root = fixture();
+    const missing = await attempt(root, "没写", { "notes.txt": "a\n" });
+    expect([reasonOf(missing.outcome), missing.said.includes(`advances: ${missing.change} names no success criterion it advances`)]).toEqual(["landed", true]);
+    const none = await attempt(root, "不推进", { "notes.txt": "b\n" }, undefined, 'advances: "none: 修 YAML 转义"\n');
+    expect([reasonOf(none.outcome), none.said.includes(`advances: ${none.change} advances no success criterion: 修 YAML 转义`)]).toEqual(["landed", true]);
+    const c = startChore(ws(root), { title: "顺手" }, quiet);
+    if (!c.ok) throw new Error(c.error.message);
+    write(c.value.worktree, { "notes.txt": "c\n" });
+    sh(c.value.worktree, "add", "-A");
+    sh(c.value.worktree, "commit", "-qm", "chore");
+    const said: string[] = [];
+    expect((await land(ws(c.value.worktree), FAST, (l: string) => said.push(l))).kind).toBe("landed");
+    expect(said.join("\n")).not.toContain("advances:");
   });
 });

@@ -193,3 +193,35 @@ describe("what a release is made of", () => {
     expect(existsSync(join(root, "canon"))).toBe(true);
   });
 });
+
+describe("criterion ids and advances", () => {
+  const withCriteria = (n: number, criteria: string, front = "status: active\n") => release(n, front).replace("## 成功标准\n\n内容\n", `## 成功标准\n\n${criteria}\n`);
+  const featureWith = (n: number, criteria: string) => feature(n).replace("## 成功标准\n\n内容\n", `## 成功标准\n\n${criteria}\n`);
+  const change = (n: number, status: string, advances: string) => `---\nid: ${C(n)}\ntitle: 变更${n}\nstatus: ${status}\nrules: []\nadvances: ${advances}\n---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n`;
+
+  test("BR-2516: an id twice in one document is file-invalid; the same id in two documents, or criteria without ids, are not", () => {
+    const root = project();
+    write(root, { [`canon/releases/${R(5)}.md`]: withCriteria(5, "- S1 甲\n- S2 乙\n- S1 丙\n- 丁\n- 戊"), [`canon/features/${F(1)}.md`]: featureWith(1, "- S1 甲") });
+    const got = findings(root).filter((f) => f.rule === "file-invalid");
+    expect(got.map((f) => [f.path.split("/").pop(), f.message.includes("S1")])).toEqual([[`${R(5)}.md`, true]]);
+  });
+
+  test("BR-2517: advances must be a list of <doc>/S<n> or none with a reason; an open change naming a missing criterion is dangling, a done one is history", () => {
+    const root = project();
+    write(root, { [`canon/releases/${R(5)}.md`]: withCriteria(5, "- S1 甲\n- S3 丙"), [`canon/features/${F(2)}.md`]: featureWith(2, "- S1 乙") });
+    write(root, {
+      [`canon/changes/${C(4)}.md`]: change(4, "open", `[${R(5)}/S3, ${F(2)}/S1]`),
+      [`canon/changes/${C(5)}.md`]: change(5, "open", '"none: 修 YAML 转义"'),
+      [`canon/changes/${C(6)}.md`]: change(6, "open", `[${R(5)}/S9]`),
+      [`canon/changes/${C(7)}.md`]: change(7, "done", `[${R(5)}/S9]`),
+      [`canon/changes/${C(8)}.md`]: change(8, "open", `[${R(9)}/S1]`),
+    });
+    const got = findings(root);
+    const on = (n: number) => got.filter((f) => f.path.endsWith(`${C(n)}.md`)).map((f) => f.rule);
+    expect([on(4), on(5), on(6), on(7), on(8)]).toEqual([[], [], ["ref-dangling"], [], ["ref-dangling"]]);
+    for (const bad of ['"none:"', "[]", `[${R(5)}-S3]`]) {
+      write(root, { [`canon/changes/${C(9)}.md`]: change(9, "open", bad) });
+      expect(findings(root).some((f) => f.rule === "file-invalid" && f.path.endsWith(`${C(9)}.md`))).toBe(true);
+    }
+  });
+});

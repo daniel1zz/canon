@@ -1,5 +1,6 @@
 import type { Change, Corpus, Feature, Release, Rule } from "../documents/model.ts";
 import type { Finding } from "../check/check.ts";
+import { criteriaOf } from "./criteria.ts";
 
 /** A release is made of the features it lists (D-130); these say which rules belong to it through them. */
 
@@ -70,4 +71,40 @@ export function plannedHints(corpus: Corpus): string[] {
       const n = rules.filter((rule) => inRelease(rule, r) && passed.has(rule.id)).length;
       return n > 0 ? [`hint release-planned: ${r.id} is planned, but ${n} rule(s) tagged with it have pass records: mark the release in progress with canon release start ${r.id}`] : [];
     });
+}
+
+/** The success criteria of every release and feature document, by document id (BR-2504). */
+export function criteriaByDoc(corpus: Corpus): Map<string, ReturnType<typeof criteriaOf>> {
+  return new Map(corpus.docs.filter((d) => d.kind === "release" || d.kind === "feature").map((d) => [d.id, criteriaOf(d.body, corpus.types)]));
+}
+
+/** Duplicate criterion ids in one document (BR-2516) and `advances` of open changes naming no criterion (BR-2517). */
+export function criteriaFindings(corpus: Corpus): Finding[] {
+  const out: Finding[] = [];
+  const byDoc = criteriaByDoc(corpus);
+  for (const [id, criteria] of byDoc) {
+    const seen = new Set<string>();
+    const doubled = new Set<string>();
+    for (const c of criteria) if (c.id !== undefined) (seen.has(c.id) ? doubled : seen).add(c.id);
+    const doc = corpus.docs.find((d) => d.id === id)!;
+    for (const d of doubled) out.push({ path: doc.path, rule: "file-invalid", message: `${id} has success criterion ${d} more than once: each id names one criterion of the document (BR-2516)` });
+  }
+  // reason: a done or dropped change is history; criteria moved or removed later do not make it wrong (BR-2517)
+  for (const c of corpus.docs.filter((d): d is Change => d.kind === "change" && d.status === "open")) {
+    if (c.advances?.kind !== "criteria") continue;
+    for (const ref of c.advances.refs) {
+      const [doc, sid] = ref.split("/") as [string, string];
+      const criteria = byDoc.get(doc);
+      if (!criteria) out.push({ path: c.path, rule: "ref-dangling", message: `${c.id} \`advances\` names ${ref}, but ${doc} is no release or feature` });
+      else if (!criteria.some((x) => x.id === sid)) out.push({ path: c.path, rule: "ref-dangling", message: `${c.id} \`advances\` names ${ref}, but ${doc} has no success criterion ${sid}` });
+    }
+  }
+  return out;
+}
+
+/** What a landing says about the change's `advances` (BR-2517); nothing for a chore or a change that names criteria. */
+export function advancesNotice(change: Change | undefined): string | undefined {
+  if (!change) return undefined;
+  if (change.advances === undefined) return `advances: ${change.id} names no success criterion it advances (advances: [R-n/S<k>] or "none: <reason>" in its front matter)`;
+  return change.advances.kind === "none" ? `advances: ${change.id} advances no success criterion: ${change.advances.reason}` : undefined;
 }

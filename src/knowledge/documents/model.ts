@@ -93,9 +93,14 @@ export interface Change extends Base {
   readonly steps?: readonly string[];
   /** The release the plan in this change belongs to (`release: R-n`); only on a change holding a plan (D-79). */
   readonly release?: string;
+  /** The success criteria this change advances (`advances: [R-5/S1]`), or why it advances none (`"none: <reason>"`) (BR-2517). */
+  readonly advances?: Advances;
   /** Questions the owner answered that confirm the goal changes this change lands (`owner_answers`, BR-2510). */
   readonly ownerAnswers?: readonly number[];
 }
+
+/** A change's `advances` (BR-2517): references `<R-n|F-n>/S<k>`, or none with the reason. */
+export type Advances = { readonly kind: "criteria"; readonly refs: readonly string[] } | { readonly kind: "none"; readonly reason: string };
 
 /** How a rule's execution was verified (BR-2237): a test the change touched (down to the test, or only to its file when the report has no line numbers), an acceptance line, or a test that existed at migration. */
 export type PassMethod = "test" | "test-file" | "acceptance" | "migration";
