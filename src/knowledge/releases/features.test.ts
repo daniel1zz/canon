@@ -105,10 +105,10 @@ describe("release start and drop", () => {
     expect(canon(wt, "release", "start", C(3)).code).toBe(3);
   });
 
-  test("BR-2511: drop writes dropped and merged_into; --into itself, a shipped or missing release is refused; a shipped release is not dropped", () => {
+  test("BR-2511 BR-2521: drop writes dropped and merged_into; --into itself, a shipped or missing release is refused; a shipped release is not dropped", () => {
     const root = project();
     const sha = sh(root, "rev-parse", "HEAD").trim();
-    write(root, { [`canon/releases/${R(1)}.md`]: release(1, `status: shipped\nshipped_at: ${sha}\n`), [`canon/releases/${R(3)}.md`]: release(3), [`canon/releases/${R(4)}.md`]: release(4, "status: active\n") });
+    write(root, { [`canon/releases/${R(1)}.md`]: release(1, `status: shipped\nshipped_at: ${sha}\n`), [`canon/releases/${R(3)}.md`]: release(3), [`canon/releases/${R(4)}.md`]: release(4, "status: active\n"), ...DOMAIN, [`canon/rules/billing/${BR(7)}.md`]: rule(7, `release: ${R(3)}\n`, "planned") });
     const wt = worktree(root);
     for (const into of [R(3), R(1), R(9)]) expect(canon(wt, "release", "drop", R(3), "--into", into).code).toBe(1);
     expect(readFileSync(join(wt, `canon/releases/${R(3)}.md`), "utf8")).toContain("status: planned");
@@ -116,6 +116,8 @@ describe("release start and drop", () => {
     expect(r.code).toBe(0);
     const text = readFileSync(join(wt, `canon/releases/${R(3)}.md`), "utf8");
     expect([text.includes("status: dropped"), text.includes(`merged_into: ${R(4)}`)]).toEqual([true, true]);
+    // The dropped release's rule now counts in the release it went into, untouched (BR-2511, BR-2521).
+    expect((JSON.parse(canon(wt, "release", "status", R(4), "--json").out) as { rules: { id: string }[] }).rules.map((r) => r.id)).toEqual([BR(7)]);
     expect(canon(wt, "release", "drop", R(3)).out.trim()).toBe(`${R(3)} is already dropped`);
     expect(canon(wt, "release", "drop", R(1)).code).toBe(1);
   });
