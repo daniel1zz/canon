@@ -97,7 +97,7 @@ export function checkGoal(ws: Workspace, input: string, runtime: AgentRuntime, c
   if (!corpus.ok) return { systemMessage: `canon goal check failed: ${corpus.error.message}` };
   const releases = goal.releases.map((id) => corpus.value.docs.find((d): d is Release => d.kind === "release" && d.id === id)).filter((r): r is Release => r !== undefined);
   const views = releaseViews(corpus.value, releases.map((doc) => ({ doc, fallback: false })));
-  const all = views.flatMap((v) => [...v.criteria.map((c) => ({ doc: v.doc.id, c })), ...v.features.flatMap((f) => f.criteria.map((c) => ({ doc: f.doc.id, c })))]);
+  const all = views.flatMap((v) => [...v.criteria.map((c) => ({ doc: v.doc.id, c })), ...[...v.features, ...v.merged].flatMap((f) => f.criteria.map((c) => ({ doc: f.doc.id, c })))]);
   const open = all.filter((x) => x.c.state === "unmet" || x.c.state === "unproven");
   const owner = all.filter((x) => x.c.state === "owner");
   const names = goal.releases.join(", ");

@@ -7,7 +7,7 @@ import { realpathSync, existsSync, mkdirSync, readdirSync, readFileSync, writeFi
 import { dirname, join } from "node:path";
 import { parse } from "yaml";
 import { stripCode, type Corpus, type Doc, type Domain, type Rule } from "../documents/model.ts";
-import { inRelease } from "../releases/features.ts";
+import { inRelease, releaseScope } from "../releases/features.ts";
 import { idsIn } from "../documents/types.ts";
 import { contextFor, referencedIds, renderContext, ruleSection, willAmendMark, type Context } from "../query/query.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
@@ -255,7 +255,8 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
   for (const release of extras.releasesFirst ? [] : releases) {
     if (release.kind !== "release") continue;
     const id = release.id;
-    const tagged = corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status !== "retired" && inRelease(d, release));
+    const scope = releaseScope(corpus, release);
+    const tagged = corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status !== "retired" && inRelease(d, scope));
     parts.push(`# Release ${release.id} ${release.title} (${release.status})${changedIds.has(id) ? " (new text shown above)" : ""}\n\n${changedIds.has(id) ? "" : `${release.body.trim()}\n\n`}Rules tagged ${id}:\n${tagged.length ? tagged.map((r) => `- ${r.id} [${r.domain}]${r.status === "planned" ? " [规划中]" : ""} ${r.title}`).join("\n") : "(none)"}\n`);
   }
   const change = extras.change;

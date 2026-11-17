@@ -153,7 +153,8 @@ describe("what a release is made of", () => {
     expect(has("release-composition", `${R(4)}.md`, R(5))).toBe(true);
     expect(has("release-composition", `${R(5)}.md`, R(4))).toBe(true);
     expect(has("release-composition", `${R(5)}.md`, F(2))).toBe(true);
-    expect(has("release-dropped", `${BR(7)}.md`, R(4))).toBe(true);
+    // reason: R-3 went into R-4, so BR-7 counts as R-4's and is not stranded (BR-2521)
+    expect(got.some((f) => f.path.endsWith(`${BR(7)}.md`))).toBe(false);
     expect(has("release-dropped", `${BR(8)}.md`, F(2))).toBe(true);
     expect(got.some((f) => f.path.endsWith(`${BR(9)}.md`))).toBe(false);
     expect(got.some((f) => f.path.endsWith(`${R(1)}.md`) || f.path.endsWith(`${R(3)}.md`))).toBe(false);
@@ -223,5 +224,48 @@ describe("criterion ids and advances", () => {
       write(root, { [`canon/changes/${C(9)}.md`]: change(9, "open", bad) });
       expect(findings(root).some((f) => f.rule === "file-invalid" && f.path.endsWith(`${C(9)}.md`))).toBe(true);
     }
+  });
+});
+
+describe("releases merged into another", () => {
+  test("BR-2521: rules, plans, features and criteria of releases merged into R-n count as R-n's, through chains; a dropped release with nowhere to go still strands its rules", () => {
+    const root = project();
+    write(root, {
+      ...DOMAIN,
+      [`canon/features/${F(2)}.md`]: feature(2),
+      [`canon/releases/${R(2)}.md`]: release(2, `status: dropped\nmerged_into: ${R(3)}\n`),
+      [`canon/releases/${R(3)}.md`]: release(3, `status: dropped\nmerged_into: ${R(5)}\nfeatures: [${F(2)}]\n`).replace("## 成功标准\n\n内容\n", "## 成功标准\n\n- 负责人试玩 R-3。（待负责人）\n"),
+      [`canon/releases/${R(5)}.md`]: release(5, "status: active\n"),
+      [`canon/rules/billing/${BR(6)}.md`]: rule(6, `release: ${R(2)}\n`, "planned"),
+      [`canon/rules/billing/${BR(7)}.md`]: rule(7, `release: ${R(3)}\n`, "planned"),
+      [`canon/rules/billing/${BR(8)}.md`]: rule(8, `feature: ${F(2)}\n`, "planned"),
+    });
+    expect(findings(root).filter((f) => f.rule === "release-dropped" || f.rule === "release-composition")).toEqual([]);
+    const status = JSON.parse(canon(root, "release", "status", R(5), "--json").out) as { rules: { id: string }[] };
+    expect(status.rules.map((r) => r.id)).toEqual([BR(6), BR(7), BR(8)]);
+    expect(canon(root, "release", "ship", R(5)).code).toBe(1);
+    const overview = canon(root, "overview").out;
+    expect(overview).toContain(`  并入 ${R(3)} 版本3`);
+    expect(overview).toContain(`  模块 ${F(2)} 模块2`);
+    expect(overview).toContain(`成功标准 ${R(3)}: 负责人试玩 R-3。`);
+    write(root, { [`canon/releases/${R(6)}.md`]: release(6, `status: planned\nfeatures: [${F(2)}]\n`) });
+    expect(findings(root).some((f) => f.rule === "release-composition" && f.message.includes(F(2)))).toBe(true);
+    write(root, { [`canon/releases/${R(6)}.md`]: release(6, "status: planned\n"), [`canon/releases/${R(3)}.md`]: release(3, "status: dropped\n") });
+    const stranded = findings(root).filter((f) => f.rule === "release-dropped").map((f) => f.path.split("/").pop());
+    expect(stranded.sort()).toEqual([`${BR(6)}.md`, `${BR(7)}.md`]);
+    write(root, { [`canon/releases/${R(3)}.md`]: release(3, `status: dropped\nmerged_into: ${R(2)}\n`) });
+    expect(findings(root).some((f) => f.rule === "release-composition" && f.path.endsWith(`${R(2)}.md`))).toBe(true);
+  });
+});
+
+describe("a shipped release keeps what was merged into it", () => {
+  test("BR-2521: after R-5 ships, a rule tagged with a release merged into it cannot be retagged", () => {
+    const root = project();
+    write(root, { ...DOMAIN, [`canon/releases/${R(3)}.md`]: release(3, `status: dropped\nmerged_into: ${R(5)}\n`), [`canon/releases/${R(5)}.md`]: release(5, "status: active\n"), [`canon/releases/${R(6)}.md`]: release(6), [`canon/rules/billing/${BR(7)}.md`]: rule(7, `release: ${R(3)}\n`) });
+    const sha = sh(root, "rev-parse", "HEAD").trim();
+    write(root, { [`canon/releases/${R(5)}.md`]: release(5, `status: shipped\nshipped_at: ${sha}\n`) });
+    expect(findings(root).filter((f) => f.rule === "release-frozen")).toEqual([]);
+    write(root, { [`canon/rules/billing/${BR(7)}.md`]: rule(7, `release: ${R(6)}\n`) });
+    expect(findings(root).some((f) => f.rule === "release-frozen" && f.path.endsWith(`${BR(7)}.md`))).toBe(true);
   });
 });

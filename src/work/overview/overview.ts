@@ -6,6 +6,7 @@ import type { Advances, Change, Corpus, Feature, Release } from "../../knowledge
 import { planStatuses, summaryLine as planLine, type PlanStatus } from "../../knowledge/plans/status.ts";
 import { CRITERION_LABEL, criteriaCountLine, criteriaOf, type Criterion } from "../../knowledge/releases/criteria.ts";
 import { releaseStatuses, summaryLine as releaseLine, type ReleaseStatus } from "../../knowledge/releases/status.ts";
+import { releaseScope } from "../../knowledge/releases/features.ts";
 import { openFindings, type OpenFinding } from "../../knowledge/review/findings/findings.ts";
 import { executionStates } from "../execution/state.ts";
 import { questions, type Question } from "../humans/questions.ts";
@@ -46,8 +47,10 @@ export interface CurrentRelease {
   /** Its rule counts; left out of the brief, which cannot afford computing every rule's execution state (BR-2506). */
   readonly status: ReleaseStatus | undefined;
   readonly criteria: readonly CriterionView[];
-  /** The features it lists that exist and are not dropped, in its order (BR-2505). */
+  /** The features it lists that exist and are not dropped, in its order (BR-2505), then those of releases merged into it (BR-2521). */
   readonly features: readonly FeatureView[];
+  /** The dropped releases merged into it, with their own criteria (BR-2521). */
+  readonly merged: readonly { readonly doc: Release; readonly criteria: readonly CriterionView[] }[];
 }
 
 export interface Overview {
@@ -113,16 +116,20 @@ export function releaseViews(corpus: Corpus, picks: readonly { doc: Release; fal
       ...c,
       advancedBy: c.id === undefined ? [] : changes.filter((ch) => ch.advances?.kind === "criteria" && ch.advances.refs.includes(`${docId}/${c.id}`)).slice(0, ADVANCED_SHOWN).map((ch) => ch.id),
     }));
-  return picks.map(({ doc, fallback }) => ({
-    doc,
-    fallback,
-    status: statuses.find((s) => s.release.id === doc.id),
-    criteria: view(doc.id, doc.body),
-    features: doc.features
-      .map((f) => corpus.docs.find((d): d is Feature => d.kind === "feature" && d.id === f))
-      .filter((f): f is Feature => f !== undefined && f.status !== "dropped")
-      .map((f) => ({ doc: f, criteria: view(f.id, f.body) })),
-  }));
+  return picks.map(({ doc, fallback }) => {
+    const scope = releaseScope(corpus, doc);
+    return {
+      doc,
+      fallback,
+      status: statuses.find((s) => s.release.id === doc.id),
+      criteria: view(doc.id, doc.body),
+      features: [...scope.features]
+        .map((f) => corpus.docs.find((d): d is Feature => d.kind === "feature" && d.id === f))
+        .filter((f): f is Feature => f !== undefined && f.status !== "dropped")
+        .map((f) => ({ doc: f, criteria: view(f.id, f.body) })),
+      merged: scope.merged.map((m) => ({ doc: m, criteria: view(m.id, m.body) })),
+    };
+  });
 }
 
 /** Everything the overview shows, read from main's documents and the coordination state. */
@@ -137,7 +144,10 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean }):
   const current = releasesInProgress(corpus.value);
   const statuses = current.length > 0 && opts.ruleCounts ? releaseStatuses(corpus.value, executionStates(ws.root, corpus.value, ws.config.floorTiming)) : [];
   const releases = releaseViews(corpus.value, current, statuses);
-  const owner = releases.flatMap((r) => [...r.criteria.filter((c) => c.state === "owner").map((c) => ({ doc: r.doc.id, text: c.text })), ...r.features.flatMap((f) => f.criteria.filter((c) => c.state === "owner").map((c) => ({ doc: f.doc.id, text: c.text })))]);
+  const owner = releases.flatMap((r) => [
+    ...r.criteria.filter((c) => c.state === "owner").map((c) => ({ doc: r.doc.id, text: c.text })),
+    ...[...r.features, ...r.merged].flatMap((f) => f.criteria.filter((c) => c.state === "owner").map((c) => ({ doc: f.doc.id, text: c.text }))),
+  ]);
   const open = every.value.listed.filter((l) => l.change.status === "open" || (l.onBranch.length > 0 && l.change.status === "done"));
   return ok({
     releases,
@@ -181,7 +191,7 @@ const criterionLine = (c: CriterionView) =>
   `[${CRITERION_LABEL[c.state]}] ${c.id !== undefined ? `${c.id} ` : ""}${c.text}${c.evidence.length > 0 ? `  证据：${c.evidence.join(", ")}` : ""}${c.advancedBy.length > 0 ? `  推进：${c.advancedBy.join(", ")}` : ""}`;
 
 /** All criteria of a release in progress: its own and its features' (BR-2506). */
-export const allCriteria = (r: CurrentRelease): Criterion[] => [...r.criteria, ...r.features.flatMap((f) => f.criteria)];
+export const allCriteria = (r: CurrentRelease): Criterion[] => [...r.criteria, ...r.features.flatMap((f) => f.criteria), ...r.merged.flatMap((m) => m.criteria)];
 
 /** What a landed change says it advanced (BR-2505, BR-2517). */
 const advancesMark = (a: Advances | undefined) => (a === undefined ? "  （没写 advances）" : a.kind === "none" ? `  （不推进：${a.reason}）` : `  → ${a.refs.join(", ")}`);
@@ -198,6 +208,7 @@ export function overviewLines(o: Overview): string[] {
     if (r.fallback) out.push(FALLBACK);
     out.push(criteriaCountLine(r.criteria), ...r.criteria.map((c) => `  ${criterionLine(c)}`));
     for (const f of r.features) out.push(`  模块 ${f.doc.id} ${f.doc.title}  ${criteriaCountLine(f.criteria)}`, ...f.criteria.map((c) => `    ${criterionLine(c)}`));
+    for (const m of r.merged) out.push(`  并入 ${m.doc.id} ${m.doc.title}  ${criteriaCountLine(m.criteria)}`, ...m.criteria.map((c) => `    ${criterionLine(c)}`));
   }
   if (o.goalChanges.length > 0) {
     out.push(`最近 ${GOAL_DAYS} 天的目标改动：`);
@@ -230,6 +241,7 @@ export function overviewJson(o: Overview): Record<string, unknown> {
       ...(r.status ? { counts: r.status.counts } : {}),
       criteria: r.criteria.map(criterionJson),
       features: r.features.map((f) => ({ id: f.doc.id, title: f.doc.title, criteria: f.criteria.map(criterionJson) })),
+      merged: r.merged.map((m) => ({ id: m.doc.id, title: m.doc.title, criteria: m.criteria.map(criterionJson) })),
     })),
     plans: o.plans.map((p) => ({ id: p.change.id, title: p.change.title, total: p.steps.length, done: p.counts.done, percent: p.percent })),
     waiting: {

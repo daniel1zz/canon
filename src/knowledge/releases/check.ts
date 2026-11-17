@@ -4,7 +4,7 @@ import { readPlan } from "../plans/parse.ts";
 import { section } from "../documents/templates.ts";
 import { git } from "../../kernel/git.ts";
 import type { Finding } from "../check/check.ts";
-import { compositionFindings, criteriaFindings, releasesListing } from "./features.ts";
+import { compositionFindings, criteriaFindings, releaseScope, releasesListing } from "./features.ts";
 
 /** The sections of a shipped release that never change (D-61): what it aims at, what it delivers, what it leaves out. */
 export const FROZEN_SECTIONS: readonly string[] = ["目标", "范围", "不做"];
@@ -84,15 +84,21 @@ function frozenFindings(root: string, release: Release, rules: readonly Rule[], 
     }
   }
   out.push(...frozenFeatures(root, release, old.value.meta["features"], rules, corpus));
-  const tagged = taggedAt(root, at, "release", release.id, "canon/rules");
-  if (typeof tagged === "string") return [...out, frozen(tagged)];
+  // reason: rules of the releases merged into this one shipped with it, tagged as they were (BR-2521)
+  const ids = releaseScope(corpus, release).ids;
+  const tagged = new Set<string>();
+  for (const id of ids) {
+    const one = taggedAt(root, at, "release", id, "canon/rules");
+    if (typeof one === "string") return [...out, frozen(one)];
+    for (const r of one) tagged.add(r);
+  }
   const byId = new Map(rules.map((r) => [r.id, r]));
   for (const id of tagged) {
     const now = byId.get(id);
-    if (now && now.release !== release.id) out.push(frozen(`${id} was tagged ${release.id} when it shipped (${at.slice(0, 9)}); its \`release\` is ${now.release ?? "gone"} now, and the release of a shipped release's rule does not change (D-61)`, now.path));
+    if (now && (now.release === undefined || !ids.has(now.release))) out.push(frozen(`${id} was tagged ${release.id} when it shipped (${at.slice(0, 9)}); its \`release\` is ${now.release ?? "gone"} now, and the release of a shipped release's rule does not change (D-61)`, now.path));
   }
   for (const rule of rules) {
-    if (rule.release === release.id && !tagged.has(rule.id)) out.push(frozen(`${rule.id} is tagged ${release.id}, but it was not when ${release.id} shipped (${at.slice(0, 9)}); a rule added to a shipped release changes what shipped: tag it with a later release, and write \`changed_in\` for a rule that release changes (D-61)`, rule.path));
+    if (rule.release !== undefined && ids.has(rule.release) && !tagged.has(rule.id)) out.push(frozen(`${rule.id} is tagged ${release.id}, but it was not when ${release.id} shipped (${at.slice(0, 9)}); a rule added to a shipped release changes what shipped: tag it with a later release, and write \`changed_in\` for a rule that release changes (D-61)`, rule.path));
   }
   return out;
 }

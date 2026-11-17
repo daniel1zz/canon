@@ -1,6 +1,6 @@
 import type { Change, Corpus, Release, Rule } from "../documents/model.ts";
 import { planStatuses, type PlanStatus } from "../plans/status.ts";
-import { inRelease } from "./features.ts";
+import { inRelease, releaseScope } from "./features.ts";
 import { STATE_LABEL, STATE_ORDER, type ExecutionState } from "../../work/execution/state.ts";
 
 /** `canon release status` (D-61): the rules tagged with each release, grouped by the execution state D-32 derives. */
@@ -37,15 +37,16 @@ export function releaseStatuses(corpus: Corpus, states: ReadonlyMap<string, Exec
     .filter((d): d is Release => d.kind === "release")
     .sort((a, b) => number(a.id) - number(b.id))
     .map((release) => {
+      const scope = releaseScope(corpus, release);
       const lines = rules
-        .filter((r) => inRelease(r, release))
+        .filter((r) => inRelease(r, scope))
         .sort((a, b) => number(a.id) - number(b.id))
         .map((r): RuleLine => {
           const s = states.get(r.id);
           return { id: r.id, title: r.title, state: s?.kind ?? "rerun", ...(s && (s.kind === "passed" || s.kind === "waiting") ? { change: s.change } : {}), changedIn: r.changedIn ?? [] };
         });
       const counts = Object.fromEntries(STATE_ORDER.map((k) => [k, lines.filter((l) => l.state === k).length])) as Record<ExecutionState["kind"], number>;
-      return { release, rules: lines, counts, changedAfterShip: release.status === "shipped" ? lines.filter((l) => l.changedIn.length > 0) : [], plans: plans.filter((p) => p.change.release === release.id) };
+      return { release, rules: lines, counts, changedAfterShip: release.status === "shipped" ? lines.filter((l) => l.changedIn.length > 0) : [], plans: plans.filter((p) => p.change.release !== undefined && scope.ids.has(p.change.release)) };
     });
 }
 
