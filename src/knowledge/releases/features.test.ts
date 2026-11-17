@@ -228,7 +228,7 @@ describe("criterion ids and advances", () => {
 });
 
 describe("releases merged into another", () => {
-  test("BR-2521: rules, plans, features and criteria of releases merged into R-n count as R-n's, through chains; a dropped release with nowhere to go still strands its rules", () => {
+  test("BR-2521 BR-2509 BR-2505: rules, plans, features and criteria of releases merged into R-n count as R-n's, through chains; a dropped release with nowhere to go still strands its rules", () => {
     const root = project();
     write(root, {
       ...DOMAIN,
