@@ -113,15 +113,9 @@ function settle(db: CoordDb, input: CloseInput, mode: "close" | "amend"): Result
     if (!t.value) return err("refused", `--fixed ${input.fixed}: the commit changes none of the documents #${n} is attached to (${docs.join(", ")})`);
     by = commit;
   } else {
-    const quote = squash(input.spurious ?? "");
-    if ([...quote].length < MIN_QUOTE) return err("refused", `--spurious: the quote must be at least ${MIN_QUOTE} characters of the document's own text, got ${JSON.stringify(quote)}`);
-    const found = docs.find((d) => {
-      const p = pathOn(input.cwd, main, d);
-      const text = p ? git(input.cwd, "show", `${main}:${p}`) : undefined;
-      return text?.ok === true && squash(text.value).includes(quote);
-    });
-    if (!found) return err("refused", `--spurious: the quote is in none of the documents #${n} is attached to on ${input.main}: ${docs.join(", ")}`);
-    by = found;
+    const found = quotedIn(input.cwd, main, input.main, n, docs, input.spurious ?? "");
+    if (!found.ok) return found;
+    by = found.value;
   }
   const how = commit !== undefined ? "fixed" : "spurious";
   const stamp = docsAt(input.cwd, main, docs);
@@ -160,6 +154,21 @@ export interface EarlierClosing {
 }
 
 /** The closing a closed finding has now, read from the event its row points at; a closing with no such event keeps how only. */
+/**
+ * The document of `docs` on main that holds `spurious` word for word, at least MIN_QUOTE characters once whitespace is
+ * squashed (BR-2453); `canon finding ask` checks the same before asking the owner, so an approved close can be made (BR-2480).
+ */
+export function quotedIn(cwd: string, main: string, mainName: string, n: number, docs: readonly string[], spurious: string): Result<string> {
+  const quote = squash(spurious);
+  if ([...quote].length < MIN_QUOTE) return err("refused", `--spurious: the quote must be at least ${MIN_QUOTE} characters of the document's own text, got ${JSON.stringify(quote)}`);
+  const found = docs.find((d) => {
+    const p = pathOn(cwd, main, d);
+    const text = p ? git(cwd, "show", `${main}:${p}`) : undefined;
+    return text?.ok === true && squash(text.value).includes(quote);
+  });
+  return found ? ok(found) : err("refused", `--spurious: the quote is in none of the documents #${n} is attached to on ${mainName}: ${docs.join(", ")}`);
+}
+
 function earlierClosing(db: CoordDb, row: Row): EarlierClosing {
   const ev = row.closed_event === null ? null : db.db.query<{ detail: string | null }, [number]>("SELECT detail FROM events WHERE id = ?").get(row.closed_event);
   const d = ev?.detail ? (JSON.parse(ev.detail) as { commit?: string; quote?: string; reason?: string }) : {};

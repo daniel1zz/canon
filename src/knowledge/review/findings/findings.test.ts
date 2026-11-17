@@ -443,6 +443,20 @@ describe("finding tiers (BR-2477, BR-2478, BR-2479, BR-2480, D-118)", () => {
     expect(JSON.parse(ev.detail)).toMatchObject({ tier: "B", advisors: ["codex:advisor"] });
   });
 
+  test("BR-2480: a spurious ask checks the quote as the close will: too short or not in its documents is refused before any question; the CLI prints the options to copy", () => {
+    const { root, db, n } = fixture();
+    const asked = () => db.db.query<{ n: number }, []>("SELECT count(*) AS n FROM questions").get()!.n;
+    const before = asked();
+    expect(why(askOwner(db, { cwd: root, main: "main", actor: "agent:test", id: String(n), spurious: "Rule 2", reason: "x" }))).toContain("at least 8 characters");
+    expect(why(askOwner(db, { cwd: root, main: "main", actor: "agent:test", id: String(n), spurious: "nowhere in any document", reason: "x" }))).toContain("in none of the documents");
+    expect(asked()).toBe(before);
+    tier(db, n, "C");
+    const r = canon(root, "finding", "ask", String(n), "--spurious", "untested: fixture", "--reason", "x");
+    expect(r.code).toBe(0);
+    expect(r.out.trim().split("\n").at(-1)).toBe(`options, word for word: "${APPROVE}" and "${REJECT}"`);
+    expect(asked()).toBe(before + 1);
+  });
+
   test("BR-2478, BR-2480: with no advisor, a tier B finding goes to the owner: the refusal says so, and the owner's approval closes it", () => {
     const { root, db, n, fix } = fixture();
     tier(db, n, "B");

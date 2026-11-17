@@ -2,7 +2,7 @@ import { defineCommand } from "citty";
 import { entry, must, say, workspace, type DomainCommands } from "../../../invocation/command.ts";
 import { amendFinding, closeFinding, renderClosed } from "./close.ts";
 import { err } from "../../../kernel/result.ts";
-import { advise, askOwner, callerOf, setTier } from "./tier.ts";
+import { advise, APPROVE, askOwner, callerOf, REJECT, setTier } from "./tier.ts";
 import { reconcileFindings, renderReconciled } from "./reconcile.ts";
 
 /** `canon finding`: the main agent or a person settles an open review finding (BR-2453, D-99), as its tier allows (BR-2477, BR-2478, D-118). */
@@ -132,6 +132,8 @@ const finding = defineCommand({
         );
         say(`question #${r.question} recorded; ask it word for word with the question tool, record the answer with canon human answer ${r.question}, then canon finding close with --owner ${r.question}:`);
         say(r.text);
+        // reason: the close accepts only the approve option's exact text, so the options are given to copy, not to reword (BR-2480)
+        say(`options, word for word: "${APPROVE}" and "${REJECT}"`);
       },
     }),
     reconcile: defineCommand({

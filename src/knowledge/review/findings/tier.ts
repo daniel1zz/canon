@@ -6,6 +6,7 @@ import { ask } from "../../../work/humans/questions.ts";
 import { isWorker } from "../../../work/delegation/worker.ts";
 export { isWorker };
 import { attachedDocs, docsAt } from "./docs.ts";
+import { quotedIn } from "./close.ts";
 
 /**
  * Who may settle an open review finding (D-118, #216): tier A the session alone, tier B with another session's support,
@@ -162,7 +163,13 @@ export function askOwner(db: CoordDb, input: { readonly cwd: string; readonly ma
   if (!t.ok) return t;
   const at = mainAt(input.cwd, input.main);
   if (!at.ok) return at;
-  const stamp = docsAt(input.cwd, at.value, attachedDocs(first.value.docs, first.value.criterion));
+  const attached = attachedDocs(first.value.docs, first.value.criterion);
+  // reason: the quote is checked as the close will check it, so the owner never approves a close that cannot be made (BR-2480)
+  if (input.spurious !== undefined) {
+    const found = quotedIn(input.cwd, at.value, input.main, first.value.id, attached, input.spurious);
+    if (!found.ok) return found;
+  }
+  const stamp = docsAt(input.cwd, at.value, attached);
   // reason: the pending check and the new question are one transaction, so two asks at once leave one question (#224)
   return db.db
     .transaction((): Result<{ question: number; text: string; target: Target }> => {
