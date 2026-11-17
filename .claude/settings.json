@@ -49,6 +49,16 @@
           }
         ]
       }
+    ],
+    "Stop": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "canon goal check --hook || echo '{\"systemMessage\":\"canon goal check failed or canon is not on PATH: the goal was not checked\"}'"
+          }
+        ]
+      }
     ]
   },
   "enabledPlugins": {

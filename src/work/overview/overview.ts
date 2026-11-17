@@ -102,6 +102,29 @@ export function releasesInProgress(corpus: Corpus): { doc: Release; fallback: bo
 /** How many changes advancing a criterion the overview names (BR-2505). */
 const ADVANCED_SHOWN = 3;
 
+/**
+ * The releases `picks` with their own criteria and their features' (dropped ones left out), each criterion with the
+ * changes on main advancing it (BR-2505); `statuses` gives the rule counts when computed.
+ */
+export function releaseViews(corpus: Corpus, picks: readonly { doc: Release; fallback: boolean }[], statuses: readonly ReleaseStatus[] = []): CurrentRelease[] {
+  const changes = corpus.docs.filter((d): d is Change => d.kind === "change" && d.status !== "dropped").sort((a, b) => number(b.id) - number(a.id));
+  const view = (docId: string, body: string): CriterionView[] =>
+    criteriaOf(body, corpus.types).map((c) => ({
+      ...c,
+      advancedBy: c.id === undefined ? [] : changes.filter((ch) => ch.advances?.kind === "criteria" && ch.advances.refs.includes(`${docId}/${c.id}`)).slice(0, ADVANCED_SHOWN).map((ch) => ch.id),
+    }));
+  return picks.map(({ doc, fallback }) => ({
+    doc,
+    fallback,
+    status: statuses.find((s) => s.release.id === doc.id),
+    criteria: view(doc.id, doc.body),
+    features: doc.features
+      .map((f) => corpus.docs.find((d): d is Feature => d.kind === "feature" && d.id === f))
+      .filter((f): f is Feature => f !== undefined && f.status !== "dropped")
+      .map((f) => ({ doc: f, criteria: view(f.id, f.body) })),
+  }));
+}
+
 /** Everything the overview shows, read from main's documents and the coordination state. */
 export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean }): Result<Overview> {
   const corpus = mainCorpus(ws);
@@ -113,22 +136,7 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean }):
   if (!every.ok) return every;
   const current = releasesInProgress(corpus.value);
   const statuses = current.length > 0 && opts.ruleCounts ? releaseStatuses(corpus.value, executionStates(ws.root, corpus.value, ws.config.floorTiming)) : [];
-  const changes = corpus.value.docs.filter((d): d is Change => d.kind === "change" && d.status !== "dropped").sort((a, b) => number(b.id) - number(a.id));
-  const view = (docId: string, body: string): CriterionView[] =>
-    criteriaOf(body, ws.config.types).map((c) => ({
-      ...c,
-      advancedBy: c.id === undefined ? [] : changes.filter((ch) => ch.advances?.kind === "criteria" && ch.advances.refs.includes(`${docId}/${c.id}`)).slice(0, ADVANCED_SHOWN).map((ch) => ch.id),
-    }));
-  const releases: CurrentRelease[] = current.map(({ doc, fallback }) => ({
-    doc,
-    fallback,
-    status: statuses.find((s) => s.release.id === doc.id),
-    criteria: view(doc.id, doc.body),
-    features: doc.features
-      .map((f) => corpus.value.docs.find((d): d is Feature => d.kind === "feature" && d.id === f))
-      .filter((f): f is Feature => f !== undefined && f.status !== "dropped")
-      .map((f) => ({ doc: f, criteria: view(f.id, f.body) })),
-  }));
+  const releases = releaseViews(corpus.value, current, statuses);
   const owner = releases.flatMap((r) => [...r.criteria.filter((c) => c.state === "owner").map((c) => ({ doc: r.doc.id, text: c.text })), ...r.features.flatMap((f) => f.criteria.filter((c) => c.state === "owner").map((c) => ({ doc: f.doc.id, text: c.text })))]);
   const open = every.value.listed.filter((l) => l.change.status === "open" || (l.onBranch.length > 0 && l.change.status === "done"));
   return ok({
@@ -147,7 +155,7 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean }):
 }
 
 /** The latest landings of changes, newest first, chores left out (BR-2505). */
-function landed(ws: Workspace, corpus: Corpus): Landed[] {
+export function landed(ws: Workspace, corpus: Corpus): Landed[] {
   const rows = ws.db.db.query<{ ts: string; subject: string | null }, []>("SELECT ts, subject FROM events WHERE kind = 'land.ok' ORDER BY id DESC").all();
   const out: Landed[] = [];
   const seen = new Set<string>();
@@ -162,7 +170,7 @@ function landed(ws: Workspace, corpus: Corpus): Landed[] {
 }
 
 /** A release without its rule counts: id, status, title, as `canon release status` starts its line (BR-2506). */
-const headLine = (r: Release) => `${r.id}  ${r.status}  ${r.title}`;
+export const headLine = (r: Release) => `${r.id}  ${r.status}  ${r.title}`;
 const FALLBACK = "(没有 active 的版本，取编号最小的 planned；正在做的版本把 status 改成 active)";
 
 const firstLine = (s: string) => s.split("\n")[0]!.trim();
@@ -173,7 +181,7 @@ const criterionLine = (c: CriterionView) =>
   `[${CRITERION_LABEL[c.state]}] ${c.id !== undefined ? `${c.id} ` : ""}${c.text}${c.evidence.length > 0 ? `  证据：${c.evidence.join(", ")}` : ""}${c.advancedBy.length > 0 ? `  推进：${c.advancedBy.join(", ")}` : ""}`;
 
 /** All criteria of a release in progress: its own and its features' (BR-2506). */
-const allCriteria = (r: CurrentRelease): Criterion[] => [...r.criteria, ...r.features.flatMap((f) => f.criteria)];
+export const allCriteria = (r: CurrentRelease): Criterion[] => [...r.criteria, ...r.features.flatMap((f) => f.criteria)];
 
 /** What a landed change says it advanced (BR-2505, BR-2517). */
 const advancesMark = (a: Advances | undefined) => (a === undefined ? "  （没写 advances）" : a.kind === "none" ? `  （不推进：${a.reason}）` : `  → ${a.refs.join(", ")}`);

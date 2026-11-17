@@ -199,6 +199,14 @@ CREATE TABLE IF NOT EXISTS design_requests (
   asked_at    TEXT NOT NULL,
   answered_at TEXT
 );
+-- A session's goal mode (BR-2518, D-132): the releases it works toward, and what the Stop hook saw when it last held the session.
+CREATE TABLE IF NOT EXISTS goals (
+  actor       TEXT PRIMARY KEY,
+  releases    TEXT NOT NULL,           -- JSON array of release ids
+  started_at  TEXT NOT NULL,
+  marker      TEXT,                    -- main, the worktree's HEAD and its status when last held (BR-2519)
+  stalls      INTEGER NOT NULL DEFAULT 0
+);
 `;
 
 /** Columns added after the first schema, as `table`, `column definition`. */

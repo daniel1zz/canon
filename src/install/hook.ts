@@ -42,6 +42,12 @@ export const RECORD_COMMAND =
  */
 export const RESTATEMENT_COMMAND =
   `canon restatements --hook || echo '{"systemMessage":"canon restatements --hook failed or canon is not on PATH: the edited rule or decision was not checked for restatements"}'`;
+/**
+ * When a session stops, the goal check (BR-2519, BR-2520, D-132): it keeps a session in goal mode working. When canon
+ * fails or is not on PATH, the echo prints a JSON that lets the session stop and tells the user why.
+ */
+export const GOAL_COMMAND =
+  `canon goal check --hook || echo '{"systemMessage":"canon goal check failed or canon is not on PATH: the goal was not checked"}'`;
 /** The tools whose edits the restatement hook checks (BR-2404). */
 export const RESTATEMENT_MATCHER = "Write|Edit|MultiEdit";
 /** The form canon installed before BR-2087 required the fallback; found once and replaced in place. */
@@ -88,6 +94,14 @@ const postToolUse = (settings: Settings | undefined): HookEntry[] => {
   const post = (settings?.["hooks"] as Record<string, unknown> | undefined)?.["PostToolUse"];
   return Array.isArray(post) ? (post as HookEntry[]) : [];
 };
+
+const stopHooks = (settings: Settings | undefined): HookEntry[] => {
+  const stop = (settings?.["hooks"] as Record<string, unknown> | undefined)?.["Stop"];
+  return Array.isArray(stop) ? (stop as HookEntry[]) : [];
+};
+
+/** Whether the Stop entry with canon's goal check is there (BR-2520). */
+const hasGoal = (settings: Settings | undefined) => stopHooks(settings).some((e) => isObject(e) && Array.isArray(e.hooks) && e.hooks.some((h) => h.command?.trim() === GOAL_COMMAND));
 
 /** Whether the AskUserQuestion PostToolUse entry with canon's record command is there (BR-2274). */
 const hasRecord = (settings: Settings | undefined) =>
@@ -187,6 +201,8 @@ export interface SettingsState {
   /** Whether the record hook after each answer to the question tool is installed (BR-2274). */
   readonly record: boolean;
   readonly restatement: boolean;
+  /** Whether the goal check hook when a session stops is installed (BR-2520). */
+  readonly goal: boolean;
 }
 
 /** Which of canon's entries the project's settings have: `canon brief` in the current form, an older one or none, and any withdrawn ones. Reads only. */
@@ -195,7 +211,7 @@ export function hookStatus(root: string): Result<SettingsState> {
   if (!s.ok) return s;
   const base = baseRefState(s.value);
   if (base === "invalid") return NOT_OBJECT;
-  return ok({ brief: briefState(s.value), snapshot: hasSnapshot(s.value), checkAs: hasCheckAs(s.value), retired: retiredIn(s.value), baseRef: base === "head", record: hasRecord(s.value), restatement: hasRestatement(s.value) });
+  return ok({ brief: briefState(s.value), snapshot: hasSnapshot(s.value), checkAs: hasCheckAs(s.value), retired: retiredIn(s.value), baseRef: base === "head", record: hasRecord(s.value), restatement: hasRestatement(s.value), goal: hasGoal(s.value) });
 }
 
 /**
@@ -214,7 +230,8 @@ export function planHook(root: string): Result<Settings | undefined> {
   if (base === "invalid") return NOT_OBJECT;
   const record = hasRecord(s.value);
   const restatement = hasRestatement(s.value);
-  if (state === "present" && snapshot && checkAs && record && restatement && retired.length === 0 && base === "head") return ok(undefined);
+  const goal = hasGoal(s.value);
+  if (state === "present" && snapshot && checkAs && record && restatement && goal && retired.length === 0 && base === "head") return ok(undefined);
   const settings = retired.length > 0 ? withoutRetired(s.value ?? {}) : { ...(s.value ?? {}) };
   if (state !== "present") {
     const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
@@ -245,6 +262,11 @@ export function planHook(root: string): Result<Settings | undefined> {
     hooks["PostToolUse"] = [...postToolUse(settings), { matcher: RESTATEMENT_MATCHER, hooks: [{ type: "command", command: RESTATEMENT_COMMAND }] }];
     settings["hooks"] = hooks;
   }
+  if (!goal) {
+    const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
+    hooks["Stop"] = [...stopHooks(settings), { hooks: [{ type: "command", command: GOAL_COMMAND }] }];
+    settings["hooks"] = hooks;
+  }
   if (base !== "head") settings["worktree"] = { ...((settings["worktree"] as Settings | undefined) ?? {}), baseRef: "head" };
   return ok(settings);
 }
@@ -253,7 +275,7 @@ export function planHook(root: string): Result<Settings | undefined> {
 const isCanonCommand = (c: unknown) => {
   if (typeof c !== "string") return false;
   const t = c.trim();
-  return t === BRIEF_COMMAND || t === OLD_BRIEF_COMMAND || t === SNAPSHOT_COMMAND || t === CHECK_AS_COMMAND || t === RECORD_COMMAND || t === RESTATEMENT_COMMAND || t.startsWith(RETIRED_HOOK_PREFIX);
+  return t === BRIEF_COMMAND || t === OLD_BRIEF_COMMAND || t === SNAPSHOT_COMMAND || t === CHECK_AS_COMMAND || t === RECORD_COMMAND || t === RESTATEMENT_COMMAND || t === GOAL_COMMAND || t.startsWith(RETIRED_HOOK_PREFIX);
 };
 
 /** `list` without canon's hooks; an entry left with no hooks goes. Undefined when nothing of canon's was in it. */
