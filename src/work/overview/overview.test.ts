@@ -24,7 +24,10 @@ function write(root: string, files: Record<string, string>) {
     writeFileSync(join(root, p), text);
   }
   sh(root, "add", "-A");
-  sh(root, "commit", "-qm", "fixture");
+  // reason: fixtures predate the 7-day window, so only the cases about recent goal changes see one (BR-2505)
+  const date = new Date(Date.now() - 30 * 86_400_000).toISOString();
+  const r = Bun.spawnSync(["git", "commit", "-qm", "fixture"], { cwd: root, env: { ...process.env, GIT_COMMITTER_DATE: date, GIT_AUTHOR_DATE: date } });
+  if (r.exitCode !== 0) throw new Error(r.stderr.toString());
 }
 
 const release = (n: number, status: string, criteria = "内容", extra = "") =>
@@ -172,5 +175,35 @@ describe("canon brief: the overall progress summary", () => {
     const lines = canon(root, "brief").out.split("\n");
     const at = lines.indexOf("Overall progress (canon overview):");
     expect(lines.slice(at + 1, at + 3)).toEqual(["  no release in progress", "  waiting for the owner: 1 question(s), 0 tier-C finding(s), 0 criterion(s)"]);
+  });
+});
+
+describe("recent changes to the goal", () => {
+  const commitAt = (root: string, files: Record<string, string>, message: string, daysAgo: number) => {
+    for (const [p, text] of Object.entries(files)) {
+      mkdirSync(join(root, p, ".."), { recursive: true });
+      writeFileSync(join(root, p), text);
+    }
+    sh(root, "add", "-A");
+    const date = new Date(Date.now() - daysAgo * 86_400_000).toISOString();
+    const r = Bun.spawnSync(["git", "commit", "-qm", message], { cwd: root, env: { ...process.env, GIT_COMMITTER_DATE: date, GIT_AUTHOR_DATE: date } });
+    if (r.exitCode !== 0) throw new Error(r.stderr.toString());
+  };
+
+  test("BR-2505 BR-2506: a commit of the last 7 days that changed a criterion is listed in the overview and named in the brief; an older one is not", () => {
+    const root = project();
+    commitAt(root, { [`canon/releases/${R(3)}.md`]: release(3, "active", "- 甲") }, "add release", 20);
+    commitAt(root, { [`canon/releases/${R(3)}.md`]: release(3, "active", "- 甲\n- 乙") }, "old goal change", 8);
+    expect(canon(root, "overview").out).not.toContain("最近 7 天的目标改动");
+    commitAt(root, { [`canon/releases/${R(3)}.md`]: release(3, "active", "- 甲\n- 乙\n- 支持手柄。") }, "加手柄", 3);
+    const lines = canon(root, "overview").out.split("\n");
+    const at = lines.indexOf("最近 7 天的目标改动：");
+    expect(at).toBeGreaterThan(-1);
+    expect(lines[at + 1]).toMatch(/^ {2}[0-9a-f]{9} 加手柄$/);
+    expect(lines[at + 2]).toBe(`    ${R(3)}: success criterion added or reworded: 支持手柄。`);
+    expect(lines[at + 3]).toBe("");
+    const sha = sh(root, "rev-parse", "--short=9", "HEAD").trim();
+    expect(canon(root, "brief").out).toContain(`  goal changed in the last 7 days: ${sha} (canon overview)`);
+    expect(JSON.parse(canon(root, "overview", "--json").out).goal_changes).toHaveLength(1);
   });
 });

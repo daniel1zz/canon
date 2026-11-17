@@ -115,9 +115,10 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   // A release becomes shipped only through `canon release ship`, and stays shipped (BR-2332, D-61).
   const releases = landingReleases({ primary: ws.primary, timing: ws.config.floorTiming, db: ws.db, wt, base: base.value, head: head.value, corpus: read.corpus, subject });
   if (!releases.ok) return refuse("release", releases.message);
-  // Success criteria, what a release is made of and what is dropped are the owner's to change (BR-2510, D-130).
+  // Goal changes land and are listed; a chore cannot make one, and only the owner accepts a criterion waiting for them (BR-2510, D-130).
   const goal = landingGoal({ db: ws.db, wt, base: base.value, head: head.value, corpus: read.corpus, subject });
   if (!goal.ok) return refuse("release", goal.message);
+  for (const line of goal.notices) say(line);
 
   // Every added, edited or deleted file under canon/rules, canon/decisions or canon/releases is reviewed after the landing
   // (BR-2009, BR-2441): rule, release and decision documents by their new text, deleted ones by their text on main, domain READMEs whole.

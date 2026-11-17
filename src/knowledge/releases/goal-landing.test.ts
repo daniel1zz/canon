@@ -34,68 +34,75 @@ function fixture(): string {
   return root;
 }
 
-/** A question asked and, when `answered`, answered; its number. */
-function question(root: string, answered: boolean): number {
+/** A question asked for `subject` and, when `answered`, answered; its number. */
+function question(root: string, subject: string | null, answered: boolean): number {
   const db = ws(root).db;
-  const n = ask(db, "agent:a", null, "要改目标吗？", ["是", "否"]);
+  const n = ask(db, "agent:a", subject, "负责人玩通了吗？", ["是", "否"]);
   if (answered) db.db.query("UPDATE questions SET answer = '是', answered_by = 'human:o' WHERE id = ?").run(n);
   return n;
 }
 
-/** Lands a new change writing `files`, with `owner_answers` when given; the outcome. */
-async function attempt(root: string, title: string, files: Record<string, string>, answers?: string) {
+/** Starts a change writing `files`, with `owner_answers` from `answers(change id)` when given; lands it, keeping what it said. */
+async function attempt(root: string, title: string, files: Record<string, string>, answers?: (change: string) => string) {
   const s = startNew(root, title);
   write(s.worktree, files);
   if (answers !== undefined) {
     const dir = join(s.worktree, "canon/changes");
     const file = join(dir, readdirSync(dir).find((f) => f.startsWith(`${s.change}`))!);
-    writeFileSync(file, readFileSync(file, "utf8").replace("status: open\n", `status: open\nowner_answers: ${answers}\n`));
+    writeFileSync(file, readFileSync(file, "utf8").replace("status: open\n", `status: open\nowner_answers: ${answers(s.change)}\n`));
   }
   sh(s.worktree, "add", "-A");
   sh(s.worktree, "commit", "-qm", title);
-  return land(ws(s.worktree), FAST, quiet);
+  const said: string[] = [];
+  const outcome = await land(ws(s.worktree), FAST, (l: string) => said.push(l));
+  return { outcome, said: said.join("\n"), change: s.change };
 }
 
-const refused = (o: Awaited<ReturnType<typeof land>>) => (o.kind === "refused" ? [o.reason, o.message] : [o.kind, ""]);
+const reasonOf = (o: Awaited<ReturnType<typeof land>>) => (o.kind === "refused" ? o.reason : o.kind);
+const messageOf = (o: Awaited<ReturnType<typeof land>>) => (o.kind === "refused" ? o.message : "");
+const ACCEPTED = `- 负责人玩通主线。（已满足：${F(1)}）\n- 没人解释也能玩。`;
 
-describe("the goal is the owner's", () => {
-  test("BR-2510: an added criterion needs an answered question in owner_answers: none or an unanswered one is refused, an answered one lands", async () => {
+describe("the goal: the AI may change it, the owner sees it", () => {
+  test("BR-2510: an added criterion, a feature added and a drop land without the owner and list each change; marks and a reorder list nothing", async () => {
     const root = fixture();
-    const added = { [`canon/releases/${R(5)}.md`]: R5(undefined, `${CRITERIA}\n- 支持手柄。`) };
-    const [reason, message] = refused(await attempt(root, "加标准", added));
-    expect(reason).toBe("release");
-    expect([message.includes(R(5)), message.includes("支持手柄"), message.includes("owner_answers")]).toEqual([true, true, true]);
-    const pending = question(root, false);
-    expect(refused(await attempt(root, "加标准 2", added, `[${pending}]`))[0]).toBe("release");
-    const yes = question(root, true);
-    expect((await attempt(root, "加标准 3", added, `[${yes}]`)).kind).toBe("landed");
+    const added = await attempt(root, "加标准", { [`canon/releases/${R(5)}.md`]: R5(undefined, `${CRITERIA}\n- 支持手柄。`) });
+    expect(reasonOf(added.outcome)).toBe("landed");
+    expect(added.said).toContain(`goal: ${added.change} changes the goal:`);
+    expect(added.said).toMatch(new RegExp(`${R(5)}: success criterion added or reworded: 支持手柄`));
+    const more = await attempt(root, "加模块", { [`canon/releases/${R(5)}.md`]: R5(`status: active\nfeatures: [${F(1)}, ${F(2)}, ${F(3)}]\n`, `${CRITERIA}\n- 支持手柄。`) });
+    expect([reasonOf(more.outcome), more.said.includes(`features [${F(1)}, ${F(2)}] → [${F(1)}, ${F(2)}, ${F(3)}]`)]).toEqual(["landed", true]);
+    const dropped = await attempt(root, "取消", { [`canon/releases/${R(6)}.md`]: release(6, `status: dropped\nmerged_into: ${R(5)}\n`, "- 内容") });
+    expect([reasonOf(dropped.outcome), dropped.said.includes(`${R(6)}: status planned → dropped`)]).toEqual(["landed", true]);
+    const marks = await attempt(root, "标记和换顺序", { [`canon/releases/${R(5)}.md`]: R5(`status: active\nfeatures: [${F(3)}, ${F(2)}, ${F(1)}]\n`, `- 负责人玩通主线。（待负责人）\n- 没人解释也能玩。（未满足：还差引导）\n- 支持手柄。`) });
+    expect([reasonOf(marks.outcome), marks.said.includes("goal:")]).toEqual(["landed", false]);
   });
 
-  test("BR-2510: marks between met, unmet and unproven, ids reordered and start land without answers; leaving 待负责人, a feature added or a drop do not", async () => {
+  test("BR-2510: leaving 待负责人 needs an answered question asked for this change: none, unanswered or asked for another change is refused", async () => {
     const root = fixture();
-    expect((await attempt(root, "标记", { [`canon/releases/${R(5)}.md`]: R5(undefined, "- 负责人玩通主线。（待负责人）\n- 没人解释也能玩。（未满足：还差引导）") })).kind).toBe("landed");
-    expect((await attempt(root, "换顺序", { [`canon/releases/${R(5)}.md`]: R5(`status: active\nfeatures: [${F(2)}, ${F(1)}]\n`, "- 负责人玩通主线。（待负责人）\n- 没人解释也能玩。（未满足：还差引导）") })).kind).toBe("landed");
-    expect((await attempt(root, "开工", { [`canon/releases/${R(6)}.md`]: release(6, "status: active\n", "- 内容") })).kind).toBe("landed");
-    const now = "- 没人解释也能玩。（未满足：还差引导）";
-    expect(refused(await attempt(root, "验收", { [`canon/releases/${R(5)}.md`]: R5(`status: active\nfeatures: [${F(2)}, ${F(1)}]\n`, `- 负责人玩通主线。（已满足：${id("C", 1)}）\n${now}`) }))[1]).toContain("no longer waits for the owner");
-    expect(refused(await attempt(root, "加模块", { [`canon/releases/${R(5)}.md`]: R5(`status: active\nfeatures: [${F(2)}, ${F(1)}, ${F(3)}]\n`, `- 负责人玩通主线。（待负责人）\n${now}`) }))[1]).toContain(`features [${F(2)}, ${F(1)}] → [${F(2)}, ${F(1)}, ${F(3)}]`);
-    expect(refused(await attempt(root, "取消", { [`canon/releases/${R(6)}.md`]: release(6, `status: dropped\nmerged_into: ${R(5)}\n`, "- 内容") }))[1]).toContain(`${R(6)}: status active → dropped`);
+    const accept = { [`canon/releases/${R(5)}.md`]: R5(undefined, ACCEPTED) };
+    const none = await attempt(root, "验收", accept);
+    expect([reasonOf(none.outcome), messageOf(none.outcome).includes("负责人玩通主线")]).toEqual(["release", true]);
+    const old = question(root, null, true);
+    expect(reasonOf((await attempt(root, "验收 2", accept, () => `[${old}]`)).outcome)).toBe("release");
+    const pending = await attempt(root, "验收 3", accept, (c) => `[${question(root, c, false)}]`);
+    expect(reasonOf(pending.outcome)).toBe("release");
+    const yes = await attempt(root, "验收 4", accept, (c) => `[${question(root, c, true)}]`);
+    expect(reasonOf(yes.outcome)).toBe("landed");
   });
 
-  test("BR-2510: a chore that changes a criterion is refused whatever it names", async () => {
+  test("BR-2510: a chore that changes a criterion is refused and told to use a change", async () => {
     const root = fixture();
     const c = startChore(ws(root), { title: "顺手改字" }, quiet);
     if (!c.ok) throw new Error(c.error.message);
     write(c.value.worktree, { [`canon/releases/${R(5)}.md`]: R5(undefined, "- 负责人玩通全部主线。（待负责人）\n- 没人解释也能玩。") });
     sh(c.value.worktree, "add", "-A");
     sh(c.value.worktree, "commit", "-qm", "chore");
-    const [reason, message] = refused(await land(ws(c.value.worktree), FAST, quiet));
-    expect([reason, message.includes("a chore cannot")]).toEqual(["release", true]);
+    const o = await land(ws(c.value.worktree), FAST, quiet);
+    expect([reasonOf(o), messageOf(o).includes("a chore cannot")]).toEqual(["release", true]);
   });
 
   test("BR-2510: owner_answers that is not a list of question numbers makes the change file invalid", async () => {
     const root = fixture();
-    const [reason] = refused(await attempt(root, "坏字段", {}, "[abc]"));
-    expect(reason).toBe("check");
+    expect(reasonOf((await attempt(root, "坏字段", {}, () => "[abc]")).outcome)).toBe("check");
   });
 });

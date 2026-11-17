@@ -1,4 +1,6 @@
+import { git } from "../../kernel/git.ts";
 import { ok, type Result } from "../../kernel/result.ts";
+import { goalChangesBetween } from "../../knowledge/releases/goal-landing.ts";
 import { backlogAt } from "../../knowledge/documents/backlog.ts";
 import type { Corpus, Release } from "../../knowledge/documents/model.ts";
 import { planStatuses, summaryLine as planLine, type PlanStatus } from "../../knowledge/plans/status.ts";
@@ -41,6 +43,34 @@ export interface Overview {
   readonly backlog: readonly ListedChange[];
   readonly backlogMore: number;
   readonly landed: readonly Landed[];
+  /** Commits on main of the last GOAL_DAYS days that changed the goal, newest first (BR-2505, BR-2510). */
+  readonly goalChanges: readonly GoalCommit[];
+}
+
+export interface GoalCommit {
+  readonly sha: string;
+  readonly subject: string;
+  readonly changes: readonly string[];
+}
+
+/** How far back the overview and the brief show changes to the goal (BR-2505, BR-2506). */
+const GOAL_DAYS = 7;
+
+/** main's commits of the last GOAL_DAYS days that changed a release's or feature's goal, worked out from git each time (BR-2510). */
+function goalCommits(ws: Workspace): GoalCommit[] {
+  const dirs = ["release", "feature"].map((n) => ws.config.types.find((t) => t.name === n)).filter((t) => t !== undefined).map((t) => `canon/${t.dir}`);
+  const log = git(ws.primary, "log", ws.config.main, `--since=${GOAL_DAYS}.days`, "--format=%H%x09%s", "--", ...dirs);
+  if (!log.ok || log.value.trim() === "") return [];
+  const out: GoalCommit[] = [];
+  for (const line of log.value.trim().split("\n")) {
+    const [sha, subject] = line.split("\t") as [string, string];
+    // reason: a root commit has no parent to compare with; everything in it is the first goal, not a change to one
+    if (!git(ws.primary, "rev-parse", "--verify", "--quiet", `${sha}^`).ok) continue;
+    const paths = git(ws.primary, "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", `${sha}^`, sha, "--", ...dirs);
+    const changes = goalChangesBetween(ws.primary, `${sha}^`, sha, paths.ok && paths.value !== "" ? paths.value.split("\n") : [], ws.config.types);
+    if (changes.length > 0) out.push({ sha, subject, changes });
+  }
+  return out;
 }
 
 const number = (id: string) => Number(id.split("-")[1]);
@@ -78,6 +108,7 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean }):
     backlog: open.slice(0, BACKLOG_SHOWN),
     backlogMore: Math.max(0, open.length - BACKLOG_SHOWN),
     landed: landed(ws, corpus.value),
+    goalChanges: goalCommits(ws),
   });
 }
 
@@ -115,6 +146,10 @@ export function overviewLines(o: Overview): string[] {
     out.push(criteriaCountLine(o.release.criteria));
     for (const c of o.release.criteria) out.push(`  [${CRITERION_LABEL[c.state]}] ${c.text}${c.evidence.length > 0 ? `  证据：${c.evidence.join(", ")}` : ""}`);
   }
+  if (o.goalChanges.length > 0) {
+    out.push(`最近 ${GOAL_DAYS} 天的目标改动：`);
+    for (const g of o.goalChanges) out.push(`  ${g.sha.slice(0, 9)} ${g.subject}`, ...g.changes.map((c) => `    ${c}`));
+  }
   out.push("", "## 计划", ...(o.plans.length > 0 ? o.plans.map(planLine) : ["(no plans)"]));
   const releaseId = o.release?.doc.id;
   const waiting = [...o.waiting.questions.map(questionLine), ...o.waiting.findings.map(findingLine), ...o.waiting.criteria.map((c) => `成功标准 ${releaseId}: ${c.text}`)];
@@ -145,6 +180,7 @@ export function overviewJson(o: Overview): Record<string, unknown> {
     backlog: o.backlog.map((l) => ({ id: l.change.id, title: l.change.title, marks: marksOf(l, false) })),
     backlog_more: o.backlogMore,
     landed: o.landed.map((l) => ({ id: l.id, title: l.title ?? null, at: l.at })),
+    goal_changes: o.goalChanges.map((g) => ({ sha: g.sha, subject: g.subject, changes: g.changes })),
   };
 }
 
@@ -153,11 +189,12 @@ export function briefSummary(o: Overview): string[] {
   const notDone = o.plans.filter((p) => p.counts.done < p.steps.length);
   const { questions: q, findings: f, criteria: c } = o.waiting;
   // reason: with nothing to say the brief stays the bare guide (BR-2024, BR-2506)
-  if (!o.release && notDone.length === 0 && q.length + f.length + c.length === 0) return [];
+  if (!o.release && notDone.length === 0 && q.length + f.length + c.length === 0 && o.goalChanges.length === 0) return [];
   const out = ["Overall progress (canon overview):"];
   if (o.release) out.push(`  ${headLine(o.release.doc)}${o.release.fallback ? "  (no release is active: the lowest planned one)" : ""}`, `  ${criteriaCountLine(o.release.criteria)}`);
   else out.push("  no release in progress");
   if (notDone.length > 0) out.push(`  plans not done: ${notDone.map((p) => `${p.change.id} ${p.counts.done}/${p.steps.length} (${p.percent}%)`).join(", ")}`);
+  if (o.goalChanges.length > 0) out.push(`  goal changed in the last ${GOAL_DAYS} days: ${o.goalChanges.map((g) => g.sha.slice(0, 9)).join(", ")} (canon overview)`);
   if (q.length + f.length + c.length > 0) out.push(`  waiting for the owner: ${q.length} question(s), ${f.length} tier-C finding(s), ${c.length} criterion(s)`);
   return out;
 }

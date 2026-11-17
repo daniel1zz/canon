@@ -53,31 +53,49 @@ export function goalChanges(before: GoalDoc | undefined, now: GoalDoc | undefine
   return out;
 }
 
-export function landingGoal(i: { readonly db: CoordDb; readonly wt: string; readonly base: string; readonly head: string; readonly corpus: Corpus; readonly subject: string | null }): { ok: true } | { ok: false; message: string } {
+/** Whether a change line says a criterion left 待负责人: the one goal change that needs the owner's own answer (BR-2510). */
+const leftOwner = (line: string) => line.includes("no longer waits for the owner");
+
+/**
+ * The landing's goal check (BR-2510): changes to the goal land and are listed in `notices`; a chore may not change it,
+ * and a criterion leaves 待负责人 only with an answered question asked for this change.
+ */
+export function landingGoal(i: { readonly db: CoordDb; readonly wt: string; readonly base: string; readonly head: string; readonly corpus: Corpus; readonly subject: string | null }): { ok: true; notices: string[] } | { ok: false; message: string } {
   const dirs = ["release", "feature"].map((n) => i.corpus.types.find((t) => t.name === n)).filter((t) => t !== undefined).map((t) => `canon/${t.dir}`);
   const diff = git(i.wt, "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", i.base, i.head, "--", ...dirs);
-  const paths = diff.ok && diff.value !== "" ? diff.value.split("\n") : [];
-  const read = (ref: string, path: string) => {
-    const text = git(i.wt, "show", `${ref}:${path}`);
-    return text.ok ? goalDoc(text.value, path, i.corpus.types) : undefined;
-  };
-  const changes: string[] = [];
-  for (const path of paths) {
-    const before = read(i.base, path);
-    // reason: a shipped release is frozen by its own checks; comparing it again would ask the owner about a ship (BR-2325, BR-2515)
-    if (before?.status === "shipped") continue;
-    const now = read(i.head, path);
-    if (now?.status === "shipped") continue;
-    if (!before && !now) continue;
-    changes.push(...goalChanges(before, now));
-  }
-  if (changes.length === 0) return { ok: true };
-  const ask = "ask the owner first (canon human ask), then write the answered question's number in the change's owner_answers (BR-2510)";
+  const changes = goalChangesBetween(i.wt, i.base, i.head, diff.ok && diff.value !== "" ? diff.value.split("\n") : [], i.corpus.types);
+  if (changes.length === 0) return { ok: true, notices: [] };
   const list = changes.map((c) => `  ${c}`).join("\n");
-  if (i.subject === null || isChore(i.subject)) return { ok: false, message: `this landing changes the goal, which only a change confirmed by the owner may do; a chore cannot:\n${list}\nLand it in a change and ${ask}` };
-  const change = i.corpus.docs.find((d): d is Change => d.kind === "change" && d.id === i.subject);
-  const answered = (change?.ownerAnswers ?? []).filter((n) => i.db.db.query<{ answer: string | null }, [number]>("SELECT answer FROM questions WHERE id = ?").get(n)?.answer != null);
-  if (answered.length > 0) return { ok: true };
-  const named = change?.ownerAnswers?.length ? ` (owner_answers names ${change.ownerAnswers.map((n) => `#${n}`).join(", ")}, none answered)` : "";
-  return { ok: false, message: `${i.subject} changes the goal without the owner's answer${named}:\n${list}\n${ask}` };
+  if (i.subject === null || isChore(i.subject)) return { ok: false, message: `this landing changes the goal, and a chore cannot: land it in a change, whose ## 为什么 says why (BR-2510):\n${list}` };
+  const owner = changes.filter(leftOwner);
+  if (owner.length > 0) {
+    const change = i.corpus.docs.find((d): d is Change => d.kind === "change" && d.id === i.subject);
+    // reason: the answer must be one asked for this change, or any old answered question would do (BR-2510)
+    const answered = (change?.ownerAnswers ?? []).filter((n) => {
+      const q = i.db.db.query<{ answer: string | null; subject: string | null }, [number]>("SELECT answer, subject FROM questions WHERE id = ?").get(n);
+      return q?.answer != null && q.subject === i.subject;
+    });
+    if (answered.length === 0) {
+      return { ok: false, message: `${i.subject} marks success criteria the owner was to accept, without the owner's answer:\n${owner.map((c) => `  ${c}`).join("\n")}\nAsk the owner (canon human ask --change ${i.subject}), then write the answered question's number in owner_answers (BR-2510)` };
+    }
+  }
+  return { ok: true, notices: [`goal: ${i.subject} changes the goal:`, ...changes.map((c) => `  ${c}`)] };
+}
+
+/** The goal changes of the release and feature files `paths` between two commits, one line each (BR-2510, BR-2505). */
+export function goalChangesBetween(cwd: string, base: string, head: string, paths: readonly string[], types: readonly DocType[]): string[] {
+  const read = (ref: string, path: string) => {
+    const text = git(cwd, "show", `${ref}:${path}`);
+    return text.ok ? goalDoc(text.value, path, types) : undefined;
+  };
+  const out: string[] = [];
+  for (const path of paths) {
+    const before = read(base, path);
+    // reason: a shipped release is frozen by its own checks (BR-2325, BR-2515)
+    if (before?.status === "shipped") continue;
+    const now = read(head, path);
+    if (now?.status === "shipped" || (!before && !now)) continue;
+    out.push(...goalChanges(before, now));
+  }
+  return out;
 }
