@@ -248,7 +248,7 @@ describe("help", () => {
     const root = repo();
     const sub = canon(root, "rule", "--help");
     expect(sub.code).toBe(0);
-    expect(sub.out).toContain("USAGE canon rule new|list|retire|domain|domains");
+    expect(sub.out).toContain("USAGE canon rule new|list|propose|apply|retire|domain|domains");
     expect(sub.out).toContain("Use canon rule <command> --help");
     expect(sub.out).not.toContain("main.ts");
     expect(canon(root, "rule", "new", "--help").out).toContain("USAGE canon rule new [OPTIONS]");
