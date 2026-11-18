@@ -20,4 +20,22 @@ export const delegationKeys = {
     listed: 146,
     checked: 82,
   }),
+  delegateMaxWorkers: configKey<number>({
+    key: "delegate_max_workers",
+    doc: "How many delegations may hold a worker slot at once; canon work delegate refuses a new worker beyond it (BR-2526).",
+    default: 10,
+    schema: { type: "integer", minimum: 1, default: 10 },
+    read: (v) => (typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`delegate_max_workers` must be a whole number of at least 1")),
+    listed: 221,
+    checked: 221,
+  }),
+  delegateMaxLoadPerCpu: configKey<number>({
+    key: "delegate_max_load_per_cpu",
+    doc: "The 5-minute load average per CPU at which canon work delegate refuses a new worker (BR-2526).",
+    default: 2,
+    schema: positiveNumber(2),
+    read: positiveValue("delegate_max_load_per_cpu", 1),
+    listed: 222,
+    checked: 222,
+  }),
 };

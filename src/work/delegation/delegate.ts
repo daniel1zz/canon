@@ -10,6 +10,7 @@ import { branchSubject } from "../session/subject.ts";
 import type { Say, Workspace } from "../workspace.ts";
 import { isWorker } from "./worker.ts";
 import { delegationKeys } from "./config-keys.ts";
+import { measure, refusal, refusalMessage, unmeasured, unmeasuredLines } from "./capacity.ts";
 import { delegation, delegationNotice, type ContractItem, type Delegation } from "./records.ts";
 import { parseDocFile } from "../../knowledge/documents/docfile.ts";
 import { isDeepStrictEqual } from "node:util";
@@ -105,8 +106,20 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
   }
   if (unpublished.size) return err("refused", `publish these contract items to ${ws.config.main} first: ${[...unpublished].join(", ")}`);
   const taskHash = taskHashOf(task.value.change.body);
+  const before = delegation(ws.db, subject);
+  // reason: only a delegation that adds a worker is checked; redelegating replaces one (BR-2526, D-136)
+  const cap = !before || before.ended !== null ? measure(ws, main.value) : undefined;
+  if (cap && !cap.ok) return cap;
   const result = ws.db.db.transaction((): Result<Delegation> => {
     const previous = delegation(ws.db, subject);
+    const adds = !previous || previous.ended !== null;
+    if (adds && cap) {
+      const no = refusal(ws, cap.value);
+      if (no) {
+        ws.db.event(ws.actor, "delegation.refuse", subject, no.detail);
+        return err("refused", refusalMessage(subject, no.reasons));
+      }
+    }
     const claim = ws.db.db.query<{ holder: string }, [string]>("SELECT holder FROM claims WHERE subject = ?").get(subject);
     if (claim && claim.holder !== ws.actor && !isWorker(claim.holder)) return err("conflict", `${subject} is claimed by ${claim.holder}`);
     const accepted = claim && claim.holder === previous?.acceptor;
@@ -115,10 +128,12 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
     ws.db.db.query("INSERT INTO delegations(subject,worker,owner,revision,epoch,acceptor,manifest,task_hash) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET worker=excluded.worker,owner=excluded.owner,revision=excluded.revision,epoch=excluded.epoch,acceptor=excluded.acceptor,manifest=excluded.manifest,task_hash=excluded.task_hash,ended=NULL")
       .run(subject, worker, d.owner, d.revision, d.epoch, d.acceptor, JSON.stringify(manifest), taskHash);
     if (claim?.holder === ws.actor) ws.db.db.query("DELETE FROM claims WHERE subject = ? AND holder = ?").run(subject, ws.actor);
-    ws.db.event(ws.actor, previous ? "delegation.update" : "delegation.create", subject, { ...d, ...(previous ? { previous } : {}) });
+    const missing = adds && cap ? unmeasured(cap.value) : [];
+    ws.db.event(ws.actor, previous ? "delegation.update" : "delegation.create", subject, { ...d, ...(previous ? { previous } : {}), ...(missing.length ? { unmeasured: missing } : {}) });
     return ok(d);
   }).immediate();
   if (!result.ok) return result;
+  if (cap) for (const line of unmeasuredLines(cap.value)) say(line);
   for (const line of delegationNotice(ws.db, subject)) say(line);
   say(`contract: ${manifest.map((i) => `${i.id ?? i.path} ${i.hash}`).join(", ")}; task ${taskHash}`);
   const hooks = config.hooks as { after_land?: string | string[] } | undefined;
