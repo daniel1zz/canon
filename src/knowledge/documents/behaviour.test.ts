@@ -50,6 +50,7 @@ describe("pass records in a change's front matter", () => {
     expect(repo(`passes:\n  ${br(1)}: "3f2a9c0d1e4b5a67 test"\n`)).toEqual([]);
     expect(repo(`passes:\n  ${br(1)}: "3f2a9c0d1e4b5a67 acceptance wording"\n`)).toEqual([]);
     expect(repo(`passes:\n  ${br(1)}: "3f2a9c0d1e4b5a67 test-file"\n`)).toEqual([]); // evidence only down to the file (BR-2241)
+    expect(repo(`passes:\n  ${br(1)}: "3f2a9c0d1e4b5a67 test-comment"\n`)).toEqual([]); // the named test changed only in comments (BR-2241, #250)
   });
 
   test("BR-2237: an unknown method, a short or upper-case hash, or a list is file-invalid naming passes", () => {
