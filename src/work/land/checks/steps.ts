@@ -13,7 +13,6 @@ import { changePort } from "../../hooks/ports.ts";
 import { type Doc } from "../../../knowledge/documents/model.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
 import { retryPrompt, runReview, unparsedTexts, wordingPrompt } from "../../../knowledge/review/review.ts";
-import { recordFindings } from "../../../knowledge/review/findings/findings.ts";
 import { REVIEW_NONE } from "../../../knowledge/review/config-keys.ts";
 import type { ReviewNeeds } from "../../../knowledge/review/landed-queue.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
@@ -173,19 +172,16 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       if (!run.ok && retried) {
         say(`wording judgement: the answer could not be read (${run.error.message.slice(0, 200)}); asking the review command once more`);
         run = await runReview(reviewer, at.value, retryPrompt(prompt, run.error.message), limits);
-        // reason: the reviewer ran and wrote something; its words become open findings on the rules it was asked about,
-        // so the session settles them like any finding instead of guessing from a refusal message (BR-2239, #252)
+        // reason: the reviewer ran and wrote something; its words are shown whole and kept in an event, but they refuse
+        // only this landing: an open finding would block every session's new work once its author left (BR-2239, BR-2464, #252)
         const unread = !run.ok && run.error.code === "invalid" ? run.error.message : undefined;
         const texts = unread !== undefined ? unparsedTexts(lastOut) : [];
         if (texts.length > 0) {
           const docs = execution.wording.map((q) => q.id);
-          const event = ws.db.event(ws.actor, "review.unparsed", subject, { docs, texts, commit: head.value });
-          const rec = recordFindings(ws.db, { findings: texts.map((text) => ({ criterion: "unparsed", text })), reviewed: docs, change: subject, event, sha: head.value });
-          if (!rec.ok) return refuse("environment", rec.error.message);
-          const ids = [...rec.value.opened, ...rec.value.existing].map((n) => `#${n}`).join(", ");
+          ws.db.event(ws.actor, "review.unparsed", subject, { docs, texts, commit: head.value });
           return refuse(
             "review",
-            `the wording judgement answered twice in a form canon cannot read (${(unread ?? "").slice(0, 200)}); its text is recorded as open review finding(s) ${ids} [unparsed] on ${docs.join(", ")}: read them with canon context ${docs[0]}, then settle each (canon finding close) and land again`,
+            [`the wording judgement of ${docs.join(", ")} answered twice in a form canon cannot read (${(unread ?? "").slice(0, 200)}); what the reviewer wrote:`, ...texts.map((t) => `  - ${t}`), "Address it, then land again: the judgement is asked anew."].join("\n"),
           );
         }
       }

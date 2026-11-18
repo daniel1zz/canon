@@ -452,22 +452,24 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     expect(changeOn(bad.s.worktree, "HEAD", bad.s.change).status).toBe("open");
   }, TIMED * 2);
 
-  test("BR-2239: two unreadable answers that carry text record that text as open [unparsed] findings on the rules asked about and refuse on them (#252)", async () => {
+  test("BR-2239: two unreadable answers that carry text refuse with the reviewer's words in full and a review.unparsed event; no finding is opened (#252)", async () => {
     const { root, s } = await wordingProject((r) => reviewing(r, `{"findings":["${br(1)} changes when the line shows"]}`));
     write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
     const out = await land(ws(s.worktree), FINISH, quiet);
     expect(out.kind === "refused" && out.reason).toBe("review");
-    expect(out.kind === "refused" && out.message).toContain("[unparsed]");
+    expect(out.kind === "refused" && out.message).toContain(`what the reviewer wrote:\n  - ${br(1)} changes when the line shows`);
     expect(out.kind === "refused" && out.message).not.toContain("asked twice; neither answer could be read");
-    const open = openFindings(ws(root).db, [br(1)]);
-    expect(open.map((f) => [f.criterion, f.text, f.change])).toEqual([["unparsed", `${br(1)} changes when the line shows`, s.change]]);
+    const ev = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'review.unparsed' ORDER BY id DESC LIMIT 1").get()!;
+    expect(JSON.parse(ev.detail).texts).toEqual([`${br(1)} changes when the line shows`]);
+    expect(openFindings(ws(root).db)).toEqual([]); // only this landing is refused: nothing stays open to block other sessions (BR-2464)
     expect(changeOn(s.worktree, "HEAD", s.change).status).toBe("open");
-    // a reviewer that prints plain prose, no JSON: the prose is the finding, attached to the rule asked about
-    const prose = await wordingProject((r) => reviewing(r, "I think the statement now says something new."));
+    // a reviewer that prints plain prose, no JSON: the prose is shown whole
+    const long = `I think the statement now says something new. ${"x".repeat(400)}`;
+    const prose = await wordingProject((r) => reviewing(r, long));
     write(prose.s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
     const refused = await land(ws(prose.s.worktree), FINISH, quiet);
     expect(refused.kind === "refused" && refused.reason).toBe("review");
-    expect(openFindings(ws(prose.root).db, [br(1)]).map((f) => f.text)).toEqual(["I think the statement now says something new."]);
+    expect(refused.kind === "refused" && refused.message).toContain(`  - ${long}`);
   }, TIMED * 2);
 
   test("BR-2239: a review command that fails is not asked again (#227)", async () => {
