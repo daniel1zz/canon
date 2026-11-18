@@ -289,6 +289,26 @@ describe("work land", () => {
     expect(fetched).toEqual(["https://ok.example/a"]);
   });
 
+  test("BR-2111: a file source of a superseded decision already on main is checked by no step, so its file may change", async () => {
+    const root = project();
+    const s = startNew(root, "Sourced");
+    mkdirSync(join(s.worktree, "canon/decisions"), { recursive: true });
+    writeFileSync(join(s.worktree, "refund.txt"), "export function refund(order) {}\n");
+    const doc = (id: string, status: string, extra: string, quote: string) =>
+      `---\nid: ${id}\ntitle: Pick ${id}\nstatus: ${status}\n${extra}---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：refund.txt “${quote}”\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
+    writeFileSync(join(s.worktree, "canon/decisions/D-1.md"), doc("D-1", "superseded", "", "export function refund(order)"));
+    writeFileSync(join(s.worktree, "canon/decisions/D-2.md"), doc("D-2", "accepted", "supersedes: D-1\nrevised_because: requirement\n", "(order) {}"));
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "decisions");
+    const first = await land(ws(s.worktree), FAST, quiet);
+    expect(first.kind === "refused" ? `${first.reason}: ${first.message} ${JSON.stringify(first.findings ?? [])}` : first.kind).toBe("landed");
+    const t = startNew(root, "Rename");
+    writeFileSync(join(t.worktree, "refund.txt"), "export function refundOrder(order) {}\n");
+    sh(t.worktree, "commit", "-qam", "rename");
+    // D-1's quote is gone from refund.txt, but D-1 is superseded: neither the source step nor canon check reads it (BR-2252)
+    expect((await land(ws(t.worktree), FAST, quiet)).kind).toBe("landed");
+  });
+
   test("BR-2018 BR-2019: --finish closes the change, releases the claim, and clean removes only fully landed worktrees", async () => {
     const root = project();
     const done = startNew(root, "Done one");
