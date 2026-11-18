@@ -12,7 +12,7 @@ import { runHooks } from "../../hooks/hooks.ts";
 import { changePort } from "../../hooks/ports.ts";
 import { type Doc } from "../../../knowledge/documents/model.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
-import { retryPrompt, runReview, unparsedTexts, wordingPrompt } from "../../../knowledge/review/review.ts";
+import { judgeWording, retryPrompt, runReview, unparsedTexts, wordingPrompt, type WordingWhy } from "../../../knowledge/review/review.ts";
 import { REVIEW_NONE } from "../../../knowledge/review/config-keys.ts";
 import type { ReviewNeeds } from "../../../knowledge/review/landed-queue.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
@@ -157,6 +157,7 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
     const hash = reviewKey("land", reviewer, 0, [prompt]);
     const earlier = passedWording(ws.db, hash);
     let answers: Readonly<Record<string, string>> | undefined;
+    let why: Readonly<Record<string, WordingWhy>> | undefined;
     if (earlier && unconfirmedWording(execution.wording, earlier.wording).length === 0) {
       say(`wording judgement: reused event ${earlier.event} for the same question; the review command was not run`);
       answers = earlier.wording;
@@ -186,11 +187,15 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
         }
       }
       if (!run.ok) return refuse("review", couldNotRun("wording", retried ? `${run.error.message} (asked twice; neither answer could be read)` : run.error.message, at.value, v.main));
-      answers = run.value.wording;
-      ws.db.event(ws.actor, "review.wording", subject, { docs: execution.wording.map((q) => q.id), wording: answers ?? {}, hash, commit: head.value });
+      // reason: a behaviour answer must quote the sentence that makes the difference; without one it counts as wording (BR-2239, #256)
+      const judged = judgeWording(execution.wording, run.value.wording, run.value.wordingWhy);
+      for (const id of judged.unquoted) say(`wording judgement: ${id}: behaviour without a quote from the rule: treated as wording`);
+      answers = judged.answers;
+      why = run.value.wordingWhy;
+      ws.db.event(ws.actor, "review.wording", subject, { docs: execution.wording.map((q) => q.id), wording: answers, ...(why ? { why } : {}), ...(judged.unquoted.length > 0 ? { unquoted: judged.unquoted } : {}), hash, commit: head.value });
     }
     const unconfirmed = unconfirmedWording(execution.wording, answers);
-    if (unconfirmed.length > 0) return refuse("review", wordingMessage(unconfirmed, answers, true));
+    if (unconfirmed.length > 0) return refuse("review", wordingMessage(unconfirmed, answers, true, why));
   }
   // reason: the wording call is over, so the temporary worktree goes before before_land runs, not after it (BR-2216)
   const gone = tree.release();

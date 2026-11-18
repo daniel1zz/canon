@@ -17,11 +17,11 @@ import { REVIEW_NONE } from "./config-keys.ts";
 import { passedReview, reviewKey } from "../../work/land/checks/review-reuse.ts";
 import type { Doc, Corpus } from "../documents/model.ts";
 import { planClose, wordingQuestions } from "../../work/execution/landing.ts";
-import { onlyChangedBlock, reviewPromptParts, type ReviewExtras, runReview, runReviews, type ReviewVerdict } from "./review.ts";
+import { judgeWording, onlyChangedBlock, reviewPromptParts, type ReviewExtras, runReview, runReviews, type ReviewVerdict, type WordingWhy } from "./review.ts";
 
 /** What `canon work review` found, as the command turns it into text and an exit code (BR-2358). */
 export type PreviewOutcome =
-  | { readonly kind: "ok" | "block"; readonly findings: readonly { readonly review: "rule" | "duplicate"; readonly text: string }[]; readonly reviewed: readonly string[]; readonly behind: number; readonly main: string; readonly reusedFrom?: number; readonly related: readonly string[]; readonly wording: readonly { readonly id: string; readonly answer: string | undefined }[] }
+  | { readonly kind: "ok" | "block"; readonly findings: readonly { readonly review: "rule" | "duplicate"; readonly text: string }[]; readonly reviewed: readonly string[]; readonly behind: number; readonly main: string; readonly reusedFrom?: number; readonly related: readonly string[]; readonly wording: readonly { readonly id: string; readonly answer: string | undefined; readonly why?: WordingWhy; readonly unquoted?: boolean }[] }
   | { readonly kind: "off"; readonly behind: number; readonly main: string; readonly related: readonly string[]; readonly wording: readonly string[] }
   | { readonly kind: "nothing"; readonly behind: number; readonly main: string }
   | { readonly kind: "unconfigured"; readonly needs: readonly string[]; readonly main: string }
@@ -145,6 +145,8 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
   const findings: { review: "rule" | "duplicate"; text: string }[] = [];
   let blocked = false;
   let reusedFrom: number | undefined;
+  let unquoted: string[] = [];
+  let why: Readonly<Record<string, WordingWhy>> | undefined;
   let rule: { hash: string; verdict: "ok" | "block"; findings: readonly string[]; wording?: Readonly<Record<string, string>> } | undefined;
   try {
     if (plannedRule) {
@@ -163,7 +165,11 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
       }
       // reason: the preview reports what the review after landing would record (BR-2358, BR-2485)
       v = onlyChangedBlock(v, new Set([...scope.changedDocs, ...scope.deleted].map((d) => d.id)));
-      rule = { hash, verdict: v.verdict, findings: v.findings, ...(wording.questions.length > 0 ? { wording: v.wording ?? {} } : {}) };
+      // reason: judged as the landing judges it, a behaviour answer standing only with a quote from the rule (BR-2358, BR-2239, #256)
+      const judged = judgeWording(wording.questions, v.wording, v.wordingWhy);
+      unquoted = judged.unquoted;
+      why = v.wordingWhy;
+      rule = { hash, verdict: v.verdict, findings: v.findings, ...(wording.questions.length > 0 ? { wording: judged.answers } : {}) };
       findings.push(...v.findings.map((text) => ({ review: "rule" as const, text })));
       blocked ||= v.verdict === "block";
     }
@@ -183,7 +189,7 @@ export async function previewReview(ws: Workspace, guide: string | undefined): P
   }
   const verdict = blocked ? "block" : "ok";
   ws.db.event(ws.actor, "review.preview", subject, { verdict, findings: findings.length, docs: scope.reviewed, standing, tree: head.value, main: main.value, ...(rule ? { hash: rule.hash, rule: rule.verdict, ruleFindings: rule.findings, ...(rule.wording ? { wording: rule.wording } : {}) } : {}) });
-  const answers = wording.questions.map((q) => ({ id: q.id, answer: rule?.wording?.[q.id] }));
+  const answers = wording.questions.map((q) => ({ id: q.id, answer: rule?.wording?.[q.id], ...(why?.[q.id] ? { why: why[q.id] } : {}), ...(unquoted.includes(q.id) ? { unquoted: true } : {}) }));
   return { kind: verdict, findings, reviewed: needs, behind, main: main.value, related, wording: answers, ...(reusedFrom !== undefined ? { reusedFrom } : {}) };
 }
 

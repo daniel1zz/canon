@@ -24,7 +24,18 @@ export interface ReviewVerdict {
   readonly findings: readonly string[];
   /** Per rule asked about in `# Wording judgements`, what the reviewer answered (BR-2239); absent when it gave none. */
   readonly wording?: Readonly<Record<string, string>>;
+  /** Per rule answered "behaviour" as an object, the sentence it quoted and what that sentence requires anew (BR-2239, #256). */
+  readonly wordingWhy?: Readonly<Record<string, WordingWhy>>;
 }
+
+/** Why the reviewer judged a rule's edit a behaviour change: a quote from its 规则 section now, and what that quote requires anew (BR-2239). */
+export interface WordingWhy {
+  readonly quote: string;
+  readonly requires: string;
+}
+
+/** The wording answer format the landing and the review ask for (BR-2239). */
+export const WORDING_FORMAT = '"wording":{"<rule id>":"wording" | {"verdict":"behaviour","quote":"<a sentence copied from its 规则 now>","requires":"<what that sentence requires that the version before did not>"}}';
 
 /** A rule whose 规则 section changed while its examples did not, for the review to judge wording or behaviour (BR-2239, BR-2243). */
 export interface WordingQuestion {
@@ -191,7 +202,7 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
     "When the change shown below has a section 方案依据 (its design basis), add a note (never block) naming the change id for each of these: a decision it says it reuses does not decide a choice the change makes (a new choice hidden behind the reuse); it names no worst failure or no result that would prove the choice wrong; its evidence for persisted data, an outside boundary or a dependency is a link or a claim with no answer to the question that kind of choice raises (how the data evolves and recovers; the outside thing's own configuration and limits; why this dependency and its limits where it runs).",
     STATIC_END,
     extras.wording?.length
-      ? `Answer with JSON only: ${ANSWER_FORMAT_RULE}, "wording":{"<rule id>":"wording"|"behaviour"}}, with one wording entry per rule under # Wording judgements`
+      ? `Answer with JSON only: ${ANSWER_FORMAT_RULE}, ${WORDING_FORMAT}}, with one wording entry per rule under # Wording judgements`
       : `Answer with JSON only: ${ANSWER_FORMAT_RULE}}`,
     ...(note ? [note] : []),
     ...(extras.part ? [partNote(extras.part.i, extras.part.n)] : []),
@@ -304,7 +315,7 @@ function wordingSection(questions: readonly WordingQuestion[]): string[] {
   const parts = [
     "# Wording judgements",
     "",
-    'Each rule below changed only its 规则 section since the version that passed; its examples are the same. Answer "wording" when the edit changes no requirement (the product must do exactly what it had to before, for every input), "behaviour" when it adds, removes or changes any requirement, condition or boundary. When unsure, answer "behaviour". This judgement does not affect the verdict.',
+    'Each rule below changed only its 规则 section since the version that passed; its examples are the same. Answer "wording" when the edit changes no requirement: the product must do exactly what it had to before, for every input, including an edit that only states a scope the old text already implied, rephrases, or adds a reference. Answer behaviour only when the new text requires the product to do something it did not have to do before, or no longer requires something it had to: then give an object with "verdict":"behaviour", "quote" copied word for word from 规则 now (the sentence that makes the difference), and "requires" saying what it requires that the version before did not. A behaviour answer without a quote found in 规则 now counts as wording. This judgement does not affect the verdict.',
     "",
   ];
   for (const q of questions) parts.push(`## ${q.id} ${q.title}\n\n### 规则 before\n\n${q.before.trim()}\n\n### 规则 now\n\n${q.after.trim()}\n\n### 例子 (unchanged)\n\n${q.examples.trim()}\n`);
@@ -318,7 +329,7 @@ function wordingSection(questions: readonly WordingQuestion[]): string[] {
 export function wordingPrompt(questions: readonly WordingQuestion[]): string {
   return [
     "You judge edits to a project's rules. Rules are the current truth of what the product must do.",
-    'Answer with JSON only: {"findings":[],"wording":{"<rule id>":"wording"|"behaviour"}}, with one wording entry per rule below.',
+    `Answer with JSON only: {"findings":[],${WORDING_FORMAT}}, with one wording entry per rule below.`,
     "",
     ...wordingSection(questions),
   ].join("\n");
@@ -527,8 +538,14 @@ export async function runReview(command: string, cwd: string, prompt: string, li
 export function parseAnswer(v: unknown): Result<ReviewVerdict> {
   const a = v !== null && typeof v === "object" && !Array.isArray(v) ? (v as { verdict?: unknown; findings?: unknown; wording?: unknown }) : {};
   const w = a.wording;
-  const wording = w !== null && typeof w === "object" && !Array.isArray(w) ? Object.fromEntries(Object.entries(w as Record<string, unknown>).map(([k, x]) => [k, String(x)])) : undefined;
-  const extra = wording ? { wording } : {};
+  const entries = w !== null && typeof w === "object" && !Array.isArray(w) ? Object.entries(w as Record<string, unknown>) : undefined;
+  const isEntryObject = (x: unknown): x is Record<string, unknown> => x !== null && typeof x === "object" && !Array.isArray(x);
+  // reason: a behaviour answer is an object carrying the quote that makes the difference; its verdict is the entry's answer (BR-2239, #256)
+  const wording = entries ? Object.fromEntries(entries.map(([k, x]) => [k, isEntryObject(x) ? String(x["verdict"] ?? "") : String(x)])) : undefined;
+  const why = entries
+    ? Object.fromEntries(entries.filter(([, x]) => isEntryObject(x)).map(([k, x]) => { const o = x as Record<string, unknown>; return [k, { quote: typeof o["quote"] === "string" ? o["quote"] : "", requires: typeof o["requires"] === "string" ? o["requires"] : "" }]; }))
+    : undefined;
+  const extra = { ...(wording ? { wording } : {}), ...(why && Object.keys(why).length > 0 ? { wordingWhy: why } : {}) };
   const list = Array.isArray(a.findings) ? a.findings : [];
   const isObject = (f: unknown): boolean => f !== null && typeof f === "object" && !Array.isArray(f);
   if (!list.some(isObject)) {
@@ -1048,5 +1065,24 @@ export async function runReviews(command: string, cwd: string, prompts: readonly
   if (failed !== undefined) return failed;
   const all = results as ReviewVerdict[];
   const first = all[0]!;
-  return ok({ verdict: all.some((x) => x.verdict === "block") ? "block" : "ok", findings: [...new Set(all.flatMap((x) => x.findings))], ...(first.wording ? { wording: first.wording } : {}) });
+  return ok({ verdict: all.some((x) => x.verdict === "block") ? "block" : "ok", findings: [...new Set(all.flatMap((x) => x.findings))], ...(first.wording ? { wording: first.wording } : {}), ...(first.wordingWhy ? { wordingWhy: first.wordingWhy } : {}) });
+}
+
+/**
+ * The wording answers as the landing acts on them (BR-2239, #256): a "behaviour" answer stands only with a quote found in the
+ * rule's 规则 section now (whitespace squashed, as source quotes are compared); without one it counts as "wording", and the
+ * rule is listed in `unquoted` so the caller can say so. Other answers are kept as given.
+ */
+export function judgeWording(questions: readonly WordingQuestion[], answers: Readonly<Record<string, string>> | undefined, why: Readonly<Record<string, WordingWhy>> | undefined): { answers: Record<string, string>; unquoted: string[] } {
+  const squash = (t: string): string => t.replace(/\s+/g, " ").trim();
+  const out: Record<string, string> = { ...(answers ?? {}) };
+  const unquoted: string[] = [];
+  for (const q of questions) {
+    if (out[q.id] !== "behaviour") continue;
+    const quote = squash(why?.[q.id]?.quote ?? "");
+    if (quote !== "" && squash(q.after).includes(quote)) continue;
+    out[q.id] = "wording";
+    unquoted.push(q.id);
+  }
+  return { answers: out, unquoted };
 }

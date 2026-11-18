@@ -47,7 +47,9 @@ const review = defineCommand({
         say(out.kind === "block" ? "review: block; the review after landing would record these findings as open findings for the main agent to settle (canon finding close); the landing is not refused" : "review: ok");
         // reason: the landing asks the same question after its queue turn; asked here, a "behaviour" answer is known before landing (BR-2358, BR-2239, #166)
         for (const w of out.wording) {
+          if (w.unquoted) say(`wording judgement: ${w.id}: behaviour without a quote from the rule: treated as wording`);
           if (w.answer === "wording") say(`wording judgement: ${w.id}: wording; the landing records it as a wording-only edit and needs no new evidence for it`);
+          else if (w.answer === "behaviour" && w.why) say(`wording judgement: ${w.id}: behaviour: “${w.why.quote}” requires ${w.why.requires || "(not said)"}; the landing would refuse it as a wording-only edit: change a line in a running test whose title names ${w.id} that tests this, or for a rule with untested:, a line under ## 验收`);
           else say(`wording judgement: ${w.id}: ${w.answer === undefined ? "no answer" : w.answer}; the landing would refuse it as a wording-only edit: change a line in a running test whose title names ${w.id}, or for a rule with untested:, a line under ## 验收`);
         }
         say("this was a preview: the review after landing runs again and its result is the one that counts");

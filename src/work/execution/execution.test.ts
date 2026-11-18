@@ -382,11 +382,11 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
   }, TIMED);
 
   test("BR-2358 BR-2239: canon work review reports a behaviour answer as what the landing would refuse, with exit 0; an edit with new evidence asks nothing", async () => {
-    const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"behaviour"}}`));
+    const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":{"verdict":"behaviour","quote":"Statement one, changed.","requires":"a changed statement"}}}`));
     write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, changed." }) });
     const cli = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "review"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
     expect(cli.exitCode).toBe(0);
-    expect(cli.stdout.toString()).toContain(`wording judgement: ${br(1)}: behaviour; the landing would refuse it as a wording-only edit: change a line in a running test whose title names ${br(1)}`);
+    expect(cli.stdout.toString()).toContain(`wording judgement: ${br(1)}: behaviour: “Statement one, changed.” requires a changed statement; the landing would refuse it as a wording-only edit: change a line in a running test whose title names ${br(1)}`);
     write(s.worktree, { "src/billing/a.test.ts": testFile([1, 2]).replace("toBe(1)", "toBe(1); // changed") });
     const after = await previewReview(ws(s.worktree), undefined);
     expect(after.kind === "ok" && after.wording).toEqual([]);
@@ -418,13 +418,14 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
   }, TIMED);
 
   test("BR-2239 BR-2014: the review answering behaviour, or giving no wording field, refuses with reason review naming the rule before the floor runs; the change stays open", async () => {
-    for (const answer of [`{"verdict":"ok","findings":[],"wording":{"${br(1)}":"behaviour"}}`, `{"verdict":"ok","findings":[]}`]) {
+    for (const answer of [`{"verdict":"ok","findings":[],"wording":{"${br(1)}":{"verdict":"behaviour","quote":"Statement one, reworded.","requires":"a changed statement"}}}`, `{"verdict":"ok","findings":[]}`]) {
       const { root, s } = await wordingProject((r) => reviewing(r, answer));
       write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
       rmSync(`${root}-floor-ran`, { force: true }); // the fixture's own landings ran the floor
       const out = await land(ws(s.worktree), FINISH, quiet);
       expect(out.kind === "refused" && out.reason).toBe("review");
       expect(out.kind === "refused" && out.message).toContain(br(1));
+      if (answer.includes("quote")) expect(out.kind === "refused" && out.message).toContain(`${br(1)}: the review answered behaviour: “Statement one, reworded.” requires a changed statement`);
       expect(existsSync(`${root}-floor-ran`)).toBe(false);
       expect(changeOn(s.worktree, "HEAD", s.change).status).toBe("open");
     }
@@ -481,8 +482,30 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     expect(readFileSync(`${root}-asked`, "utf8").trim()).toBe("1");
   }, TIMED);
 
+  test("BR-2239: a behaviour answer without a quote found in the rule's 规则 now counts as wording, and the landing says so (#256)", async () => {
+    for (const answer of [
+      `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"behaviour"}}`, // the old bare string: no quote
+      `{"verdict":"ok","findings":[],"wording":{"${br(1)}":{"verdict":"behaviour","quote":"Statement one, never written.","requires":"a changed statement"}}}`, // a quote that is not in the rule
+      `{"verdict":"ok","findings":[],"wording":{"${br(1)}":{"verdict":"behaviour","quote":"","requires":"a changed statement"}}}`, // an empty quote
+    ]) {
+      const { root, s } = await wordingProject((r) => reviewing(r, answer));
+      write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement   one,\n reworded." }) });
+      const said: string[] = [];
+      const out = await land(ws(s.worktree), FINISH, (l: string) => said.push(l));
+      expect(out.kind).toBe("landed");
+      expect(said.join("\n")).toContain(`wording judgement: ${br(1)}: behaviour without a quote from the rule: treated as wording`);
+      const ev = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'review.wording' ORDER BY id DESC LIMIT 1").get()!;
+      expect(JSON.parse(ev.detail)).toMatchObject({ wording: { [br(1)]: "wording" }, unquoted: [br(1)] });
+    }
+    // the quote is compared with whitespace squashed, so a quote across the rule's line break still stands
+    const { s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":{"verdict":"behaviour","quote":"Statement one, reworded.","requires":"a changed statement"}}}`));
+    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement   one,\n reworded." }) });
+    const refused = await land(ws(s.worktree), FINISH, quiet);
+    expect(refused.kind === "refused" && refused.reason).toBe("review");
+  }, TIMED * 4);
+
   test("BR-2361 BR-2239: a review that answered behaviour is not reused for the same prompt: the review command runs again", async () => {
-    const { root, s } = await wordingProject((r) => `echo run >> ${promptOf(r)}.runs; cat > /dev/null; echo '{"verdict":"ok","findings":[],"wording":{"${br(1)}":"behaviour"}}'`);
+    const { root, s } = await wordingProject((r) => `echo run >> ${promptOf(r)}.runs; cat > /dev/null; echo '{"verdict":"ok","findings":[],"wording":{"${br(1)}":{"verdict":"behaviour","quote":"Statement one, reworded.","requires":"a changed statement"}}}'`);
     write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
     for (let i = 0; i < 2; i++) {
       const out = await land(ws(s.worktree), FINISH, quiet);

@@ -4,7 +4,7 @@ import { behaviourHash, formatPass, parsePasses } from "../../knowledge/document
 import { parseDocFile } from "../../knowledge/documents/docfile.ts";
 import type { Change, Corpus, PassRecord, Rule } from "../../knowledge/documents/model.ts";
 import { EXAMPLE_SECTION, RULE_SECTION, section } from "../../knowledge/documents/templates.ts";
-import type { WordingQuestion } from "../../knowledge/review/review.ts";
+import type { WordingQuestion, WordingWhy } from "../../knowledge/review/review.ts";
 import type { CoordDb } from "../db.ts";
 import { earlierLandings, hasPassesAt, passedVersion, plan, recordsOf, rulesAt, type Missing, type Plan } from "./evidence.ts";
 
@@ -161,7 +161,13 @@ export function unconfirmedWording(questions: readonly WordingQuestion[], answer
 }
 
 /** The refusal text when the review does not confirm a wording-only edit (BR-2239). */
-export function wordingMessage(ids: readonly string[], answers: Readonly<Record<string, string>> | undefined, configured: boolean): string {
-  const why = configured ? ids.map((id) => `${id}: the review answered ${answers?.[id] === undefined ? "nothing" : JSON.stringify(answers[id])}`).join("; ") : "no review command is configured to judge them";
+export function wordingMessage(ids: readonly string[], answers: Readonly<Record<string, string>> | undefined, configured: boolean, reasons?: Readonly<Record<string, WordingWhy>>): string {
+  // reason: a behaviour answer names the sentence and what it requires, so the session knows what to test (BR-2239, #256)
+  const one = (id: string): string => {
+    const r = reasons?.[id];
+    if (answers?.[id] === "behaviour" && r) return `${id}: the review answered behaviour: “${r.quote}” requires ${r.requires || "(not said)"}`;
+    return `${id}: the review answered ${answers?.[id] === undefined ? "nothing" : JSON.stringify(answers[id])}`;
+  };
+  const why = configured ? ids.map(one).join("; ") : "no review command is configured to judge them";
   return `the close commit records ${ids.join(", ")} as wording-only edits, but the rule review did not judge them so (${why}) (BR-2239). Execute them as behaviour changes: change a line in a running test whose title names each, or for a rule with untested:, a line under ## 验收; then land --finish again`;
 }
