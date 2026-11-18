@@ -55,7 +55,7 @@ test("BR-2522: a delegated change whose worker process is gone and whose branch 
   expect(later.ok && later.value[0]!.lastCommit).toBeDefined();
 });
 
-test("BR-2522 BR-2505 BR-2373: canon work status, canon overview and canon plan status show the stalled delegation and its plan step as stalled", () => {
+test("BR-2522 BR-2505 BR-2372 BR-2373 BR-2374: canon work status, canon overview and canon plan status show the stalled delegation and its plan step as stalled", () => {
   const f = fixture();
   setClaimProcess(f.root, f.step, GONE);
   // a stall threshold far below the time the fixture took, so the CLI sees it stalled now
