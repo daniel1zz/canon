@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readCorpus } from "../documents/read.ts";
-import { reviewPrompt, runReview } from "./review.ts";
+import { reviewPrompt, runReview, WORDING_FORMAT } from "./review.ts";
 
 const br = (n: number) => ["BR", n].join("-");
 
@@ -43,7 +43,8 @@ describe("wording judgements", () => {
     const prompt = reviewPrompt(root, corpus, [], { wording: [q] });
     expect(prompt).toContain("# Wording judgements");
     expect(prompt).toContain(`## ${br(1)} 退款\n\n### 规则 before\n\n退款必须在 30 天内。\n\n### 规则 now\n\n退款一定要在 30 天内。\n\n### 例子 (unchanged)\n\n- 第 30 天 → 退款`);
-    expect(prompt).toContain('"wording":{"<rule id>":"wording"|"behaviour"}');
+    expect(prompt).toContain(WORDING_FORMAT); // a behaviour answer quotes the rule and says what it requires (#256)
+    expect(prompt).toContain('"verdict":"behaviour","quote"');
   });
 
   test("BR-2239: without wording questions the prompt has no Wording judgements section", () => {
