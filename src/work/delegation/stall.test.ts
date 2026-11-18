@@ -55,7 +55,7 @@ test("BR-2522: a delegated change whose worker process is gone and whose branch 
   expect(later.ok && later.value[0]!.lastCommit).toBeDefined();
 });
 
-test("BR-2522 BR-2505 BR-2372 BR-2373 BR-2374: canon work status, canon overview and canon plan status show the stalled delegation and its plan step as stalled", () => {
+test("BR-2522 BR-2505 BR-2506 BR-2372 BR-2373 BR-2374: canon work status, canon overview and canon plan status show the stalled delegation and its plan step as stalled", () => {
   const f = fixture();
   setClaimProcess(f.root, f.step, GONE);
   // a stall threshold far below the time the fixture took, so the CLI sees it stalled now
@@ -67,9 +67,14 @@ test("BR-2522 BR-2505 BR-2372 BR-2373 BR-2374: canon work status, canon overview
   expect(status.text).toContain(`design owner agent:s1: delegate it again (canon work delegate ${f.step} --to <name>) or take it over (canon work take ${f.step})`);
   const overview = cli(f.root, "agent:s1", "overview");
   expect(overview.text).toMatch(new RegExp(`## 等负责人\\n[\\s\\S]*${f.step}: stalled`));
+  // the brief of a session with no claimed change carries the summary line (BR-2506)
+  const brief = cli(f.root, "agent:s9", "brief");
+  expect(brief.text).toContain(`  stalled delegations: ${f.step} (canon work status)`);
   const plan = cli(f.root, "agent:s1", "plan", "status", f.plan);
   expect(plan.text).toContain("停滞 1");
   expect(plan.text).toContain(`停滞: A (${f.step})`);
   const json = JSON.parse(cli(f.root, "agent:s1", "plan", "status", f.plan, "--json").text) as { stalled: number; working: number };
   expect([json.stalled, json.working]).toEqual([1, 0]);
+  const detail = JSON.parse(cli(f.root, "agent:s1", "plan", "status", f.plan, "--json").text) as { steps: { step: string; state: string }[] };
+  expect(detail.steps.map((x) => [x.step, x.state])).toEqual([["A", "stalled"]]);
 });
