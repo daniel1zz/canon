@@ -619,6 +619,22 @@ describe("rule review after landing", () => {
     }
   });
 
+  test("BR-2009 BR-2010: a feature document changed on its own is reviewed with its new text (#249)", async () => {
+    const fid = ["F", 1].join("-");
+    const feature = (not: string, links = "") => `---\nid: ${fid}\ntitle: 账单\nstatus: active\n${links}---\n\n${["目标", "范围", "不做", "成功标准"].map((h) => `## ${h}\n\n${h === "不做" ? not : `${h}的内容`}\n`).join("\n")}`;
+    const p = reviewedProject("block");
+    const s = startNew(p.root, "A feature");
+    mkdirSync(join(s.worktree, "canon/features"), { recursive: true });
+    writeFileSync(join(s.worktree, `canon/features/${fid}.md`), feature("不做导出"));
+    sh(s.worktree, "add", "-A");
+    sh(s.worktree, "commit", "-qm", "feature");
+    expect((await landReviewed(p.root, s.worktree)).out.kind).toBe("landed");
+    const prompt = readFileSync(p.promptFile, "utf8");
+    expect(prompt).toContain("不做导出");
+    expect(prompt).toContain(`# Feature ${fid} 账单 (active) (new text shown above)`);
+    expect(kinds(p.root)).toEqual(["review.block"]);
+  });
+
   test("BR-2009: deleting a rule file is reviewed with the text it had on main", async () => {
     const { root, promptFile } = reviewedProject("ok");
     const id = ["BR", 1].join("-");

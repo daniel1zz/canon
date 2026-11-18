@@ -129,7 +129,7 @@ export const CRITERION_TEXT: Readonly<Record<string, string>> = {
   // reason: an experience goal accepted by a person is not untestable; asking to drop it made agents cut the owner's goals (D-115)
   untestable: "`untestable`: a claim in a rule that neither a test nor a stated way of accepting it can decide (vague, no boundary, examples that do not pin the boundary). A subjective goal (feel, look, being worth sharing) is decided when the text says, anywhere (an `untested:` reason, a `## 验收` section, or a decision's own words), what is accepted, what evidence is handed over, and who accepts or rejects it against the goal and records it; it needs no measurable threshold. A claim a test can decide (a name not shown early, a reward not given twice) still needs a test, even beside such a goal. When the way of accepting is missing, ask for it; never ask to delete, narrow or widen a goal or commitment, nor to choose levels or tiers the text does not set.",
   "no-rejected-options": "`no-rejected-options`: a decision without the options it rejected.",
-  release: "`release`: a release is a version's PRD; the rules whose front matter says `release: R-n` are its behaviour. A rule tagged with a release that does something that release's 不做 excludes or lies outside its 范围; a release whose 不做 contradicts its own 范围 or a rule tagged with it. Only a rule or release changed in this landing can be blocked for it.",
+  release: "`release`: a release is a version's PRD; the rules whose front matter says `release: R-n` are its behaviour. A rule tagged with a release that does something that release's 不做 excludes or lies outside its 范围; a release whose 不做 contradicts its own 范围 or a rule tagged with it. A feature (F-n) is a part of a release with its own 范围 and 不做, and the rules whose front matter says `feature: F-n` are its behaviour; under this key also give a rule tagged with a feature that does something that feature's 不做 excludes or lies outside its 范围, a feature whose 不做 contradicts its own 范围 or a rule tagged with it, and a feature whose 范围 does something the 不做 of a release listing it excludes or lies outside that release's 范围. Only a rule, release or feature changed in this landing can be blocked for it.",
   amends: "`amends`: a changed decision that replaces only part of an accepted decision must list it in `amends:` (one that replaces a whole decision uses `supersedes:`); a decision that says it changes part of another decision without listing it in `amends:`.",
   overview: "`overview`: when an architecture overview is shown below, it is where readers start, not the judge: where it disagrees with the active rules and accepted decisions, they win. Use this key only when the part of the overview this landing changed (its diff is shown) contradicts an active rule or an accepted decision. When a rule or decision changed in this landing makes a statement in the overview wrong, add a `note` naming the overview section.",
   restatement: "`restatement`: a changed rule or decision that, in a line this landing adds or changes, states again a behaviour another rule already states (its conditions, outcomes, numbers or order) and states it differently from that rule: another condition, outcome, number or order than the rule it copies, so the two now disagree. Quote both. A restatement that agrees with the rule it copies is a `note`, never this key: it only goes stale if that rule changes. Not a restatement at all: a line that already names the other rule (按 BR-x, 见 BR-x) and adds a few words saying which of its behaviours is meant (按 BR-11 的侦测半径); what this document adds to the other rule; a decision's source line (来源：) quoting its target; a decision's 决定 naming the rule it produced. The lines this landing adds or changes are listed under # Lines added or changed in this landing; a changed rule or decision with no entry there is new, and all of its lines are. A restatement only in lines this landing did not add or change is a `note`. Name both ids and quote the restating words.",
@@ -258,10 +258,29 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
     else if (d.kind === "rule" && d.release !== undefined) releaseIds.add(d.release);
   }
   const changedIds = new Set(changed.map((d) => d.id));
+  // reason: a feature has its own 范围 and 不做 and sits inside the releases that list it, so a changed feature or a rule
+  // tagged with one brings that feature, its rules and those releases' 范围 and 不做 into the review (BR-2327, #249)
+  const featureIds = new Set<string>();
+  for (const d of changed) {
+    if (d.kind === "feature") featureIds.add(d.id);
+    else if (d.kind === "rule" && d.feature !== undefined) featureIds.add(d.feature);
+  }
+  const features = [...featureIds].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map((id) => corpus.docs.find((d) => d.kind === "feature" && d.id === id)).filter((d): d is Doc => d?.kind === "feature");
   const releases = [...releaseIds].sort((a, b) => a.localeCompare(b, undefined, { numeric: true })).map((id) => corpus.docs.find((d) => d.kind === "release" && d.id === id)).filter((d): d is Doc => d?.kind === "release");
   // reason: a release's 范围, 不做 and tagged-rule list only judge the changed documents, and call 1 holds all of them; repeated in every call they took about 90 KB of each (BR-2359, #242)
   if (extras.releasesFirst && releases.length) {
     parts.push("# Releases of this landing (whole text and tagged rules in call 1 of this review; here only id and title)", "", ...releases.map((r) => `- ${r.id} ${r.title} (${"status" in r ? r.status : ""})`), "");
+  }
+  if (extras.releasesFirst && features.length) {
+    parts.push("# Features of this landing (whole text, tagged rules and listing releases in call 1 of this review; here only id and title)", "", ...features.map((f) => `- ${f.id} ${f.title} (${"status" in f ? f.status : ""})`), "");
+  }
+  for (const feature of extras.releasesFirst ? [] : features) {
+    if (feature.kind !== "feature") continue;
+    const id = feature.id;
+    const tagged = corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status !== "retired" && d.feature === id);
+    const listing = corpus.docs.filter((d) => d.kind === "release" && d.features.includes(id));
+    const scopeOf = (r: Doc): string => ["范围", "不做"].map((h) => `### ${r.id} ${h}\n\n${(section(r.body, `## ${h}`) ?? "(none)").trim()}`).join("\n\n");
+    parts.push(`# Feature ${id} ${feature.title} (${feature.status})${changedIds.has(id) ? " (new text shown above)" : ""}\n\n${changedIds.has(id) ? "" : `${feature.body.trim()}\n\n`}Rules tagged ${id}:\n${tagged.length ? tagged.map((r) => `- ${r.id} [${r.domain}]${r.status === "planned" ? " [规划中]" : ""} ${r.title}`).join("\n") : "(none)"}\n\nReleases listing ${id}:\n${listing.length ? listing.map((r) => `- ${r.id} ${r.title} (${"status" in r ? r.status : ""})\n\n${scopeOf(r)}`).join("\n\n") : "(none)"}\n`);
   }
   for (const release of extras.releasesFirst ? [] : releases) {
     if (release.kind !== "release") continue;

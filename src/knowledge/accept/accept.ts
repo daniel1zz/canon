@@ -1,4 +1,5 @@
 import { git } from "../../kernel/git.ts";
+import { REVIEWED_DIRS } from "../../work/land/checks/review-scope.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import type { Say, Workspace } from "../../work/workspace.ts";
 import { changeIdsOnBranches, architectureBase, listedBefore } from "../../work/session/inflight.ts";
@@ -94,14 +95,14 @@ function reviewReasons(ws: Workspace, base: string | undefined, commit: string):
     if (r.state === "failed") reasons.push(`the review after the landing of ${r.change ?? r.head.slice(0, 9)} failed: canon work review-landed --again ${r.change ?? "<C-n>"}`);
     else if (r.state === "queued" || r.state === "running") waiting.push(`the review after the landing of ${r.change ?? r.head.slice(0, 9)} is still ${r.state}`);
   }
-  const listed = git(ws.root, "rev-list", `${base}..${commit}`, "--", "canon/rules", "canon/decisions", "canon/releases");
+  const listed = git(ws.root, "rev-list", `${base}..${commit}`, "--", ...REVIEWED_DIRS);
   if (!listed.ok) return listed;
   for (const sha of listed.value.split("\n").filter((s) => s !== "")) {
     if (covered.has(sha)) continue;
     const parent = git(ws.root, "rev-parse", "--verify", "--quiet", `${sha}^`);
     if (!parent.ok) return err("io", `cannot resolve the parent of ${sha.slice(0, 9)}: ${parent.error.message}`);
     if (reviewEntries(ws.root, parent.value, sha).entries.length === 0) continue;
-    reasons.push(`${sha.slice(0, 9)} changed canon/rules, canon/decisions or canon/releases but no review after its landing is recorded (landed without a \`review\` command? see review.skip): canon work review-landed --again <C-n>`);
+    reasons.push(`${sha.slice(0, 9)} changed canon/rules, canon/decisions, canon/releases or canon/features but no review after its landing is recorded (landed without a \`review\` command? see review.skip): canon work review-landed --again <C-n>`);
   }
   return ok({ reasons, waiting });
 }

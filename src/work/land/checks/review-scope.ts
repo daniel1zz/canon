@@ -21,7 +21,7 @@ import { shippedUnedited } from "../../../install/install.ts";
  * `canon work review` both build their prompts from it, so the two see the same thing (BR-2009, BR-2143).
  */
 export interface ReviewScope {
-  /** Every added, edited or deleted file under canon/rules, canon/decisions and canon/releases, paired by exact rename. */
+  /** Every added, edited or deleted file under canon/rules, canon/decisions, canon/releases and canon/features, paired by exact rename. */
   readonly entries: readonly { status: string; path: string }[];
   /** Files only moved with identical content: not reviewed. */
   readonly renamed: readonly string[];
@@ -45,6 +45,9 @@ export interface ReviewScope {
   readonly activated: readonly Activation[];
 }
 
+/** The directories whose files a landing's rule review reads; a feature document is reviewed like a release (BR-2009, BR-2010, #249). */
+export const REVIEWED_DIRS: readonly string[] = ["canon/rules", "canon/decisions", "canon/releases", "canon/features"];
+
 /**
  * Which files under canon/rules, canon/decisions and canon/releases a change between `base` and `head` adds, edits or deletes
  * for the review: files only moved with identical content and files whose only change is their `links` records are left out
@@ -54,7 +57,7 @@ export function reviewEntries(wt: string, base: string, head: string): { entries
   // core.quotePath=false: git otherwise prints non-ASCII paths quoted and octal-escaped, which match no document.
   // A file only moved, with identical content, is neither changed nor deleted: moving 74 rules into
   // subdomains must not re-review all of them (BR-2009). git pairs exact renames; the blobs are compared too.
-  const knowledge = git(wt, "-c", "core.quotePath=false", "diff", "--name-status", "--find-renames=100%", base, head, "--", "canon/rules", "canon/decisions", "canon/releases");
+  const knowledge = git(wt, "-c", "core.quotePath=false", "diff", "--name-status", "--find-renames=100%", base, head, "--", ...REVIEWED_DIRS);
   const entries: { status: string; path: string }[] = [];
   const renamed: string[] = [];
   for (const l of knowledge.ok && knowledge.value !== "" ? knowledge.value.split("\n") : []) {
@@ -122,7 +125,7 @@ export function reviewScope(wt: string, base: string, head: string, corpus: Corp
   // reason: a decision or release already on main brings only the domains its added or changed lines name, not every
   // domain its whole text names: a one-line edit of a release naming 116 rules planned 127 calls (BR-2009, #237)
   const namedInAdded: { id: string; ids: string[] }[] = [];
-  for (const d of changedDocs.filter((x) => x.kind === "decision" || x.kind === "release")) {
+  for (const d of changedDocs.filter((x) => x.kind === "decision" || x.kind === "release" || x.kind === "feature")) {
     const now = readFileSync(join(wt, d.path), "utf8");
     const before = textAt(wt, base, d.path);
     if (before === undefined) continue; // a new document: every line is new, so its whole text counts
