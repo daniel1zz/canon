@@ -530,7 +530,8 @@ describe("code layout (D-15)", () => {
       "src/lib/loose.ts": "", // a file in an ancestor of a shared path is nobody's
       "src/__tests__/a.test.ts": "", // tests-only directories get no exemption
       "src/index.ts": "",
-      "src/.cache/x": "",
+      "src/.cache/x": "", // dot-named entries are skipped by the placement checks
+      "src/.DS_Store": "",
     });
     rmSync(join(root, "src/billing"), { recursive: true });
     mkdirSync(join(root, "src/work/drop/empty"), { recursive: true }); // a directory with no file is not landed by git (#236)
@@ -547,6 +548,7 @@ describe("code layout (D-15)", () => {
     ]);
     expect(kinds(root).filter((k) => k.startsWith("code-layout"))).toEqual([]); // no code_root: none of the above is reported
     expect(kinds(root, { codeRoot: "src", shared: ["src/lib/kernel", "src/gone", "src/index.ts"] })).not.toContain("code-layout src/index.ts"); // a shared file
+    expect(kinds(root, { codeRoot: "src", shared: ["src/lib/kernel", "src/gone", "src/__tests__"] })).not.toContain("code-layout src/__tests__"); // a tests-only directory listed under shared
     writeFileSync(join(root, "src/work/drop/empty/.keep"), ""); // a dot file is kept by git, so the directory now counts
     expect(kinds(root, { codeRoot: "src", shared: ["src/lib/kernel", "src/gone"] })).not.toContain("code-layout canon/rules/work/drop/README.md");
     const overlap = (shared: string[]) => check({ root, ...readCorpus(root, undefined, { codeRoot: "src", shared }), testFiles: [] }).filter((f) => f.message.includes("overlaps")).map((f) => f.message);
