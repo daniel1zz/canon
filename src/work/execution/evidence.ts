@@ -65,7 +65,7 @@ export function plan(input: PlanInput): Plan {
   const { corpus, change } = input;
   const others = recordsOf(corpus, change.id);
   const rules = new Map(corpus.docs.filter((d): d is Rule => d.kind === "rule").map((r) => [r.id, r]));
-  const { line: touched, file: touchedInFile } = touchedRules(input);
+  const { line: touched, file: touchedInFile, comment: commented } = touchedRules(input);
   const executed = executedRules(input);
   const records: Record<string, PassRecord> = {};
   const missing: Missing[] = [];
@@ -76,6 +76,8 @@ export function plan(input: PlanInput): Plan {
     if (!input.recorded?.has(id) && (others.get(id) ?? []).some((o) => o.record.hash === hash)) continue;
     if (touched.has(id)) records[id] = { hash, method: "test", wording: false };
     else if (touchedInFile.has(id)) records[id] = { hash, method: "test-file", wording: false };
+    // reason: a rule-named test changed only in comments or blank lines still counts, recorded apart so no one reads it as new behaviour evidence (BR-2241, #250)
+    else if (commented.has(id)) records[id] = { hash, method: "test-comment", wording: false };
     else if (rule.untested !== undefined && hasAcceptanceLine(change.body, id)) records[id] = { hash, method: "acceptance", wording: false };
     else {
       const before = passedVersion(input.root, input.head, rule, others);
@@ -159,16 +161,17 @@ function isTestPath(config: Config, path: string): boolean {
  * starting at or before it (a deletion, to the line after the deletion point); `file`: some testcase has no `line`, so the
  * file being changed is all the evidence there is (method `test-file`).
  */
-function touchedRules(input: PlanInput): { line: Set<string>; file: Set<string> } {
+function touchedRules(input: PlanInput): { line: Set<string>; file: Set<string>; comment: Set<string> } {
   const line = new Set<string>();
   const file = new Set<string>();
+  const comment = new Set<string>();
   const types = input.corpus.types;
   const prefix = `${types.find((t) => t.name === "rule")!.prefix}-`;
   const ids = (c: TestCase) => [...idsIn(types, caseNames(c))].filter((id) => id.startsWith(prefix));
   for (const r of input.ranges) {
     const diff = git(input.root, "-c", "core.quotePath=false", "diff", "-U0", "--no-color", "--no-ext-diff", r.base, r.head);
     if (!diff.ok) continue;
-    for (const [path, hunks] of newSideLines(diff.value)) {
+    for (const [path, hunks] of newSideHunks(diff.value)) {
       if (!isTestPath(input.config, path) || hunks.length === 0) continue;
       // reason: the report is keyed by the file's content at `head`, the tree that becomes main (BR-2337, D-64)
       const blob = git(input.root, "rev-parse", `${r.head}:${path}`);
@@ -180,24 +183,38 @@ function touchedRules(input: PlanInput): { line: Set<string>; file: Set<string> 
         continue;
       }
       const ordered = [...row.cases].sort((a, b) => a.line! - b.line!);
-      for (const [from, count] of hunks) {
+      for (const { from, count, text } of hunks) {
+        const only = commentOnly(path, text);
         // reason: a deletion (`+c,0`) falls after line c, so it belongs to the testcase that holds line c + 1 (BR-2241)
         const first = count > 0 ? from : from + 1;
         for (let l = first; l < first + Math.max(count, 1); l++) {
           let owner: TestCase | undefined;
           for (const c of ordered) if (c.line! <= l) owner = c;
-          if (owner?.runs) for (const id of ids(owner)) line.add(id);
+          if (owner?.runs) for (const id of ids(owner)) (only ? comment : line).add(id);
         }
       }
     }
   }
   for (const id of line) file.delete(id);
-  return { line, file };
+  for (const id of [...line, ...file]) comment.delete(id);
+  return { line, file, comment };
 }
 
 /** Per file of a `-U0` diff, the new-side hunks as [first line, line count]; a deleted file has none. */
 export function newSideLines(diff: string): Map<string, [number, number][]> {
-  const out = new Map<string, [number, number][]>();
+  return new Map([...newSideHunks(diff)].map(([path, hunks]) => [path, hunks.map((h): [number, number] => [h.from, h.count])]));
+}
+
+/** A new-side hunk of a `-U0` diff: its first line, line count, and its text: the added lines, or the removed ones when it only deletes. */
+export interface Hunk {
+  readonly from: number;
+  readonly count: number;
+  readonly text: readonly string[];
+}
+
+/** Per file of a `-U0` diff, its new-side hunks with their text; a deleted file has none. */
+export function newSideHunks(diff: string): Map<string, Hunk[]> {
+  const out = new Map<string, { from: number; count: number; added: string[]; removed: string[] }[]>();
   let current: string | undefined;
   for (const line of diff.split("\n")) {
     if (line.startsWith("+++ ")) {
@@ -206,10 +223,34 @@ export function newSideLines(diff: string): Map<string, [number, number][]> {
       if (current !== undefined && !out.has(current)) out.set(current, []);
       continue;
     }
+    if (line.startsWith("--- ")) continue;
     const m = /^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@/.exec(line);
-    if (m && current !== undefined) out.get(current)!.push([Number(m[1]), m[2] === undefined ? 1 : Number(m[2])]);
+    if (m && current !== undefined) {
+      out.get(current)!.push({ from: Number(m[1]), count: m[2] === undefined ? 1 : Number(m[2]), added: [], removed: [] });
+      continue;
+    }
+    const last = current === undefined ? undefined : out.get(current)!.at(-1);
+    if (!last) continue;
+    if (line.startsWith("+")) last.added.push(line.slice(1));
+    else if (line.startsWith("-")) last.removed.push(line.slice(1));
   }
-  return out;
+  return new Map([...out].map(([path, hs]) => [path, hs.map((h) => ({ from: h.from, count: h.count, text: h.count > 0 ? h.added : h.removed }))]));
+}
+
+/** The line-comment marker of a test file, by its extension (BR-2241, #250); undefined for an extension not listed. */
+const COMMENT: Readonly<Record<string, string>> = Object.fromEntries([
+  ...["py", "gd", "rb", "sh"].map((e) => [e, "#"]),
+  ...["ts", "tsx", "js", "jsx", "mjs", "cjs", "go", "rs", "swift", "kt", "java", "c", "cc", "cpp", "cs"].map((e) => [e, "//"]),
+  ...["lua", "sql"].map((e) => [e, "--"]),
+]);
+
+/**
+ * Whether every line of a hunk is blank or a line comment of its file's language (BR-2241, #250). An extension not listed
+ * has no comment marker, so only blank lines count; a block comment's inner lines are not recognised and count as code.
+ */
+export function commentOnly(path: string, text: readonly string[]): boolean {
+  const marker = COMMENT[path.slice(path.lastIndexOf(".") + 1).toLowerCase()];
+  return text.every((l) => { const t = l.trim(); return t === "" || (marker !== undefined && t.startsWith(marker)); });
 }
 
 /** Rules a running testcase names in the tree at `root`, from the ledger (BR-2005's reading), for migration (BR-2245). */

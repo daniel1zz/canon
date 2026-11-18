@@ -186,6 +186,8 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
         const planned = planClose(ws.db, ws.config, wt, ws.config.main, corpus, doc);
         if ("error" in planned) return early("environment", `the pass records could not be computed: ${planned.error}`);
         if (planned.missing.length > 0) return early("evidence", missingMessage(subject, planned.missing));
+        // reason: evidence that is only comments passes, but the session and the reviewer are told what it is (BR-2241, #250)
+        for (const [id, r] of Object.entries(planned.records)) if (r.method === "test-comment") say(`evidence: ${id}: its named tests changed only in comment or blank lines; recorded as test-comment, not as new behaviour evidence`);
         // reason: a file write or git commit that fails is an environment error, not a check's verdict (BR-2193).
         // setMeta fails before it writes, so the file is left as it is: whatever is in it now is someone else's edit (issue #80).
         // reason: passes is replaced whole, so a record written by hand never survives the close (BR-2242)

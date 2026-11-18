@@ -9,6 +9,7 @@ import { behaviourHash } from "../../knowledge/documents/behaviour.ts";
 import type { Change } from "../../knowledge/documents/model.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 import { recordReport } from "../verify/ledger.ts";
+import { commentOnly, newSideHunks } from "./evidence.ts";
 import type { TestCase } from "../verify/report.ts";
 
 // reason: each test lands one or more changes through real worktrees, which takes seconds under load
@@ -211,6 +212,30 @@ describe("evidence from the report's lines (BR-2241, D-64)", () => {
     expect(out.kind).toBe("landed");
     expect(changeOn(root, "main", s.change).passes[br(1)]).toMatchObject({ method: "test-file" });
   }, TIMED);
+
+  test("BR-2241: lines added inside the rule's test that are only comments or blank are evidence of method test-comment; one code line beside them makes it test (#250)", async () => {
+    const only = await run({ lines: true, edit: (t) => t.replace("  expect(1).toBe(1);", "  // why the example went\n\n  expect(1).toBe(1);") });
+    expect(only.out.kind).toBe("landed");
+    expect(changeOn(only.root, "main", only.s.change).passes[br(1)]).toMatchObject({ method: "test-comment" });
+    const mixed = await run({ lines: true, edit: (t) => t.replace("  expect(1).toBe(1);", "  // why the example went\n  expect(1).toBe(1);\n  expect(10).toBe(10);") });
+    expect(mixed.out.kind).toBe("landed");
+    expect(changeOn(mixed.root, "main", mixed.s.change).passes[br(1)]).toMatchObject({ method: "test" });
+  }, TIMED * 2);
+
+  test("BR-2241: a comment line is known by the test file's extension; an extension not listed counts only blank lines, and a block comment counts as code (#250)", () => {
+    expect(commentOnly("game/tests/a_test.gd", ["\t# note", ""])).toBe(true);
+    expect(commentOnly("tests/test_a.py", ["# note"])).toBe(true);
+    expect(commentOnly("src/a.test.ts", ["  // note"])).toBe(true);
+    expect(commentOnly("db/a_test.sql", ["-- note"])).toBe(true);
+    expect(commentOnly("src/a.test.ts", ["  // note", "  expect(1).toBe(1);"])).toBe(false);
+    expect(commentOnly("src/a.test.ts", ["  /* note */"])).toBe(false);
+    expect(commentOnly("tests/a.unknown", ["# note"])).toBe(false);
+    expect(commentOnly("tests/a.unknown", ["   "])).toBe(true);
+    // a hunk that only deletes is judged by the lines it removes
+    const hunks = newSideHunks("+++ b/src/a.test.ts\n@@ -3 +2,0 @@\n-  // old note\n+++ b/src/b.test.ts\n@@ -3,0 +4 @@\n+  expect(2).toBe(2);\n");
+    expect(hunks.get("src/a.test.ts")).toEqual([{ from: 2, count: 0, text: ["  // old note"] }]);
+    expect(hunks.get("src/b.test.ts")).toEqual([{ from: 4, count: 1, text: ["  expect(2).toBe(2);"] }]);
+  });
 
   test("BR-2241: with line numbers the same edit to another rule's test is not evidence", async () => {
     const { out } = await run({ lines: true, edit: (t) => t.replace("toBe(2)", "toBe(2); // other") });

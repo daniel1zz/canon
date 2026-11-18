@@ -103,7 +103,7 @@ export interface Change extends Base {
 export type Advances = { readonly kind: "criteria"; readonly refs: readonly string[] } | { readonly kind: "none"; readonly reason: string };
 
 /** How a rule's execution was verified (BR-2237): a test the change touched (down to the test, or only to its file when the report has no line numbers), an acceptance line, or a test that existed at migration. */
-export type PassMethod = "test" | "test-file" | "acceptance" | "migration";
+export type PassMethod = "test" | "test-comment" | "test-file" | "acceptance" | "migration";
 
 /** One pass record: the rule's behaviour hash when it passed, the method, and whether the review judged the edit wording only (BR-2243). */
 export interface PassRecord {
