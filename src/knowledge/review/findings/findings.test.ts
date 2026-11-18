@@ -624,6 +624,19 @@ describe("finding tiers (BR-2477, BR-2478, BR-2479, BR-2480, D-118)", () => {
     expect(JSON.parse(ev.detail)).toMatchObject({ tier: "C", owner: older, covers: "keep the three-day refund window" });
   });
 
+  test("BR-2480 BR-2478: with no other session to advise, a tier B finding closes as spurious by citing the owner's standing authorization (#66)", () => {
+    const { root, db, n } = fixture();
+    tier(db, n, "B");
+    expect(why(close(root, db, n, main, { spurious: "untested: fixture" }))).toContain("another session");
+    const standing = ask(db, "agent:x", null, "长期授权：没有别的会话能出意见时，由主会话自己判断并关闭误判的意见？", ["approve: 主会话自己判断误判的意见，判断不了再问我", "reject: 每次仍然问我"]);
+    db.db.query("UPDATE questions SET answer = 'approve: 主会话自己判断误判的意见，判断不了再问我', answered_by = 'human:owner' WHERE id = ?").run(standing);
+    expect(why(close(root, db, n, main, { spurious: "untested: fixture", owner: String(standing), covers: "每次都由负责人批准" }))).toContain("not in its question or answer");
+    const c = close(root, db, n, main, { spurious: "untested: fixture", owner: String(standing), covers: "主会话自己判断误判的意见" });
+    expect(c.ok).toBe(true);
+    const ev = db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'finding.close'").get()!;
+    expect(JSON.parse(ev.detail)).toMatchObject({ tier: "B", owner: standing, covers: "主会话自己判断误判的意见" });
+  });
+
   test("BR-2483: a closed finding's closing is corrected with amend: spurious to fixed by a later commit; the earlier close event stays and the row points at the amend", () => {
     const { root, db, n, fix } = fixture();
     tier(db, n, "B");
