@@ -195,7 +195,9 @@ describe("rule review prompt budget", () => {
     expect(msg).toContain("review_max_prompt_kb = 25 KB");
     expect(msg).toMatch(/changed documents 1 KB, .*domain text 3\d KB/);
     expect(msg).toContain("splitting the change cannot help");
-    expect(msg).toMatch(/raise review_max_prompt_kb in canon\/config.yaml to at least 3\d KB/);
+    // reason: the minimum is the rule (30 KB) plus the instructions, which grow as the review prompt gains lines; pin only that it covers the rule
+    const least = /raise review_max_prompt_kb in canon\/config.yaml to at least (\d+) KB/.exec(msg);
+    expect(Number(least?.[1])).toBeGreaterThan(30);
     expect(msg).toContain("canon rule domain big/a/<name>");
     expect(msg).not.toContain("several smaller changes");
   });
