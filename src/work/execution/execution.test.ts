@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { land } from "../land/land.ts";
 import { previewReview } from "../../knowledge/review/preview.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
+import { openFindings } from "../../knowledge/review/findings/findings.ts";
 import { behaviourHash } from "../../knowledge/documents/behaviour.ts";
 import type { Change } from "../../knowledge/documents/model.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
@@ -449,6 +450,24 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     expect(refused.kind === "refused" && refused.message).toContain("asked twice; neither answer could be read");
     expect(readFileSync(`${bad.root}-asked`, "utf8").trim()).toBe("2");
     expect(changeOn(bad.s.worktree, "HEAD", bad.s.change).status).toBe("open");
+  }, TIMED * 2);
+
+  test("BR-2239: two unreadable answers that carry text record that text as open [unparsed] findings on the rules asked about and refuse on them (#252)", async () => {
+    const { root, s } = await wordingProject((r) => reviewing(r, `{"findings":["${br(1)} changes when the line shows"]}`));
+    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+    const out = await land(ws(s.worktree), FINISH, quiet);
+    expect(out.kind === "refused" && out.reason).toBe("review");
+    expect(out.kind === "refused" && out.message).toContain("[unparsed]");
+    expect(out.kind === "refused" && out.message).not.toContain("asked twice; neither answer could be read");
+    const open = openFindings(ws(root).db, [br(1)]);
+    expect(open.map((f) => [f.criterion, f.text, f.change])).toEqual([["unparsed", `${br(1)} changes when the line shows`, s.change]]);
+    expect(changeOn(s.worktree, "HEAD", s.change).status).toBe("open");
+    // a reviewer that prints plain prose, no JSON: the prose is the finding, attached to the rule asked about
+    const prose = await wordingProject((r) => reviewing(r, "I think the statement now says something new."));
+    write(prose.s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+    const refused = await land(ws(prose.s.worktree), FINISH, quiet);
+    expect(refused.kind === "refused" && refused.reason).toBe("review");
+    expect(openFindings(ws(prose.root).db, [br(1)]).map((f) => f.text)).toEqual(["I think the statement now says something new."]);
   }, TIMED * 2);
 
   test("BR-2239: a review command that fails is not asked again (#227)", async () => {

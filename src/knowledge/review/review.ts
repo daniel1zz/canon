@@ -490,6 +490,31 @@ export function retryPrompt(prompt: string, error: string): string {
   return `${prompt}\n\n# Your previous answer could not be read\n\n${error}\n\nAnswer again with JSON only, in exactly the format asked above.\n`;
 }
 
+/**
+ * The reviewer's own words in an answer canon could not read (BR-2239, #252): the text of each finding in its JSON (a string,
+ * or an object's `text`), else the stdout around or instead of the JSON. Empty when the answer carries no text at all.
+ */
+export function unparsedTexts(out: string): string[] {
+  const clean = (xs: readonly string[]) => xs.map((x) => x.trim()).filter((x) => x !== "").map((x) => x.slice(0, 2000));
+  const match = out.match(/\{[\s\S]*\}/);
+  if (match) {
+    try {
+      const v = JSON.parse(match[0]) as unknown;
+      const list = v !== null && typeof v === "object" && !Array.isArray(v) ? (v as { findings?: unknown }).findings : undefined;
+      const texts = clean(
+        (Array.isArray(list) ? list : []).map((f) =>
+          typeof f === "string" ? f : f !== null && typeof f === "object" && typeof (f as { text?: unknown }).text === "string" ? (f as { text: string }).text : "",
+        ),
+      );
+      if (texts.length > 0) return texts;
+      return clean([out.replace(match[0], " ")]);
+    } catch {
+      // reason: JSON that does not parse is still the reviewer's text; it is kept whole below (#252)
+    }
+  }
+  return clean([out]);
+}
+
 /** How one answer becomes a verdict; the release check passes its own, which places each finding (BR-2411, D-107). */
 export type AnswerParser = (answer: unknown) => Result<ReviewVerdict>;
 

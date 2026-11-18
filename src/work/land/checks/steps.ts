@@ -12,7 +12,8 @@ import { runHooks } from "../../hooks/hooks.ts";
 import { changePort } from "../../hooks/ports.ts";
 import { type Doc } from "../../../knowledge/documents/model.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
-import { retryPrompt, runReview, wordingPrompt } from "../../../knowledge/review/review.ts";
+import { retryPrompt, runReview, unparsedTexts, wordingPrompt } from "../../../knowledge/review/review.ts";
+import { recordFindings } from "../../../knowledge/review/findings/findings.ts";
 import { REVIEW_NONE } from "../../../knowledge/review/config-keys.ts";
 import type { ReviewNeeds } from "../../../knowledge/review/landed-queue.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
@@ -163,7 +164,8 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
     } else {
       const at = tree.get();
       if (!at.ok) return refuse("environment", at.error.message);
-      const limits = { timeoutMs: onMain.reviewTimeoutMs, kind: "land" as const, track: (r: { kill(): void } | undefined) => (v.running.review = r) };
+      let lastOut = "";
+      const limits = { timeoutMs: onMain.reviewTimeoutMs, kind: "land" as const, track: (r: { kill(): void } | undefined) => (v.running.review = r), capture: (out: string) => (lastOut = out) };
       let run = await runReview(reviewer, at.value, prompt, limits);
       // reason: an answer canon cannot read is the reviewer's failure, not a verdict on the change; it is asked once more with the
       // format error, and only a second unreadable answer refuses (BR-2239, #227). A command that fails or times out is not asked again.
@@ -171,6 +173,21 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
       if (!run.ok && retried) {
         say(`wording judgement: the answer could not be read (${run.error.message.slice(0, 200)}); asking the review command once more`);
         run = await runReview(reviewer, at.value, retryPrompt(prompt, run.error.message), limits);
+        // reason: the reviewer ran and wrote something; its words become open findings on the rules it was asked about,
+        // so the session settles them like any finding instead of guessing from a refusal message (BR-2239, #252)
+        const unread = !run.ok && run.error.code === "invalid" ? run.error.message : undefined;
+        const texts = unread !== undefined ? unparsedTexts(lastOut) : [];
+        if (texts.length > 0) {
+          const docs = execution.wording.map((q) => q.id);
+          const event = ws.db.event(ws.actor, "review.unparsed", subject, { docs, texts, commit: head.value });
+          const rec = recordFindings(ws.db, { findings: texts.map((text) => ({ criterion: "unparsed", text })), reviewed: docs, change: subject, event, sha: head.value });
+          if (!rec.ok) return refuse("environment", rec.error.message);
+          const ids = [...rec.value.opened, ...rec.value.existing].map((n) => `#${n}`).join(", ");
+          return refuse(
+            "review",
+            `the wording judgement answered twice in a form canon cannot read (${(unread ?? "").slice(0, 200)}); its text is recorded as open review finding(s) ${ids} [unparsed] on ${docs.join(", ")}: read them with canon context ${docs[0]}, then settle each (canon finding close) and land again`,
+          );
+        }
       }
       if (!run.ok) return refuse("review", couldNotRun("wording", retried ? `${run.error.message} (asked twice; neither answer could be read)` : run.error.message, at.value, v.main));
       answers = run.value.wording;
