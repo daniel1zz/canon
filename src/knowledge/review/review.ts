@@ -119,6 +119,17 @@ const CRITERIA: readonly string[] = [...RULE_CRITERIA, ...DUPLICATE_CRITERIA];
 export const MUST_QUOTE: readonly string[] = ["contradiction", "restatement"];
 /** What canon adds to a finding it took as a note for quoting nothing (BR-2481). */
 export const unquotedNote = (criterion: string): string => `(canon: given as [${criterion}] but quotes no text, so taken as a note)`;
+
+/**
+ * The phrases with which a finding concludes there is no blocking problem; matched with all whitespace removed, ignoring
+ * case. Only whole conclusions: "no conflict" or "does not contradict" were found followed by a real problem (BR-2523, C-597).
+ */
+export const SELF_CLEARED: readonly string[] = ["未发现阻断", "no blocking defect", "no blocking issue"];
+const squashAll = (t: string): string => t.replace(/\s+/g, "").toLowerCase();
+/** Whether a finding's own text concludes there is no blocking problem (BR-2523). */
+export const selfCleared = (text: string): boolean => SELF_CLEARED.some((p) => squashAll(text).includes(squashAll(p)));
+/** What canon adds to a finding it took as a note because its own text clears it (BR-2523). */
+export const clearedNote = (criterion: string): string => `(canon: given as [${criterion}] but its own text says there is no problem, so taken as a note)`;
 const ANSWER_FORMAT_RULE = `{"findings":[{"criterion":"${RULE_CRITERIA.join('"|"')}"|"note","text":"<one sentence, naming the id>"}]`;
 export const NO_VERDICT = "Do not give a verdict: canon derives it from the keys.";
 
@@ -191,6 +202,7 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
     // reason: one review reported the same D-51 defect four times in different words (BR-2484, findings #43, #44, #46, #50)
     "Give each defect once: findings that quote the same passages for the same problem are one finding, whatever their wording; name every document it concerns in that one sentence.",
     "Do not block for wording, style or formatting.",
+    "A remark whose conclusion is that there is no blocking problem is a `note`: never give it a blocking key.",
     "One rule is one trigger (one command, event or kind of input) and one outcome (D-5). The error cases, exit codes and boundaries of the same trigger belong in that rule as examples, and a definition table (such as a list of exit codes) is one rule: do not suggest splitting those. Suggest a split only when a rule covers two different triggers, or two outcomes that could change independently; never block for it.",
     "Write the findings in the language the documents are written in.",
     // reason: turning a lesson into a mechanism needs the owner's confirmation; the review only reminds, never blocks (BR-2162, D-24);
@@ -584,6 +596,8 @@ export function parseAnswer(v: unknown): Result<ReviewVerdict> {
     if (criterion === "note") findings.push(text);
     // reason: these two are about text that exists; one that quotes none of it cannot be checked, and the ones seen said they found nothing (BR-2481, D-119, #219)
     else if (typeof criterion === "string" && MUST_QUOTE.includes(criterion) && quotedSpans(text).length === 0) findings.push(`${text} ${unquotedNote(criterion)}`);
+    // reason: a finding that itself concludes there is no blocking problem blocks nothing; recorded as open it waited on the owner (BR-2523, C-597)
+    else if (typeof criterion === "string" && CRITERIA.includes(criterion) && selfCleared(text)) findings.push(`${text} ${clearedNote(criterion)}`);
     else if (typeof criterion === "string" && CRITERIA.includes(criterion)) {
       blocking = true;
       findings.push(`[${criterion}] ${text}`);

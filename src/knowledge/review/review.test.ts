@@ -185,6 +185,19 @@ describe("review verdict derived from the criteria findings name (BR-2367)", () 
     expect(await answer(`{"findings":[${f("untestable", "BR-4 says nothing about exit codes")}]}`)).toEqual({ ok: true, value: { verdict: "block", findings: ["[untestable] BR-4 says nothing about exit codes"] } });
   });
 
+  test("BR-2523, BR-2434: a blocking finding whose own text concludes there is no blocking problem is a note saying why, not an open finding; 'no conflict' followed by a problem still blocks", async () => {
+    const cleared = "BR-1 要求「三天内退款」，BR-2 要求「三天内退款」，二者一致，没有矛盾。未发现阻断问题。";
+    const note = `${cleared} (canon: given as [contradiction] but its own text says there is no problem, so taken as a note)`;
+    expect(await answer(`{"findings":[${f("contradiction", cleared)}]}`)).toEqual({ ok: true, value: { verdict: "ok", findings: [note] } });
+    expect(findingOf(note).criterion).toBe("note");
+    const english = "BR-6 「按 BR-5 的半径」 agrees with BR-5; overall no   Blocking defect from the rules shown.";
+    expect(await answer(`{"findings":[${f("restatement", english)}]}`)).toEqual({ ok: true, value: { verdict: "ok", findings: [`${english} (canon: given as [restatement] but its own text says there is no problem, so taken as a note)`] } });
+    const real = "BR-6 「按半径排序」 orders by radius, so no conflict, but it duplicates the mapping in BR-5 「按半径排序」";
+    expect(await answer(`{"findings":[${f("restatement", real)}]}`)).toEqual({ ok: true, value: { verdict: "block", findings: [`[restatement] ${real}`] } });
+    const empty = mkdtempSync(join(tmpdir(), "canon-prompt-"));
+    expect(reviewPrompt(empty, readCorpus(empty).corpus, [])).toContain("A remark whose conclusion is that there is no blocking problem is a `note`");
+  });
+
   test("BR-2367: a finding without a usable criterion or text, or a string among objects, is an invalid answer that says which finding and the names", async () => {
     for (const out of [`{"findings":[${f("vague", "x")}]}`, '{"findings":[{"text":"x"}]}', `{"findings":[${f("note", "")}]}`, `{"findings":[${f("note", "a")},"b"]}`]) {
       const r = await answer(out);
