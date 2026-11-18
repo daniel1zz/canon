@@ -185,7 +185,7 @@ describe("review verdict derived from the criteria findings name (BR-2367)", () 
     expect(await answer(`{"findings":[${f("untestable", "BR-4 says nothing about exit codes")}]}`)).toEqual({ ok: true, value: { verdict: "block", findings: ["[untestable] BR-4 says nothing about exit codes"] } });
   });
 
-  test("BR-2523, BR-2434: a blocking finding whose own text concludes there is no blocking problem is a note saying why, not an open finding; 'no conflict' followed by a problem still blocks", async () => {
+  test("BR-2523, BR-2434, BR-2367: a blocking finding whose own text concludes there is no blocking problem is a note saying why, not an open finding; 'no conflict' followed by a problem still blocks", async () => {
     const cleared = "BR-1 要求「三天内退款」，BR-2 要求「三天内退款」，二者一致，没有矛盾。未发现阻断问题。";
     const note = `${cleared} (canon: given as [contradiction] but its own text says there is no problem, so taken as a note)`;
     expect(await answer(`{"findings":[${f("contradiction", cleared)}]}`)).toEqual({ ok: true, value: { verdict: "ok", findings: [note] } });
