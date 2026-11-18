@@ -1,4 +1,5 @@
 import { basename } from "node:path";
+import { applyCmd, proposeCmd } from "../../work/delegation/commands.ts";
 import { defineCommand } from "citty";
 import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import type { Doc, Kind } from "./model.ts";
@@ -130,6 +131,8 @@ const rule = defineCommand({
       untested: { type: "string", description: "Reason this rule deliberately has no test" },
     }),
     list: listCommand("rule", "List active rules (--all for retired too)"),
+    propose: proposeCmd,
+    apply: applyCmd,
     retire: defineCommand({
       meta: { description: "Retire a rule; its id is never reused" },
       args: { id: { type: "positional", required: true } },

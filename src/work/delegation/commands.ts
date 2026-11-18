@@ -3,6 +3,8 @@ import { AS_ARG, entry, fail, must, say, workspace, type DomainCommands } from "
 import { delegate } from "./delegate.ts";
 import { acceptDesign } from "./accept-design.ts";
 import { designAnswer, needDesign } from "./requests.ts";
+import { applyProposals, proposalNotice, proposeRule } from "./proposals.ts";
+import { claimOfWorktree } from "../claims/claims.ts";
 
 const delegateCmd = defineCommand({
   meta: { description: "Delegate a change with a published design contract" },
@@ -26,7 +28,9 @@ const needDesignCmd = defineCommand({
   args: { change: { type: "positional", required: true }, request: { type: "positional", required: true, description: "What is undecided or contradictory, which rules or files it touches, which work stops because of it" }, ...AS_ARG },
   run({ args }) {
     const change = String(args.change).toUpperCase();
-    const r = must(needDesign(workspace(args.as), change, String(args.request)));
+    const ws = workspace(args.as);
+    // reason: the design owner sees the worker's proposed rule files in the request itself (BR-2524, #254)
+    const r = must(needDesign(ws, change, `${String(args.request)}${proposalNotice(ws.root, change)}`));
     say(`${change}: design request #${r.id} pending; design owner ${r.owner}. Keep the claim and go on with work that does not depend on it; after the answer, canon brief shows it and canon work accept-design takes the new design.`);
   },
 });
@@ -37,6 +41,32 @@ const designAnswerCmd = defineCommand({
   run({ args }) {
     const r = must(designAnswer(workspace(), String(args.request), String(args.answer)));
     say(`#${r.id} on ${r.subject} answered at main ${r.main}. If the answer changed the design, run canon work delegate ${r.subject} --to <worker> so the worker accepts the new design.`);
+  },
+});
+
+/** `canon rule propose <BR-n>`: the rule as main has it, copied into this worktree's change for editing (BR-2524). */
+export const proposeCmd = defineCommand({
+  meta: { description: "Propose new text for a rule: copy it as main has it to canon/proposals/<C-n>/<BR-n>.md in this worktree's change and edit that copy (a worker cannot edit rule files)" },
+  args: { id: { type: "positional", required: true, description: "The rule id (BR-n)" }, ...AS_ARG },
+  run({ args }) {
+    const ws = workspace(args.as);
+    const claim = claimOfWorktree(ws.db, ws.root);
+    if (!claim) fail({ code: "invalid", message: "canon rule propose runs in the worktree of a change you claim: its proposals travel with that change" });
+    const p = must(proposeRule(ws, claim!.subject, String(args.id).toUpperCase()));
+    say(`${p.path}: edit this copy of ${p.id}; the design owner applies it with canon rule apply ${claim!.subject}`);
+  },
+});
+
+/** `canon rule apply <C-n> [BR-n ...]`: the design owner writes the change's proposals over the rules (BR-2524). */
+export const applyCmd = defineCommand({
+  meta: { description: "Design owner: write a change's proposed rule files (canon/proposals/<C-n>/) over the rules and delete them; all or none, refused when main changed a rule since it was proposed" },
+  args: { change: { type: "positional", required: true }, ids: { type: "positional", required: false, description: "Only these rule ids (default: every proposal of the change)" } },
+  run({ args, rawArgs }) {
+    const ws = workspace();
+    const change = String(args.change).toUpperCase();
+    const only = rawArgs.filter((a) => !a.startsWith("-")).slice(1).map((a) => a.toUpperCase());
+    for (const a of must(applyProposals(ws, change, only))) say(`${a.id} → ${a.rulePath}\n${a.diff.trimEnd()}`);
+    say("commit the rule files with the change; the review and the evidence gate treat them as any rule edit");
   },
 });
 

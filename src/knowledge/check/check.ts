@@ -55,6 +55,7 @@ export type CheckRule =
   | "domain-name-technical" // a domain named after a technical layer: only ever a note, never a finding (BR-2318)
   | "domain-code-declared" // a README lists `code:` where the layout gives the location (BR-2117)
   | "code-layout" // with code_root: a domain without its directory, or a directory no domain or shared entry owns (BR-2118)
+  | "proposal-unapplied" // canon/proposals/<C-n>/ still holds rule proposals of a change that is not open (BR-2525)
   | "decision-options" // a decision's options section shows no real choice (BR-2109)
   | "decision-revision-reason" // a decision this work adds revises another without a known `revised_because` (BR-2492)
   | "source-malformed" // a source line in a decision's options does not name a target and quote it (BR-2110)
@@ -262,6 +263,17 @@ export function check(input: CheckInput): Finding[] {
   for (const f of revisionReasonFindings(input.root, input.corpus, input.architecture?.since)) findings.push({ path: f.path, rule: "decision-revision-reason", message: f.message });
   // reason: `architecture.refs` is what was there before this work, which is also what "a domain this work adds" means here (BR-2446, BR-2352)
   for (const f of domainDecisionFindings(input.root, input.corpus, input.architecture?.refs)) findings.push({ path: f.path, rule: "domain-no-decision", message: f.message });
+  // reason: proposals are applied by the design owner before the change closes; ones left behind were never applied (BR-2525, #254)
+  const proposalsDir = join(input.root, "canon/proposals");
+  if (existsSync(proposalsDir)) {
+    for (const change of readdirSync(proposalsDir).filter((n) => statSync(join(proposalsDir, n)).isDirectory()).sort()) {
+      const files = readdirSync(join(proposalsDir, change)).filter((n) => n.endsWith(".md")).sort();
+      if (files.length === 0) continue;
+      const doc = input.corpus.docs.find((d) => d.kind === "change" && d.id === change);
+      if (doc?.kind === "change" && doc.status === "open") continue;
+      findings.push({ path: `canon/proposals/${change}`, rule: "proposal-unapplied", message: `${change} is ${doc?.kind === "change" ? doc.status : "no change on this tree"} but still has rule proposals not applied: ${files.map((f) => f.slice(0, -3)).join(", ")}; its design owner applies them (canon rule apply ${change}) or deletes them` });
+    }
+  }
   for (const s of staleLinks(input.corpus)) {
     findings.push({ path: s.doc.path, rule: "link-stale", message: `\`links\` records ${s.id}, which the text of ${s.doc.id} no longer names as a rule or decision: delete that line from \`links\` (BR-2426)` });
   }
