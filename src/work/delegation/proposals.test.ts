@@ -39,7 +39,7 @@ function workerGone(root: string, change: string) {
   try { w.db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(GONE.pid, GONE.start, change); } finally { w.db.close(); }
 }
 
-test("BR-2524 BR-2501: a worker proposes a rule's whole text, lands it without a design refusal, names it in its design request; the design owner applies it word for word after take", () => {
+test("BR-2524 BR-2501 BR-2499: a worker proposes a rule's whole text, lands it without a design refusal, names it in its design request; the design owner applies it word for word after take", () => {
   const f = fixture();
   const proposed = cli(f.worktree, "agent:s7:w1", "rule", "propose", "BR-1");
   expect(proposed.code).toBe(0);
