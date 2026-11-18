@@ -1,4 +1,5 @@
 import { defineCommand } from "citty";
+import { stalledDelegations } from "../../work/delegation/stall.ts";
 import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { setMeta } from "../documents/write.ts";
 import { findDoc } from "../query/query.ts";
@@ -22,7 +23,9 @@ const plan = defineCommand({
         const target = typeof args.id === "string" && args.id.trim() !== "" ? args.id.trim().toUpperCase() : undefined;
         // reason: the plans are main's, the doers also include changes still on their own branch, so a step being worked on shows before its change lands (BR-2372)
         const { listed } = must(listedChanges(ws, corpus, [], () => true));
-        const all = planStatuses(corpus, listed.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 })));
+        // reason: a step whose changes are all stalled delegations shows as stalled, not in progress (BR-2522, #255)
+        const stalled = new Set(must(stalledDelegations(ws)).map((s) => s.subject));
+        const all = planStatuses(corpus, listed.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 })), stalled);
         const one = target === undefined ? undefined : all.find((p) => p.change.id === target);
         if (target !== undefined && one === undefined) {
           const doc = corpus.docs.find((d) => d.id === target);

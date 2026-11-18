@@ -1,4 +1,5 @@
 import { proposedNotice } from "./proposed.ts";
+import { stalledDelegations, stalledLine } from "../delegation/stall.ts";
 import { readFileSync } from "node:fs";
 import { readRuntime } from "../../kernel/agent.ts";
 import { recordCodexStartup } from "../agent-session.ts";
@@ -113,9 +114,12 @@ const status = defineCommand({
     const unreviewed = unreviewedNotice(ws);
     const failedReviews = failedReviewNotice(ws.db);
     const chores = must(choresInFlight(ws));
-    const data = { chores, ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), ...(failedReviews.length > 0 ? { failed_reviews: failedReviews } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending"), design_requests: pendingRequests(ws.db), urgent: marks(ws.db) };
+    const stalled = must(stalledDelegations(ws));
+    const data = { chores, ...(stalled.length > 0 ? { stalled } : {}), ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), ...(failedReviews.length > 0 ? { failed_reviews: failedReviews } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending"), design_requests: pendingRequests(ws.db), urgent: marks(ws.db) };
     if (args.json) return json(data);
     for (const row of ws.db.db.query<{ subject: string }, []>("SELECT subject FROM delegations ORDER BY subject").all()) for (const line of delegationNotice(ws.db, row.subject)) say(line);
+    // Delegations nobody is working on, each with what the design owner can do (BR-2522, #255).
+    for (const s of stalled) say(stalledLine(s));
     // Pending design requests, each with the design owner who answers it (BR-2499).
     const requests = statusRequestLines(ws.db);
     if (requests.length) say(`Design requests waiting for their design owner (canon work design-answer <n> "<answer>"):\n${requests.join("\n")}`);
@@ -300,7 +304,9 @@ function briefState(ws: Workspace): Result<void> {
     // reason: another session's half-done branch is said, never fatal: brief must still list everything else (BR-2292)
     for (const u of every.value.unreadable) say(`Unreadable change file, not listed: ${u}`);
     // Plans with steps ready to start, one line each, so a coordinator sees what to dispatch (BR-2383).
-    for (const p of planStatuses(onMain.value, every.value.listed.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 })))) {
+    const stalled = stalledDelegations(ws);
+    if (!stalled.ok) say(`Cannot tell stalled delegations: ${stalled.error.message}`);
+    for (const p of planStatuses(onMain.value, every.value.listed.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 })), new Set(stalled.ok ? stalled.value.map((s) => s.subject) : []))) {
       const line = briefLine(p);
       if (line) say(line);
     }

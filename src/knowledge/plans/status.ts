@@ -3,10 +3,10 @@ import { readPlan, type Step } from "./parse.ts";
 
 /** What a plan's steps stand at, worked out from the changes doing them every time, never stored (BR-2372, D-77). */
 
-export type StepState = "done" | "working" | "ready" | "blocked";
+export type StepState = "done" | "stalled" | "working" | "ready" | "blocked";
 
-export const STATE_ORDER: readonly StepState[] = ["ready", "working", "blocked", "done"];
-export const STATE_LABEL: Readonly<Record<StepState, string>> = { done: "已完成", working: "进行中", ready: "可开始", blocked: "被挡住" };
+export const STATE_ORDER: readonly StepState[] = ["ready", "stalled", "working", "blocked", "done"];
+export const STATE_LABEL: Readonly<Record<StepState, string>> = { done: "已完成", stalled: "停滞", working: "进行中", ready: "可开始", blocked: "被挡住" };
 
 /** A change that may do steps, and whether it is on main: one only on its own branch has not landed, whatever it says (BR-2372). */
 export interface Doer {
@@ -31,18 +31,21 @@ export interface PlanStatus {
   readonly percent: number;
 }
 
-/** One status per change with a valid plan, by number (BR-2373); `doers` are the changes whose `plan` names it. */
-export function planStatuses(corpus: Corpus, doers: readonly Doer[]): PlanStatus[] {
+/**
+ * One status per change with a valid plan, by number (BR-2373); `doers` are the changes whose `plan` names it, `stalled`
+ * the delegated changes nobody is working on (BR-2522): a step all of whose changes are stalled is `stalled`, not `working`.
+ */
+export function planStatuses(corpus: Corpus, doers: readonly Doer[], stalled: ReadonlySet<string> = new Set()): PlanStatus[] {
   return corpus.docs
     .filter((d): d is Change => d.kind === "change")
     .sort((a, b) => Number(a.id.split("-")[1]) - Number(b.id.split("-")[1]))
     .flatMap((change) => {
       const plan = readPlan(change.body);
-      return plan.kind === "plan" ? [statusOf(change, plan.steps, doers)] : [];
+      return plan.kind === "plan" ? [statusOf(change, plan.steps, doers, stalled)] : [];
     });
 }
 
-function statusOf(change: Change, steps: readonly Step[], doers: readonly Doer[]): PlanStatus {
+function statusOf(change: Change, steps: readonly Step[], doers: readonly Doer[], stalled: ReadonlySet<string>): PlanStatus {
   const doing = (s: Step) => doers.filter((d) => d.change.plan === change.id && d.change.steps?.includes(s.name) && d.change.status !== "dropped");
   // reason: done needs every change landed and done on main; one only on its branch is still being done (BR-2372)
   const finished = (d: Doer) => d.onMain && d.change.status === "done";
@@ -50,7 +53,8 @@ function statusOf(change: Change, steps: readonly Step[], doers: readonly Doer[]
   const list = steps.map((step): StepStatus => {
     const changes = doing(step).map((d) => d.change.id);
     const waitingFor = step.dependsOn.filter((d) => !done.has(d));
-    const state: StepState = done.has(step.name) ? "done" : changes.length > 0 ? "working" : waitingFor.length === 0 ? "ready" : "blocked";
+    // reason: a step whose every change is a delegation nobody works on is not in progress; it waits for its design owner (BR-2522, #255)
+    const state: StepState = done.has(step.name) ? "done" : changes.length > 0 ? (changes.every((c) => stalled.has(c)) ? "stalled" : "working") : waitingFor.length === 0 ? "ready" : "blocked";
     return { step, state, changes, waitingFor: state === "blocked" ? waitingFor : [] };
   });
   const counts = Object.fromEntries(STATE_ORDER.map((k) => [k, list.filter((s) => s.state === k).length])) as Record<StepState, number>;
@@ -60,14 +64,16 @@ function statusOf(change: Change, steps: readonly Step[], doers: readonly Doer[]
 /** The one-line summary of a plan (BR-2373). */
 export function summaryLine(p: PlanStatus): string {
   const total = p.steps.length;
-  return `${p.change.id}  ${p.change.title}  ${STATE_LABEL.done} ${p.counts.done}/${total} (${p.percent}%)  ${STATE_LABEL.working} ${p.counts.working}  ${STATE_LABEL.ready} ${p.counts.ready}  ${STATE_LABEL.blocked} ${p.counts.blocked}`;
+  // reason: the stalled count shows only when there is one, so plans without delegations read as before (BR-2373, BR-2522)
+  const stalled = p.counts.stalled > 0 ? `  ${STATE_LABEL.stalled} ${p.counts.stalled}` : "";
+  return `${p.change.id}  ${p.change.title}  ${STATE_LABEL.done} ${p.counts.done}/${total} (${p.percent}%)${stalled}  ${STATE_LABEL.working} ${p.counts.working}  ${STATE_LABEL.ready} ${p.counts.ready}  ${STATE_LABEL.blocked} ${p.counts.blocked}`;
 }
 
 /** The summary, then a line per state that has steps (BR-2374). */
 export function detailLines(p: PlanStatus): string[] {
   const out = [summaryLine(p)];
   const show = (s: StepStatus): string =>
-    s.state === "ready" ? `${s.step.name} ${s.step.content}` : s.state === "working" ? `${s.step.name} (${s.changes.join(", ")})` : s.state === "blocked" ? `${s.step.name} (等 ${s.waitingFor.join(", ")})` : s.step.name;
+    s.state === "ready" ? `${s.step.name} ${s.step.content}` : s.state === "working" || s.state === "stalled" ? `${s.step.name} (${s.changes.join(", ")})` : s.state === "blocked" ? `${s.step.name} (等 ${s.waitingFor.join(", ")})` : s.step.name;
   for (const k of STATE_ORDER) {
     const of = p.steps.filter((s) => s.state === k);
     if (of.length > 0) out.push(`  ${STATE_LABEL[k]}: ${of.map(show).join(k === "done" ? ", " : "; ")}`);
@@ -82,6 +88,7 @@ export function statusJson(p: PlanStatus, withSteps: boolean): Record<string, un
     title: p.change.title,
     total: p.steps.length,
     done: p.counts.done,
+    stalled: p.counts.stalled,
     working: p.counts.working,
     ready: p.counts.ready,
     blocked: p.counts.blocked,

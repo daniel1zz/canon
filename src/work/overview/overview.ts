@@ -1,4 +1,5 @@
 import { git } from "../../kernel/git.ts";
+import { stalledDelegations, stalledLine, type StalledDelegation } from "../delegation/stall.ts";
 import { ok, type Result } from "../../kernel/result.ts";
 import { goalChangesBetween } from "../../knowledge/releases/goal-landing.ts";
 import { backlogAt } from "../../knowledge/documents/backlog.ts";
@@ -57,7 +58,7 @@ export interface Overview {
   /** The releases in progress (BR-2505): every active one, else the lowest planned one; empty when none. */
   readonly releases: readonly CurrentRelease[];
   readonly plans: readonly PlanStatus[];
-  readonly waiting: { readonly questions: readonly Question[]; readonly findings: readonly OpenFinding[]; readonly criteria: readonly { readonly doc: string; readonly text: string }[] };
+  readonly waiting: { readonly questions: readonly Question[]; readonly findings: readonly OpenFinding[]; readonly criteria: readonly { readonly doc: string; readonly text: string }[]; readonly stalled: readonly StalledDelegation[] };
   readonly backlog: readonly ListedChange[];
   readonly backlogMore: number;
   readonly landed: readonly Landed[];
@@ -149,13 +150,17 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean }):
     ...[...r.features, ...r.merged].flatMap((f) => f.criteria.filter((c) => c.state === "owner").map((c) => ({ doc: f.doc.id, text: c.text }))),
   ]);
   const open = every.value.listed.filter((l) => l.change.status === "open" || (l.onBranch.length > 0 && l.change.status === "done"));
+  // reason: a delegation nobody works on waits for its design owner, so it is listed with what waits for the owner (BR-2522, #255)
+  const stalled = stalledDelegations(ws);
+  if (!stalled.ok) return stalled;
   return ok({
     releases,
-    plans: planStatuses(corpus.value, every.value.listed.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 }))),
+    plans: planStatuses(corpus.value, every.value.listed.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 })), new Set(stalled.value.map((s) => s.subject))),
     waiting: {
       questions: questions(ws.db, "pending"),
       findings: openFindings(ws.db).filter((f) => f.tier === "C"),
       criteria: owner,
+      stalled: stalled.value,
     },
     backlog: open.slice(0, BACKLOG_SHOWN),
     backlogMore: Math.max(0, open.length - BACKLOG_SHOWN),
@@ -215,7 +220,7 @@ export function overviewLines(o: Overview): string[] {
     for (const g of o.goalChanges) out.push(`  ${g.sha.slice(0, 9)} ${g.subject}`, ...g.changes.map((c) => `    ${c}`));
   }
   out.push("", "## 计划", ...(o.plans.length > 0 ? o.plans.map(planLine) : ["(no plans)"]));
-  const waiting = [...o.waiting.questions.map(questionLine), ...o.waiting.findings.map(findingLine), ...o.waiting.criteria.map((c) => `成功标准 ${c.doc}: ${c.text}`)];
+  const waiting = [...o.waiting.questions.map(questionLine), ...o.waiting.findings.map(findingLine), ...o.waiting.criteria.map((c) => `成功标准 ${c.doc}: ${c.text}`), ...o.waiting.stalled.map(stalledLine)];
   out.push("", "## 等负责人", ...(waiting.length > 0 ? waiting : ["(nothing)"]));
   out.push("", "## 待办顺序");
   if (o.backlog.length === 0) out.push("(none)");
@@ -248,6 +253,7 @@ export function overviewJson(o: Overview): Record<string, unknown> {
       questions: o.waiting.questions.map((q) => ({ id: q.id, question: q.question })),
       findings: o.waiting.findings.map((f) => ({ id: f.id, ids: f.ids, text: f.text })),
       criteria: o.waiting.criteria.map((c) => ({ doc: c.doc, text: c.text })),
+      stalled: o.waiting.stalled,
     },
     backlog: o.backlog.map((l) => ({ id: l.change.id, title: l.change.title, marks: marksOf(l, false) })),
     backlog_more: o.backlogMore,
@@ -259,14 +265,15 @@ export function overviewJson(o: Overview): Record<string, unknown> {
 /** The brief's summary of the first three sections, where no change is claimed (BR-2506). */
 export function briefSummary(o: Overview): string[] {
   const notDone = o.plans.filter((p) => p.counts.done < p.steps.length);
-  const { questions: q, findings: f, criteria: c } = o.waiting;
+  const { questions: q, findings: f, criteria: c, stalled: st } = o.waiting;
   // reason: with nothing to say the brief stays the bare guide (BR-2024, BR-2506)
-  if (o.releases.length === 0 && notDone.length === 0 && q.length + f.length + c.length === 0 && o.goalChanges.length === 0) return [];
+  if (o.releases.length === 0 && notDone.length === 0 && q.length + f.length + c.length + st.length === 0 && o.goalChanges.length === 0) return [];
   const out = ["Overall progress (canon overview):"];
   for (const r of o.releases) out.push(`  ${headLine(r.doc)}  ${criteriaCountLine(allCriteria(r))}${r.fallback ? "  (no release is active: the lowest planned one)" : ""}`);
   if (o.releases.length === 0) out.push("  no release in progress");
   if (notDone.length > 0) out.push(`  plans not done: ${notDone.map((p) => `${p.change.id} ${p.counts.done}/${p.steps.length} (${p.percent}%)`).join(", ")}`);
   if (o.goalChanges.length > 0) out.push(`  goal changed in the last ${GOAL_DAYS} days: ${o.goalChanges.map((g) => g.sha.slice(0, 9)).join(", ")} (canon overview)`);
   if (q.length + f.length + c.length > 0) out.push(`  waiting for the owner: ${q.length} question(s), ${f.length} tier-C finding(s), ${c.length} criterion(s)`);
+  if (st.length > 0) out.push(`  stalled delegations: ${st.map((s) => s.subject).join(", ")} (canon work status)`);
   return out;
 }
