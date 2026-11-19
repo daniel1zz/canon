@@ -18,7 +18,8 @@ function fixture() {
   mkdirSync(join(root, "src/billing"), { recursive: true });
   writeFileSync(join(root, "src/billing/.keep"), "");
   writeFileSync(join(root, "canon/rules/billing/BR-1.md"), rule(1, "Refunds take three days."));
-  writeFileSync(join(root, "canon/rules/billing/BR-2.md"), rule(2, "A refund is announced as BR-1 says."));
+  // a stale record: BR-2's links names an old fingerprint of BR-1 (BR-2425)
+  writeFileSync(join(root, "canon/rules/billing/BR-2.md"), rule(2, "A refund is announced as BR-1 says.").replace("business: x\n", "business: x\nlinks:\n  BR-1: 0000000000000000\n"));
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "billing");
   const first = sh(root, "rev-parse", "HEAD");
@@ -34,7 +35,7 @@ const suspects = (root: string) => {
   return l.value.filter((x) => x.suspect).map((x) => `${x.from} -> ${x.to}`);
 };
 
-test("BR-2539: once the review after a landing that changed a rule is done, the references naming it count as reviewed at its new text; a later change makes them suspect again", async () => {
+test("BR-2539 BR-2425: once the review after a landing that changed a rule is done, the references naming it count as reviewed at its new text; a later change makes them suspect again; a stale links record does not outweigh the review", async () => {
   const root = fixture();
   const change = async (text: string) => {
     const s = startNew(root, `refunds ${text}`);
