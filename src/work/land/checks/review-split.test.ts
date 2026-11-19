@@ -5,7 +5,7 @@ import { land } from "../land.ts";
 import { FAST, project, reviewLandings, sh, startNew, ws } from "../../testkit.ts";
 
 const KB = 1024;
-const bigRule = (n: number, title: string, tag: string) => `---\nid: ${["BR", n].join("-")}\ntitle: ${title}\nuntested: demo\nbusiness: x\n---\n## 规则\n\n${tag} ${"x".repeat(9 * KB)}\n\n## 例子\n\n- a → b\n`;
+const bigRule = (n: number, title: string, tag: string) => `---\nid: ${["BR", n].join("-")}\ntitle: ${title}\nuntested: demo\nbusiness: x\n---\n## 规则\n\n${tag} 见 BR-1。${"x".repeat(9 * KB)}\n\n## 例子\n\n- a → b\n`;
 
 /**
  * A project whose billing domain has two subdomains of one 9 KB rule each, and a reviewer script that keeps the prompt of

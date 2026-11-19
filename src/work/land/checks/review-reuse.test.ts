@@ -131,7 +131,7 @@ describe("reusing a passed rule review (BR-2361)", () => {
     writeFileSync(script, `#!/bin/sh\ncat > /dev/null\necho run >> ${log}\nn=$(wc -l < ${log} | tr -d ' ')\nif [ "$n" = 2 ]; then echo '{"verdict":"block","findings":["second blocks"]}'; else echo '{"verdict":"ok","findings":[]}'; fi\n`);
     chmodSync(script, 0o755);
     writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview_max_prompt_kb: 20\nreview_parallel: 1\nreview: ${JSON.stringify(script)}\n`);
-    const big = (n: number, tag: string) => `---\nid: ${["BR", n].join("-")}\ntitle: Big ${n}\nuntested: demo\nbusiness: x\n---\n## 规则\n\n${tag} ${"x".repeat(9 * 1024)}\n\n## 例子\n\n- a → b\n`;
+    const big = (n: number, tag: string) => `---\nid: ${["BR", n].join("-")}\ntitle: Big ${n}\nuntested: demo\nbusiness: x\n---\n## 规则\n\n${tag} 见 ${id}。${"x".repeat(9 * 1024)}\n\n## 例子\n\n- a → b\n`;
     for (const [path, text] of Object.entries({
       "canon/rules/billing/README.md": "---\ncode: [src/billing]\n---\n# billing\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **x**：y\n",
       "canon/rules/billing/x/README.md": "# billing/x\n\n## 术语\n\n- **子域 X**：x\n\n## 业务\n\n- **x**：y\n",

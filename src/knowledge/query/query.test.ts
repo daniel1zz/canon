@@ -266,12 +266,14 @@ describe("subdomains", () => {
     expect(r.problems.map((p) => p.path)).toContain("canon/rules/work/tokens");
   });
 
-  test("BR-2009: the review of a subdomain's rule reads the whole top-level domain, so a contradiction across subdomains is visible", () => {
+  test("BR-2009: the review of a subdomain's rule reads its top-level domain's READMEs, but a sibling subdomain's rule only when it is a neighbour", () => {
     const { root, corpus } = corpusOf(sub);
     const changed = corpus.docs.filter((d) => d.id === id("BR", 2));
     const prompt = reviewPrompt(root, corpus, changed);
     expect(prompt).toContain("# Current context for work\n");
-    expect(prompt).toContain("Queue."); // work/land's rule text, a sibling subdomain
+    expect(prompt).toContain("Overview of work.");
+    // reason: work/land's rule neither names BR-2 nor relates to it, so it is only in the rule index (D-137)
+    expect(prompt).not.toContain("Queue.");
   });
 });
 

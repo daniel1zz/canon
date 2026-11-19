@@ -183,7 +183,8 @@ export function reviewNeighbours(corpus: Corpus, changed: readonly Doc[], delete
 
 /**
  * The corpus the domain part of a review is drawn from: the changed documents and their neighbours, in the domains that hold
- * them and the domains above those; a domain whose README this landing changes keeps all its rules (BR-2009, D-137).
+ * them and the domains above those, with every rule of a changed rule's own (sub)domain; a domain whose README this landing
+ * changes keeps all its rules (BR-2009, D-137, D-138).
  */
 function scopedCorpus(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras): Corpus {
   // reason: the whole domain made a one-rule change send about 900 KB; its direct neighbours are about a tenth of that (D-137)
@@ -192,7 +193,10 @@ function scopedCorpus(corpus: Corpus, changed: readonly Doc[], extras: ReviewExt
   const readmes = extras.readmes ?? [];
   const underReadme = (domain: string): boolean => readmes.some((n) => domain === n || domain.startsWith(`${n}/`));
   const scoped = (d: Doc): boolean => d.kind !== "rule" && d.kind !== "decision" && d.kind !== "change" && d.kind !== "extra";
-  const docs = corpus.docs.filter((d) => scoped(d) || keep.has(d.id) || (d.kind === "rule" && underReadme(d.domain)));
+  // reason: a contradiction inside the changed rule's own (sub)domain is the likeliest kind; replaying 105 past contradiction
+  // findings, its rules recovered 2 of the 3 the neighbours alone missed (D-138)
+  const ownDomains = new Set(changed.filter((d): d is Rule => d.kind === "rule").map((d) => d.domain));
+  const docs = corpus.docs.filter((d) => scoped(d) || keep.has(d.id) || (d.kind === "rule" && (underReadme(d.domain) || ownDomains.has(d.domain))));
   const held = new Set<string>(readmes);
   for (const d of docs) if (d.kind === "rule") held.add(d.domain);
   for (const top of deletedDomains(corpus, extras.deleted ?? [])) held.add(top);

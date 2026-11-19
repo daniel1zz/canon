@@ -22,16 +22,16 @@ function corpusOf(files: Record<string, string>) {
   return { root, ...readCorpus(root) };
 }
 
-/** Domain `big` with subdomains `big/a` (BR-1, BR-2, and the short BR-6) and `big/b` (BR-3, BR-4), each rule `kb` KB; a small domain `small` (BR-5). */
+/** Domain `big` with subdomains `big/a` (BR-1, BR-2, and the short BR-6) and `big/b` (BR-3, BR-4), each rule `kb` KB and naming BR-6, so a review of BR-6 shows them (BR-2009, D-137); a small domain `small` (BR-5). */
 function bigDomain(kb: number) {
   return corpusOf({
     "canon/rules/big/README.md": "---\ncode: [src/big]\n---\n# big\n\nTop README of big.\n",
     "canon/rules/big/a/README.md": "# big/a\n\nSub A.\n",
     "canon/rules/big/b/README.md": "# big/b\n\nSub B.\n",
-    [`canon/rules/big/a/${id("BR", 1)}.md`]: rule(1, "A one", fat("TEXT-1", kb)),
-    [`canon/rules/big/a/${id("BR", 2)}.md`]: rule(2, "A two", fat("TEXT-2", kb)),
-    [`canon/rules/big/b/${id("BR", 3)}.md`]: rule(3, "B three", fat("TEXT-3", kb)),
-    [`canon/rules/big/b/${id("BR", 4)}.md`]: rule(4, "B four", fat("TEXT-4", kb)),
+    [`canon/rules/big/a/${id("BR", 1)}.md`]: rule(1, "A one", `见 ${id("BR", 6)}。${fat("TEXT-1", kb)}`),
+    [`canon/rules/big/a/${id("BR", 2)}.md`]: rule(2, "A two", `见 ${id("BR", 6)}。${fat("TEXT-2", kb)}`),
+    [`canon/rules/big/b/${id("BR", 3)}.md`]: rule(3, "B three", `见 ${id("BR", 6)}。${fat("TEXT-3", kb)}`),
+    [`canon/rules/big/b/${id("BR", 4)}.md`]: rule(4, "B four", `见 ${id("BR", 6)}。${fat("TEXT-4", kb)}`),
     "canon/rules/small/README.md": "---\ncode: [src/small]\n---\n# small\n\nSmall.\n",
     [`canon/rules/big/a/${id("BR", 6)}.md`]: rule(6, "A six", "SMALL-6 short."),
     [`canon/rules/small/${id("BR", 5)}.md`]: rule(5, "Small five", "Short text."),
@@ -123,14 +123,14 @@ describe("rule review prompt budget", () => {
   });
 
   test("BR-2359: a split into ten or more calls never has a call over the budget, whatever the budget (#160)", () => {
-    // 24 subdomains of 10 KB each: the call count has two digits, and the note of "call 10 of 12" is longer than the one of "call 1 of 2"
+    // 24 subdomains of 10 KB each, each rule naming the changed BR-99 so the review shows it (D-137): the call count has two digits, and the note of "call 10 of 12" is longer than the one of "call 1 of 2"
     const files: Record<string, string> = {
       "canon/rules/wide/README.md": "---\ncode: [src/wide]\n---\n# wide\n\nTop.\n",
       [`canon/rules/wide/${id("BR", 99)}.md`]: rule(99, "Wide changed", "CHANGED-99 short."),
     };
     for (let n = 1; n <= 24; n++) {
       files[`canon/rules/wide/s${n}/README.md`] = `# wide/s${n}\n\nSub ${n}.\n`;
-      files[`canon/rules/wide/s${n}/${id("BR", n)}.md`] = rule(n, `Sub rule ${n}`, fat(`TEXT-${n}`, 10));
+      files[`canon/rules/wide/s${n}/${id("BR", n)}.md`] = rule(n, `Sub rule ${n}`, `见 ${id("BR", 99)}。${fat(`TEXT-${n}`, 10)}`);
     }
     const { root, corpus } = corpusOf(files);
     const changed = corpus.docs.filter((d) => d.id === id("BR", 99));
@@ -157,7 +157,7 @@ describe("rule review prompt budget", () => {
     const huge = changedRule(corpus, 1); // BR-1 is 30 KB and travels in every call
     const msg = refusal(reviewPrompts(root, corpus, huge, {}, 20 * KB));
     expect(msg).toMatch(/cannot be made smaller than \d+ KB .*review_max_prompt_kb = 20 KB/);
-    expect(msg).toMatch(/changed documents 3\d KB, review instructions \+ rule index \+ accepted decision titles \d KB, domain text 0 KB/);
+    expect(msg).toMatch(/changed documents 3\d KB, review instructions \+ rule index \+ accepted decision titles \d+ KB, domain text 0 KB/);
     expect(msg).toContain("land the changed documents in several smaller changes");
     expect(msg).not.toContain("cannot help");
   });
