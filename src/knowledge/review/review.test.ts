@@ -33,14 +33,15 @@ const files = {
 };
 
 describe("rule review of deleted documents", () => {
-  test("BR-2009: a deleted rule brings the current context of its whole top-level domain", () => {
+  test("BR-2009: a deleted rule brings its top-level domain's READMEs, not the rules there that neither name it nor relate to it", () => {
     const { root, corpus } = corpusOf(files);
     const deleted = [{ id: id("BR", 1), path: `canon/rules/work/land/${id("BR", 1)}.md`, text: rule(1, "Retry once", "Retry a failed landing once.") }];
     const prompt = reviewPrompt(root, corpus, [], { deleted });
     expect(prompt).toContain(`## ${id("BR", 1)} — deleted canon/rules/work/land/${id("BR", 1)}.md`);
     expect(prompt).toContain("# Current context for work\n");
-    expect(prompt).toContain("Queue in arrival order."); // what is left in work/land
-    expect(prompt).toContain("Archive before deleting."); // and its sibling subdomain
+    const domainPart = prompt.slice(prompt.indexOf("# Current context for work"));
+    // reason: the review shows a domain's rules only when they are the deleted rule's neighbours (D-137)
+    expect(domainPart).not.toContain("Archive before deleting.");
     expect(prompt).not.toContain("# Current context for billing");
   });
 
@@ -71,7 +72,7 @@ describe("rule review of deleted documents", () => {
 describe("rule review of changed decisions", () => {
   const decision = (n: number, body: string) => `---\nid: ${id("D", n)}\ntitle: Decision ${n}\nstatus: proposed\n---\n${body}\n`;
 
-  test("BR-2009: changed decisions bring the whole top-level domain of the rules they name, each domain once and each decision text once", () => {
+  test("BR-2009: changed decisions bring the rules they name in their top-level domain, each domain once and each decision text once", () => {
     const { root, corpus } = corpusOf({
       ...files,
       [`canon/decisions/${id("D", 5)}.md`]: decision(5, `Drop rule ${id("BR", 2)} matters. Unique text five.`),
@@ -81,7 +82,7 @@ describe("rule review of changed decisions", () => {
     const prompt = reviewPrompt(root, corpus, changed);
     expect(prompt.split("# Current context for work\n").length).toBe(2); // once, though both decisions name work rules
     expect(prompt).toContain("Archive before deleting."); // work/drop
-    expect(prompt).toContain("Queue in arrival order."); // and work/land: the whole top-level domain
+    expect(prompt).toContain("Queue in arrival order."); // and work/land: each named rule, in their one top-level domain
     expect(prompt).not.toContain("# Current context for billing");
     expect(prompt).not.toContain(`# Current context for ${id("D", 5)}`);
     expect(prompt.split("Unique text five.").length).toBe(2); // the changed text is not repeated as context

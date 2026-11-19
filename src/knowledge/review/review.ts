@@ -10,6 +10,7 @@ import { stripCode, type Corpus, type Doc, type Domain, type Rule } from "../doc
 import { inRelease, releaseScope } from "../releases/features.ts";
 import { idsIn } from "../documents/types.ts";
 import { contextFor, referencedIds, renderContext, ruleSection, willAmendMark, type Context } from "../query/query.ts";
+import { live, RELATED_LIMIT, relatedIndex, relatedTo } from "../query/related.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { LESSONS_SECTION, section } from "../documents/templates.ts";
 import { shippedUnedited } from "../../install/install.ts";
@@ -90,6 +91,11 @@ export interface ReviewExtras {
   /** Restatements the text test finds in the added lines, given to the review as hints (BR-2405). */
   readonly restatements?: readonly Restatement[];
   /**
+   * The titles of the running tests that name each changed rule, from the recorded test reports (BR-2009, #265); a changed
+   * rule absent here has none. Undefined when the caller did not look them up: the section is left out.
+   */
+  readonly tests?: ReadonlyMap<string, readonly string[]>;
+  /**
    * One part of a review whose changed documents do not fit one call (BR-2448): this is part `i` of `n`, and `others` are the
    * changed documents the other parts show in full, listed here by id, title and first line.
    */
@@ -111,6 +117,9 @@ export interface ReviewExtras {
 }
 
 /** The key of each blocking criterion in the prompts, and `note` for a remark that never blocks (BR-2367, D-74). */
+/** At most this many test titles per changed rule go into the review; the count says how many there are (#265). */
+export const NAMED_TESTS_SHOWN = 10;
+
 export const RULE_CRITERIA = ["contradiction", "untestable", "no-rejected-options", "release", "amends", "overview", "restatement", "business-overlap"] as const;
 export const DUPLICATE_CRITERIA = ["duplication"] as const;
 const CRITERIA: readonly string[] = [...RULE_CRITERIA, ...DUPLICATE_CRITERIA];
@@ -138,7 +147,7 @@ export const CRITERION_TEXT: Readonly<Record<string, string>> = {
   // reason: a contradiction must be shown, not felt: two passages, the same conditions and two results that cannot both hold (D-115)
   contradiction: "`contradiction`: a rule whose requirements cannot all hold together with those of another active rule (in any domain: see the rule index) or an accepted decision under the same applicable conditions. Quote both passages and name the conditions (an input, a sequence of inputs or a state history) and the two incompatible results. Two requirements that differ but can both be met are not a contradiction, and one text saying nothing is not a contrary result; a tension you cannot show that way is a `note`.",
   // reason: an experience goal accepted by a person is not untestable; asking to drop it made agents cut the owner's goals (D-115)
-  untestable: "`untestable`: a claim in a rule that neither a test nor a stated way of accepting it can decide (vague, no boundary, examples that do not pin the boundary). A subjective goal (feel, look, being worth sharing) is decided when the text says, anywhere (an `untested:` reason, a `## 验收` section, or a decision's own words), what is accepted, what evidence is handed over, and who accepts or rejects it against the goal and records it; it needs no measurable threshold. A claim a test can decide (a name not shown early, a reward not given twice) still needs a test, even beside such a goal. When the way of accepting is missing, ask for it; never ask to delete, narrow or widen a goal or commitment, nor to choose levels or tiers the text does not set.",
+  untestable: "`untestable`: a claim in a rule that neither a test nor a stated way of accepting it can decide (vague, no boundary, examples that do not pin the boundary). A subjective goal (feel, look, being worth sharing) is decided when the text says, anywhere (an `untested:` reason, a `## 验收` section, or a decision's own words), what is accepted, what evidence is handed over, and who accepts or rejects it against the goal and records it; it needs no measurable threshold. A claim a test can decide (a name not shown early, a reward not given twice) still needs a test, even beside such a goal. When the way of accepting is missing, ask for it; never ask to delete, narrow or widen a goal or commitment, nor to choose levels or tiers the text does not set. A rule that the section # Tests that name the changed rules lists with tests is decided by them: never call it untestable for want of a test; judge only claims those test titles plainly do not cover, and quote the claim.",
   "no-rejected-options": "`no-rejected-options`: a decision without the options it rejected.",
   release: "`release`: a release is a version's PRD; the rules whose front matter says `release: R-n` are its behaviour. A rule tagged with a release that does something that release's 不做 excludes or lies outside its 范围; a release whose 不做 contradicts its own 范围 or a rule tagged with it. A feature (F-n) is a part of a release with its own 范围 and 不做, and the rules whose front matter says `feature: F-n` are its behaviour; under this key also give a rule tagged with a feature that does something that feature's 不做 excludes or lies outside its 范围, a feature whose 不做 contradicts its own 范围 or a rule tagged with it, and a feature whose 范围 does something the 不做 of a release listing it excludes or lies outside that release's 范围. Only a rule, release or feature changed in this landing can be blocked for it.",
   amends: "`amends`: a changed decision that replaces only part of an accepted decision must list it in `amends:` (one that replaces a whole decision uses `supersedes:`); a decision that says it changes part of another decision without listing it in `amends:`.",
@@ -149,10 +158,53 @@ export const CRITERION_TEXT: Readonly<Record<string, string>> = {
   duplication: "`duplication`: one requirement (an instruction, a condition or a qualifier) is stated in two standing texts, or twice in one of them, in any wording or language, and at least one of the two places is in a line this landing added or changed.",
 };
 
-/** The review prompt with every affected domain's whole text in it, however large. */
+/**
+ * The documents the domain part of a review shows beside the changed ones (BR-2009, D-137): every live document that names a
+ * changed or deleted one, every document a changed one or a deleted one's text on main names, and the RELATED_LIMIT most related to each changed rule or
+ * decision (BR-2387). The rest of each domain is only in the rule index, by title.
+ */
+export function reviewNeighbours(corpus: Corpus, changed: readonly Doc[], deleted: readonly DeletedDoc[] = []): Set<string> {
+  const touched = new Set([...changed.map((d) => d.id), ...deleted.map((d) => d.id)]);
+  const keep = new Set<string>();
+  for (const d of corpus.docs) {
+    if (!live(d) || touched.has(d.id)) continue;
+    const names = referencedIds(d, corpus.types);
+    for (const id of touched) if (names.has(id)) keep.add(d.id);
+  }
+  // a deleted document's text on main names what it constrained, as a changed one's text does
+  for (const d of deleted) for (const id of idsIn(corpus.types, stripCode(d.text))) if (id !== d.id) keep.add(id);
+  const index = relatedIndex(corpus);
+  for (const d of changed) {
+    for (const id of referencedIds(d, corpus.types)) keep.add(id);
+    if (d.kind === "rule" || d.kind === "decision") for (const r of relatedTo(corpus, d, RELATED_LIMIT, index)) keep.add(r.doc.id);
+  }
+  return keep;
+}
+
+/**
+ * The corpus the domain part of a review is drawn from: the changed documents and their neighbours, in the domains that hold
+ * them and the domains above those; a domain whose README this landing changes keeps all its rules (BR-2009, D-137).
+ */
+function scopedCorpus(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras): Corpus {
+  // reason: the whole domain made a one-rule change send about 900 KB; its direct neighbours are about a tenth of that (D-137)
+  const keep = reviewNeighbours(corpus, changed, extras.deleted ?? []);
+  for (const d of changed) keep.add(d.id);
+  const readmes = extras.readmes ?? [];
+  const underReadme = (domain: string): boolean => readmes.some((n) => domain === n || domain.startsWith(`${n}/`));
+  const scoped = (d: Doc): boolean => d.kind !== "rule" && d.kind !== "decision" && d.kind !== "change" && d.kind !== "extra";
+  const docs = corpus.docs.filter((d) => scoped(d) || keep.has(d.id) || (d.kind === "rule" && underReadme(d.domain)));
+  const held = new Set<string>(readmes);
+  for (const d of docs) if (d.kind === "rule") held.add(d.domain);
+  for (const top of deletedDomains(corpus, extras.deleted ?? [])) held.add(top);
+  const domains = corpus.domains.filter((x) => [...held].some((h) => h === x.name || h.startsWith(`${x.name}/`) || underReadme(x.name)));
+  return { ...corpus, docs, domains };
+}
+
+/** The review prompt with every affected domain's text in it (the changed documents' neighbours, BR-2009), however large. */
 export function reviewPrompt(root: string, corpus: Corpus, changed: readonly Doc[], extras: ReviewExtras = {}): string {
   const summaries = changedRuleIds(changed);
-  const contexts = contextTops(corpus, changed, extras).map((top) => contextSection(root, corpus, top, summaries));
+  const scoped = scopedCorpus(corpus, changed, extras);
+  const contexts = contextTops(scoped, changed, extras).map((top) => contextSection(root, scoped, top, summaries));
   return assemble(promptHead(corpus, changed, extras), contexts, promptTail(corpus));
 }
 
@@ -238,6 +290,16 @@ function promptHead(corpus: Corpus, changed: readonly Doc[], extras: ReviewExtra
   if (extras.citedListed?.length) {
     parts.push("# More documents the changed documents name (only id, title and first line here: their whole text does not fit in a call beside the domain text; they are not changed by this landing)", "");
     parts.push(...extras.citedListed.map((d) => `- ${d.id} ${d.title} (${d.kind}${"status" in d ? `, ${d.status}` : ""}): ${firstLine(d)}`), "");
+  }
+  const changedRules = changed.filter((d) => d.kind === "rule");
+  if (extras.tests && changedRules.length) {
+    // reason: the review judged untestable from the rule text alone and flagged rules tests already decide (#265, D-137)
+    parts.push("# Tests that name the changed rules (titles from the latest recorded test reports; a rule with tests listed here is decided by them)", "");
+    for (const r of changedRules) {
+      const titles = extras.tests.get(r.id) ?? [];
+      const shown = titles.slice(0, NAMED_TESTS_SHOWN);
+      parts.push(`## ${r.id}: ${titles.length === 0 ? "no running test names it" : `${titles.length} test(s)${titles.length > shown.length ? `, the first ${shown.length}` : ""}`}`, ...shown.map((t) => `- ${t}`), "");
+    }
   }
   if (extras.added?.length) {
     parts.push("# Lines added or changed in this landing", "", "For each changed rule or decision that was already on main, the lines this landing adds or changes (line number in the file, then the line). A changed rule or decision not listed here is new: all of its lines are.", "");
@@ -856,14 +918,15 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   if (bytes(whole) <= budgetBytes) return ok([whole]);
 
   const tail = promptTail(corpus);
+  const scoped = scopedCorpus(corpus, changed, extras);
   // reason: the size split puts a cited rule wherever its domain falls, and a call without it cannot judge 按 BR-n; every call carries them (BR-2359, #219)
   extras = { ...extras, cited: citedDocs(corpus, changed) };
   // reason: one changed document naming many documents made every call too large to send, so the review never ran; the named
   // documents are kept whole in the order first named while the call still has room for the largest domain piece it needs (BR-2488, #229)
   const summaries = changedRuleIds(changed);
-  const sizes = domainPieces(root, corpus, contextTops(corpus, changed, extras), summaries);
-  const largest = Math.max(0, ...contextTops(corpus, changed, extras).map((t) => sizes.find((p) => p.top === t)?.piece ?? 0));
-  const roomFor = (ex: ReviewExtras): number => bytes([...promptHead(corpus, changed, ex), ...tail].join("\n")) + noteRoom(corpus, maxCalls(root, corpus, contextTops(corpus, changed, ex))) + largest;
+  const sizes = domainPieces(root, scoped, contextTops(scoped, changed, extras), summaries);
+  const largest = Math.max(0, ...contextTops(scoped, changed, extras).map((t) => sizes.find((p) => p.top === t)?.piece ?? 0));
+  const roomFor = (ex: ReviewExtras): number => bytes([...promptHead(corpus, changed, ex), ...tail].join("\n")) + noteRoom(corpus, maxCalls(root, scoped, contextTops(scoped, changed, ex))) + largest;
   if (roomFor(extras) > budgetBytes) {
     const kept: Doc[] = [];
     const listed: Doc[] = [];
@@ -878,7 +941,7 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   // documents repeated them whole in each call, so the fixed part multiplied the calls (#241): those go whole in call 1 only
   const ruleNamed = new Set(changed.filter((d) => d.kind === "rule").flatMap((d) => [...referencedIds(d, corpus.types)]));
   const noWording: ReviewExtras = { ...extras, wording: [], releasesFirst: true, cited: (extras.cited ?? []).filter((d) => ruleNamed.has(d.id)), citedFirst: (extras.cited ?? []).filter((d) => !ruleNamed.has(d.id)) };
-  const room = noteRoom(corpus, maxCalls(root, corpus, contextTops(corpus, changed, extras)));
+  const room = noteRoom(corpus, maxCalls(root, scoped, contextTops(scoped, changed, extras)));
   const fixed = (first: boolean): number => bytes([...promptHead(corpus, changed, first ? extras : noWording), ...tail].join("\n")) + room;
   // the three parts of the smallest prompt, so a refusal can say which one is too large (BR-2359, D-67, #136)
   const docsBytes = changedBytes(corpus, changed, extras);
@@ -886,7 +949,7 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   /** `piece`: the domain text the smallest call needs on top of the fixed parts, `where`: the domain to split when that is the large part. */
   const tooBig = (need: number, what: string, piece = 0, where?: string): Result<never> => {
     const sizes = `changed documents ${kb(docsBytes)} KB, review instructions + rule index + accepted decision titles ${kb(indexBytes)} KB, domain text ${kb(piece)} KB`;
-    const remedy = refusalRemedy(root, corpus, { docs: docsBytes, index: indexBytes, piece, where, need, budget: budgetBytes });
+    const remedy = refusalRemedy(root, scoped, { docs: docsBytes, index: indexBytes, piece, where, need, budget: budgetBytes });
     return err("invalid", `the rule review prompt cannot be made smaller than ${kb(need)} KB (${what}), above review_max_prompt_kb = ${kb(budgetBytes)} KB; sizes: ${sizes}: ${remedy}`);
   };
   if (fixed(true) > budgetBytes) return tooBig(fixed(true), "the changed documents, the rule index and the accepted decisions' titles, which every call carries");
@@ -897,8 +960,8 @@ export function reviewPrompts(root: string, corpus: Corpus, changed: readonly Do
   const fixedRest = fixed(false);
   const roomOf = (c: Call): number => (c === calls[0] ? budgetBytes - fixed(true) : budgetBytes - fixedRest);
 
-  for (const top of contextTops(corpus, changed, extras)) {
-    const { ctx, readme, chain, rule, price: priceIn } = packer(root, corpus, top, summaries);
+  for (const top of contextTops(scoped, changed, extras)) {
+    const { ctx, readme, chain, rule, price: priceIn } = packer(root, scoped, top, summaries);
     const price = (call: Call, d: Domain, rules: readonly Rule[]): number => priceIn(call.groups.get(top), d, rules);
     const add = (call: Call, d: Domain, rules: readonly Rule[]): void => {
       call.size += price(call, d, rules);

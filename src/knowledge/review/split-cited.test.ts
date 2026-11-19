@@ -11,7 +11,7 @@ const rule = (id: string, text: string) => `---\nid: ${id}\ntitle: Rule ${id}\ns
 const decision = (id: string, body: string, source = "   - 来源：canon/config.yaml “floor:”") =>
   `---\nid: ${id}\ntitle: Decision ${id}\nstatus: accepted\n---\n\n## 背景\n\n${body}\n\n## 方案\n\n1. A：采用。\n${source}\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nnone.\n`;
 
-/** game: BR-10 and many padded rules; other: BR-90 (named by the decision) and BR-91 (named by the rule BR-10). */
+/** game: BR-10 and many padded rules that name it, so the review shows them beside it (BR-2009, D-137); other: BR-90 (named by the decision) and BR-91 (named by the rule BR-10). */
 function repo(): string {
   const root = project();
   for (const dom of ["game", "other"]) {
@@ -21,7 +21,7 @@ function repo(): string {
     writeFileSync(join(root, `src/${dom}/.keep`), "");
   }
   writeFileSync(join(root, "canon/rules/game/BR-10.md"), rule("BR-10", "按 BR-91 处理。"));
-  for (let n = 11; n < 30; n++) writeFileSync(join(root, `canon/rules/game/BR-${n}.md`), rule(`BR-${n}`, `PAD-${n} ${"p".repeat(6 * KB)}`));
+  for (let n = 11; n < 30; n++) writeFileSync(join(root, `canon/rules/game/BR-${n}.md`), rule(`BR-${n}`, `PAD-${n} 见 BR-10。${"p".repeat(6 * KB)}`));
   writeFileSync(join(root, "canon/rules/other/BR-90.md"), rule("BR-90", `NAMED-BY-DECISION ${"q".repeat(8 * KB)}`));
   writeFileSync(join(root, "canon/rules/other/BR-91.md"), rule("BR-91", "NAMED-BY-RULE."));
   mkdirSync(join(root, "canon/decisions"), { recursive: true });

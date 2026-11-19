@@ -1,4 +1,5 @@
 import { readFileSync } from "node:fs";
+import { namedTests } from "./named-tests.ts";
 import { join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import type { Say, Workspace } from "../../work/workspace.ts";
@@ -88,7 +89,7 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
     const overview = architectureOf(wt, base, head);
     if (!overview.ok) return overview;
     const architecture = overview.value;
-    const extras = { deleted, readmes, deletedReadmes, change: change ? findDoc(read.corpus, change) : undefined, added: scope.added, namedInAdded: scope.namedInAdded, restatements: scope.restatements, activated: scope.activated, ...(architecture ? { architecture } : {}) };
+    const extras = { tests: namedTests(ws.db, wt, ws.config, changedDocs.filter((d) => d.kind === "rule").map((d) => d.id)), deleted, readmes, deletedReadmes, change: change ? findDoc(read.corpus, change) : undefined, added: scope.added, namedInAdded: scope.namedInAdded, restatements: scope.restatements, activated: scope.activated, ...(architecture ? { architecture } : {}) };
     const parted = reviewPromptParts(wt, read.corpus, changedDocs, extras, s.reviewMaxPromptBytes);
     if (!parted.ok) return err("invalid", parted.error.message);
     const prompts = parted.value.prompts;
@@ -125,7 +126,7 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
         const targets = new Set(scope.activated.flatMap((a) => a.targets));
         const keep = new Set<Doc>([...changedDocs, ...since, ...read.corpus.docs.filter((d) => targets.has(d.id))]);
         // reason: retain added lines so old restatements cannot block an incremental review (BR-2405, D-84).
-        const small = reviewPromptParts(wt, { ...read.corpus, docs: read.corpus.docs.filter((d) => keep.has(d)) }, changedDocs, { deleted, readmes, deletedReadmes, change: extras.change, added: scope.added, namedInAdded: scope.namedInAdded, activated: scope.activated, incremental: { from: usable.event, added: since } }, s.reviewMaxPromptBytes);
+        const small = reviewPromptParts(wt, { ...read.corpus, docs: read.corpus.docs.filter((d) => keep.has(d)) }, changedDocs, { tests: namedTests(ws.db, wt, ws.config, changedDocs.filter((d) => d.kind === "rule").map((d) => d.id)), deleted, readmes, deletedReadmes, change: extras.change, added: scope.added, namedInAdded: scope.namedInAdded, activated: scope.activated, incremental: { from: usable.event, added: since } }, s.reviewMaxPromptBytes);
         if (!small.ok) return err("invalid", small.error.message);
         const smallParts = partsNote(small.value.parts);
         if (smallParts) say(`review: ${smallParts}`);
