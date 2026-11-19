@@ -295,8 +295,8 @@ export async function runLandedReviews(ws: Workspace, say: Say, guide: string | 
       r = err("io", (e as Error).message);
     }
     if (r.ok) {
-      finish(ws.db, job.id, "done");
-      // reason: the finished review saw every live document naming what this landing changed, so those references count as reviewed (BR-2539)
+      // reason: the finished review saw every live document naming what this landing changed, so those references count as reviewed (BR-2539);
+      // written before the row is done, since canon work after-land prints the log as soon as it is
       try {
         const n = recordReviewed(ws, job.base, job.head, false);
         if (n > 0) line(`review: ${n} reference(s) to the changed documents recorded as reviewed`);
@@ -306,6 +306,7 @@ export async function runLandedReviews(ws: Workspace, say: Say, guide: string | 
         line(`review: references not recorded as reviewed: ${(e as Error).message}`);
       }
       line("review: done");
+      finish(ws.db, job.id, "done");
     } else {
       ws.db.event(ws.actor, "review.fail", job.change, { landed: job.landed, commit: job.head, message: r.error.message.slice(0, 2000) });
       finish(ws.db, job.id, "failed");
