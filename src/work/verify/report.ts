@@ -40,6 +40,8 @@ export interface TestCase {
   readonly name: string;
   /** False when the `testcase` has a `skipped` child; a failed or errored test still ran. */
   readonly runs: boolean;
+  /** True when the `testcase` has a `failure` or `error` child (BR-2534); absent otherwise. */
+  readonly failed?: true;
   /** The `line` attribute, when it is a whole number. */
   readonly line?: number;
   /** The `file` attribute, when there is one. */
@@ -197,6 +199,7 @@ export function parseJUnit(text: string): Result<TestCase[]> {
           classname: child.attrs["classname"] ?? "",
           name: child.attrs["name"] ?? "",
           runs: !child.children.some((c) => c.name === "skipped"),
+          ...(child.children.some((c) => c.name === "failure" || c.name === "error") ? { failed: true as const } : {}),
           ...(line !== undefined && /^[0-9]+$/.test(line.trim()) ? { line: Number(line) } : {}),
           ...(file !== undefined && file !== "" ? { file } : {}),
         });

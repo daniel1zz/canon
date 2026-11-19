@@ -16,6 +16,8 @@ import { clearRedMain, fixLandedIn, recordFailure } from "./redmain.ts";
 import { stopStarted } from "./stop.ts";
 import { floorWithReport } from "../land/checks/floor.ts";
 import { publishedCanonReads } from "./published.ts";
+import { runLogged } from "./run.ts";
+import { finishInterrupted, revertBad, runFiles } from "./revert.ts";
 
 /**
  * Merge-then-test (D-31): with `floor_timing: after`, landings move main without the floor and `canon floor watch`
@@ -112,7 +114,7 @@ export interface Watched {
 type Tested = { readonly sha: string; readonly passed: boolean; readonly log: string };
 
 /** One tested commit, and whether after_green ran and every command of it exited 0 (BR-2251). */
-type TestedHere = Tested & { readonly rebuilt?: boolean };
+type TestedHere = Tested & { readonly rebuilt?: boolean; readonly files?: readonly string[] };
 
 /**
  * `canon floor watch` (BR-2219): unless another watcher is alive, tests main's latest commit once the untested
@@ -156,6 +158,8 @@ export async function watch(ws: Workspace, say: Say, opts: { readonly now?: bool
         break;
       }
       mine = true;
+      // reason: a watcher killed between moving main and recording the revert left the change without its branch (BR-2536)
+      try { await finishInterrupted(ws, say); } catch (e) { say(`floor watch: could not finish an interrupted revert: ${(e as Error).message}`); }
       let announced = "";
       for (;;) {
         const tip = git(ws.primary, "rev-parse", "--verify", `refs/heads/${ws.config.main}`);
@@ -185,6 +189,14 @@ export async function watch(ws: Workspace, say: Say, opts: { readonly now?: bool
         ws.db.db.query("UPDATE watcher SET sha = NULL WHERE id = 1 AND pid = ?").run(self.pid);
         if (!r.ok) return r;
         results.push({ sha: r.value.sha, passed: r.value.passed, log: r.value.log });
+        if (!r.value.passed) {
+          // reason: a real failure is located and its landing reverted when the reverted tree checks out; otherwise the forward fix stands (BR-2535, BR-2536)
+          const fd = openSync(r.value.log, "a");
+          try { await revertBad(ws, say, { sha: r.value.sha, log: r.value.log, fd, files: r.value.files ?? [] }); }
+          catch (e) { say(`floor watch: the automatic revert stopped: ${(e as Error).message}; main is left for a fix change`); }
+          finally { closeSync(fd); }
+          continue;
+        }
         if (!r.value.rebuilt) continue;
         const handed = handOff(ws, say, self, tip.value);
         mine = handed !== "handed" && handed.ok && handed.value;
@@ -286,12 +298,6 @@ function handOff(ws: Workspace, say: Say, self: Proc, sha: string): "handed" | R
   return "handed";
 }
 
-/** Runs `command` in `cwd` with its output appended to the log behind `fd`. */
-async function runLogged(command: string, cwd: string, fd: number, env?: Record<string, string>): Promise<number> {
-  writeSync(fd, `$ ${command}\n`);
-  const proc = Bun.spawn(["sh", "-c", command], { cwd, stdout: fd, stderr: fd, stdin: "ignore", ...(env ? { env: { ...(process.env as Record<string, string>), ...env } } : {}) });
-  return await proc.exited;
-}
 
 /**
  * Tests one commit (BR-2219): a fresh detached worktree at it, setup, then the floor, both into `watch-<sha12>.log`;
@@ -310,6 +316,8 @@ async function testCommit(ws: Workspace, say: Say, sha: string): Promise<Result<
     const fd = openSync(log, "w");
     let code: number;
     let why: string;
+    let failing: string[] = [];
+    let flaky = false;
     // reason: the tested commit's own config names its setup, floor and after_green, as a landing reads the landing tree's (BR-2218).
     const config = readConfig(dir);
     try {
@@ -327,20 +335,26 @@ async function testCommit(ws: Workspace, say: Say, sha: string): Promise<Result<
           code = setup;
           why = `setup exited ${setup}`;
         } else {
-          code = await floorWithReport(ws.db, config.value, dir, config.value.floor, (command) => runLogged(command, dir, fd), (line) => writeSync(fd, `${line}\n`));
+          code = await floorWithReport(ws.db, config.value, dir, config.value.floor, (command) => runLogged(command, dir, fd), (line) => writeSync(fd, `${line}\n`), (f) => { failing = f; });
           why = `floor exited ${code}`;
+          // reason: a failure whose failing files all pass when run again unchanged is a flaky test, not a broken main (BR-2534)
+          if (code !== 0 && failing.length > 0 && config.value.testCommand) {
+            writeSync(fd, `\ncanon: running the failing test files again: ${failing.join(", ")}\n`);
+            if (await runFiles(config.value, dir, failing, fd)) flaky = true;
+          }
         }
       }
     } finally {
       closeSync(fd);
     }
-    const passed = code === 0;
+    const passed = code === 0 || flaky;
     // reason: the result event is what marks a commit tested (tested()), so it is written in one transaction with the
     // failing-main record it implies; a watcher killed before that commit leaves neither, and the commit is tested again (#86).
     const record = (write: () => void): Result<void> => {
       try {
         ws.db.db.transaction(() => {
-          ws.db.event(ws.actor, passed ? "floor.pass" : "floor.fail", null, { sha, log, exit: code, ...(passed ? {} : { why }) });
+          ws.db.event(ws.actor, passed ? "floor.pass" : "floor.fail", null, { sha, log, exit: code, ...(passed ? {} : { why }), ...(flaky ? { flaky: failing } : {}) });
+          if (flaky) ws.db.event(ws.actor, "floor.flaky", null, { sha, files: failing, log });
           write();
         }).immediate();
         return ok(undefined);
@@ -354,9 +368,9 @@ async function testCommit(ws: Workspace, say: Say, sha: string): Promise<Result<
       const recorded = record(() => recordFailure(ws.db, { sha, log, tail, green: green.ok && green.value !== "" ? green.value : null, fixLanded: fixLandedIn(ws, sha) }));
       if (!recorded.ok) return recorded;
       say(`floor watch: ${ws.config.main} ${sha.slice(0, 9)} failed (${why}); recorded for a fix change (canon work start --fix-main)`);
-      return ok({ sha, passed, log });
+      return ok({ sha, passed, log, files: failing });
     }
-    say(`floor watch: ${ws.config.main} ${sha.slice(0, 9)} passed`);
+    say(flaky ? `floor watch: ${ws.config.main} ${sha.slice(0, 9)} passed once its failing test files passed on a second run; they are flaky: ${failing.join(", ")} (canon work due)` : `floor watch: ${ws.config.main} ${sha.slice(0, 9)} passed`);
     // reason: the ref moves before the pass is recorded, so a watcher killed in between only makes the commit be tested again (#86).
     markGreen(ws, sha, say);
     const recorded = record(() => clearRedMain(ws.db));

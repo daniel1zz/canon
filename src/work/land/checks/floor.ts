@@ -125,13 +125,14 @@ export async function floorWithReport(
   command: string,
   run: (command: string) => Promise<number>,
   note: (line: string) => void,
+  failed?: (files: string[]) => void,
 ): Promise<number> {
   if (!command.includes(REPORT_PLACEHOLDER)) return run(command);
   const dir = mkdtempSync(join(tmpdir(), "canon-report-"));
   try {
     const report = join(dir, "report.xml");
     const code = await run(command.replaceAll(REPORT_PLACEHOLDER, `'${report.replaceAll("'", `'\\''`)}'`));
-    const problem = recordFloorReport(db, config, cwd, report, note);
+    const problem = recordFloorReport(db, config, cwd, report, note, failed);
     return code !== 0 || problem === undefined ? code : 1;
   } finally {
     rmSync(dir, { recursive: true, force: true });
@@ -139,7 +140,7 @@ export async function floorWithReport(
 }
 
 /** Records the floor's report; returns what is wrong with it, undefined when it is recorded. */
-function recordFloorReport(db: CoordDb, config: Config, cwd: string, report: string, note: (line: string) => void): string | undefined {
+function recordFloorReport(db: CoordDb, config: Config, cwd: string, report: string, note: (line: string) => void, failed?: (files: string[]) => void): string | undefined {
   const fail = (why: string) => {
     note(`canon: floor report: ${why}`);
     return why;
@@ -172,5 +173,7 @@ function recordFloorReport(db: CoordDb, config: Config, cwd: string, report: str
     recordReport(db, file, blob.value, cases, "floor");
   }
   if (skipped) note(`canon: floor report: ${skipped} file(s) in the report match no \`tests\` glob and were not recorded`);
+  // reason: the files with a failing test are what the background floor reruns and probes with (BR-2534, BR-2535)
+  failed?.([...byFile].filter(([file, cases]) => tests.has(file) && cases.some((c) => c.failed)).map(([file]) => file).sort());
   return undefined;
 }

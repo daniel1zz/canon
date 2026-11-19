@@ -6,6 +6,7 @@ import { pendingRequests } from "../delegation/requests.ts";
 import { pressure, readings } from "../delegation/capacity.ts";
 import { isWorker } from "../delegation/worker.ts";
 import { redMain } from "../watch/redmain.ts";
+import { flakyFiles, revertedChanges } from "../watch/revert.ts";
 import type { Workspace } from "../workspace.ts";
 
 /**
@@ -89,6 +90,10 @@ function mainItems(ws: Workspace, now: number, read: Readings): Result<DueItem[]
   if (red && red.change === null) {
     items.push({ key: "red-main", since: red.since, summary: `the background floor failed on ${red.sha.slice(0, 9)} (log: ${red.log})`, next: "canon work start --fix-main" });
   }
+  // reason: a reverted change waits on its branch until someone fixes and lands it again (BR-2536)
+  for (const r of revertedChanges(ws)) items.push({ key: `reverted:${r.subject}`, since: r.since, summary: `reverted from main after the background floor failed${r.files.length > 0 ? ` (${r.files.join(", ")})` : " before the tests"}; its work is replayed on change/${r.subject}`, next: `canon work start ${r.subject}, fix the failure, land again` });
+  // reason: a flaky test is a reminder for a week, not a hold (BR-2534)
+  for (const f of flakyFiles(ws, now)) items.push({ key: `flaky:${f.file}`, since: f.since, summary: `failed in the background floor and passed when run again unchanged`, next: "open an issue for this flaky test (one per file), then fix or quarantine it" });
   const busy = pressure(ws, read());
   if (busy.length > 0) items.push({ key: "capacity", since: "now", summary: busy.join("; "), next: "wait for workers to land; delegate no new one" });
   return ok(items);

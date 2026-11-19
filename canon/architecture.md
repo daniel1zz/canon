@@ -60,10 +60,10 @@ title: 架构总览
 - 决策：D-9、D-10、D-16、D-36、D-46、D-53、D-62、D-65、D-84、D-101。
 
 **后台 floor watch（`floor_timing: after` 时）**
-- 职责：合入后在 git 公共目录下的临时 worktree 里，对 main 的最新提交按批跑 floor；通过就移动 `refs/canon/green` 并运行 `after_green`；没通过就记下，由下一个会话 `canon work start --fix-main` 向前修。
+- 职责：合入后在 git 公共目录下的临时 worktree 里，对 main 的最新提交按批跑 floor；通过就移动 `refs/canon/green` 并运行 `after_green`；没通过时先把失败的测试文件原样重跑一次，都通过就记为不稳定测试、按通过处理（BR-2534）；真失败就记下，在这一批合入里二分找出让它失败的合入（BR-2535），撤回后的树检查通过时在 main 上追加撤回提交、推送，并把变更重放到它的分支上退回（BR-2536）；撤回不了时由下一个会话 `canon work start --fix-main` 向前修。
 - 数据：`refs/canon/green`，`state.db` 里的 watcher 和 red_main 表，日志在 git 公共目录下。
 - 代码：`src/work/watch`。
-- 决策：D-31、D-55、D-59。
+- 决策：D-31、D-55、D-59、D-137。
 
 **合入后的命令和评审**
 - 职责：合入后在主 checkout 里后台运行配置的 `after_land` 命令，记下日志和退出码；`land --finish` 之后在后台删掉合入的 worktree，等里面的进程退出，条件同 `canon work clean`（BR-2486）；运行和记录配置的生命周期 hook、每个变更的端口 `CANON_PORT`；合入后的规则评审和重复评审：两种评审先确定实际提示计划、统一检查总预算，超限沿用协调库的 questions/events 问答、一次消费负责人批准，预览也共用此闸门（BR-2490、D-123）；合入把要评审的合入排进 `landed_reviews`，并在没有活着的评审进程时启动后台的 `canon work review-landed`，它按排队顺序运行，同时最多 `landed_review_parallel` 个（默认 1），所有评审的调用共用 `review_parallel` 的名额，改了同一文件的按顺序（BR-2487、D-121），在合入前 main 的提交上的临时 worktree 里调用 `review` 命令（`--again` 重新排的在重排时 main 的提交上，评审命令修好后才能重跑成，BR-2449、D-117）（上下文是改动规则所在领域的全部规则和改动直接相关的文档，其余规则只在索引里，D-138；拆成几次调用时同时运行，D-83；同样的提示通过过就沿用，同一变更的改动文档和上次通过时一样就只对之后合入 main 的文档做小评审，D-70、D-81），拦截意见（按 BR-2481、BR-2485、BR-2523 当作提示的除外）全部记进 `review_findings`，日志逐条列出、交给主 agent 定档（`canon finding tier`）后用 `canon finding close` 当场处理（worker 不能定档和关闭，BR-2502），B 档要另一个会话的 `canon finding advise`，C 档要负责人回答 `canon finding ask` 记的问题（BR-2441、BR-2442、BR-2477 到 BR-2480、BR-2502、D-89、D-99、D-118、D-128）；方向相反的两条意见由主会话用 `canon finding reconcile` 交给评审求两边都满足的写法，给不出时记成留给人的问题并和意见互记（BR-2461、D-103）；负责人随时用 `canon accept` 验收 main 的当前提交（`src/knowledge/accept`）：条件、退出码和当场跑 floor 的时机按 BR-2462，全部成立才把 `refs/canon/accepted` 比较并交换地前移，发版发布它指向的提交（D-89、D-104）；只挪了路径或只改了 `links` 复核记录的文件不评审，验收的评审完整性也按同一个范围算（BR-2009、D-106）；改动文档放不进一次调用时按文档分成几部分评审（BR-2448）；失败或没排上的评审用 `canon work review-landed --again <C-n>` 重新排（BR-2449）；`canon work after-land` 报告同一次合入的后台命令和评审。合入后的代码评审怎么跑由项目配；项目运行 `scripts/code-review.ts` 时，范围里改了 `canon/` 以外文件的 worker 合入按 `land.ok` 记下的派发快照另找契约清单没写到的业务选择（`design-gap`），每条开一个 `canon-design-gap` issue 交给设计负责人（BR-2503）。重复评审不评审 canon 装进项目、项目没改过的 skill 文件，只有这些文件改动的 `canon update` 合入不做重复评审；AGENTS 管理段改动仍按 BR-2143 评审（BR-2410）。规则评审的 `restatement` 标准针对新写的行，只拦和被抄规则说法不一致的复述，一致的只作建议，同一组文档只记一条；`contradiction` 和 `restatement` 的意见没引原文时只算建议（BR-2481、D-119）；拆成几次调用时，改动文档点名的规则和决策放得下才带全文，放不下的只列一行（BR-2488、D-122，BR-2359）；提示里附上这次新增或改动的行和文字判定找到的候选；小评审只附新增或改动的行（BR-2405、BR-2433、D-84、D-110）。规则评审还拦截这次往某个领域的业务清单里新加、却和这个领域已有业务说的是同一件事的业务（BR-2447、D-98）。
@@ -92,7 +92,9 @@ flowchart LR
   F --> G[push remote]
   F --> H[after_land 后台]
   F --> I[floor watch 后台] -->|通过| J[after_green]
-  I -->|没通过| K[fix-main 变更向前修]
+  I -->|重跑通过| J
+  I -->|没通过| N[定位并撤回 退回分支]
+  N -->|撤回不了| K[fix-main 变更向前修]
 ```
 
 - **一个变更**：`work start`（子 agent 带 `--as <agent_id>`，worker 会话带自己的名字，BR-2468）建 worktree、分支和认领，未处理的评审意见不挡开工，第一次开始一个变更时列出它们作为提醒（`--settles` 点名要处理的意见，BR-2530、D-136）；改完 `work test`（在后台进程里跑、命令只跟随，BR-2467；记下每个文件的 CPU 时间，指出大部分时间在空等的文件，BR-2472、D-113；总时限 `test_timeout_minutes`，默认 30 分钟，超过就停下并以 1 退出，写明最慢的文件和机器负载，BR-2466）；`work land --finish` 进合入流水线，只有 main 通过比较并交换前移；`work after-land <C-n> --wait` 等后台命令和合入后的评审；`work clean` 删 worktree。每一步的要求看 `work/session`、`work/verify`、`work/land` 的规则（D-5、D-16、D-22、D-62）。
