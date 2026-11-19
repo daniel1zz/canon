@@ -22,6 +22,35 @@ export interface StalledDelegation {
   readonly handoff?: string;
 }
 
+/**
+ * Whether a change is closed (`done` or `dropped`) on main. Main's corpus is read once, on the first question, so a
+ * caller with no candidate never reads it.
+ */
+// reason: a change closed on main is finished whatever its delegation record says; a landing does not end the record (BR-2522, BR-2497, #264)
+export function closedOnMainReader(ws: Workspace): (subject: string) => Result<boolean> {
+  let closed: ReadonlySet<string> | undefined;
+  return (subject) => {
+    if (!closed) {
+      const main = corpusOf(ws, ws.config.main);
+      if (!main.ok) return main;
+      closed = new Set(main.value.docs.filter((d) => d.kind === "change" && d.status !== "open").map((d) => d.id));
+    }
+    return ok(closed.has(subject));
+  };
+}
+
+/** The delegation records `canon work status` lists: every one whose change is not closed on main (BR-2497). */
+export function listedDelegations(ws: Workspace): Result<string[]> {
+  const closedOnMain = closedOnMainReader(ws);
+  const out: string[] = [];
+  for (const row of ws.db.db.query<{ subject: string }, []>("SELECT subject FROM delegations ORDER BY subject").all()) {
+    const done = closedOnMain(row.subject);
+    if (!done.ok) return done;
+    if (!done.value) out.push(row.subject);
+  }
+  return ok(out);
+}
+
 /** The delegated changes stalled at `now` (BR-2522). */
 export function stalledDelegations(ws: Workspace, now: number = Date.now()): Result<StalledDelegation[]> {
   const rows = ws.db.db.query<{ subject: string; worker: string; owner: string }, []>("SELECT subject, worker, owner FROM delegations WHERE ended IS NULL ORDER BY subject").all();
@@ -40,16 +69,7 @@ export function stalledDelegations(ws: Workspace, now: number = Date.now()): Res
   };
   const notes = new Map(handoffs(ws.db).map((h) => [h.subject, h.next]));
   const out: StalledDelegation[] = [];
-  // reason: a change closed on main is finished whatever its delegation record says; read main only when a candidate exists (BR-2522, #264)
-  let closed: ReadonlySet<string> | undefined;
-  const closedOnMain = (subject: string): Result<boolean> => {
-    if (!closed) {
-      const main = corpusOf(ws, ws.config.main);
-      if (!main.ok) return main;
-      closed = new Set(main.value.docs.filter((d) => d.kind === "change" && d.status !== "open").map((d) => d.id));
-    }
-    return ok(closed.has(subject));
-  };
+  const closedOnMain = closedOnMainReader(ws);
   for (const r of rows) {
     if (liveClaim(ws.db, r.subject)) continue;
     const delegated = ws.db.db

@@ -90,3 +90,15 @@ test("BR-2522: a delegated change already closed on main is not stalled, whateve
   expect(stalledDelegations(ws(f.root), Date.now() + 2 * HOUR)).toEqual({ ok: true, value: [] });
   expect(cli(f.root, "agent:s1", "work", "status").text).not.toContain(`${f.step}: stalled`);
 });
+
+test("BR-2497: canon work status lists a delegation record until its change is closed on main, then no longer", () => {
+  const f = fixture();
+  expect(cli(f.root, "agent:s1", "work", "status").text).toContain(`${f.step}: delegated to w1; design owner agent:s1`);
+  // close it on main by hand, leaving the delegation in force, as a landing does (#264)
+  const file = join(f.root, "canon/changes", readdirSync(join(f.root, "canon/changes")).find((n) => n.startsWith(`${f.step}`) && n.endsWith(".md")) ?? `${f.step}.md`);
+  writeFileSync(file, `---\nid: ${f.step}\ntitle: Step A\nstatus: done\n---\n\n## 为什么\n\nA.\n\n## 要改什么\n\nA.\n`);
+  sh(f.root, "add", "-A"); sh(f.root, "commit", "-qm", `close ${f.step}`);
+  const status = cli(f.root, "agent:s1", "work", "status");
+  expect(status.code).toBe(0);
+  expect(status.text).not.toContain(`${f.step}: delegated to`);
+});
