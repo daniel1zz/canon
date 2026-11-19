@@ -49,15 +49,25 @@ export const unmeasured = (c: Capacity): ("memory" | "load")[] => [...(c.memory 
  * Inside the delegation's write transaction: the reasons a new worker is refused, with what was measured, or undefined
  * when it may start. Unmeasured signals take no part (BR-2526); the slots are always counted.
  */
-export function refusal(ws: Workspace, c: Capacity): { reasons: string[]; detail: Record<string, unknown> } | undefined {
-  const rows = ws.db.db.query<{ subject: string }, []>("SELECT subject FROM delegations WHERE ended IS NULL").all();
-  const held = rows.filter((r) => !c.free.has(r.subject)).length;
-  const max = ws.config.delegateMaxWorkers;
+/**
+ * The machine conditions of BR-2526 (1, memory under pressure; 2, load too high) that hold now, one reason each; the
+ * worker slots are not among them. `canon work due` lists a `capacity` item while any holds (BR-2527).
+ */
+export function pressure(ws: Workspace, c: Pick<Capacity, "memory" | "machine">): string[] {
   const perCpu = ws.config.delegateMaxLoadPerCpu;
   const reasons: string[] = [];
   if (c.memory?.tight) reasons.push(c.memory.text);
   // reason: compared unrounded, as BR-2400 does, so 15.96 on 8 CPUs is under a limit of 16 (BR-2526)
   if (c.machine && c.machine.load5 >= perCpu * c.machine.cpus) reasons.push(`5-minute load ${c.machine.load5.toFixed(1)} on ${c.machine.cpus} CPUs (limit ${perCpu * c.machine.cpus})`);
+  return reasons;
+}
+
+export function refusal(ws: Workspace, c: Capacity): { reasons: string[]; detail: Record<string, unknown> } | undefined {
+  const rows = ws.db.db.query<{ subject: string }, []>("SELECT subject FROM delegations WHERE ended IS NULL").all();
+  const held = rows.filter((r) => !c.free.has(r.subject)).length;
+  const max = ws.config.delegateMaxWorkers;
+  const perCpu = ws.config.delegateMaxLoadPerCpu;
+  const reasons = pressure(ws, c);
   if (held >= max) reasons.push(`${held} of delegate_max_workers (${max}) in use`);
   if (reasons.length === 0) return undefined;
   return {

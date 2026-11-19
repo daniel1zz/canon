@@ -27,6 +27,7 @@ import { snapshotCommands } from "../work/snapshots/commands.ts";
 import { statsCommands } from "../work/stats/commands.ts";
 import { verifyCommands } from "../work/verify/commands.ts";
 import { watchCommands } from "../work/watch/commands.ts";
+import { reminderCommands } from "../work/reminders/commands.ts";
 import { remoteCommands } from "../work/remote/commands.ts";
 import { overviewCommands } from "../work/overview/commands.ts";
 import { goalCommands } from "../work/goal/commands.ts";
@@ -56,6 +57,7 @@ export const main = defineCommand({
     workCommands,
     sessionCommands,
     delegationCommands,
+    reminderCommands,
     landCommands,
     urgentCommands,
     verifyCommands,

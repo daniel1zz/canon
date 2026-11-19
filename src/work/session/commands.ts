@@ -24,6 +24,8 @@ import { claimOfWorktree, claimsWithState, type ClaimState } from "../claims/cla
 import { questions } from "../humans/questions.ts";
 import { activeQueue, keptPlaces } from "../land/queue/queue.ts";
 import { marks } from "../land/queue/urgent.ts";
+import { dueItems, renderDue } from "../reminders/due.ts";
+import { isWorker } from "../delegation/worker.ts";
 import { attemptIn, describeAttempt, goneLanders, openAttempts } from "../land/queue/interrupted.ts";
 import { openWorkspace, type Workspace } from "../workspace.ts";
 import { firstLine, handoffs } from "./handoffs.ts";
@@ -51,9 +53,7 @@ const startCmd = defineCommand({
     plan: { type: "string", description: "With --title and --step: the change holding the plan this change does steps of (BR-2376)" },
     step: { type: "string", description: "With --plan: the plan's step names this change does, comma separated (BR-2376)" },
     "fix-main": { type: "boolean", description: "Open the one change that fixes main's failing background floor (floor_timing: after, BR-2221)" },
-    settles: { type: "string", description: "Open review finding numbers this change settles, comma separated: it starts while findings are open (BR-2464)" },
-    urgent: { type: "boolean", description: "The owner asked for this work now: it starts while review findings are open; needs --relayed (BR-2489)" },
-    relayed: { type: "string", description: "With --urgent: the owner's own words asking for it, kept on the record (BR-2489)" },
+    settles: { type: "string", description: "Open review finding numbers this change settles, comma separated (BR-2530)" },
     ...AS_ARG,
   },
   run({ args }) {
@@ -70,11 +70,7 @@ const startCmd = defineCommand({
     const settles = list(args.settles).map((v) => v.replace(/^#/, ""));
     if (settles.some((v) => !/^[1-9]\d*$/.test(v))) fail({ code: "invalid", message: `--settles takes review finding numbers, comma separated (got ${String(args.settles)})` });
     if (fixMain && settles.length > 0) fail({ code: "invalid", message: "--fix-main opens its own change; give no --settles with it" });
-    const urgent = Boolean(args.urgent);
-    if (args.relayed !== undefined && !urgent) fail({ code: "invalid", message: "--relayed goes with --urgent" });
-    if (urgent && fixMain) fail({ code: "invalid", message: "--fix-main is never held back; give no --urgent with it" });
-    if (urgent && (typeof args.relayed !== "string" || args.relayed.trim() === "")) fail({ code: "invalid", message: "--urgent needs --relayed \"<the owner's own words>\": use it only when the owner asked for this work now in the conversation (BR-2489)" });
-    const s = must(fixMain ? startFixMain(ws, say) : start(ws, target, say, { settles: settles.map(Number), ...(urgent ? { urgent: String(args.relayed) } : {}) }));
+    const s = must(fixMain ? startFixMain(ws, say) : start(ws, target, say, { settles: settles.map(Number) }));
     for (const line of startHint(ws.db, machineNow(), { fixMain, created: s.created })) say(line);
     // A step another unfinished change is doing is said, never refused: a step may take several changes (BR-2385, D-77).
     if ("plan" in target && target.plan) for (const line of stepsTaken(ws, target.plan, s.change)) say(line);
@@ -214,7 +210,7 @@ const brief = defineCommand({
     }
     let state: Result<void>;
     try {
-      state = briefState(opened.value);
+      state = briefState(opened.value, env);
     } catch (e) {
       failed(e instanceof Error ? e.message : String(e));
       throw e;
@@ -227,8 +223,24 @@ const brief = defineCommand({
   },
 });
 
+/** The text of the Monitor hint `canon brief` prints in a Claude Code main session (BR-2529). */
+export const MONITOR_HINT = "Keep canon work watch running under Monitor (timeout 30 min); when it expires, re-arm with --since <the last event number it printed>.";
+
+/** BR-2529: `Due now` with the due list when it is not empty; the Monitor hint whenever the session runs in Claude Code. */
+function dueSection(ws: Workspace, env: Readonly<Record<string, string | undefined>>): string[] {
+  const out: string[] = [];
+  const due = dueItems(ws);
+  if (!due.ok) out.push(`Cannot list what is due: ${due.error.message}`);
+  else if (due.value.length > 0) {
+    const now = Date.now();
+    out.push("Due now (canon work due):", ...due.value.map((it) => `  ${renderDue(it, now)}`));
+  }
+  if (env["CLAUDECODE"] === "1") out.push(MONITOR_HINT);
+  return out;
+}
+
 /** What `canon brief` says after the guide: in a claimed worktree only its own change; elsewhere the handoffs and questions; then the update notice. */
-function briefState(ws: Workspace): Result<void> {
+function briefState(ws: Workspace, env: Readonly<Record<string, string | undefined>> = process.env): Result<void> {
   const claimed = claimOfWorktree(ws.db, ws.root);
   const chore = choreIn(ws);
   if (!chore.ok) return chore;
@@ -318,6 +330,8 @@ function briefState(ws: Workspace): Result<void> {
       });
       say(`Open changes in the owner's order (canon change list); with no task, take the first unclaimed, not ambiguous one: ${order.join(", ")}`);
     }
+    // The main session's due list and, in Claude Code, the standing watch; a worker runs headless and has neither (BR-2529, D-136).
+    if (!isWorker(ws.actor)) for (const line of dueSection(ws, env)) say(line);
   }
   // The schema editors read for canon/config.yaml, from this canon; a failure is said, never fatal (BR-2176).
   const schema = writeSchemaFile(ws.root);

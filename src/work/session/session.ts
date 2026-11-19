@@ -11,6 +11,7 @@ import { runHooksSync } from "../hooks/hooks.ts";
 import { inFlight, noticeOverlaps } from "./overlap.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { openFindings } from "../../knowledge/review/findings/findings.ts";
+import { findingItems, renderDue } from "../reminders/due.ts";
 import { slugify, type Change, type Corpus } from "../../knowledge/documents/model.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
@@ -56,43 +57,31 @@ export interface Started {
  * lands, and a session that stopped without a handoff must still be able to resume it (BR-2107).
  */
 /**
- * BR-2464: what a session owes before it starts new work (the owner's choice B in canon human #36, asked about findings piling
- * up): open review findings it can settle; one waiting on the owner's verdict is the owner's, not the agent's. A failed review
- * is not owed here: it fails when the review command's quota runs out, and holding every start until then helps nobody.
+ * BR-2530 (D-136, superseding D-126's hold): open review findings never hold a start back; a change starting for the first
+ * time lists the ones owed (findings waiting on the owner's answer are the owner's, BR-2461), at most ten, with their age
+ * and next command, so they are seen where new work begins.
  */
-/**
- * BR-2464: the review work owed, and whether it holds a new change back: more open findings than `debt_max_findings`, or
- * one open longer than `debt_max_age_hours`. Findings waiting on the owner's answer are not owed (BR-2461).
- */
-export function workDebt(ws: Workspace, now = Date.now()): { readonly owed: string[]; readonly holds: boolean } {
-  const unanswered = new Set(ws.db.db.query<{ id: number }, []>("SELECT f.id FROM review_findings f JOIN questions q ON q.id = f.question WHERE f.closed_at IS NULL AND q.answer IS NULL").all().map((r) => r.id));
-  const open = openFindings(ws.db).filter((f) => !unanswered.has(f.id));
-  if (open.length === 0) return { owed: [], holds: false };
-  const oldest = Math.min(...open.map((f) => Date.parse(f.openedAt)));
-  const hours = (ms: number) => `${Math.round((ms / 3_600_000) * 10) / 10}h`;
-  const tooMany = open.length > ws.config.debtMaxFindings;
-  const tooOld = now - oldest > ws.config.debtMaxAgeMs;
-  const why = tooMany ? `more than debt_max_findings (${ws.config.debtMaxFindings})` : tooOld ? `the oldest open for ${hours(now - oldest)}, over debt_max_age_hours (${hours(ws.config.debtMaxAgeMs)})` : `within debt_max_findings (${ws.config.debtMaxFindings}) and debt_max_age_hours (${hours(ws.config.debtMaxAgeMs)})`;
-  return { owed: [`${open.length} open review finding(s) (${open.slice(0, 10).map((f) => `#${f.id}`).join(", ")}${open.length > 10 ? ", …" : ""}), ${why}: settle each with canon finding close; canon context <id> shows them`], holds: tooMany || tooOld };
+export const OWED_SHOWN = 10;
+function remindOwed(ws: Workspace, say: Say): void {
+  const owed = findingItems(ws);
+  if (owed.length === 0) return;
+  const now = Date.now();
+  const lines = owed.slice(0, OWED_SHOWN).map((it) => `  ${renderDue(it, now)}`);
+  if (owed.length > OWED_SHOWN) lines.push(`  … and ${owed.length - OWED_SHOWN} more: canon work due`);
+  say(`note: review work is owed (BR-2530):\n${lines.join("\n")}`);
 }
 
-/** Owed review work under the limits does not hold the start back; it is said so it gets settled (BR-2464). */
-function remind(debt: { readonly owed: readonly string[] }, say: Say): void {
-  say(`note: review work is owed; it holds new changes back once over the limits (BR-2464):\n${debt.owed.map((l) => `  - ${l}`).join("\n")}`);
-}
-
-/** Whether a change was started before: it has a branch of its own (BR-2464 lets it go on). */
+/** Whether a change was started before: it has a branch of its own (BR-2530 reminds only at a first start). */
 function startedBefore(ws: Workspace, id: string): boolean {
   const refs = git(ws.primary, "for-each-ref", "--format=%(refname:short)", `refs/heads/change/${id}`, `refs/heads/change/${id}-*`);
   return refs.ok && refs.value.trim() !== "";
 }
 
-export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] } }, say: Say, opts: { fixMain?: boolean; settles?: readonly number[]; urgent?: string } = {}): Result<Started> {
+export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] } }, say: Say, opts: { fixMain?: boolean; settles?: readonly number[] } = {}): Result<Started> {
   if (isWorker(ws.actor) && "title" in target) return workerNewWorkError();
   if ("change" in target) { const allowed = workerMayStart(ws.db, target.change.toUpperCase(), ws.actor); if (!allowed.ok) return allowed; }
   const main = ws.config.main;
-  // reason: a change that settles named open findings is paying the debt, not new work: some findings need a rule edit a
-  // project lets only a change make (BR-2464, #209); every number must be an open finding, so a stale or made-up one opens nothing
+  // reason: --settles names the open findings a change settles; every number must be an open finding, so a stale or made-up one opens nothing (BR-2530, #209)
   if (opts.settles && opts.settles.length > 0) {
     const open = new Set(openFindings(ws.db).map((f) => f.id));
     const notOpen = opts.settles.filter((n) => !open.has(n));
@@ -101,12 +90,12 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
       return err("not_found", `--settles ${notOpen.map((n) => `#${n}`).join(", ")}: not an open review finding (canon context <id> lists the open ones); a change that settles findings names only open ones`);
     }
   }
-  const settling = (opts.settles?.length ?? 0) > 0;
   // reason: BR-2012 — checked before an id is allocated or git is called, so a repository with no commit yet loses no number (BR-2002)
   if (mainIsUnborn(ws.primary, main)) return err("io", `${main} has no commit yet, so no change can start: ${firstCommitStep(main)}`);
   let changeId: string;
   let slug: string;
   let fresh = false;
+  let remind = false;
   const onMain = mainCorpus(ws);
   if (!onMain.ok) return onMain;
   let existing: { branch: string; worktree: string | undefined } | undefined;
@@ -129,16 +118,12 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
       ws.db.event(ws.actor, "start.refuse", doc.id, { reason: "not-open", status: doc.status });
       return err("invalid", `${doc.id} is ${doc.status}`);
     }
-    // reason: new work waits while findings or failed reviews are owed; a change already started goes on, a chore settles them (BR-2464)
-    const debt = opts.fixMain || settling || existing || startedBefore(ws, doc.id) ? { owed: [], holds: false } : workDebt(ws);
-    if (debt.holds && !waived(ws, doc.id, debt.owed, opts.urgent, say)) return refuseForDebt(ws, doc.id, debt.owed);
-    if (!debt.holds && debt.owed.length > 0) remind(debt, say);
+    // reason: only a first start reminds of owed findings; resuming, --fix-main and chores do not (BR-2530)
+    remind = !opts.fixMain && !existing && !startedBefore(ws, doc.id);
     changeId = doc.id;
     slug = slugify(doc.title);
   } else {
-    const debt = opts.fixMain || settling ? { owed: [], holds: false } : workDebt(ws);
-    if (debt.holds && !waived(ws, null, debt.owed, opts.urgent, say)) return refuseForDebt(ws, null, debt.owed);
-    if (!debt.holds && debt.owed.length > 0) remind(debt, say);
+    remind = !opts.fixMain;
     // reason: checked before an id is allocated, so a refused start leaves no number, worktree or claim behind (BR-2376, BR-2002)
     const bad = target.plan ? planProblem(onMain.value, ws.config.main, target.plan) : undefined;
     if (bad) {
@@ -153,7 +138,10 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   const branch = existing?.branch ?? (slug ? `change/${changeId}-${slug}` : `change/${changeId}`).slice(0, 80);
   const path = existing?.worktree ?? join(worktreesDir(ws), changeId);
 
-  return startWorkspace(ws, { subject: changeId, branch, path, existing: existing !== undefined, ...(fresh && "title" in target ? { document: target } : {}) }, say);
+  const started = startWorkspace(ws, { subject: changeId, branch, path, existing: existing !== undefined, ...(fresh && "title" in target ? { document: target } : {}) }, say);
+  // reason: the start goes ahead first; the owed findings are said after it, never instead of it (BR-2530)
+  if (started.ok && remind) remindOwed(ws, say);
+  return started;
 }
 
 /** Start or resume document-free work, sharing the same ownership and setup path (BR-2457). */
@@ -508,18 +496,3 @@ export function describeOccupants(list: readonly Occupant[]): string {
   return list.map((o) => `pid ${o.pid} (${o.command})`).join(", ");
 }
 
-/**
- * BR-2489: the owner's urgent work starts while review work is owed. The owner's words are kept on the record and said, as
- * for any relayed human word (D-6): canon cannot check them, so the flag is for the owner's request only. The debt stays.
- */
-function waived(ws: Workspace, subject: string | null, owed: readonly string[], urgent: string | undefined, say: Say): boolean {
-  if (urgent === undefined) return false;
-  ws.db.event(ws.actor, "start.urgent", subject, { relayed: urgent, owed: owed.map((l) => l.slice(0, 300)) });
-  say(`urgent (relayed by ${ws.actor}: "${urgent}"): starts although review work is owed (BR-2489); it stays owed:\n${owed.map((l) => `  - ${l}`).join("\n")}`);
-  return true;
-}
-
-function refuseForDebt(ws: Workspace, subject: string | null, owed: readonly string[]): Result<never> {
-  ws.db.event(ws.actor, "start.refuse", subject, { reason: "debt", owed: owed.map((l) => l.slice(0, 300)) });
-  return err("refused", `no new change while review work is owed (BR-2464):\n${owed.map((l) => `  - ${l}`).join("\n")}\nSettle it first: in a chore (canon chore start "<title>"), in the change it belongs to, or in a new change that names them (canon work start --title "<title>" --settles <n>[,<n>]); a change already started, canon work start --fix-main and chores are not held back; work the owner asked for now in the conversation starts with --urgent --relayed "<the owner's own words>" (BR-2489).`);
-}

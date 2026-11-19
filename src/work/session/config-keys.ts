@@ -29,25 +29,6 @@ export const sessionKeys = {
     listed: 120,
     checked: 50,
   }),
-  // reason: a few fresh findings are settled as they come; only a pile or an old one holds new work back (BR-2464, owner 2026-11-15)
-  debtMaxFindings: configKey<number>({
-    key: "debt_max_findings",
-    doc: "Open review findings a new change may start with; one more holds new changes back (BR-2464). 0 holds them back at the first.",
-    default: 5,
-    schema: { type: "integer", minimum: 0, default: 5 },
-    read: (v) => (typeof v === "number" && Number.isInteger(v) && v >= 0 ? ok(v) : err("invalid", "`debt_max_findings` must be a whole number of at least 0")),
-    listed: 91,
-    checked: 131,
-  }),
-  debtMaxAgeMs: configKey<number>({
-    key: "debt_max_age_hours",
-    doc: "How long an open review finding may wait before it holds new changes back (BR-2464).",
-    default: 4 * HOUR,
-    schema: positiveNumber(4),
-    read: positiveValue("debt_max_age_hours", HOUR),
-    listed: 92,
-    checked: 132,
-  }),
   regenerable: configKey<readonly string[]>({
     key: "regenerable",
     doc: "Names (globs, matched against each path segment) of git-ignored files a worktree can rebuild, such as node_modules; removing a worktree loses nothing by deleting them (BR-2019). Any other ignored file counts as work.",

@@ -847,8 +847,7 @@ describe("start and clean leave nothing half made", () => {
   });
 });
 
-describe("no new change while review work is owed", () => {
-  // reason: two findings opened 5 hours ago are over the default 4-hour limit, so they hold a new change back (BR-2464)
+describe("open review findings remind at a start and never hold it back", () => {
   const owe = (root: string, ageHours = 5, count = 2) => {
     const db = ws(root).db;
     const add = (id: number) => db.db.query("INSERT INTO review_findings(identity, criterion, ids, docs, text, change, event, sha, opened_at) VALUES (?, 'contradiction', '[]', '[]', 'x contradicts y', 'C-9', 1, 'abc', ?)").run(`identity-${id}`, new Date(Date.now() - ageHours * 3_600_000).toISOString());
@@ -856,98 +855,65 @@ describe("no new change while review work is owed", () => {
     return db;
   };
   const changesIn = (root: string) => sh(root, "for-each-ref", "--format=%(refname:short)", "refs/heads/change/");
+  const cli = (root: string, ...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), ...args], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
 
-  test("BR-2464: open findings refuse a new change with exit 1 and a debt event, and leave no id, worktree or claim; a chore, a change already started and the fix of main go on", () => {
+  test("BR-2530: six findings, the oldest open 5 hours, do not hold a new change back; the start goes ahead and then lists them with their age and next command", () => {
     const root = project();
-    const before = startNew(root, "Started earlier");
-    const db = owe(root);
-    const r = start(ws(root), { title: "New feature" }, quiet);
-    expect(r.ok ? "" : r.error.code).toBe("refused");
-    expect(r.ok ? "" : r.error.message).toContain("2 open review finding(s) (#1, #2)");
-    expect(r.ok ? "" : r.error.message).toContain("canon chore start");
-    expect(changesIn(root).split("\n").filter((l) => l !== "")).toEqual([before.branch]);
-    expect(claims(db).map((c) => c.subject)).toEqual([before.change]); // nothing new claimed
-    expect(db.db.query<{ d: string }, []>("SELECT json_extract(detail, '$.reason') AS d FROM events WHERE kind = 'start.refuse'").all().map((x) => x.d)).toEqual(["debt"]);
-    stop(ws(before.worktree), "hand over", undefined, true); // released, so the resume is a fresh start of a change already started
-    const again = start(ws(root), { change: before.change }, quiet);
-    expect(again.ok ? "" : again.error.message).toBe(""); // already started: it goes on
-    expect(startChore(ws(root), { title: "settle the findings" }, quiet).ok).toBe(true);
-    expect(start(ws(root), { title: "fix main" }, quiet, { fixMain: true }).ok).toBe(true);
-  });
-
-  test("BR-2464: owed findings hold a new change back only when there are more than debt_max_findings or the oldest is older than debt_max_age_hours; under both it starts with a note", () => {
-    const fresh = project();
-    owe(fresh, 0.5, 2);
+    const db = owe(root, 5, 6);
     const said: string[] = [];
-    const r = start(ws(fresh), { title: "Goes on" }, (l) => said.push(l), {});
+    const r = start(ws(root), { title: "New feature" }, (l) => said.push(l));
     expect(r.ok ? "" : r.error.message).toBe("");
-    expect(said.join("\n")).toContain("note: review work is owed; it holds new changes back once over the limits (BR-2464)");
-    expect(said.join("\n")).toContain("2 open review finding(s) (#1, #2), within debt_max_findings (5) and debt_max_age_hours (4h)");
-    const five = project();
-    owe(five, 0.5, 5);
-    expect(start(ws(five), { title: "Five is still fine" }, quiet).ok).toBe(true);
-    const six = project();
-    owe(six, 0.5, 6);
-    const many = start(ws(six), { title: "Six is too many" }, quiet);
-    expect(many.ok ? "" : many.error.message).toContain("6 open review finding(s) (#1, #2, #3, #4, #5, #6), more than debt_max_findings (5)");
-    const old = project();
-    owe(old, 4.5, 1);
-    const late = start(ws(old), { title: "One left too long" }, quiet);
-    expect(late.ok ? "" : late.error.message).toContain("over debt_max_age_hours (4h)");
-    const strict = project();
-    writeFileSync(join(strict, "canon/config.yaml"), `${readFileSync(join(strict, "canon/config.yaml"), "utf8")}debt_max_findings: 0\ndebt_max_age_hours: 1\n`);
-    sh(strict, "commit", "-qam", "strict debt");
-    owe(strict, 0.5, 1);
-    expect(start(ws(strict), { title: "Any finding holds" }, quiet).ok).toBe(false);
+    const text = said.join("\n");
+    expect(text).toContain("note: review work is owed (BR-2530):");
+    for (let i = 1; i <= 6; i++) expect(text).toMatch(new RegExp(`  finding:${i} 5h00m untriaged \\[contradiction\\] -: x contradicts y → canon finding tier ${i} A\\|B\\|C`));
+    // reason: the reminder follows the start's own lines, never replaces them (BR-2530)
+    expect(said.findIndex((l) => l.startsWith("note: review work is owed"))).toBe(said.length - 1);
+    expect(db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'start.refuse'").get()!.n).toBe(0);
   });
 
-  test("BR-2489, BR-2464: the owner's urgent work starts with --urgent and their words, which are said and kept with what stays owed; the refusal names the flag", () => {
-    const root = project();
-    const db = owe(root);
-    const refused = start(ws(root), { title: "Ordinary" }, quiet);
-    expect(refused.ok ? "" : refused.error.message).toContain('--urgent --relayed "<the owner\'s own words>"');
-    const said: string[] = [];
-    const r = start(ws(root), { title: "Hotfix" }, (l) => said.push(l), { urgent: "先修这个线上 bug" });
-    expect(r.ok ? "" : r.error.message).toBe("");
-    expect(said.join("\n")).toContain('urgent (relayed by agent:a: "先修这个线上 bug"): starts although review work is owed (BR-2489)');
-    expect(said.join("\n")).toContain("2 open review finding(s) (#1, #2)");
-    const ev = db.db.query<{ subject: string | null; relayed: string; owed: string }, []>("SELECT subject, json_extract(detail, '$.relayed') AS relayed, json_extract(detail, '$.owed') AS owed FROM events WHERE kind = 'start.urgent'").all();
-    expect(ev).toHaveLength(1);
-    expect(ev[0]!.relayed).toBe("先修这个线上 bug");
-    expect(ev[0]!.owed).toContain("2 open review finding(s)");
-    expect(start(ws(root), { title: "Next ordinary" }, quiet).ok).toBe(false); // the findings are still owed
-  });
-
-  test("BR-2489: --urgent without the owner's words, or --relayed alone, is a usage error (exit 2) that starts nothing", () => {
-    const root = project();
-    owe(root);
-    const run = (...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", ...args], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
-    const noWords = run("--title", "Hotfix", "--urgent");
-    expect(noWords.exitCode).toBe(2);
-    expect(noWords.stderr.toString()).toContain("--urgent needs --relayed");
-    expect(run("--title", "Hotfix", "--urgent", "--relayed", "  ").exitCode).toBe(2);
-    expect(run("--title", "Hotfix", "--relayed", "now").exitCode).toBe(2);
-    expect(changesIn(root).trim()).toBe("");
-  });
-
-  test("BR-2464: a change on main not started yet is new work too, and only the first 10 finding numbers are listed", () => {
+  test("BR-2530: twelve findings list ten and point at canon work due; a change on main not started yet reminds too", () => {
     const root = project();
     mkdirSync(join(root, "canon/changes"), { recursive: true });
     writeFileSync(join(root, "canon/changes/C-5.md"), "---\nid: C-5\ntitle: Waiting\nstatus: open\n---\n\n## 为什么\n\nW.\n\n## 要改什么\n\nX.\n");
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "a change waits on main");
-    const db = ws(root).db;
-    for (let i = 1; i <= 11; i++) db.db.query("INSERT INTO review_findings(identity, criterion, ids, docs, text, change, event, sha, opened_at) VALUES (?, 'untestable', '[]', '[]', 't', NULL, 1, 'abc', ?)").run(`i-${i}`, new Date().toISOString());
-    const r = start(ws(root), { change: "C-5" }, quiet);
-    expect(r.ok ? "" : r.error.code).toBe("refused");
-    expect(r.ok ? "" : r.error.message).toContain("11 open review finding(s) (#1, #2, #3, #4, #5, #6, #7, #8, #9, #10, …)");
+    owe(root, 1, 12);
+    const said: string[] = [];
+    expect(start(ws(root), { change: "C-5" }, (l) => said.push(l)).ok).toBe(true);
+    const note = said.find((l) => l.startsWith("note: review work is owed"))!;
+    expect(note.split("\n").filter((l) => /^  finding:\d+ /.test(l))).toHaveLength(10);
+    expect(note).toContain("  … and 2 more: canon work due");
   });
 
-  test("BR-2464: a new change that names open findings with --settles starts; one naming a finding that is not open is refused and leaves nothing", () => {
+  test("BR-2530: no reminder without findings, when resuming a change already started, for --fix-main or for a chore", () => {
+    const root = project();
+    const quietSaid: string[] = [];
+    const before = start(ws(root), { title: "Started earlier" }, (l) => quietSaid.push(l));
+    if (!before.ok) throw new Error(before.error.message);
+    expect(quietSaid.join("\n")).not.toContain("review work is owed");
+    owe(root);
+    stop(ws(before.value.worktree), "hand over", undefined, true);
+    const said: string[] = [];
+    expect(start(ws(root), { change: before.value.change }, (l) => said.push(l)).ok).toBe(true);
+    expect(startChore(ws(root), { title: "settle the findings" }, (l) => said.push(l)).ok).toBe(true);
+    expect(start(ws(root), { title: "fix main" }, (l) => said.push(l), { fixMain: true }).ok).toBe(true);
+    expect(said.join("\n")).not.toContain("review work is owed");
+  });
+
+  test("BR-2530: a finding waiting on the owner's answer is not listed", () => {
+    const root = project();
+    const db = owe(root, 1, 1);
+    db.db.query("INSERT INTO questions(subject, asked_by, question, options, multi, asked_at) VALUES (NULL, 'agent:x', 'which way?', '[]', 0, ?)").run(new Date().toISOString());
+    db.db.query("UPDATE review_findings SET question = (SELECT MAX(id) FROM questions)").run();
+    const said: string[] = [];
+    expect(start(ws(root), { title: "Free" }, (l) => said.push(l)).ok).toBe(true);
+    expect(said.join("\n")).not.toContain("review work is owed");
+  });
+
+  test("BR-2530: --settles names open findings; one not open is refused with exit 3 and a settles event and leaves nothing; bad numbers are usage errors", () => {
     const root = project();
     const db = owe(root);
-    const ok = start(ws(root), { title: "Settle #1" }, quiet, { settles: [1] });
-    expect(ok.ok ? "" : ok.error.message).toBe("");
+    expect(start(ws(root), { title: "Settle #1" }, quiet, { settles: [1] }).ok).toBe(true);
     db.db.query("UPDATE review_findings SET closed_at = ? WHERE id = 2").run(new Date().toISOString());
     const before = changesIn(root);
     const bad = start(ws(root), { title: "Settle #2 and #9" }, quiet, { settles: [2, 9] });
@@ -955,29 +921,22 @@ describe("no new change while review work is owed", () => {
     expect(bad.ok ? "" : bad.error.message).toContain("--settles #2, #9: not an open review finding");
     expect(changesIn(root)).toBe(before);
     expect(db.db.query<{ d: string }, []>("SELECT json_extract(detail, '$.reason') AS d FROM events WHERE kind = 'start.refuse'").all().map((x) => x.d)).toEqual(["settles"]);
-    const plain = start(ws(root), { title: "New feature" }, quiet);
-    expect(plain.ok ? "" : plain.error.message).toContain("--settles <n>[,<n>]");
-    const usage = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", "--title", "x", "--settles", "abc"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
-    expect(usage.exitCode).toBe(2);
-    const run = (...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", ...args], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } }).exitCode;
-    expect(run("--title", "x", "--settles", "0")).toBe(2);
-    expect(run("--fix-main", "--settles", "1")).toBe(2);
-    db.db.query("INSERT INTO questions(subject, asked_by, question, options, multi, asked_at) VALUES (NULL, 'agent:x', 'which way?', '[]', 0, ?)").run(new Date().toISOString());
-    db.db.query("UPDATE review_findings SET question = (SELECT MAX(id) FROM questions) WHERE id = 1").run();
-    const waiting = start(ws(root), { title: "Settle the one the owner weighs" }, quiet, { settles: [1] });
-    expect(waiting.ok ? "" : waiting.error.message).toBe("");
+    expect(cli(root, "work", "start", "--title", "x", "--settles", "abc").exitCode).toBe(2);
+    expect(cli(root, "work", "start", "--title", "x", "--settles", "0").exitCode).toBe(2);
+    expect(cli(root, "work", "start", "--fix-main", "--settles", "1").exitCode).toBe(2);
+    expect(changesIn(root)).toBe(before);
   });
 
-  test("BR-2464: a finding waiting on the owner's verdict is not owed, and neither is a failed review after landing", () => {
+  test("BR-2530: --urgent and --relayed are gone (usage error, exit 2); debt_max_findings in the config fails every command with exit 2 and says to delete the line", () => {
     const root = project();
-    const db = owe(root);
-    db.db.query("INSERT INTO questions(subject, asked_by, question, options, multi, asked_at) VALUES (NULL, 'agent:x', 'which way?', '[]', 0, ?)").run(new Date().toISOString());
-    const q = Number(db.db.query<{ id: number }, []>("SELECT MAX(id) AS id FROM questions").get()!.id);
-    db.db.query("UPDATE review_findings SET question = ?").run(q);
-    expect(start(ws(root), { title: "Free to start" }, quiet).ok).toBe(true);
-    // a review that failed (the review command's quota ran out, say) is not owed: it does not hold a start back
-    db.db.query("INSERT INTO landed_reviews(entry, change, base, head, landed, log, state, queued_at) VALUES (1, 'C-1', 'a', 'b', 1, 'review.log', 'failed', ?)").run(new Date().toISOString());
-    expect(start(ws(root), { title: "Next" }, quiet).ok).toBe(true);
+    const urgent = cli(root, "work", "start", "--title", "X", "--urgent", "--relayed", "now");
+    expect(urgent.exitCode).toBe(2);
+    expect(changesIn(root).trim()).toBe("");
+    writeFileSync(join(root, "canon/config.yaml"), `${readFileSync(join(root, "canon/config.yaml"), "utf8")}debt_max_findings: 5\n`);
+    const show = cli(root, "change", "list");
+    expect(show.exitCode).toBe(2);
+    expect(show.stderr.toString()).toContain("`debt_max_findings` was removed");
+    expect(show.stderr.toString()).toContain("Delete the `debt_max_findings` line from canon/config.yaml");
   });
 });
 

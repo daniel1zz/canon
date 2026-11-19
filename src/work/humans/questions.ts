@@ -32,8 +32,10 @@ export interface Question {
 
 export function ask(db: CoordDb, actor: string, subject: string | null, question: string, options: readonly string[], multi = false): number {
   const r = db.db.query("INSERT INTO questions(subject, asked_by, question, options, multi, asked_at) VALUES (?, ?, ?, ?, ?, ?)").run(subject, actor, question, JSON.stringify(options), multi ? 1 : 0, iso(now()));
-  db.event(actor, "human.ask", subject, { question });
-  return Number(r.lastInsertRowid);
+  const id = Number(r.lastInsertRowid);
+  // reason: canon work watch names the question number in its line, so the event carries it (BR-2528)
+  db.event(actor, "human.ask", subject, { question, id });
+  return id;
 }
 
 export function questions(db: CoordDb, which: "pending" | "all"): Question[] {
