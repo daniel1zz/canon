@@ -19,7 +19,7 @@ function fixture() {
   writeFileSync(join(root, "src/billing/.keep"), "");
   writeFileSync(join(root, "canon/rules/billing/BR-1.md"), rule(1, "Refunds take three days."));
   // a stale record: BR-2's links names an old fingerprint of BR-1 (BR-2425)
-  writeFileSync(join(root, "canon/rules/billing/BR-2.md"), rule(2, "A refund is announced as BR-1 says.").replace("business: x\n", "business: x\nlinks:\n  BR-1: 0000000000000000\n"));
+  writeFileSync(join(root, "canon/rules/billing/BR-2.md"), rule(2, "A refund is announced as BR-1 says.").replace("business: x\n", "business: x\nlinks:\n  BR-1: 0123456789abcdef\n"));
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "billing");
   const first = sh(root, "rev-parse", "HEAD");
