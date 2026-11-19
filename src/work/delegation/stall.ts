@@ -3,6 +3,7 @@ import { err, ok, type Result } from "../../kernel/result.ts";
 import type { Workspace } from "../workspace.ts";
 import { liveClaim } from "../claims/claims.ts";
 import { handoffs } from "../session/handoffs.ts";
+import { corpusOf } from "../session/session.ts";
 
 /**
  * A delegated change nobody is working on (BR-2522, #255): its delegation is in force, no claim on it still binds (none,
@@ -39,6 +40,16 @@ export function stalledDelegations(ws: Workspace, now: number = Date.now()): Res
   };
   const notes = new Map(handoffs(ws.db).map((h) => [h.subject, h.next]));
   const out: StalledDelegation[] = [];
+  // reason: a change closed on main is finished whatever its delegation record says; read main only when a candidate exists (BR-2522, #264)
+  let closed: ReadonlySet<string> | undefined;
+  const closedOnMain = (subject: string): Result<boolean> => {
+    if (!closed) {
+      const main = corpusOf(ws, ws.config.main);
+      if (!main.ok) return main;
+      closed = new Set(main.value.docs.filter((d) => d.kind === "change" && d.status !== "open").map((d) => d.id));
+    }
+    return ok(closed.has(subject));
+  };
   for (const r of rows) {
     if (liveClaim(ws.db, r.subject)) continue;
     const delegated = ws.db.db
@@ -49,6 +60,9 @@ export function stalledDelegations(ws: Workspace, now: number = Date.now()): Res
     if (times.length === 0) continue;
     const since = times.reduce((a, b) => (Date.parse(a) >= Date.parse(b) ? a : b));
     if (now - Date.parse(since) < ws.config.delegationStallMs) continue;
+    const done = closedOnMain(r.subject);
+    if (!done.ok) return done;
+    if (done.value) continue;
     const handoff = notes.get(r.subject);
     out.push({ subject: r.subject, worker: r.worker, owner: r.owner, since, ...(lastCommit ? { lastCommit } : {}), ...(handoff ? { handoff } : {}) });
   }

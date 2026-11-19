@@ -78,3 +78,15 @@ test("BR-2522 BR-2505 BR-2506 BR-2372 BR-2373 BR-2374: canon work status, canon 
   const detail = JSON.parse(cli(f.root, "agent:s1", "plan", "status", f.plan, "--json").text) as { steps: { step: string; state: string }[] };
   expect(detail.steps.map((x) => [x.step, x.state])).toEqual([["A", "stalled"]]);
 });
+
+test("BR-2522: a delegated change already closed on main is not stalled, whatever its delegation record says (#264)", () => {
+  const f = fixture();
+  setClaimProcess(f.root, f.step, GONE);
+  expect(stalledDelegations(ws(f.root), Date.now() + 2 * HOUR).ok ? (stalledDelegations(ws(f.root), Date.now() + 2 * HOUR) as { value: { subject: string }[] }).value.map((s) => s.subject) : []).toEqual([f.step]);
+  // close it on main by hand, leaving the delegation in force, as a landing that did not end it does
+  const file = join(f.root, "canon/changes", readdirSync(join(f.root, "canon/changes")).find((n) => n.startsWith(`${f.step}`) && n.endsWith(".md")) ?? `${f.step}.md`);
+  writeFileSync(file, `---\nid: ${f.step}\ntitle: Step A\nstatus: done\n---\n\n## 为什么\n\nA.\n\n## 要改什么\n\nA.\n`);
+  sh(f.root, "add", "-A"); sh(f.root, "commit", "-qm", `close ${f.step}`);
+  expect(stalledDelegations(ws(f.root), Date.now() + 2 * HOUR)).toEqual({ ok: true, value: [] });
+  expect(cli(f.root, "agent:s1", "work", "status").text).not.toContain(`${f.step}: stalled`);
+});
