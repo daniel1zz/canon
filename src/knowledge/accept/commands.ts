@@ -4,7 +4,7 @@ import { accept } from "./accept.ts";
 
 /** `canon accept`: the owner's acceptance of main's current commit (BR-2462, D-89, D-104). */
 const acceptCmd = defineCommand({
-  meta: { description: "Accept main's current commit: canon check clean, no open findings or suspect references, every landed review done, the commit tested; moves refs/canon/accepted" },
+  meta: { description: "Accept main's current commit: canon check clean, every rule and decision changed since the last acceptance accepted (no open finding or suspect reference on it), every landed review done, the commit tested; moves refs/canon/accepted" },
   async run() {
     const ws = workspace();
     const read = corpusOf(ws);
@@ -15,6 +15,7 @@ const acceptCmd = defineCommand({
     }
     for (const reason of r.reasons) say(`not accepted: ${reason}`);
     for (const w of r.waiting) say(`not finished: ${w}`);
+    if (r.older) say(r.older);
     if (r.reasons.length > 0) process.exit(EXIT.refused);
     if (r.waiting.length > 0) process.exit(EXIT.timeout);
     say(`accepted ${r.commit}`);

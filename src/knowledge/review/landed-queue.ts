@@ -14,6 +14,8 @@ import { reviewLanded } from "./landed.ts";
 import { SKILL_FILE, Slots } from "./review.ts";
 import { standingInstructions } from "../../kernel/agent.ts";
 import { reviewSettingsOn } from "../../work/land/checks/review-scope.ts";
+import { corpusOf } from "../../work/session/session.ts";
+import { reviewedBy, reviewedKeys } from "../links/reviewed.ts";
 
 /**
  * The queue of landed reviews (BR-2441, D-89): a landing that changed rules, decisions, releases or standing instructions,
@@ -206,6 +208,35 @@ function nextOrRelease(db: CoordDb, self: Proc, active: number, paths: (job: Job
     .immediate();
 }
 
+/** Writes the `link.reviewed` records one finished review implies, skipping those already there (BR-2539); returns how many it wrote. */
+function recordReviewed(ws: Workspace, base: string, head: string, sameTop: boolean): number {
+  const before = corpusOf(ws, base);
+  if (!before.ok) throw new Error(before.error.message);
+  const after = corpusOf(ws, head);
+  if (!after.ok) throw new Error(after.error.message);
+  const have = reviewedKeys(ws.primary);
+  let n = 0;
+  for (const r of reviewedBy(before.value, after.value, sameTop)) {
+    if (have.has(`${r.from}>${r.to}>${r.fingerprint}`)) continue;
+    ws.db.event(ws.actor, "link.reviewed", r.from, { ...r, head });
+    n++;
+  }
+  return n;
+}
+
+/**
+ * Once per repository: the references the reviews finished before BR-2539 imply. Those reviews gave the changed rule's
+ * whole top-level domain, so only referrers that are rules in that domain count (BR-2539). Undefined when already done.
+ */
+function backfillReviewed(ws: Workspace): number | undefined {
+  if (ws.db.db.query("SELECT 1 FROM events WHERE kind = 'link.reviewed.backfill' LIMIT 1").get()) return undefined;
+  const rows = ws.db.db.query<{ base: string; head: string }, []>("SELECT base, head FROM landed_reviews WHERE state = 'done' ORDER BY id").all();
+  let n = 0;
+  for (const r of rows) n += recordReviewed(ws, r.base, r.head, true);
+  ws.db.event(ws.actor, "link.reviewed.backfill", null, { reviews: rows.length, references: n });
+  return n;
+}
+
 function finish(db: CoordDb, id: number, state: "done" | "failed"): void {
   db.db.query("UPDATE landed_reviews SET state = ?, finished_at = ? WHERE id = ?").run(state, new Date().toISOString(), id);
 }
@@ -265,6 +296,15 @@ export async function runLandedReviews(ws: Workspace, say: Say, guide: string | 
     }
     if (r.ok) {
       finish(ws.db, job.id, "done");
+      // reason: the finished review saw every live document naming what this landing changed, so those references count as reviewed (BR-2539)
+      try {
+        const n = recordReviewed(ws, job.base, job.head, false);
+        if (n > 0) line(`review: ${n} reference(s) to the changed documents recorded as reviewed`);
+        const back = backfillReviewed(ws);
+        if (back !== undefined) line(`review: ${back} reference(s) recorded as reviewed from the earlier finished reviews (once)`);
+      } catch (e) {
+        line(`review: references not recorded as reviewed: ${(e as Error).message}`);
+      }
       line("review: done");
     } else {
       ws.db.event(ws.actor, "review.fail", job.change, { landed: job.landed, commit: job.head, message: r.error.message.slice(0, 2000) });

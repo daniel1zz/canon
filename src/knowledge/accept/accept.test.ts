@@ -1,11 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../../work/land/land.ts";
 import { FAST, project, reviewLandings, sh, startNew, ws } from "../../work/testkit.ts";
 import { readCorpus } from "../documents/read.ts";
 import { recordFindings, type Finding } from "../review/findings/findings.ts";
 import { accept, ACCEPTED_REF } from "./accept.ts";
+import { watch } from "../../work/watch/watch.ts";
 
 const quiet = () => {};
 const f = (criterion: string, text: string): Finding => ({ criterion, text });
@@ -152,5 +153,53 @@ describe("canon accept (BR-2462)", () => {
     expect(!behind.ok && [behind.error.code, behind.error.message.includes("check out")]).toEqual(["io", true]);
     const db = ws(root).db;
     expect(db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'accept.ok'").get()!.n).toBe(0);
+  });
+
+  test("BR-2537 BR-2462: after an acceptance, only the documents changed since block; an unchanged document's finding is an older debt that does not", async () => {
+    const root = fixture();
+    writeFileSync(join(root, "canon/rules/billing/BR-2.md"), rule(2));
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "BR-2");
+    await landRule(root, "narrow", rule(1, " Only overseas."));
+    await reviewLandings(root);
+    const first = await run(root);
+    expect(first.ok && first.value.reasons).toEqual([]);
+    const db = ws(root).db;
+    const docAccepts = () => db.db.query<{ subject: string; detail: string }, []>("SELECT subject, detail FROM events WHERE kind = 'doc.accept' ORDER BY id").all().map((r) => ({ subject: r.subject, ...JSON.parse(r.detail) }));
+    expect(docAccepts().map((d) => d.subject).sort()).toEqual(["BR-1", "BR-2"]);
+    expect(docAccepts()[0]).toEqual(expect.objectContaining({ commit: sh(root, "rev-parse", "main"), fingerprint: expect.any(String) }));
+    // BR-2 is unchanged since the acceptance: its finding is an older debt
+    const event = db.event("agent:x", "review.block", "C-9", {});
+    const old = recordFindings(db, { findings: [f("contradiction", "BR-2 的说法不清")], reviewed: [], change: "C-9", event, sha: sh(root, "rev-parse", "main") });
+    if (!old.ok) throw new Error(old.error.message);
+    await landRule(root, "wider", rule(1, " Everywhere."));
+    await reviewLandings(root);
+    const second = await run(root);
+    if (!second.ok) throw new Error(second.error.message);
+    expect(second.value.reasons).toEqual([]);
+    expect(second.value.older).toContain("older debts (do not block): 1 open finding(s)");
+    expect(sh(root, "rev-parse", ACCEPTED_REF)).toBe(sh(root, "rev-parse", "main"));
+    // BR-1 changed again and carries a finding: it blocks, by name
+    const now = recordFindings(db, { findings: [f("contradiction", "BR-1 的「到处」说不通")], reviewed: [], change: "C-9", event, sha: sh(root, "rev-parse", "main") });
+    if (!now.ok) throw new Error(now.error.message);
+    await landRule(root, "narrower", rule(1, " Only at home."));
+    await reviewLandings(root);
+    const third = await run(root);
+    if (!third.ok) throw new Error(third.error.message);
+    expect(third.value.reasons).toEqual([`BR-1 changed since the last acceptance and is not accepted: open finding(s) #${now.value.opened[0]} (canon finding close)`]);
+  });
+
+  test("BR-2538: after the background floor passes, the passing commit is accepted and the point moves, marked as by the floor watch", async () => {
+    const root = fixture();
+    writeFileSync(join(root, "canon/config.yaml"), readFileSync(join(root, "canon/config.yaml"), "utf8") + "floor_timing: after\nfloor_quiet_minutes: 600\nfloor_max_untested: 100\nfloor_max_age_minutes: 600\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "after mode");
+    await landRule(root, "narrow", rule(1, " Only overseas."));
+    await reviewLandings(root);
+    await watch(ws(root), quiet, { now: true });
+    const tip = sh(root, "rev-parse", "main");
+    expect(sh(root, "rev-parse", ACCEPTED_REF)).toBe(tip);
+    const ok = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'accept.ok' ORDER BY id DESC LIMIT 1").get();
+    expect(JSON.parse(ok!.detail)).toEqual({ commit: tip, by: "floor watch" });
   });
 });

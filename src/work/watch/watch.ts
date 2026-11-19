@@ -1,4 +1,4 @@
-import { closeSync, existsSync, openSync, readFileSync, rmSync, writeSync, mkdirSync } from "node:fs";
+import { appendFileSync, closeSync, existsSync, openSync, readFileSync, rmSync, writeSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { parse } from "yaml";
 import type { CoordDb } from "../db.ts";
@@ -17,6 +17,8 @@ import { stopStarted } from "./stop.ts";
 import { floorWithReport } from "../land/checks/floor.ts";
 import { publishedCanonReads } from "./published.ts";
 import { runLogged } from "./run.ts";
+import { acceptAfterFloor } from "../../knowledge/accept/accept.ts";
+import { readCorpus } from "../../knowledge/documents/read.ts";
 import { finishInterrupted, revertBad, runFiles } from "./revert.ts";
 
 /**
@@ -375,6 +377,14 @@ async function testCommit(ws: Workspace, say: Say, sha: string): Promise<Result<
     markGreen(ws, sha, say);
     const recorded = record(() => clearRedMain(ws.db));
     if (!recorded.ok) return recorded;
+    // reason: every passing commit is a chance to accept the documents and move the acceptance point; an error there is only logged (BR-2538)
+    try {
+      const line = await acceptAfterFloor(ws, dir, sha, readCorpus(dir, ws.config.types, ws.config));
+      appendFileSync(log, `canon: ${line}\n`);
+      if (line.startsWith("accepted ")) say(`floor watch: ${line}`);
+    } catch (e) {
+      appendFileSync(log, `canon: accept: ${(e as Error).message}\n`);
+    }
     if (config.ok && config.value.floorTiming === "after" && config.value.hooks.after_green.length > 0) {
       const env = { CANON_GREEN: sha, CANON_PRIMARY: ws.primary };
       const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "after_green", change: null, cwd: dir, env, port: noPort }, config.value.hooks.after_green, say, false);

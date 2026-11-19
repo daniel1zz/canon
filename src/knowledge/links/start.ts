@@ -4,6 +4,7 @@ import { err, ok, type Result } from "../../kernel/result.ts";
 import type { Corpus } from "../documents/model.ts";
 import { CANON_DIR } from "../documents/read.ts";
 import { typeNamed, type DocType } from "../documents/types.ts";
+import { reviewedKeys, withReviewed } from "./reviewed.ts";
 import { computeLinks, fingerprint, proseIds, type DocAt, type Link, type LinkKind, type Start } from "./links.ts";
 
 /**
@@ -15,7 +16,8 @@ import { computeLinks, fingerprint, proseIds, type DocAt, type Link, type LinkKi
 /** Every reference of the corpus with whether it is suspect (BR-2423, BR-2424, BR-2425). */
 export function linksOf(root: string, corpus: Corpus, since: string | undefined): Result<Link[]> {
   const start = readStart(root, corpus.types, since);
-  return start.ok ? ok(computeLinks(corpus, start.value)) : start;
+  // reason: a reference a finished review saw at the named document's current text is not suspect (BR-2539, D-137)
+  return start.ok ? ok(withReviewed(computeLinks(corpus, start.value), corpus, reviewedKeys(root))) : start;
 }
 
 /** The starting commit's rules and decisions; undefined in a repository without a commit (BR-2424). */
