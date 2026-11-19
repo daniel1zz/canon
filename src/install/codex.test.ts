@@ -30,7 +30,7 @@ function commit(root: string) {
 }
 
 describe("Codex project assets through the CLI", () => {
-  test("BR-2459 BR-2032 BR-2264 BR-2519: Codex init writes native assets, a Codex reviewer and no Claude assets; repeat is current", () => {
+  test("BR-2459 BR-2032 BR-2264 BR-2519 BR-2531: Codex init writes native assets, a Codex reviewer and no Claude assets; repeat is current", () => {
     const { root, source } = fixture();
     const r = cli(root, source, "init", "--agent", "codex", "--floor", "true");
     expect(r.code).toBe(0);
@@ -38,6 +38,8 @@ describe("Codex project assets through the CLI", () => {
     expect(read(root, ".codex/hooks.json")).toContain("--runtime codex");
     // The Stop hook runs the goal check with the Codex input protocol (BR-2459, BR-2519).
     expect(JSON.stringify(JSON.parse(read(root, ".codex/hooks.json")).hooks.Stop)).toContain("canon goal check --hook --runtime codex");
+    // A second Stop entry records a model switched mid-session, which Codex has no hook for (BR-2459, BR-2531).
+    expect(JSON.stringify(JSON.parse(read(root, ".codex/hooks.json")).hooks.Stop)).toContain("canon work model --hook --runtime codex");
     expect(read(root, ".codex/hooks.json")).not.toContain("baseRef");
     expect(read(root, "AGENTS.md")).toContain("canon brief");
     expect(read(root, "canon/config.yaml")).toContain('review: "codex exec --ephemeral --sandbox read-only -"');
