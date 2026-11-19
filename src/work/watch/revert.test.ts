@@ -68,7 +68,7 @@ const changeFile = (root: string, ref: string, change: string) => {
 };
 
 describe("the background floor after a failure", () => {
-  test("BR-2534: a failing test file that passes when run again unchanged is flaky: the commit counts as passed and canon work due lists it", async () => {
+  test("BR-2534 BR-2220: a failing test file that passes when run again unchanged is flaky: the commit counts as passed, main is not recorded as failing, and canon work due lists it", async () => {
     const counter = join(mkdtempSync(join(tmpdir(), "canon-flaky-")), "n");
     roots.push(counter);
     // fails on its first run only
