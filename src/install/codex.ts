@@ -2,7 +2,7 @@ import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node
 import { join, relative } from "node:path";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { symlinkOnPath } from "./install.ts";
-import { BRIEF_COMMAND, CHECK_AS_COMMAND, GOAL_COMMAND, RECORD_COMMAND, RESTATEMENT_COMMAND, SNAPSHOT_COMMAND, type Settings } from "./hook.ts";
+import { BRIEF_COMMAND, CHECK_AS_COMMAND, GOAL_COMMAND, MODEL_COMMAND, RECORD_COMMAND, RESTATEMENT_COMMAND, SNAPSHOT_COMMAND, type Settings } from "./hook.ts";
 
 const HOOKS = ".codex/hooks.json";
 const BEGIN = "<!-- canon:begin -->";
@@ -17,6 +17,8 @@ export const CODEX_HOOKS = [
   { event: "PostToolUse", matcher: "request_user_input", command: RECORD_COMMAND.replace("canon human record", "canon human record --runtime codex") },
   { event: "PostToolUse", matcher: "apply_patch|Write|Edit", command: RESTATEMENT_COMMAND.replace("--hook", "--hook --runtime codex") },
   { event: "Stop", command: GOAL_COMMAND.replace("--hook", "--hook --runtime codex") },
+  // reason: Codex has no model-switch hook; Stop runs every turn and its input carries the model, recorded only when it changed (BR-2459, BR-2531)
+  { event: "Stop", command: MODEL_COMMAND.replace("--hook", "--hook --runtime codex") },
 ] as const;
 const object = (v: unknown): v is Settings => v !== null && typeof v === "object" && !Array.isArray(v);
 

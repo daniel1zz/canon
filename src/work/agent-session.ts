@@ -3,6 +3,7 @@ import { existsSync } from "node:fs";
 import { agentSession, sessionActor } from "../kernel/agent.ts";
 import { err, ok, type Result } from "../kernel/result.ts";
 import { CoordDb } from "./db.ts";
+import { modelFromHook, recordModel } from "./stats/model.ts";
 
 type Session = NonNullable<ReturnType<typeof agentSession>>;
 
@@ -47,6 +48,10 @@ export function recordCodexStartup(cwd: string, raw: string, actorOverride?: str
       const row = db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind='session.codex' AND subject=? ORDER BY id DESC LIMIT 1").get(subject);
       if (row?.detail !== JSON.stringify(detail)) db.event(override || sessionActor("codex", context.id, child), "session.codex", subject, detail);
     }).immediate();
+    // reason: Codex installs no separate start hook for the model; the startup input carries it (BR-2531)
+    const model = modelFromHook(input, "codex");
+    if (!model.ok) return model;
+    recordModel(db, model.value.actor, model.value.record);
     return ok(context);
   } catch (e) { return err("io", `cannot record the Codex session relationship: ${(e as Error).message}`); }
   finally { db.db.close(); }

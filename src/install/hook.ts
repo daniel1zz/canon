@@ -48,6 +48,12 @@ export const RESTATEMENT_COMMAND =
  */
 export const GOAL_COMMAND =
   `canon goal check --hook || echo '{"systemMessage":"canon goal check failed or canon is not on PATH: the goal was not checked"}'`;
+/**
+ * At session start and when the model changes, a record of the session's host and model (BR-2531, BR-2533, D-137).
+ * It prints nothing on success; when canon fails or is not on PATH, the echo tells the user in a systemMessage.
+ */
+export const MODEL_COMMAND =
+  `canon work model --hook || echo '{"systemMessage":"canon work model failed or canon is not on PATH: the model of this session was not recorded"}'`;
 /** The tools whose edits the restatement hook checks (BR-2404). */
 export const RESTATEMENT_MATCHER = "Write|Edit|MultiEdit";
 /** The form canon installed before BR-2087 required the fallback; found once and replaced in place. */
@@ -94,6 +100,15 @@ const postToolUse = (settings: Settings | undefined): HookEntry[] => {
   const post = (settings?.["hooks"] as Record<string, unknown> | undefined)?.["PostToolUse"];
   return Array.isArray(post) ? (post as HookEntry[]) : [];
 };
+
+const eventHooks = (settings: Settings | undefined, event: string): HookEntry[] => {
+  const list = (settings?.["hooks"] as Record<string, unknown> | undefined)?.[event];
+  return Array.isArray(list) ? (list as HookEntry[]) : [];
+};
+
+/** Whether `event` has an entry running canon's model record (BR-2533). */
+const hasModel = (settings: Settings | undefined, event: "SessionStart" | "PostModelSwitch") =>
+  eventHooks(settings, event).some((e) => isObject(e) && Array.isArray(e.hooks) && e.hooks.some((h) => h.command?.trim() === MODEL_COMMAND));
 
 const stopHooks = (settings: Settings | undefined): HookEntry[] => {
   const stop = (settings?.["hooks"] as Record<string, unknown> | undefined)?.["Stop"];
@@ -203,6 +218,9 @@ export interface SettingsState {
   readonly restatement: boolean;
   /** Whether the goal check hook when a session stops is installed (BR-2520). */
   readonly goal: boolean;
+  /** Whether the model record runs at session start and when the model changes (BR-2533). */
+  readonly modelStart: boolean;
+  readonly modelSwitch: boolean;
 }
 
 /** Which of canon's entries the project's settings have: `canon brief` in the current form, an older one or none, and any withdrawn ones. Reads only. */
@@ -211,7 +229,7 @@ export function hookStatus(root: string): Result<SettingsState> {
   if (!s.ok) return s;
   const base = baseRefState(s.value);
   if (base === "invalid") return NOT_OBJECT;
-  return ok({ brief: briefState(s.value), snapshot: hasSnapshot(s.value), checkAs: hasCheckAs(s.value), retired: retiredIn(s.value), baseRef: base === "head", record: hasRecord(s.value), restatement: hasRestatement(s.value), goal: hasGoal(s.value) });
+  return ok({ brief: briefState(s.value), snapshot: hasSnapshot(s.value), checkAs: hasCheckAs(s.value), retired: retiredIn(s.value), baseRef: base === "head", record: hasRecord(s.value), restatement: hasRestatement(s.value), goal: hasGoal(s.value), modelStart: hasModel(s.value, "SessionStart"), modelSwitch: hasModel(s.value, "PostModelSwitch") });
 }
 
 /**
@@ -231,7 +249,9 @@ export function planHook(root: string): Result<Settings | undefined> {
   const record = hasRecord(s.value);
   const restatement = hasRestatement(s.value);
   const goal = hasGoal(s.value);
-  if (state === "present" && snapshot && checkAs && record && restatement && goal && retired.length === 0 && base === "head") return ok(undefined);
+  const modelStart = hasModel(s.value, "SessionStart");
+  const modelSwitch = hasModel(s.value, "PostModelSwitch");
+  if (state === "present" && snapshot && checkAs && record && restatement && goal && modelStart && modelSwitch && retired.length === 0 && base === "head") return ok(undefined);
   const settings = retired.length > 0 ? withoutRetired(s.value ?? {}) : { ...(s.value ?? {}) };
   if (state !== "present") {
     const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
@@ -267,6 +287,12 @@ export function planHook(root: string): Result<Settings | undefined> {
     hooks["Stop"] = [...stopHooks(settings), { hooks: [{ type: "command", command: GOAL_COMMAND }] }];
     settings["hooks"] = hooks;
   }
+  for (const [event, present] of [["SessionStart", modelStart], ["PostModelSwitch", modelSwitch]] as const) {
+    if (present) continue;
+    const hooks = { ...((settings["hooks"] as Record<string, unknown> | undefined) ?? {}) };
+    hooks[event] = [...eventHooks(settings, event), { hooks: [{ type: "command", command: MODEL_COMMAND }] }];
+    settings["hooks"] = hooks;
+  }
   if (base !== "head") settings["worktree"] = { ...((settings["worktree"] as Settings | undefined) ?? {}), baseRef: "head" };
   return ok(settings);
 }
@@ -275,7 +301,7 @@ export function planHook(root: string): Result<Settings | undefined> {
 const isCanonCommand = (c: unknown) => {
   if (typeof c !== "string") return false;
   const t = c.trim();
-  return t === BRIEF_COMMAND || t === OLD_BRIEF_COMMAND || t === SNAPSHOT_COMMAND || t === CHECK_AS_COMMAND || t === RECORD_COMMAND || t === RESTATEMENT_COMMAND || t === GOAL_COMMAND || t.startsWith(RETIRED_HOOK_PREFIX);
+  return t === BRIEF_COMMAND || t === OLD_BRIEF_COMMAND || t === SNAPSHOT_COMMAND || t === CHECK_AS_COMMAND || t === RECORD_COMMAND || t === RESTATEMENT_COMMAND || t === GOAL_COMMAND || t === MODEL_COMMAND || t.startsWith(RETIRED_HOOK_PREFIX);
 };
 
 /** `list` without canon's hooks; an entry left with no hooks goes. Undefined when nothing of canon's was in it. */

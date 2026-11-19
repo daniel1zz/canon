@@ -12,6 +12,9 @@ import { claimsWithState } from "../claims/claims.ts";
 import { batchStats, renderBatchStats } from "./batches.ts";
 import { designStats, renderDesignStats } from "./design.ts";
 import { followEvents } from "./follow.ts";
+import { readFileSync } from "node:fs";
+import { readRuntime } from "../../kernel/agent.ts";
+import { landingsByModel, modelFromHook, recordModel, renderLandingsByModel } from "./model.ts";
 import { eventsSince, lastEventId, parseSince, renderEvents, renderWindow, windowSummary } from "./window.ts";
 
 /** `canon stats` and `canon events`: what the event table recorded. */
@@ -49,6 +52,9 @@ const stats = defineCommand({
     // reason: the batch section is text-only too (BR-2202, BR-2379); `canon events --kind batch.end --json` has the raw rows
     const batches = renderBatchStats(batchStats(ws.db, since ?? 0, until));
     if (batches) say(`\n${batches}`);
+    // reason: text-only like the batch section; the --json fields are fixed (BR-2202, BR-2532)
+    const byModel = renderLandingsByModel(landingsByModel(ws.db, since ?? 0, until));
+    if (byModel) say(`\n${byModel}`);
     // reason: text-only like the review counts; whether a class needs a hard gate is read off these numbers (BR-2494, D-124)
     // reason: revisions are counted on main as committed, never on this checkout's HEAD or uncommitted text (BR-2494)
     const mainSha = must(git(ws.primary, "rev-parse", "--verify", `refs/heads/${ws.config.main}^{commit}`)).trim();
@@ -146,4 +152,23 @@ const usage = defineCommand({
   },
 });
 
-export const statsCommands: DomainCommands = { commands: [entry("stats", 140, stats), entry("events", 150, events), entry("verdict", 152, verdict), entry("usage", 153, usage)] };
+/** `canon work model --hook`: the hook that records the session's host and model (BR-2531, D-137). Prints nothing on success. */
+const model = defineCommand({
+  meta: { description: "Record the host and model of this session from a host hook's input on stdin (run by the SessionStart and PostModelSwitch hooks, and Codex's Stop hook)" },
+  args: { hook: { type: "boolean", description: "Read the hook input from stdin" }, runtime: { type: "string", description: "claude or codex: whose hook input this is" } },
+  run({ args }) {
+    if (!args.hook) fail({ code: "invalid", message: "`canon work model` is run by the host's hooks: pass --hook, the hook input comes on stdin" });
+    const runtime = must(readRuntime(args.runtime));
+    let input: unknown;
+    try { input = JSON.parse(readFileSync(0, "utf8")); } catch { fail({ code: "invalid", message: "canon work model --hook needs the hook's JSON object on stdin" }); }
+    const parsed = must(modelFromHook(input, runtime));
+    const given = (input as Record<string, unknown>)["cwd"];
+    const cwd = typeof given === "string" && given !== "" ? given : process.cwd();
+    const db = must(CoordDb.open(must(CoordDb.pathFor(cwd)), cwd));
+    try { recordModel(db, parsed.actor, parsed.record); }
+    catch (e) { fail({ code: "io", message: `canon work model: cannot record the model: ${(e as Error).message}` }); }
+    finally { db.db.close(); }
+  },
+});
+
+export const statsCommands: DomainCommands = { commands: [entry("model", 67, model, "work"), entry("stats", 140, stats), entry("events", 150, events), entry("verdict", 152, verdict), entry("usage", 153, usage)] };

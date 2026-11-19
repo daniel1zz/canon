@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, symlink
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { installSkills, MANIFEST, skillsSource, versionOf } from "./install.ts";
-import { BRIEF_COMMAND } from "./hook.ts";
+import { BRIEF_COMMAND, MODEL_COMMAND } from "./hook.ts";
 import { BUILTIN_TYPES, idsIn } from "../knowledge/documents/types.ts";
 import { stripCode } from "../knowledge/documents/model.ts";
 import { WORKFLOW_GUIDE } from "../invocation/guide.ts";
@@ -87,7 +87,7 @@ describe("project-level skills", () => {
     expect(cli.code).toBe(0);
     expect(cli.out).not.toContain("skill canon-"); // the skills are the source here; only the session hook is added (BR-2087)
     const settings = JSON.parse(readFileSync(join(repo, ".claude/settings.json"), "utf8"));
-    expect(settings.hooks.SessionStart.flatMap((e: { hooks: { command: string }[] }) => e.hooks.map((h) => h.command))).toEqual([BRIEF_COMMAND]);
+    expect(settings.hooks.SessionStart.flatMap((e: { hooks: { command: string }[] }) => e.hooks.map((h) => h.command))).toEqual([BRIEF_COMMAND, MODEL_COMMAND]);
   });
 
   test("BR-2081: an unedited file follows canon's new version and a dropped one is removed; an edited one refuses the whole install until --force", () => {

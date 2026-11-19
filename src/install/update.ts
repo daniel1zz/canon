@@ -108,7 +108,8 @@ function claudeAssetsStatus(root: string, source: string): Result<AssetsStatus> 
   const record = h.value.record ? [] : ["hook: canon human record after each answer to the question tool (.claude/settings.json)"];
   const restatement = h.value.restatement ? [] : ["hook: canon restatements --hook after each Write or Edit (.claude/settings.json)"];
   const goal = h.value.goal ? [] : ["hook: canon goal check --hook when a session stops (.claude/settings.json)"];
-  const hook = [...brief, ...snapshot, ...checkAs, ...record, ...restatement, ...goal, ...h.value.retired.map((r) => withdrawn[r]), ...baseRef];
+  const model = [...(h.value.modelStart ? [] : ["hook: canon work model --hook at session start (.claude/settings.json)"]), ...(h.value.modelSwitch ? [] : ["hook: canon work model --hook when the model changes (.claude/settings.json)"])];
+  const hook = [...brief, ...snapshot, ...checkAs, ...record, ...restatement, ...goal, ...model, ...h.value.retired.map((r) => withdrawn[r]), ...baseRef];
   const g = guardLine(root);
   if (!g.ok) return g;
   const x = excludeMissing(root, WORKTREES_EXCLUDE);
