@@ -206,7 +206,7 @@ test("BR-2528: a deleted coordination database stops watch with a watch stopped 
   expect(await p.exited).toBe(0);
 });
 
-test("BR-2529: a Claude Code main session's brief lists what is due and the Monitor line; Codex gets no Monitor line; a worker and a claimed worktree get neither", () => {
+test("BR-2529, BR-2024: a Claude Code main session's brief lists what is due and the Monitor line; Codex gets no Monitor line; a worker and a claimed worktree get neither", () => {
   const root = fresh();
   const hint = "Keep canon work watch running under Monitor (timeout 30 min); when it expires, re-arm with --since <the last event number it printed>.";
   const empty = cli(root, "agent:s1", ["brief"], { CLAUDECODE: "1" });
