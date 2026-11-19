@@ -72,7 +72,7 @@ describe("JUnit reports: what each testcase says", () => {
 
   test("BR-2338: entities, CDATA and comments in a report are read without changing which testcases there are", () => {
     const r = parseJUnit('<?xml version="1.0"?><!-- c --><testsuites><testsuite name="a &amp; b"><testcase name="x &lt; y &#65;" classname=\'k\'><failure><![CDATA[</testcase>]]></failure></testcase></testsuite></testsuites>');
-    expect(r.ok && r.value).toEqual([{ suites: ["a & b"], classname: "k", name: "x < y A", runs: true }]);
+    expect(r.ok && r.value).toEqual([{ suites: ["a & b"], classname: "k", name: "x < y A", runs: true, failed: true }]);
   });
 });
 

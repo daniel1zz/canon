@@ -131,7 +131,8 @@ describe("canon floor watch thresholds", () => {
     const c = land(b.root, "c.txt");
     const r = await watchAt(b, after(b.root, 1));
     expect(r.waited).toBe(false);
-    expect(b.tested().at(-1)).toBe(c);
+    // reason: after the failure the floor also runs as the probe that looks for the landing to revert (BR-2535), so c is tested but need not be the last run
+    expect(b.tested()).toContain(c);
     expect(r.out).toContain("main is failing, so there is no quiet wait");
   });
 
