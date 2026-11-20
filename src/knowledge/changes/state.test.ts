@@ -317,3 +317,13 @@ test("BR-2526 BR-2571: a delegation of a branch-only change dropped before BR-25
   expect(r.stderr.toString()).toBe("");
   expect(r.exitCode).toBe(0);
 });
+
+test("BR-2497 BR-2571: canon work status no longer lists the delegation record of a branch-only change dropped before BR-2574; an open change's record it lists", () => {
+  const root = repo({ "changes/C-1.md": change(1, "open") });
+  db(root, (w) => w.db.event("agent:a", "drop.done", "C-671", {}));
+  delegateRow(root, "C-671", "w0");
+  delegateRow(root, "C-1", "w1");
+  const out = cli(root, "agent:s1", "work", "status").out;
+  expect(out).not.toContain("C-671: delegated to w0");
+  expect(out).toContain("C-1: delegated to w1");
+});
