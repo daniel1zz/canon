@@ -233,14 +233,19 @@ describe("canon config --flow page", () => {
     const root = withConfig(BASE);
     const page = join(root, ".canon/flow.html");
     expect(canon(root, "config", "--flow").code).toBe(0);
+    // the remote's YAML snippet as the page shows it, read from the data the page embeds
+    const remoteYaml = () => {
+      const data = readFileSync(page, "utf8").match(/<script id="data" type="application\/json">([^<]*)<\/script>/)![1]!;
+      return keyIn(step(JSON.parse(data) as FlowView, "after.push"), "remote").yaml;
+    };
     const before = readFileSync(page, "utf8");
-    expect(before).not.toContain('"remote: \\"origin\\""');
+    expect(remoteYaml()).toBe("remote: ");
     writeFileSync(join(root, "canon/config.yaml"), `${BASE}remote: origin\n`);
     sh(root, "commit", "-qam", "push to origin");
     expect(canon(root, "config").code).toBe(0);
     expect(readFileSync(page, "utf8")).toBe(before);
     expect(canon(root, "config", "--flow").code).toBe(0);
-    expect(readFileSync(page, "utf8")).toContain('"remote: \\"origin\\""');
+    expect(remoteYaml()).toBe('remote: "origin"');
   });
 
   test("BR-2541: canon brief writes no page", () => {
