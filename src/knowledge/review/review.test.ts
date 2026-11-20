@@ -113,7 +113,7 @@ describe("rule review prompt", () => {
     expect(prompt).toContain("a defect only between documents this landing does not change is a `note`");
   });
 
-  test("BR-2009: the instructions make a new refusal outside the four allowed kinds, or one that stops unrelated work, a note suggesting a reminder", () => {
+  test("BR-2009: the instructions make a new refusal outside the four allowed kinds, or one that stops unrelated work, a note suggesting a reminder or the missing, wrong or stale context (D-152)", () => {
     const { root, corpus } = corpusOf(files);
     const prompt = reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 4)));
     expect(prompt).toContain("makes a command refuse or stop work for a reason other than keeping main correct");
