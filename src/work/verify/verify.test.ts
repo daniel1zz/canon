@@ -492,6 +492,15 @@ describe("canon work test type check and canon check", () => {
     expect(lastEvent(wt)).toMatchObject({ failed: 0, check: 1 });
   });
 
+  test("BR-2109: a canon check note is printed by canon work test and does not fail it", () => {
+    const { wt } = fixture();
+    write(wt, { "canon/decisions/D-1.md": "---\nid: D-1\ntitle: d\nstatus: accepted\n---\n\n## 背景\n\nx\n\n## 方案\n\n1. A：采用。\n\n## 决定\n\nA\n\n## 后果\n\nx\n" });
+    const r = canon(wt, "work", "test");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("note: canon/decisions/D-1.md: D-1 has 1 option(s) under ## 方案; a choice needs at least two (BR-2109)");
+    expect(r.out).toContain("canon check: ok");
+  });
+
   test("BR-2456: a rule whose examples the change edited with no test line changed is listed as landing 待重新执行, a note that does not fail the run; changing a line in its test clears it", () => {
     const { root, wt } = fixture();
     write(wt, { [`canon/rules/core/${rule}.md`]: ruleText("x").replace("- a → b", "- a → c") });
