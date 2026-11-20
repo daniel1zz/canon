@@ -37,6 +37,8 @@ export const BUILTIN_TYPES: readonly DocType[] = [
   { name: "release", prefix: "R", dir: "releases", statuses: ["planned", "active", "shipped", "dropped"], defaultStatus: "planned", fields: [], sections: ["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"], items: {}, builtin: true },
   // reason: built in beside release, because a release lists its features and the release checks read both (D-130)
   { name: "feature", prefix: "F", dir: "features", statuses: ["active", "dropped"], defaultStatus: "active", fields: [], sections: ["目标", "范围", "不做", "成功标准"], items: {}, builtin: true },
+  // reason: built in, not declared, because only canon's code checks the aspect list, reminds when none exists and reviews it (D-145, D-146)
+  { name: "quality", prefix: "Q", dir: "quality", statuses: ["draft", "active", "retired"], defaultStatus: "draft", fields: [], sections: ["门槛", "来源"], items: {}, builtin: true },
 ];
 
 /** Front-matter keys canon itself owns; a declared field may not reuse one. */

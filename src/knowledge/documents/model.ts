@@ -10,6 +10,9 @@
  *   canon/changes/C-<n>-<slug>.md          one unit of intended work (P3)
  *   canon/notes/N-<n>-<slug>.md            research, retros, references
  *   canon/releases/R-<n>.md                a version's PRD: goal, scope, what it leaves out (D-61)
+ *   canon/features/F-<n>.md                a part of a release with its own goal (D-130)
+ *   canon/quality/Q-<n>.md                 a quality standard: aspect, threshold, sources, judge, what it covers (D-145)
+ *   canon/quality/README.md                the product's aspects and the owner's decisions on them (D-146); not a document
  *
  * One file per document so concurrent sessions only conflict when they edit the same document
  * (prototype: one file per rule 0% false conflicts vs 53% for a shared append-only file).
@@ -19,7 +22,7 @@
 import type { DocType } from "./types.ts";
 
 /** Built-in kinds; a document of a type declared in config (D-2 §2) has kind "extra" and names its type. */
-export type Kind = "rule" | "decision" | "change" | "note" | "release" | "feature" | "extra";
+export type Kind = "rule" | "decision" | "change" | "note" | "release" | "feature" | "quality" | "extra";
 
 /** `planned`: designed, not yet executed; needs no test, so a missing test blocks no landing (BR-2235, D-32). */
 export type RuleStatus = "active" | "retired" | "planned";
@@ -29,6 +32,10 @@ export type ChangeStatus = "open" | "done" | "dropped";
 export type ReleaseStatus = "planned" | "active" | "shipped" | "dropped";
 /** `dropped`: the feature is not built (D-130). */
 export type FeatureStatus = "active" | "dropped";
+/** `draft`: written by a session, in force, not yet confirmed by the owner; `active`: confirmed; `retired`: no longer applies (D-145). */
+export type QualityStatus = "draft" | "active" | "retired";
+/** Who judges a quality standard (BR-2552). */
+export type QualityJudge = "test" | "agent" | "owner";
 
 interface Base {
   readonly id: string;
@@ -133,6 +140,19 @@ export interface Feature extends Base {
   readonly status: FeatureStatus;
 }
 
+/** A quality standard (`canon/quality/Q-n.md`, BR-2552, D-145): one threshold of one aspect of the product, with who judges it. */
+export interface Quality extends Base {
+  readonly kind: "quality";
+  readonly status: QualityStatus;
+  /** The aspect it belongs to, a name the aspect list should hold (BR-2555, BR-2556). */
+  readonly aspect: string;
+  readonly judge: QualityJudge;
+  /** Domains or repository paths it covers, as written (BR-2552). */
+  readonly covers: readonly string[];
+  /** Why a retired standard no longer applies; present exactly when retired. */
+  readonly retiredReason?: string;
+}
+
 /** A document of a type the project declared in `canon/config.yaml` (BR-2050). */
 export interface Extra extends Base {
   readonly kind: "extra";
@@ -141,7 +161,7 @@ export interface Extra extends Base {
   readonly status: string | undefined;
 }
 
-export type Doc = Rule | Decision | Change | Note | Release | Feature | Extra;
+export type Doc = Rule | Decision | Change | Note | Release | Feature | Quality | Extra;
 
 /** The type name of a document: its kind for built-ins, the declared name otherwise. */
 export const typeNameOf = (d: Doc): string => (d.kind === "extra" ? d.type : d.kind);
@@ -182,6 +202,8 @@ export interface Corpus {
    * parse: such a file still holds its number, so allocation must not hand it out again (BR-2002).
    */
   readonly numbers: Readonly<Record<string, number>>;
+  /** The aspect list `canon/<quality dir>/README.md` as written, when it exists (BR-2556); its own module reads it. */
+  readonly qualityReadme?: { readonly path: string; readonly text: string };
 }
 
 /**

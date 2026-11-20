@@ -4,6 +4,9 @@ import { join } from "node:path";
 import { ask } from "../humans/questions.ts";
 import { project, sh, startNew, ws } from "../testkit.ts";
 
+/** The overview's quality line in a project without canon/quality (BR-2558). */
+const NO_QUALITY = "质量标准：还没有（canon/quality）。用 canon-product 按产品类型调研同类产品，列出方面、写 Q-n";
+
 // reason: each case spawns the CLI, which under load can take seconds per run (as in brief.test.ts)
 setDefaultTimeout(60_000);
 
@@ -78,6 +81,7 @@ describe("canon overview", () => {
       ` [已满足] 规则全过。 证据：${C(4)}`,
       " [待负责人] 负责人玩通。",
       " [未证明] 没人解释也能玩。",
+      NO_QUALITY,
       "",
       "## 计划",
       `${C(5)} 变更5 已完成 0/2 (0%) 进行中 0 可开始 1 被挡住 1`,
@@ -107,7 +111,7 @@ describe("canon overview", () => {
     write(root, Object.fromEntries([2, 3, 10].map((n) => [`canon/releases/${R(n)}.md`, release(n, "shipped", "内容", `shipped_at: ${"b".repeat(40)}\n`)])));
     const none = canon(root, "overview");
     expect(none.code).toBe(0);
-    expect(none.out.split("\n").slice(0, 4)).toEqual(["## 当前版本", "(no release in progress)", "", "## 计划"]);
+    expect(none.out.split("\n").slice(0, 5)).toEqual(["## 当前版本", "(no release in progress)", NO_QUALITY, "", "## 计划"]);
     expect(none.out).toContain("## 最近合入");
   });
 
@@ -115,7 +119,7 @@ describe("canon overview", () => {
     const root = project();
     const r = canon(root, "overview");
     expect(r.code).toBe(0);
-    expect(r.out.trim().split("\n")).toEqual(["## 当前版本", "(no release in progress)", "", "## 计划", "(no plans)", "", "## 等负责人", "(nothing)", "", "## 待办顺序", "(none)", "", "## 最近合入", "(none)"]);
+    expect(r.out.trim().split("\n")).toEqual(["## 当前版本", "(no release in progress)", NO_QUALITY, "", "## 计划", "(no plans)", "", "## 等负责人", "(nothing)", "", "## 待办顺序", "(none)", "", "## 最近合入", "(none)"]);
   });
 
   test("BR-2505: a claimed change carries its mark in the order", () => {
@@ -170,6 +174,8 @@ describe("canon brief: the overall progress summary", () => {
 
   test("BR-2506: with nothing at all there is no summary; with no release but a question waiting, the release line says so", () => {
     const root = project();
+    // reason: quality standards all accounted for (BR-2558 case 3), so only this rule's own parts could print a summary
+    write(root, { "canon/quality/README.md": "# 质量\n\n## 方面\n\n- **联机**：不适用：canon human #3\n" });
     expect(canon(root, "brief").out).not.toContain("Overall progress");
     ask(ws(root).db, "agent:a", null, "要不要发布？", ["是", "否"]);
     const lines = canon(root, "brief").out.split("\n");
@@ -240,6 +246,7 @@ describe("releases made of features", () => {
       `${R(5)} active 版本5 规划中 0 已通过 0 待 main 测试 0 待重新执行 0`,
       "成功标准 1 条：已满足 0 未满足 0 待负责人 0 未证明 1",
       " [未证明] 甲",
+      NO_QUALITY,
     ]);
     expect(lines).toContain(`成功标准 ${R(3)}: 负责人玩通。`);
     expect(lines.map(squash)).toContain(`${C(11)} 变更11 2026-11-16 06:00 UTC （不推进：修 YAML）`);

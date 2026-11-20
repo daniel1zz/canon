@@ -3,7 +3,7 @@ import { join, relative } from "node:path";
 import { parseDocFile, parseReadme } from "./docfile.ts";
 import { parseLinks, parsePasses } from "./behaviour.ts";
 import { planLink } from "./planlink.ts";
-import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type Advances, type DecisionStatus, type Doc, type FeatureStatus, type Domain, type Layout, type ReleaseStatus, type RuleStatus } from "./model.ts";
+import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type Advances, type DecisionStatus, type Doc, type FeatureStatus, type Domain, type Layout, type QualityJudge, type QualityStatus, type ReleaseStatus, type RuleStatus } from "./model.ts";
 import { BUILTIN_TYPES, type DocType } from "./types.ts";
 
 /** A file under canon/ that does not fit the model. `canon check` reports these; reading never stops on one. */
@@ -155,11 +155,18 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
   };
   for (const domain of listDirs(rulesDir)) walk(domain, undefined);
 
+  let qualityReadme: { path: string; text: string } | undefined;
   for (const type of types) {
     if (type.name === "rule") continue;
     const dir = join(base, type.dir);
     const numbered = new RegExp(`^${type.prefix}-\\d+(-[a-z0-9-]+)?\\.md$`);
     for (const file of listFiles(dir)) {
+      // reason: the quality directory's README is the aspect list, not a quality standard (BR-2552, BR-2556)
+      if (type.name === "quality" && file === "README.md") {
+        const full = join(dir, file);
+        qualityReadme = { path: rel(full), text: readFileSync(full, "utf8") };
+        continue;
+      }
       seen(type.prefix, file);
       const full = join(dir, file);
       const path = rel(full);
@@ -247,6 +254,13 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         docs.push({ kind: "release", ...common, status: p.status as ReleaseStatus, ...(shipped ? { shippedAt: shippedAt as string } : {}), features: features as string[], ...(mergedInto !== undefined ? { mergedInto: mergedInto as string } : {}) });
       } else if (type.name === "feature") {
         docs.push({ kind: "feature", ...common, status: p.status as FeatureStatus });
+      } else if (type.name === "quality") {
+        const q = qualityFields(p.meta, p.status as string);
+        if (typeof q === "string") {
+          problems.push({ path, message: q });
+          continue;
+        }
+        docs.push({ kind: "quality", ...common, status: p.status as QualityStatus, ...q });
       } else if (type.name === "note") {
         docs.push({ kind: "note", ...common });
       } else {
@@ -254,7 +268,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
       }
     }
   }
-  return { corpus: { docs, domains, types, layout: { codeRoot, shared }, numbers }, problems };
+  return { corpus: { docs, domains, types, layout: { codeRoot, shared }, numbers, ...(qualityReadme ? { qualityReadme } : {}) }, problems };
 }
 
 function checkCommon(meta: Record<string, unknown>, idFromName: string): string | undefined {
@@ -291,6 +305,26 @@ function releaseTags(meta: Record<string, unknown>, prefix: string, featurePrefi
   const early = release !== undefined ? (changed as string[] | undefined)?.find((c) => num(c) <= num(release)) : undefined;
   if (early !== undefined) return `\`changed_in\` names ${early}, which is not later than \`release\` ${release as string}: a release is changed only by a later one (D-61)`;
   return { release: release as string | undefined, changedIn: (changed as string[] | undefined) ?? [], feature: feature as string | undefined };
+}
+
+const JUDGES: readonly string[] = ["test", "agent", "owner"] satisfies readonly QualityJudge[];
+
+/** A quality standard's own front matter (BR-2552), or the problem with it; whether aspect and covers name anything is `canon check`'s to say (BR-2555). */
+function qualityFields(meta: Record<string, unknown>, status: string): { aspect: string; judge: QualityJudge; covers: string[]; retiredReason?: string } | string {
+  const aspect = meta["aspect"];
+  if (typeof aspect !== "string" || aspect.trim() === "") return "`aspect` must name the aspect this standard belongs to, as canon/quality/README.md lists it (BR-2552)";
+  const judge = meta["judge"];
+  if (typeof judge !== "string" || !JUDGES.includes(judge)) return `\`judge\` must be one of ${JUDGES.join(", ")}: who judges this standard (BR-2552)`;
+  const covers = meta["covers"];
+  const badPath = (c: string) => c.startsWith("/") || c.split("/").includes("..");
+  if (!Array.isArray(covers) || covers.length === 0 || covers.some((c) => typeof c !== "string" || c.trim() === "" || badPath(c.trim()))) {
+    return "`covers` must be a non-empty list of domains or repository-relative paths (`.` for the whole repository; no absolute path, no `..`) (BR-2552)";
+  }
+  const reason = meta["retired_reason"];
+  const hasReason = typeof reason === "string" && reason.trim() !== "";
+  if (status === "retired" && !hasReason) return "a retired standard needs `retired_reason`: why it no longer applies (BR-2552)";
+  if (status !== "retired" && reason !== undefined) return `\`retired_reason\` is only for a retired standard; this one is ${status} (BR-2552)`;
+  return { aspect: aspect.trim(), judge: judge as QualityJudge, covers: (covers as string[]).map((c) => c.trim()), ...(hasReason ? { retiredReason: (reason as string).trim() } : {}) };
 }
 
 /** A change's `advances` (BR-2517): undefined when absent, the problem with it as a string. */

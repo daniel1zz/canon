@@ -8,6 +8,7 @@ import { planStatuses, summaryLine as planLine, type PlanStatus } from "../../kn
 import { CRITERION_LABEL, criteriaCountLine, criteriaOf, type Criterion } from "../../knowledge/releases/criteria.ts";
 import { releaseStatuses, summaryLine as releaseLine, type ReleaseStatus } from "../../knowledge/releases/status.ts";
 import { releaseScope } from "../../knowledge/releases/features.ts";
+import { briefQualityLine, overviewQualityLine, qualitySummary, type QualitySummary } from "../../knowledge/quality/aspects.ts";
 import { openFindings, type OpenFinding } from "../../knowledge/review/findings/findings.ts";
 import { executionStates } from "../execution/state.ts";
 import { questions, type Question } from "../humans/questions.ts";
@@ -64,6 +65,8 @@ export interface Overview {
   readonly landed: readonly Landed[];
   /** Commits on main of the last GOAL_DAYS days that changed the goal, newest first (BR-2505, BR-2510). */
   readonly goalChanges: readonly GoalCommit[];
+  /** How far quality standards cover the product's aspects on main (BR-2558). */
+  readonly quality: QualitySummary;
 }
 
 export interface GoalCommit {
@@ -166,6 +169,7 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean }):
     backlogMore: Math.max(0, open.length - BACKLOG_SHOWN),
     landed: landed(ws, corpus.value),
     goalChanges: goalCommits(ws),
+    quality: qualitySummary(corpus.value),
   });
 }
 
@@ -215,6 +219,8 @@ export function overviewLines(o: Overview): string[] {
     for (const f of r.features) out.push(`  模块 ${f.doc.id} ${f.doc.title}  ${criteriaCountLine(f.criteria)}`, ...f.criteria.map((c) => `    ${criterionLine(c)}`));
     for (const m of r.merged) out.push(`  并入 ${m.doc.id} ${m.doc.title}  ${criteriaCountLine(m.criteria)}`, ...m.criteria.map((c) => `    ${criterionLine(c)}`));
   }
+  // reason: one line after the releases every time, a reminder when nothing is set or an aspect is uncovered (BR-2505, BR-2558)
+  out.push(overviewQualityLine(o.quality));
   if (o.goalChanges.length > 0) {
     out.push(`最近 ${GOAL_DAYS} 天的目标改动：`);
     for (const g of o.goalChanges) out.push(`  ${g.sha.slice(0, 9)} ${g.subject}`, ...g.changes.map((c) => `    ${c}`));
@@ -259,6 +265,7 @@ export function overviewJson(o: Overview): Record<string, unknown> {
     backlog_more: o.backlogMore,
     landed: o.landed.map((l) => ({ id: l.id, title: l.title ?? null, at: l.at, advances: l.advances === undefined ? null : l.advances.kind === "none" ? { none: l.advances.reason } : l.advances.refs })),
     goal_changes: o.goalChanges.map((g) => ({ sha: g.sha, subject: g.subject, changes: g.changes })),
+    quality: { standards: o.quality.standards, drafts: o.quality.drafts, uncovered: o.quality.uncovered, none: o.quality.none },
   };
 }
 
@@ -266,8 +273,9 @@ export function overviewJson(o: Overview): Record<string, unknown> {
 export function briefSummary(o: Overview): string[] {
   const notDone = o.plans.filter((p) => p.counts.done < p.steps.length);
   const { questions: q, findings: f, criteria: c, stalled: st } = o.waiting;
+  const quality = briefQualityLine(o.quality);
   // reason: with nothing to say the brief stays the bare guide (BR-2024, BR-2506)
-  if (o.releases.length === 0 && notDone.length === 0 && q.length + f.length + c.length + st.length === 0 && o.goalChanges.length === 0) return [];
+  if (o.releases.length === 0 && notDone.length === 0 && q.length + f.length + c.length + st.length === 0 && o.goalChanges.length === 0 && quality === undefined) return [];
   const out = ["Overall progress (canon overview):"];
   for (const r of o.releases) out.push(`  ${headLine(r.doc)}  ${criteriaCountLine(allCriteria(r))}${r.fallback ? "  (no release is active: the lowest planned one)" : ""}`);
   if (o.releases.length === 0) out.push("  no release in progress");
@@ -275,5 +283,7 @@ export function briefSummary(o: Overview): string[] {
   if (o.goalChanges.length > 0) out.push(`  goal changed in the last ${GOAL_DAYS} days: ${o.goalChanges.map((g) => g.sha.slice(0, 9)).join(", ")} (canon overview)`);
   if (q.length + f.length + c.length > 0) out.push(`  waiting for the owner: ${q.length} question(s), ${f.length} tier-C finding(s), ${c.length} criterion(s)`);
   if (st.length > 0) out.push(`  stalled delegations: ${st.map((s) => s.subject).join(", ")} (canon work status)`);
+  // reason: only a reminder, short because every session reads it (BR-2506, BR-2558, D-139)
+  if (quality !== undefined) out.push(`  ${quality}`);
   return out;
 }

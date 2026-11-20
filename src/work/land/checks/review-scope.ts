@@ -21,7 +21,7 @@ import { shippedUnedited } from "../../../install/install.ts";
  * `canon work review` both build their prompts from it, so the two see the same thing (BR-2009, BR-2143).
  */
 export interface ReviewScope {
-  /** Every added, edited or deleted file under canon/rules, canon/decisions, canon/releases and canon/features, paired by exact rename. */
+  /** Every added, edited or deleted file under canon/rules, canon/decisions, canon/releases, canon/features and canon/quality (not its README), paired by exact rename. */
   readonly entries: readonly { status: string; path: string }[];
   /** Files only moved with identical content: not reviewed. */
   readonly renamed: readonly string[];
@@ -45,8 +45,10 @@ export interface ReviewScope {
   readonly activated: readonly Activation[];
 }
 
-/** The directories whose files a landing's rule review reads; a feature document is reviewed like a release (BR-2009, BR-2010, #249). */
-export const REVIEWED_DIRS: readonly string[] = ["canon/rules", "canon/decisions", "canon/releases", "canon/features"];
+/** The directories whose files a landing's rule review reads; a feature document is reviewed like a release (BR-2009, BR-2010, #249), a quality standard too (BR-2559). */
+export const REVIEWED_DIRS: readonly string[] = ["canon/rules", "canon/decisions", "canon/releases", "canon/features", "canon/quality"];
+/** The aspect list: names and the owner's decisions, which canon check verifies; not reviewed (BR-2559). */
+export const ASPECT_LIST = "canon/quality/README.md";
 
 /**
  * Which files under canon/rules, canon/decisions and canon/releases a change between `base` and `head` adds, edits or deletes
@@ -62,6 +64,7 @@ export function reviewEntries(wt: string, base: string, head: string): { entries
   const renamed: string[] = [];
   for (const l of knowledge.ok && knowledge.value !== "" ? knowledge.value.split("\n") : []) {
     const [status, from, to] = l.split("\t") as [string, string, string | undefined];
+    if (from === ASPECT_LIST && (to === undefined || to === ASPECT_LIST)) continue;
     if (status[0] !== "R" || to === undefined) entries.push({ status: status[0]!, path: from });
     else if (sameBlob(wt, `${base}:${from}`, `${head}:${to}`)) renamed.push(`${from} → ${to}`);
     else entries.push({ status: "D", path: from }, { status: "A", path: to });
@@ -125,7 +128,7 @@ export function reviewScope(wt: string, base: string, head: string, corpus: Corp
   // reason: a decision or release already on main brings only the domains its added or changed lines name, not every
   // domain its whole text names: a one-line edit of a release naming 116 rules planned 127 calls (BR-2009, #237)
   const namedInAdded: { id: string; ids: string[] }[] = [];
-  for (const d of changedDocs.filter((x) => x.kind === "decision" || x.kind === "release" || x.kind === "feature")) {
+  for (const d of changedDocs.filter((x) => x.kind === "decision" || x.kind === "release" || x.kind === "feature" || x.kind === "quality")) {
     const now = readFileSync(join(wt, d.path), "utf8");
     const before = textAt(wt, base, d.path);
     if (before === undefined) continue; // a new document: every line is new, so its whole text counts

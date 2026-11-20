@@ -105,7 +105,7 @@ function reviewReasons(ws: Workspace, base: string | undefined, commit: string):
     const parent = git(ws.root, "rev-parse", "--verify", "--quiet", `${sha}^`);
     if (!parent.ok) return err("io", `cannot resolve the parent of ${sha.slice(0, 9)}: ${parent.error.message}`);
     if (reviewEntries(ws.root, parent.value, sha).entries.length === 0) continue;
-    reasons.push(`${sha.slice(0, 9)} changed canon/rules, canon/decisions, canon/releases or canon/features but no review after its landing is recorded (landed without a \`review\` command? see review.skip): canon work review-landed --again <C-n>`);
+    reasons.push(`${sha.slice(0, 9)} changed canon/rules, canon/decisions, canon/releases, canon/features or canon/quality but no review after its landing is recorded (landed without a \`review\` command? see review.skip): canon work review-landed --again <C-n>`);
   }
   return ok({ reasons, waiting });
 }

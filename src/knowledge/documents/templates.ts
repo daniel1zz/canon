@@ -76,6 +76,8 @@ export function templateFor(type: string, projectTemplates: Readonly<Record<stri
       return `## 为什么\n\n<要解决什么问题。>\n\n## 要改什么\n\n<具体改动，以及会新增或修改哪些规则。>\n\n## 陷阱和假设\n\n<新会话接手时最容易踩的坑，以及这个变更依赖的假设；没有就删掉这一节。>\n\n${LESSONS_SECTION}\n\n<每条一行：对流程或工具的认识 → 由哪条规则、检查或命令保证（编号），或“只靠文字：原因”，或“待负责人确认是否固化”。本变更为自己的功能或修复写的规则、测试和检查不是教训。没有就写“无”。>\n`;
     case "release":
       return "## 目标\n\n<这个版本要达到什么结果，一两句话。>\n\n## 用户\n\n<谁用这个版本，用来做什么。>\n\n## 范围\n\n<这个版本交付什么；标着本版本的规则（release: 本编号）是它的行为部分，可以引用故事地图的行。>\n\n## 不做\n\n<这个版本明确不做什么；标着本版本的规则不许做这里排除的事。>\n\n## 成功标准\n\n<怎样算做成了，要能检验。>\n\n## 故事地图切片\n\n<这个版本在故事地图上的那一片：线上方的行各变成一条标着本版本的规则。>\n";
+    case "quality":
+      return "## 门槛\n\n<一句能判通过或不通过的话：在什么条件下、量什么、多少算过。>\n\n## 来源\n\n- <对标的哪个产品、实测的数字或录像、哪条用户评价，写明出处>\n";
     default:
       // A declared type without a template file starts from its required sections (BR-2093).
       return sections.map((s) => `## ${s}\n\n<${s}>\n`).join("\n");
