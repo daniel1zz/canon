@@ -36,10 +36,13 @@ export function landedWordingQuestions(wt: string, base: string, head: string, c
   return wordingQuestions(wt, head, corpus, change, records);
 }
 
-/** The text of the finding a rule not confirmed as wording-only opens; it names the rule, so it is attached to it (BR-2434). */
+/**
+ * The text of the finding a rule not confirmed as wording-only opens; it names the rule, so it is attached to it (BR-2434).
+ * reason: it names no other rule or decision of its own, since every id in the text attaches the finding to that document too
+ */
 export function wordingFindingText(id: string, change: string | null, answer: string | undefined, why: WordingWhy | undefined): string {
   const said = answer === "behaviour" && why ? `the review answered behaviour: “${why.quote}” requires ${why.requires || "(not said)"}` : `the review answered ${answer === undefined ? "nothing" : JSON.stringify(answer)}`;
-  return `${id}: ${change ?? "this landing"} recorded it as a wording-only edit, but ${said}. Execute it as a behaviour change: change a line in a running test whose title names ${id}, or for a rule with untested:, a line under ## 验收, in a change that lists it in rules: (BR-2239)`;
+  return `${id}: ${change ?? "this landing"} recorded it as a wording-only edit, but ${said}. Execute it as a behaviour change: change a line in a running test whose title names ${id}, or for a rule with untested:, a line under ## 验收, in a change that lists it in rules:`;
 }
 
 export interface WordingJob {

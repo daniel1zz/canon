@@ -306,7 +306,11 @@ describe("rules a change edits without listing them (BR-2241, issue #104)", () =
     const out = await land(ws(s.worktree), FINISH, quiet);
     expect(out.kind).toBe("landed");
     expect(changeOn(root, "main", s.change).passes).toEqual({ [br(2)]: { hash: hashOf(root, 2), method: "migration", wording: true } });
-    expect(readFileSync(prompt, "utf8")).toContain("# Wording judgements");
+    const said = (await reviewLandings(root)).join("\n"); // the wording judgement runs in the review after the landing (BR-2239)
+    expect(said).toContain(`wording judgement: ${br(2)}: wording`);
+    const ev = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'review.wording' ORDER BY id DESC LIMIT 1").get()!;
+    expect(JSON.parse(ev.detail).docs).toEqual([br(2)]);
+    expect(readFileSync(prompt, "utf8")).toContain("Statement two, reworded."); // the rule review after it read the new text
   }, TIMED);
 
   test("BR-2241: a rule only moved, a title-only edit, and a rule retired, none listed, need no evidence and get no record", async () => {
