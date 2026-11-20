@@ -1,4 +1,5 @@
 import { existsSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
+import { endOnDrop } from "../delegation/records.ts";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Workspace } from "../workspace.ts";
@@ -265,6 +266,8 @@ export function drop(ws: Workspace, change: string, say: (line: string) => void)
   unholdClaim(ws.db, { ...hold.value, prior: null });
   dropHandoff(ws.db, t.change);
   clearFixChange(ws.db, t.change);
+  // reason: a dropped change is nobody's work any more, so its delegation ends with it (BR-2574, D-151)
+  endOnDrop(ws.db, ws.actor, t.change, "canon work drop");
   ws.db.event(ws.actor, "drop.done", t.change, { worktree: t.worktree, branch: t.branch, losses: lost.value.lines, archive: archived?.ref ?? null, archive_commit: archived?.commit ?? null });
   say(`dropped ${t.change}${t.worktree ? `: removed ${t.worktree}` : ""}${t.branch ? `, deleted branch ${t.branch}` : ""}`);
   if (archived) {

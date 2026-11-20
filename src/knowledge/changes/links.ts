@@ -11,16 +11,21 @@ export interface ChangeLinks {
   readonly issues?: readonly number[];
   readonly dependsOn?: readonly string[];
   readonly doneBy?: string;
+  /** On a done change closed by `canon change close`: the commit on main that carried its work (BR-2573). */
+  readonly landedIn?: string;
 }
 
 /** The front-matter keys of the links (BR-2561); reserved so a declared type cannot reuse them. */
-export const LINK_KEYS = ["release", "feature", "issues", "depends_on", "done_by"] as const;
+export const LINK_KEYS = ["release", "feature", "issues", "depends_on", "done_by", "landed_in"] as const;
 
 export interface Prefixes {
   readonly change: string;
   readonly release: string;
   readonly feature: string;
 }
+
+/** A commit id as `landed_in` takes it (BR-2573). */
+export const COMMIT = /^[0-9a-f]{7,40}$/;
 
 const idOf = (prefix: string) => new RegExp(`^${prefix}-\\d+$`);
 
@@ -46,6 +51,11 @@ export function changeLinks(meta: Record<string, unknown>, p: Prefixes): ChangeL
   if (meta["release"] !== undefined) out.release = meta["release"] as string;
   if (meta["feature"] !== undefined) out.feature = meta["feature"] as string;
   if (meta["done_by"] !== undefined) out.doneBy = meta["done_by"] as string;
+  const landed = meta["landed_in"];
+  if (landed !== undefined) {
+    if (typeof landed !== "string" || !COMMIT.test(landed)) return "`landed_in` must be a commit id of 7 to 40 hex digits (BR-2573)";
+    out.landedIn = landed;
+  }
   const issues = meta["issues"];
   if (issues !== undefined) {
     if (!Array.isArray(issues) || issues.some((i) => typeof i !== "number" || !Number.isInteger(i) || i <= 0)) return "`issues` must be a list of GitHub issue numbers, such as [12, 40] (BR-2561)";
@@ -67,6 +77,7 @@ export function linkMeta(l: ChangeLinks): Record<string, unknown> {
     issues: l.issues && l.issues.length > 0 ? [...l.issues] : undefined,
     depends_on: l.dependsOn && l.dependsOn.length > 0 ? [...l.dependsOn] : undefined,
     done_by: l.doneBy,
+    landed_in: l.landedIn,
   };
 }
 

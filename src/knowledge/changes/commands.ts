@@ -1,4 +1,5 @@
 import { defineCommand } from "citty";
+import { git } from "../../kernel/git.ts";
 import { corpusOf, fail, json, list, must, say, workspace } from "../../invocation/command.ts";
 import type { Change, Corpus } from "../documents/model.ts";
 import { setMeta } from "../documents/write.ts";
@@ -175,5 +176,33 @@ export const graphCmd = defineCommand({
     const nodes = changeGraph(must(graphInputs(ws)), memberOf(corpus, doc));
     if (args.json) return json(graphJson(doc, nodes));
     for (const line of graphLines(doc, nodes)) say(line);
+  },
+});
+
+/**
+ * `canon change close`: a change whose work some other commit already carried into main (a landing by hand) is closed
+ * with that commit written down, in this checkout, to commit with the caller's change (BR-2573, D-151).
+ */
+export const closeCmd = defineCommand({
+  meta: { description: "Close a change whose work is already on main (landed by another commit): writes status done and landed_in <commit> in this checkout; commit it with your change" },
+  args: {
+    change: { type: "positional", required: true, description: "The change (C-n)" },
+    commit: { type: "string", description: "The commit on main that carried its work (BR-2573)" },
+  },
+  run({ args }) {
+    const ws = workspace();
+    const id = String(args.change).trim().toUpperCase();
+    const { corpus } = corpusOf(ws);
+    const doc = findDoc(corpus, id);
+    if (!doc || doc.kind !== "change") fail({ code: "not_found", message: `${id} is not a change in this checkout; nothing written (BR-2573)` });
+    if (doc.status !== "open") fail({ code: "invalid", message: `${id} is ${doc.status}, not open; only an open change is closed (BR-2573)` });
+    if (typeof args.commit !== "string" || args.commit.trim() === "") fail({ code: "invalid", message: "--commit <commit> is required: the commit on main that carried the work (BR-2573)" });
+    const sha = git(ws.primary, "rev-parse", "--verify", "-q", `${args.commit.trim()}^{commit}`);
+    if (!sha.ok) fail({ code: "not_found", message: `--commit ${args.commit}: no such commit; nothing written (BR-2573)` });
+    // reason: only a commit main contains carried the work to main; one on a branch has not landed (BR-2573, D-149)
+    if (!git(ws.primary, "merge-base", "--is-ancestor", sha.value, ws.config.main).ok) fail({ code: "not_found", message: `--commit ${args.commit}: ${sha.value.slice(0, 9)} is not on ${ws.config.main}; nothing written (BR-2573)` });
+    must(setMeta(ws.root, doc, { status: "done", landed_in: sha.value }, doc.status));
+    ws.db.event(ws.actor, "change.close", id, { commit: sha.value });
+    say(`${id} → done, landed in ${sha.value.slice(0, 9)} (${doc.path}; commit it with your change)`);
   },
 });

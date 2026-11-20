@@ -1,10 +1,11 @@
 import { basename } from "node:path";
+import { endOnDrop } from "../../work/delegation/records.ts";
 import { applyCmd, proposeCmd } from "../../work/delegation/commands.ts";
 import { defineCommand } from "citty";
 import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import type { Doc, Kind } from "./model.ts";
 import { readBacklog } from "./backlog.ts";
-import { listedChanges, marksOf } from "../../work/session/inflight.ts";
+import { changeStates, hasFile, marksOf, stateJson } from "../changes/state.ts";
 import type { readCorpus } from "./read.ts";
 import { technicalLayerWord, technicalNameAdvice } from "./domain-names.ts";
 import { contractLines } from "../domains/business.ts";
@@ -14,7 +15,7 @@ import { refuseOnGuardedMain } from "./guarded.ts";
 import { findDoc } from "../query/query.ts";
 import { planStatuses, progressMark, stepsMark } from "../plans/status.ts";
 import { waitingJson } from "../changes/deps.ts";
-import { graphCmd, LINK_ARGS, linkCmd, newLinks } from "../changes/commands.ts";
+import { closeCmd, graphCmd, LINK_ARGS, linkCmd, newLinks } from "../changes/commands.ts";
 import { mainCorpus } from "../../work/session/session.ts";
 
 /** `canon rule`, `decision`, `change`, `note`, `doc`: creating, listing and setting the status of documents. */
@@ -79,23 +80,31 @@ function listCommand(kind: Kind, describe: string) {
         // reason: read once with every change: progress counts the done ones too, which the list itself leaves out;
         // the list keeps what listedChanges would keep with `live`, a change done only on its branch included (BR-2384, BR-2294)
         // reason: dependencies are satisfied by what landed on main, not by this checkout's older copy of it (BR-2564, D-149)
-        const { listed: every, unreadable } = must(listedChanges(ws, corpus, readBacklog(ws.root, ws.config.types), () => true, must(mainCorpus(ws))));
-        const listed = every.filter((l) => live(l.change) || (l.onBranch.length > 0 && l.change.status === "done"));
-        const progress = new Map(planStatuses(corpus, every.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 }))).map((p) => [p.change.id, p]));
+        // reason: every change's state comes from the one place that computes it (BR-2571, BR-2572, D-151)
+        const { states: every, unreadable } = must(changeStates(ws, { corpus, backlog: readBacklog(ws.root, ws.config.types) }));
+        const filed = every.filter(hasFile);
+        // reason: --all adds the changes only the coordination data has, a branch-only change dropped since among them (BR-2572)
+        const listed = every.filter((s) => (s.change ? live(s.change) || (s.onBranch.length > 0 && s.change.status === "done") : Boolean(args.all)));
+        const progress = new Map(planStatuses(corpus, filed.map((s) => ({ change: s.change, onMain: s.onBranch.length === 0 }))).map((p) => [p.change.id, p]));
         if (args.json) {
-          json(listed.map(({ change: { body: _b, ...r }, onBranch, handoff, claimed, waiting }) => ({
-            ...r,
-            ...(progress.has(r.id) ? { plan_progress: { total: progress.get(r.id)!.steps.length, done: progress.get(r.id)!.counts.done, percent: progress.get(r.id)!.percent } } : {}),
-            on_branch: onBranch,
-            handoff: handoff ? { next: handoff.next, actor: handoff.actor, updated_at: handoff.updated_at } : null,
-            claimed,
-            waiting_for: waitingJson(waiting),
-          })));
+          json(listed.map((s) => {
+            const { body: _b, ...r } = s.change ?? { id: s.id, title: null, status: null, body: "" };
+            const handoff = s.handoff;
+            return {
+              ...r,
+              ...(progress.has(s.id) ? { plan_progress: { total: progress.get(s.id)!.steps.length, done: progress.get(s.id)!.counts.done, percent: progress.get(s.id)!.percent } } : {}),
+              on_branch: s.onBranch,
+              handoff: handoff ? { next: handoff.next, reason: handoff.reason ?? "unrecorded", on: handoff.on, actor: handoff.actor, updated_at: handoff.updated_at } : null,
+              claimed: s.flags.claimed,
+              waiting_for: waitingJson(s.waiting),
+              ...stateJson(s),
+            };
+          }));
         } else {
-          for (const l of listed) {
-            const plan = progress.get(l.change.id);
-            const marks = [...marksOf(l, true), ...[stepsMark(l.change), plan && progressMark(plan)].filter((m): m is string => Boolean(m))];
-            say(`${l.change.id.padEnd(8)} ${l.change.status.padEnd(10)} ${l.change.title}${marks.length ? `  (${marks.join("; ")})` : ""}`);
+          for (const s of listed) {
+            const plan = progress.get(s.id);
+            const marks = [...marksOf(s, true), ...(s.change ? [stepsMark(s.change), plan && progressMark(plan)] : []).filter((m): m is string => Boolean(m))];
+            say(`${s.id.padEnd(8)} ${(s.change?.status ?? "").padEnd(10)} ${s.change?.title ?? "(no file)"}  (${marks.join("; ")})`);
           }
           if (listed.length === 0 && unreadable.length === 0) say("(no changes)");
         }
@@ -216,15 +225,19 @@ const change = defineCommand({
     ),
     link: linkCmd,
     graph: graphCmd,
+    close: closeCmd,
     list: listCommand("change", "List open changes in the owner's order (canon/backlog.md, then the rest by id; --all for done and dropped)"),
     drop: defineCommand({
       meta: { description: "Mark a change dropped (work will not happen)" },
       args: { id: { type: "positional", required: true } },
-      run: ({ args }) =>
-        void setStatus(String(args.id), "change", "dropped", (_c, d) => {
+      run({ args }) {
+        const { ws, doc } = setStatus(String(args.id), "change", "dropped", (_c, d) => {
           // reason: a done change's work happened; marking it dropped would rewrite that fact (BR-2041)
           if (d.kind === "change" && d.status !== "open") fail({ code: "invalid", message: `${d.id} is ${d.status}, not open; only an open change can be dropped` });
-        }),
+        });
+        // reason: a dropped change is nobody's work any more, so its delegation ends with it (BR-2574, D-151)
+        if (endOnDrop(ws.db, ws.actor, doc.id, "canon change drop")) say(`${doc.id}: its delegation ended`);
+      },
     }),
   },
 });

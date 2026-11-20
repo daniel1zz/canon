@@ -86,7 +86,7 @@ describe("canon work start --fix-main", () => {
     const first = redMain(ws(root).db)!.change!;
     // The holder lets the change go first, as drop requires (BR-2064).
     const wt = join(`${root}.worktrees`, first);
-    expect(canon(wt, "work", "stop", "--next", "dropping it", "--release").code).toBe(0);
+    expect(canon(wt, "work", "stop", "--reason", "partial", "--next", "dropping it", "--release").code).toBe(0);
     const d = drop(ws(root), first, quiet);
     expect(d.ok ? "dropped" : d.error.message).toBe("dropped");
     expect(redMain(ws(root).db)!.change).toBeNull();

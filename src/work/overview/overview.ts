@@ -1,5 +1,6 @@
 import { git } from "../../kernel/git.ts";
-import { stalledDelegations, stalledLine, type StalledDelegation } from "../delegation/stall.ts";
+import { stalledLine, type StalledDelegation } from "../delegation/stall.ts";
+import { changeStates, hasFile, marksOf, type ChangeState, type Filed } from "../../knowledge/changes/state.ts";
 import { ok, type Result } from "../../kernel/result.ts";
 import { goalChangesBetween } from "../../knowledge/releases/goal-landing.ts";
 import { backlogAt } from "../../knowledge/documents/backlog.ts";
@@ -13,7 +14,6 @@ import { briefQualityLine, overviewQualityLine, qualitySummary, type QualitySumm
 import { openFindings, type OpenFinding } from "../../knowledge/review/findings/findings.ts";
 import { executionStates } from "../execution/state.ts";
 import { questions, type Question } from "../humans/questions.ts";
-import { changeIdsOnBranches, listedChanges, marksOf, type ListedChange } from "../session/inflight.ts";
 import { mainCorpus } from "../session/session.ts";
 import { isChore } from "../session/subject.ts";
 import type { Workspace } from "../workspace.ts";
@@ -63,10 +63,10 @@ export interface Overview {
   readonly releases: readonly CurrentRelease[];
   readonly plans: readonly PlanStatus[];
   readonly waiting: { readonly questions: readonly Question[]; readonly findings: readonly OpenFinding[]; readonly criteria: readonly { readonly doc: string; readonly text: string }[]; readonly stalled: readonly StalledDelegation[] };
-  readonly backlog: readonly ListedChange[];
+  readonly backlog: readonly Filed[];
   readonly backlogMore: number;
   /** Open changes naming neither a release nor a feature: the scope AI sessions chose themselves, all of them (BR-2505, D-148). */
-  readonly currentBatch: readonly ListedChange[];
+  readonly currentBatch: readonly Filed[];
   readonly landed: readonly Landed[];
   /** Commits on main of the last GOAL_DAYS days that changed the goal, newest first (BR-2505, BR-2510). */
   readonly goalChanges: readonly GoalCommit[];
@@ -148,31 +148,30 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean }):
   const backlog = backlogAt(ws.primary, ws.config.main, ws.config.types);
   if (!backlog.ok) return backlog;
   // reason: read once with every change, as the brief does: plans count done ones too, the order only open ones (BR-2373, BR-2149)
-  const every = listedChanges(ws, corpus.value, backlog.value, () => true);
+  // reason: every change's state from the one place that computes it (BR-2571, D-151)
+  const every = changeStates(ws, { corpus: corpus.value, backlog: backlog.value, delegatable: false });
   if (!every.ok) return every;
+  const filed = every.value.states.filter(hasFile);
   const current = releasesInProgress(corpus.value);
   const statuses = current.length > 0 && opts.ruleCounts ? releaseStatuses(corpus.value, executionStates(ws.root, corpus.value, ws.config.floorTiming)) : [];
   const views = releaseViews(corpus.value, current, statuses);
   // reason: the line is the one `canon release status` prints, workload included; read only when the rule counts are (BR-2505, BR-2328)
-  const branches = statuses.length > 0 ? changeIdsOnBranches(ws) : ok(new Set<string>());
-  if (!branches.ok) return branches;
-  const releases = statuses.length > 0 ? views.map((r) => ({ ...r, work: workload(changeGraph({ listed: every.value.listed, branches: branches.value }, memberOf(corpus.value, r.doc))) })) : views;
+  const releases = statuses.length > 0 ? views.map((r) => ({ ...r, work: workload(changeGraph({ states: filed }, memberOf(corpus.value, r.doc))) })) : views;
   const owner = releases.flatMap((r) => [
     ...r.criteria.filter((c) => c.state === "owner").map((c) => ({ doc: r.doc.id, text: c.text })),
     ...[...r.features, ...r.merged].flatMap((f) => f.criteria.filter((c) => c.state === "owner").map((c) => ({ doc: f.doc.id, text: c.text }))),
   ]);
-  const open = every.value.listed.filter((l) => l.change.status === "open" || (l.onBranch.length > 0 && l.change.status === "done"));
+  const open = filed.filter((l) => l.change.status === "open" || (l.onBranch.length > 0 && l.change.status === "done"));
   // reason: a delegation nobody works on waits for its design owner, so it is listed with what waits for the owner (BR-2522, #255)
-  const stalled = stalledDelegations(ws);
-  if (!stalled.ok) return stalled;
+  const stalled = every.value.states.flatMap((s) => (s.stalled ? [s.stalled] : []));
   return ok({
     releases,
-    plans: planStatuses(corpus.value, every.value.listed.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 })), new Set(stalled.value.map((s) => s.subject))),
+    plans: planStatuses(corpus.value, filed.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 })), new Set(stalled.map((s) => s.subject))),
     waiting: {
       questions: questions(ws.db, "pending"),
       findings: openFindings(ws.db).filter((f) => f.tier === "C"),
       criteria: owner,
-      stalled: stalled.value,
+      stalled,
     },
     backlog: open.slice(0, BACKLOG_SHOWN),
     backlogMore: Math.max(0, open.length - BACKLOG_SHOWN),

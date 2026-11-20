@@ -173,7 +173,7 @@ describe("canon stats", () => {
     const waiting = startNew(root, "Waiting");
     commit(waiting.worktree, "FAIL", "y");
     await land(ws(waiting.worktree), FAST, quiet);
-    stop(ws(gone.worktree), "drop it", undefined, true); // a live claim refuses the drop (BR-2064)
+    stop(ws(gone.worktree), "drop it", undefined, true, { reason: "partial" }); // a live claim refuses the drop (BR-2064)
     expect(drop(ws(root), gone.change, quiet).ok).toBe(true);
     expect(of(computeStats(ws(root).db, {}, "2026-11-03"), "floor").outcomes).toMatchObject({ abandoned: 1, pending: 1 });
   });

@@ -61,7 +61,7 @@ The change file is the agent brief: the contract a later session works from, pos
 - `## 要改什么`: the desired behaviour, including edge and error cases; which rules change or are added (use `canon-rules`, including its section 0 authorship boundary); what is explicitly out of scope, so the implementer does not gold-plate or guess at adjacent features.
   It also names the regression test.
 
-A change you write now but leave for another session to implement: hand it off with `canon work stop --release --next "<first step>"`. Plain `canon work stop` keeps your claim, so no other session can start it while yours is alive.
+A change you write now but leave for another session to implement: hand it off with `canon work stop --release --reason partial --next "<first step>"`. Plain `canon work stop` keeps your claim, so no other session can start it while yours is alive.
 
 Bad brief: "fix the bug around line 150 of the handler". Good brief: "a second session opening an old database at the same time succeeds; the missing column is added once; neither command exits 4".
 

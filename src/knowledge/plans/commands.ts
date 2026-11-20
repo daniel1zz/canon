@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { stalledDelegations } from "../../work/delegation/stall.ts";
+import { stalledDelegations } from "../changes/state.ts";
 import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { setMeta } from "../documents/write.ts";
 import { findDoc } from "../query/query.ts";

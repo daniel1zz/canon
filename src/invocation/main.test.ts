@@ -401,12 +401,12 @@ describe("session continuity", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     committed(root);
-    expect(canon(root, "work", "stop", "--next", "x").code).toBe(3);
+    expect(canon(root, "work", "stop", "--reason", "partial", "--next", "x").code).toBe(3);
     const started = canon(root, "work", "start", "--title", "Refunds");
     const wt = started.out.match(/cd (.+)/)![1]!.trim();
     expect(canon(wt, "brief").out).toContain("You are in C-1");
-    expect(canon(wt, "work", "stop", "--next", "write the refund test", "--note", "half done").code).toBe(0);
-    expect(canon(wt, "work", "stop", "--next", "land it").code).toBe(0); // replaces the earlier handoff
+    expect(canon(wt, "work", "stop", "--reason", "partial", "--next", "write the refund test", "--note", "half done").code).toBe(0);
+    expect(canon(wt, "work", "stop", "--reason", "partial", "--next", "land it").code).toBe(0); // replaces the earlier handoff
     const b = canon(wt, "brief").out;
     expect(b).toContain("next — land it");
     expect(b).not.toContain("write the refund test");
@@ -427,7 +427,7 @@ describe("session continuity", () => {
       Bun.spawnSync(["git", "commit", "-qam", "fill"], { cwd: wt });
     };
     const one = canon(root, "work", "start", "--title", "One").out.match(/cd (.+)/)![1]!.trim();
-    const stopped = canon(one, "work", "stop", "--next", "write the test");
+    const stopped = canon(one, "work", "stop", "--reason", "partial", "--next", "write the test");
     expect(stopped.code).toBe(0);
     expect(last(stopped.out)).toMatch(/^lessons: .*## 教训.*ask the owner.*not lessons/);
     fill(one, ["C", 1].join("-"));
@@ -446,8 +446,8 @@ describe("session continuity", () => {
     const wt = (title: string) => canon(root, "work", "start", "--title", title).out.match(/cd (.+)/)![1]!.trim();
     const a = wt("A");
     const b = wt("B");
-    expect(canon(b, "work", "stop", "--next", "finish B").code).toBe(0);
-    expect(canon(a, "work", "stop", "--next", "finish A").code).toBe(0);
+    expect(canon(b, "work", "stop", "--reason", "partial", "--next", "finish B").code).toBe(0);
+    expect(canon(a, "work", "stop", "--reason", "partial", "--next", "finish A").code).toBe(0);
     expect(canon(root, "human", "ask", "which way?").code).toBe(0);
     const inA = canon(a, "brief").out;
     expect(inA).toContain("You are in C-1");
@@ -470,7 +470,7 @@ describe("session continuity", () => {
     writeFileSync(join(root, "canon/quality/README.md"), "# 质量标准\n\n## 方面\n\n- **联机**：不适用：canon human #3\n");
     const idle = canon(root, "brief").out;
     expect(idle.trim()).toBe(guideFor(root)); // init wrote canon/architecture.md, so the guide starts with the overview line (BR-2090)
-    for (const cmd of ["canon context", "canon work start", "canon work land --finish", "canon work stop --next", "--relayed", "canon work drop", "canon work after-land --wait", "canon-product"]) expect(idle).toContain(cmd);
+    for (const cmd of ["canon context", "canon work start", "canon work land --finish", "canon work stop --reason", "--relayed", "canon work drop", "canon work after-land --wait", "canon-product"]) expect(idle).toContain(cmd);
     committed(root);
     const wt = canon(root, "work", "start", "--title", "Refunds").out.match(/cd (.+)/)![1]!.trim();
     const b = canon(wt, "brief").out;
@@ -526,7 +526,7 @@ describe("dropping from the command line", () => {
     committed(root);
     const wt = canon(root, "work", "start", "--title", "Risky").out.match(/cd (.+)/)![1]!.trim();
     writeFileSync(join(wt, "wip.txt"), "wip");
-    expect(canon(wt, "work", "stop", "--release", "--next", "drop it").code).toBe(0); // a live claim refuses the drop (BR-2064)
+    expect(canon(wt, "work", "stop", "--reason", "partial", "--release", "--next", "drop it").code).toBe(0); // a live claim refuses the drop (BR-2064)
     Bun.spawnSync(["git", "update-ref", "refs/canon/archive/C-1", "HEAD"], { cwd: root });
     const blocked = canon(root, "work", "drop", "C-1");
     expect(blocked.code).toBe(4);

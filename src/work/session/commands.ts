@@ -1,5 +1,6 @@
 import { proposedNotice } from "./proposed.ts";
-import { listedDelegations, stalledDelegations, stalledLine } from "../delegation/stall.ts";
+import { stalledLine } from "../delegation/stall.ts";
+import { changeStates, hasFile, isClosed, marksOf, type ChangeState } from "../../knowledge/changes/state.ts";
 import { readFileSync } from "node:fs";
 import { readRuntime } from "../../kernel/agent.ts";
 import { recordCodexStartup } from "../agent-session.ts";
@@ -28,12 +29,13 @@ import { dueItems, renderDue } from "../reminders/due.ts";
 import { isWorker } from "../delegation/worker.ts";
 import { attemptIn, describeAttempt, goneLanders, openAttempts } from "../land/queue/interrupted.ts";
 import { openWorkspace, type Workspace } from "../workspace.ts";
-import { firstLine, handoffs } from "./handoffs.ts";
-import { listedChanges, marksOf } from "./inflight.ts";
+import { firstLine, handoffs, HANDOFF_REASONS, reasonText, setHandoffReason } from "./handoffs.ts";
+import { reasonArg, whyOn } from "./reason.ts";
+import { listedChanges } from "./inflight.ts";
 import { overlapsOf } from "./overlap.ts";
 import { clean, LESSON_REMINDER, mainCorpus, start, startChore, stop } from "./session.ts";
 import { CLEAN_DONE, cleanAfterLanding } from "./clean-after-land.ts";
-import { choreIn, choresInFlight, isChore } from "./subject.ts";
+import { choreIn, choresInFlight, isChore, normalizeSubject } from "./subject.ts";
 import { redMainNotice, startFixMain } from "../watch/redmain.ts";
 import { ensureWatcher, untestedNotice } from "../watch/watch.ts";
 import { startTrailingReview, unreviewedNotice } from "../../knowledge/review/code-review-batch.ts";
@@ -98,12 +100,38 @@ const choreStartCmd = defineCommand({
 
 const stopCmd = defineCommand({
   meta: { description: "Hand off: record the next step for whoever continues this change" },
-  args: { next: { type: "string", required: true }, note: { type: "string" }, release: { type: "boolean", description: "Release the claim too" }, ...AS_ARG },
+  args: {
+    reason: { type: "string", description: `Why you stop: ${HANDOFF_REASONS.join(", ")} (land: done, waiting to land; design: waiting for design; owner: waiting for the owner, with --on; deps: waiting on dependencies; partial: partly done) (BR-2025)` },
+    on: { type: "string", description: "With --reason owner: the question it waits on (#12, asked with canon human ask --change) or a success criterion (R-2/S3)" },
+    next: { type: "string", required: true },
+    note: { type: "string" },
+    release: { type: "boolean", description: "Release the claim too" },
+    ...AS_ARG,
+  },
   run({ args }) {
     const ws = workspace(args.as);
-    const subject = must(stop(ws, String(args.next), typeof args.note === "string" ? args.note : undefined, Boolean(args.release), say));
+    const subject = must(stop(ws, String(args.next), typeof args.note === "string" ? args.note : undefined, Boolean(args.release), { reason: args.reason, on: args.on }, say));
     say(`${subject}: handoff recorded${args.release ? ", claim released" : ""}`);
     if (!isChore(subject)) say(LESSON_REMINDER);
+  },
+});
+
+/** `canon work handoff-reason`: set the reason of an existing handoff, the way old handoffs are migrated (BR-2575, D-151). */
+const handoffReasonCmd = defineCommand({
+  meta: { description: "Set or change the reason of a change's existing handoff (no claim needed): how a handoff written before reasons existed is migrated" },
+  args: {
+    change: { type: "positional", required: true, description: "The change (C-n) whose handoff it is" },
+    reason: { type: "string", description: `One of ${HANDOFF_REASONS.join(", ")} (BR-2025)` },
+    on: { type: "string", description: "With --reason owner: the question (#12, asked with canon human ask --change) or success criterion (R-2/S3) it waits on" },
+  },
+  run({ args }) {
+    const ws = workspace();
+    const subject = normalizeSubject(String(args.change));
+    const given = must(reasonArg(args.reason, args.on));
+    if (!handoffs(ws.db).some((h) => h.subject === subject)) fail({ code: "not_found", message: `${subject} has no handoff; canon work stop --reason in its worktree records one (BR-2575)` });
+    const why = must(whyOn(ws, subject, given));
+    setHandoffReason(ws.db, ws.actor, subject, why);
+    say(`${subject}: handoff reason ${reasonText(why)}`);
   },
 });
 
@@ -117,10 +145,14 @@ const status = defineCommand({
     const unreviewed = unreviewedNotice(ws);
     const failedReviews = failedReviewNotice(ws.db);
     const chores = must(choresInFlight(ws));
-    const stalled = must(stalledDelegations(ws));
+    // reason: stalled and closed come from the change states, computed once for both (BR-2522, BR-2497, BR-2571)
+    const states = must(changeStates(ws, { delegatable: false })).states;
+    const stalled = states.flatMap((s) => (s.stalled ? [s.stalled] : []));
+    const closed = new Set(states.filter(isClosed).map((s) => s.id));
     const data = { chores, ...(stalled.length > 0 ? { stalled } : {}), ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), ...(failedReviews.length > 0 ? { failed_reviews: failedReviews } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending"), design_requests: pendingRequests(ws.db), urgent: marks(ws.db) };
     if (args.json) return json(data);
-    for (const subject of must(listedDelegations(ws))) for (const line of delegationNotice(ws.db, subject)) say(line);
+    const delegated = ws.db.db.query<{ subject: string }, []>("SELECT subject FROM delegations ORDER BY subject").all().map((r) => r.subject).filter((s) => !closed.has(s));
+    for (const subject of delegated) for (const line of delegationNotice(ws.db, subject)) say(line);
     // Delegations nobody is working on, each with what the design owner can do (BR-2522, #255).
     for (const s of stalled) say(stalledLine(s));
     // Pending design requests, each with the design owner who answers it (BR-2499).
@@ -142,7 +174,7 @@ const status = defineCommand({
     if (data.urgent.length > 0) say("Urgent by the owner:");
     for (const m of data.urgent) say(`  ${m.change}  relayed by ${m.actor} (${m.at}): ${m.words}`);
     say("Handoffs:");
-    for (const h of data.handoffs) say(`  ${h.subject.padEnd(8)} next: ${firstLine(h.next)}  (${h.actor}, ${h.updated_at})`);
+    for (const h of data.handoffs) say(`  ${h.subject.padEnd(8)} ${reasonText(h)}: next: ${firstLine(h.next)}  (${h.actor}, ${h.updated_at})`);
     say(`Questions waiting for a human: ${data.questions.length}`);
   },
 });
@@ -270,7 +302,7 @@ function briefState(ws: Workspace, env: Readonly<Record<string, string | undefin
       ? `You are in chore ${mine.subject} (${ws.root}); its record is its commits. Land with canon chore land.`
       : `You are in ${mine.subject} (${ws.root}). Read it: canon show ${mine.subject}; context: canon context ${mine.subject}`);
     const h = hs.find((x) => x.subject === mine.subject);
-    if (h) say(`Handoff from ${h.actor} at ${h.updated_at}: next — ${h.next}${h.note ? `\n${h.note}` : ""}`);
+    if (h) say(`Handoff from ${h.actor} at ${h.updated_at} (${reasonText(h)}): next — ${h.next}${h.note ? `\n${h.note}` : ""}`);
     // The last landing from this worktree, when it was killed before it recorded a result (BR-2310).
     const landing = attemptIn(ws.db, ws.config.main, ws.root);
     if (landing?.state === "interrupted") for (const line of describeAttempt(landing)) say(line);
@@ -316,29 +348,35 @@ function briefState(ws: Workspace, env: Readonly<Record<string, string | undefin
     const backlog = backlogAt(ws.primary, ws.config.main, ws.config.types);
     if (!backlog.ok) return backlog;
     // reason: (claimed) only where `canon work start` would refuse; an expired or abandoned claim it takes over (BR-2149, BR-2100)
-    // reason: every change is read once; the plans need the done and dropped ones too, the order only the open ones
-    // and those done only on their branch, as listedChanges keeps them (BR-2383, BR-2294)
-    const every = listedChanges(ws, onMain.value, backlog.value, () => true);
+    // reason: every change is read once, with its state from the one place that computes it; the plans need the done and
+    // dropped ones too, the order only the open ones and those done only on their branch (BR-2383, BR-2294, BR-2571)
+    const every = changeStates(ws, { corpus: onMain.value, backlog: backlog.value, delegatable: false });
     if (!every.ok) return every;
     // reason: another session's half-done branch is said, never fatal: brief must still list everything else (BR-2292)
     for (const u of every.value.unreadable) say(`Unreadable change file, not listed: ${u}`);
+    const filed = every.value.states.filter(hasFile);
     // Plans with steps ready to start, one line each, so a coordinator sees what to dispatch (BR-2383).
-    const stalled = stalledDelegations(ws);
-    if (!stalled.ok) say(`Cannot tell stalled delegations: ${stalled.error.message}`);
-    for (const p of planStatuses(onMain.value, every.value.listed.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 })), new Set(stalled.ok ? stalled.value.map((s) => s.subject) : []))) {
+    const stalled = new Set(every.value.states.filter((s) => s.stalled).map((s) => s.id));
+    for (const p of planStatuses(onMain.value, filed.map((s) => ({ change: s.change, onMain: s.onBranch.length === 0 })), stalled)) {
       const line = briefLine(p);
       if (line) say(line);
     }
-    const open = every.value.listed.filter((l) => l.change.status === "open" || (l.onBranch.length > 0 && l.change.status === "done"));
-    const shown = (l: (typeof open)[number]) => {
-      const marks = marksOf(l, false);
-      return marks.length ? `${l.change.id} (${marks.join(", ")})` : l.change.id;
+    const open = filed.filter((s) => s.change.status === "open" || (s.onBranch.length > 0 && s.change.status === "done"));
+    const shown = (s: ChangeState) => {
+      const marks = marksOf(s, false);
+      return marks.length ? `${s.id} (${marks.join(", ")})` : s.id;
     };
-    // reason: a change waiting for its dependencies is not offered to take; it is listed apart with what it waits for (BR-2564)
-    const ready = open.filter((l) => l.waiting.length === 0);
-    const waiting = open.filter((l) => l.waiting.length > 0);
+    // reason: a change waiting for its dependencies or the owner, or whose work is already on main, is not offered to
+    // take; each is listed apart with what it waits for (BR-2564, BR-2571)
+    const apart = new Set(["waiting-deps", "waiting-owner", "awaiting-close"]);
+    const ready = open.filter((s) => !apart.has(s.state));
+    const of = (state: string) => open.filter((s) => s.state === state);
     if (ready.length) say(`Open changes in the owner's order (canon change list); with no task, take the first unclaimed, not ambiguous one: ${ready.map(shown).join(", ")}`);
-    if (waiting.length) say(`Waiting for dependencies, not ready to start: ${waiting.map(shown).join(", ")}`);
+    if (of("waiting-deps").length) say(`Waiting for dependencies, not ready to start: ${of("waiting-deps").map(shown).join(", ")}`);
+    const owed = of("waiting-owner").map((s) => `${s.id} (${[...s.ownerQuestions.map((n) => `#${n}`), ...s.waiting.filter((w) => w.state === "owner").map((w) => w.id)].join(", ")})`);
+    if (owed.length) say(`Waiting for the owner, not ready to start (ask them; canon human pending): ${owed.join(", ")}`);
+    const onMainAlready = of("awaiting-close").map((s) => s.id);
+    if (onMainAlready.length) say(`Work already on main, close it instead of starting it (canon change close <C-n> --commit <commit>): ${onMainAlready.join(", ")}`);
     // The main session's due list and, in Claude Code, the standing watch; a worker runs headless and has neither (BR-2529, D-136).
     if (!isWorker(ws.actor)) for (const line of dueSection(ws, env)) say(line);
   }
@@ -357,6 +395,7 @@ export const sessionCommands: DomainCommands = {
     entry("start", 10, startCmd, "work"),
     entry("start", 10, choreStartCmd, "chore"),
     entry("stop", 40, stopCmd, "work"),
+    entry("handoff-reason", 41, handoffReasonCmd, "work"),
     entry("status", 50, status, "work"),
     entry("clean", 80, cleanCmd, "work"),
   ],

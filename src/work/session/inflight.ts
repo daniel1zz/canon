@@ -4,14 +4,14 @@ import { backlogAt, inBacklogOrder, type BacklogEntry } from "../../knowledge/do
 import { parseDocFile } from "../../knowledge/documents/docfile.ts";
 import { planLink } from "../../knowledge/documents/planlink.ts";
 import { changeLinks } from "../../knowledge/changes/links.ts";
-import { waitingFor, waitingMark, type Waiting } from "../../knowledge/changes/deps.ts";
+import { waitingFor, type Waiting } from "../../knowledge/changes/deps.ts";
 import { criteriaByDoc } from "../../knowledge/releases/features.ts";
 import type { Change, ChangeStatus, Corpus } from "../../knowledge/documents/model.ts";
 import { CANON_DIR } from "../../knowledge/documents/read.ts";
 import type { ArchitectureBase } from "../../knowledge/check/architecture.ts";
 import { liveClaims } from "../claims/claims.ts";
 import type { Workspace } from "../workspace.ts";
-import { firstLine, handoffs, type Handoff } from "./handoffs.ts";
+import { handoffs, type Handoff } from "./handoffs.ts";
 
 /**
  * The changes `canon change list` and `canon brief` offer to pick from (BR-2291, D-50): those in a corpus, plus the
@@ -32,6 +32,10 @@ export interface ListedChange {
 /** What the listing found: the changes, and the branch files it could not read, each said on its own (BR-2292). */
 export interface Listing {
   readonly listed: ListedChange[];
+  /** Every local change branch by change id, whether or not main has the change too (BR-2571's "no branch"). */
+  readonly branches: ReadonlyMap<string, readonly BranchRef[]>;
+  /** The change ids whose files main's latest commit has. */
+  readonly onMain: ReadonlySet<string>;
   /** One message per unreadable change file on a branch, naming the file and the branch. */
   readonly unreadable: string[];
 }
@@ -84,6 +88,8 @@ export function listedChanges(ws: Workspace, corpus: Corpus, backlog: readonly B
       waiting: change.status === "open" ? waitingFor(change, landed, elsewhere, criteria) : [],
     })),
     unreadable,
+    branches: branches.value,
+    onMain: onMain.value,
   });
 }
 
@@ -153,23 +159,6 @@ export function changeIdsOnBranches(ws: Workspace): Result<Set<string>> {
   return ok(out);
 }
 
-/**
- * How a listed change is marked (BR-2291, BR-2293, BR-2294): `on branch <b>` when only its branch has it, or `ambiguous: <b>, <b>`
- * when several do (`canon work start` refuses it, BR-2107); `closed on branch, not landed` when that branch says done;
- * its handoff; `claimed`; `waiting for …` when an open change's dependencies are not satisfied (BR-2564). `full` writes the handoff's next step (canon change list); the brief keeps it to `handoff`.
- */
-export function marksOf(l: ListedChange, full: boolean): string[] {
-  const out: string[] = [];
-  if (l.onBranch.length === 1) out.push(`on branch ${l.onBranch[0]}`);
-  if (l.onBranch.length > 1) out.push(`ambiguous: ${l.onBranch.join(", ")}`);
-  if (l.onBranch.length && l.change.status === "done") out.push("closed on branch, not landed");
-  if (l.handoff) out.push(full ? `handoff: ${firstLine(l.handoff.next)}` : "handoff");
-  if (l.claimed) out.push("claimed");
-  const waiting = waitingMark(l.waiting);
-  if (waiting) out.push(waiting);
-  return out;
-}
-
 /** A change branch and the commit it pointed at when listed. */
 export interface BranchRef {
   readonly branch: string;
@@ -181,7 +170,7 @@ export interface BranchRef {
  * each with the commit it points at now: reading that commit, not the name, keeps working when another session's
  * drop, clean or undone start deletes the branch while this one is still listing (BR-2291, #110).
  */
-function changeBranches(ws: Workspace): Result<Map<string, BranchRef[]>> {
+export function changeBranches(ws: Workspace): Result<Map<string, BranchRef[]>> {
   const prefix = changeType(ws).prefix;
   const refs = git(ws.primary, "for-each-ref", "--format=%(objectname) %(refname:short)", "refs/heads/change/");
   if (!refs.ok) return refs;

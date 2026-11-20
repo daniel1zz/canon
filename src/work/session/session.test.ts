@@ -70,7 +70,7 @@ describe("work start", () => {
     writeFileSync(join(root, "app.txt"), "diverged\n");
     sh(root, "rm", "-rq", "canon/changes");
     sh(root, "commit", "-qam", "elsewhere: no changes dir");
-    stop(ws(s.worktree), "hand over", undefined, true); // agent:a releases, so agent:b may take it (BR-2011)
+    stop(ws(s.worktree), "hand over", undefined, true, { reason: "partial" }); // agent:a releases, so agent:b may take it (BR-2011)
     sh(root, "worktree", "remove", s.worktree);
     const again = start(ws(root, "agent:b"), { change: s.change }, quiet);
     expect(again.ok).toBe(true);
@@ -115,7 +115,7 @@ describe("work start", () => {
     const s = startNew(root, "Held here");
     const before = sh(root, "rev-parse", "main");
     const cli = (actor: string, ...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", ...args], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: actor } });
-    for (const args of [["stop", "--release", "--next", "x"], ["stop", "--next", "x"], ["land", "--finish"]]) {
+    for (const args of [["stop", "--reason", "partial", "--release", "--next", "x"], ["stop", "--reason", "partial", "--next", "x"], ["land", "--finish"]]) {
       const r = cli("agent:b", ...args);
       expect(r.exitCode).toBe(5);
       expect(r.stderr.toString()).toContain("claimed by agent:a");
@@ -124,7 +124,7 @@ describe("work start", () => {
     expect(sh(root, "rev-parse", "main")).toBe(before);
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM handoffs").get()?.n).toBe(0);
     expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'land.refuse'").get()?.n).toBe(0);
-    expect(cli("agent:a", "stop", "--release", "--next", "x").exitCode).toBe(0);
+    expect(cli("agent:a", "stop", "--reason", "partial", "--release", "--next", "x").exitCode).toBe(0);
     expect(claims(ws(root).db)).toEqual([]);
   });
 
@@ -134,7 +134,7 @@ describe("work start", () => {
     const db = ws(root).db;
     const before = claims(db)[0]!.expires_at;
     // A second subagent of the same session has the same actor (BR-2023): in the holder's worktree it is the holder.
-    const r = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "stop", "--next", "x"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    const r = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "stop", "--reason", "partial", "--next", "x"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
     expect(r.exitCode).toBe(0);
     expect(claims(db).map((c) => [c.subject, c.actor])).toEqual([[s.change, "agent:a"]]);
     expect(claims(db)[0]!.expires_at >= before).toBe(true);
@@ -145,8 +145,8 @@ describe("work start", () => {
     const root = project();
     const a = startNew(root, "First");
     const b = startNew(root, "Second");
-    expect(stop(ws(a.worktree), "next a", undefined, false).ok).toBe(true);
-    expect(stop(ws(b.worktree), "next b", undefined, false).ok).toBe(true);
+    expect(stop(ws(a.worktree), "next a", undefined, false, { reason: "partial" }).ok).toBe(true);
+    expect(stop(ws(b.worktree), "next b", undefined, false, { reason: "partial" }).ok).toBe(true);
     const db = ws(root).db;
     const rows = db.db.query<{ actor: string; kind: string; subject: string | null; worktree: string | null }, []>("SELECT actor, kind, subject, worktree FROM events ORDER BY id").all();
     const main = ws(root).root;
@@ -164,7 +164,7 @@ describe("work start", () => {
     const s = startNew(root, "Expired here");
     const db = ws(root).db;
     db.db.query("UPDATE claims SET expires_at = ? WHERE subject = ?").run(new Date(Date.now() - 60_000).toISOString(), s.change);
-    expect(stop(ws(s.worktree, "agent:b"), "carry on", undefined, false).ok).toBe(true);
+    expect(stop(ws(s.worktree, "agent:b"), "carry on", undefined, false, { reason: "partial" }).ok).toBe(true);
     expect(claims(db).map((c) => c.actor)).toEqual(["agent:b"]);
   });
 
@@ -205,7 +205,7 @@ describe("work start", () => {
   test("BR-2107: a change branch whose name holds shell syntax is read without running it", () => {
     const root = project();
     const s = startNew(root, "Odd name");
-    stop(ws(s.worktree), "x", undefined, true);
+    stop(ws(s.worktree), "x", undefined, true, { reason: "partial" });
     sh(root, "worktree", "remove", s.worktree);
     const marker = join(root, "..", `${root.split("/").pop()}-ran`);
     const odd = `change/${s.change}-$(touch${"${IFS}"}${marker})`;
@@ -234,7 +234,7 @@ describe("work start", () => {
   test("BR-2136: a branch deleted between reading it and taking the claim is not found, and nothing is created", () => {
     const root = project();
     const s = startNew(root, "Dropped meanwhile");
-    stop(ws(s.worktree), "x", undefined, true);
+    stop(ws(s.worktree), "x", undefined, true, { reason: "partial" });
     const r = start(dropBeforeClaim(root, s, true), { change: s.change }, quiet);
     expect(!r.ok && r.error.code).toBe("not_found");
     expect(git(root, "rev-parse", "--verify", "--quiet", `refs/heads/${s.branch}`).ok).toBe(false);
@@ -245,7 +245,7 @@ describe("work start", () => {
   test("BR-2136: a branch still there after the claim, with only its worktree gone, is resumed from the branch", () => {
     const root = project();
     const s = startNew(root, "Worktree gone meanwhile");
-    stop(ws(s.worktree), "x", undefined, true);
+    stop(ws(s.worktree), "x", undefined, true, { reason: "partial" });
     const r = start(dropBeforeClaim(root, s, false), { change: s.change }, quiet);
     expect(r.ok && r.value.branch).toBe(s.branch);
     expect(existsSync(s.worktree)).toBe(true);
@@ -268,7 +268,7 @@ describe("work start", () => {
     const expire = () => db.db.query("UPDATE claims SET expires_at = ? WHERE subject = ?").run(new Date(Date.now() - 3600_000).toISOString(), s.change);
     const expiry = () => new Date(claims(db)[0]!.expires_at).getTime();
     expire();
-    expect(stop(ws(s.worktree), "keep going", undefined, false).ok).toBe(true);
+    expect(stop(ws(s.worktree), "keep going", undefined, false, { reason: "partial" }).ok).toBe(true);
     expect(expiry()).toBeGreaterThan(Date.now() + 11 * 3600_000);
     expire();
     writeFileSync(join(s.worktree, "x.txt"), "x\n");
@@ -293,7 +293,7 @@ describe("work start", () => {
   test("BR-2047: worktrees go where `worktrees` says, relative to the primary checkout; clean only looks there", () => {
     const root = project();
     const old = startNew(root, "Old place");
-    stop(ws(old.worktree), "x", undefined, true);
+    stop(ws(old.worktree), "x", undefined, true, { reason: "partial" });
     writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nworktrees: ../${root.split("/").pop()}-wt\n`);
     sh(root, "commit", "-qam", "move worktrees");
     const s = startNew(root, "New place");
@@ -529,7 +529,7 @@ describe("same-file overlap", () => {
     commitFile(a.value.worktree, "shared.txt", "a\n");
     commitFile(b.value.worktree, "shared.txt", "b\n");
     const lines: string[] = [];
-    stop(ws(a.value.worktree), "resume later", undefined, true); // a live claim refuses every start (BR-2011)
+    stop(ws(a.value.worktree), "resume later", undefined, true, { reason: "partial" }); // a live claim refuses every start (BR-2011)
     expect(start(ws(root), { change: "C-1" }, (l) => lines.push(l)).ok).toBe(true);
     expect(lines.filter((l) => l.startsWith("overlap:"))).toEqual([`overlap: ${b.value.change} also changes shared.txt; whoever lands second resolves the conflict`]);
     expect(notices(root)).toEqual([{ subject: "C-1", at: "start", with: b.value.change, files: ["shared.txt"] }]);
@@ -702,7 +702,7 @@ describe("clean named changes", () => {
     const gone = await landed(root, "Gone");
     sh(root, "worktree", "remove", gone.worktree);
     const busy = startNew(root, "Busy");
-    stop(ws(busy.worktree), "later", undefined, true);
+    stop(ws(busy.worktree), "later", undefined, true, { reason: "partial" });
     const r = clean(ws(root), quiet, [busy.change, gone.change]);
     if (!r.ok) throw new Error(r.error.message);
     expect(r.value.removed).toEqual([]);
@@ -803,7 +803,7 @@ describe("start and clean leave nothing half made", () => {
     const root = project();
     const s = startNew(root, "Killed clean");
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
-    stop(ws(s.worktree), "done for now", undefined, true);
+    stop(ws(s.worktree), "done for now", undefined, true, { reason: "partial" });
     const w = ws(root);
     if (!holdClaim(w.db, s.change, s.worktree, "agent:a").ok) throw new Error("hold refused");
     const p = hang();
@@ -833,7 +833,7 @@ describe("start and clean leave nothing half made", () => {
     const one = startNew(root, "One");
     expect((await land(ws(one.worktree), { ...FAST, finish: true }, quiet)).kind).toBe("landed");
     const busy = startNew(root, "Busy");
-    stop(ws(busy.worktree), "later", undefined, true);
+    stop(ws(busy.worktree), "later", undefined, true, { reason: "partial" });
     const r = clean(ws(root), quiet);
     if (!r.ok) throw new Error(r.error.message);
     expect(r.value.removed).toEqual([one.worktree]);
@@ -897,7 +897,7 @@ describe("open review findings remind at a start and never hold it back", () => 
     if (!before.ok) throw new Error(before.error.message);
     expect(quietSaid.join("\n")).not.toContain("review work is owed");
     owe(root);
-    stop(ws(before.value.worktree), "hand over", undefined, true);
+    stop(ws(before.value.worktree), "hand over", undefined, true, { reason: "partial" });
     const said: string[] = [];
     expect(start(ws(root), { change: before.value.change }, (l) => said.push(l)).ok).toBe(true);
     expect(startChore(ws(root), { title: "settle the findings" }, (l) => said.push(l)).ok).toBe(true);
@@ -949,10 +949,10 @@ describe("handoff length", () => {
   test("BR-2465: --next over 2000 characters is refused and not recorded; status shows only the first line of a long one", () => {
     const root = project();
     const s = startNew(root, "Long");
-    const long = stop(ws(s.worktree), "x".repeat(2001), undefined, false);
+    const long = stop(ws(s.worktree), "x".repeat(2001), undefined, false, { reason: "partial" });
     expect(long.ok ? "" : `${long.error.code} ${long.error.message}`).toContain("invalid --next is 2001 characters");
     expect(handoffs(ws(root).db)).toEqual([]);
-    expect(stop(ws(s.worktree), "y".repeat(2000), undefined, false).ok).toBe(true);
+    expect(stop(ws(s.worktree), "y".repeat(2000), undefined, false, { reason: "partial" }).ok).toBe(true);
     expect(firstLine("first step\nsecond line")).toBe("first step (canon brief in its worktree shows all of it)");
     expect(firstLine("z".repeat(201))).toBe(`${"z".repeat(200)}… (canon brief in its worktree shows all of it)`);
     expect(firstLine("short")).toBe("short");

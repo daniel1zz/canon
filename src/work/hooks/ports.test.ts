@@ -73,7 +73,7 @@ describe("CANON_PORT", () => {
     start(ws(root, "agent:other"), { title: "Takes the first port" }, quiet);
     const s = start(ws(root), { change: "C-1" }, quiet);
     if (!s.ok) throw new Error(s.error.message);
-    expect(stop(ws(s.value.worktree), "later", undefined, true).ok).toBe(true);
+    expect(stop(ws(s.value.worktree), "later", undefined, true, { reason: "partial" }).ok).toBe(true);
     expect(start(ws(root), { change: "C-1" }, quiet).ok).toBe(true);
     const lines = readFileSync(join(s.value.worktree, "..", "ports.txt"), "utf8").trim().split("\n");
     expect(lines).toEqual([p, p + 1, p + 1, p + 1].map(String));
@@ -121,7 +121,7 @@ describe("CANON_PORT", () => {
     const s = start(ws(root), { title: "Moves" }, quiet);
     if (!s.ok) throw new Error(s.error.message);
     writeFileSync(join(s.value.worktree, "canon/config.yaml"), `floor: test ! -e FAIL\ntests: []\nports: ${q}-${q + 9}\nhooks:\n  after_stop: 'echo "$CANON_PORT" > "$CANON_WORKTREE/../stop.txt"'\n`);
-    expect(stop(ws(s.value.worktree), "later", undefined, false).ok).toBe(true);
+    expect(stop(ws(s.value.worktree), "later", undefined, false, { reason: "partial" }).ok).toBe(true);
     expect(readFileSync(join(s.value.worktree, "..", "stop.txt"), "utf8").trim()).toBe(String(q));
   });
 
@@ -241,7 +241,7 @@ describe("no free port", () => {
     if (!a.ok) throw new Error(a.error.message);
     const one = start(ws(root), { change: "C-1" }, quiet);
     if (!one.ok) throw new Error(one.error.message);
-    expect(stop(ws(one.value.worktree), "later", undefined, true).ok).toBe(true);
+    expect(stop(ws(one.value.worktree), "later", undefined, true, { reason: "partial" }).ok).toBe(true);
     sh(root, "worktree", "remove", "--force", a.value.worktree);
     expect(start(ws(root), { change: "C-1" }, quiet).ok).toBe(true);
     expect(readFileSync(join(one.value.worktree, "..", "ports.txt"), "utf8").trim().split("\n")).toEqual([`[${p}]`, "[]", `[${p}]`]); // A, then C-1 twice
@@ -258,7 +258,7 @@ describe("a hook with no port", () => {
     expect(start(ws(root, "agent:b"), { title: `Holds ${p}` }, quiet).ok).toBe(true);
     sh(s.worktree, "merge", "-q", "main", "-m", "take config");
     const stopped: string[] = [];
-    expect(stop(ws(s.worktree), "later", undefined, false, (l) => stopped.push(l)).ok).toBe(true);
+    expect(stop(ws(s.worktree), "later", undefined, false, { reason: "partial" }, (l) => stopped.push(l)).ok).toBe(true);
     expect(readFileSync(join(s.worktree, "..", "after-stop.txt"), "utf8").trim()).toBe("[]");
     expect(stopped.join("\n")).toContain("no free port");
     const said: string[] = [];
@@ -333,7 +333,7 @@ describe("choosing a new port", () => {
     const two = start(ws(root, "agent:b"), { title: "Two" }, quiet);
     const three = start(ws(root, "agent:c"), { title: "Three" }, quiet);
     if (!one.ok || !two.ok || !three.ok) throw new Error("start failed");
-    expect(stop(ws(one.value.worktree), "later", undefined, true).ok).toBe(true);
+    expect(stop(ws(one.value.worktree), "later", undefined, true, { reason: "partial" }).ok).toBe(true);
     expect(start(ws(root), { change: "C-1" }, quiet).ok).toBe(true); // hands p to C-1 again, after p + 1
     sh(root, "worktree", "remove", "--force", one.value.worktree);
     sh(root, "worktree", "remove", "--force", two.value.worktree);
@@ -350,7 +350,7 @@ describe("choosing a new port", () => {
     if (!s.ok) throw new Error(s.error.message);
     const l = hold(p);
     try {
-      expect(stop(ws(s.value.worktree), "later", undefined, true).ok).toBe(true);
+      expect(stop(ws(s.value.worktree), "later", undefined, true, { reason: "partial" }).ok).toBe(true);
       expect(start(ws(root), { change: "C-1" }, quiet).ok).toBe(true);
     } finally {
       l.stop(true);

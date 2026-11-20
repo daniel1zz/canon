@@ -3,7 +3,7 @@ import { appendFileSync, readdirSync, readFileSync, rmSync, writeFileSync } from
 import { join } from "node:path";
 import { processOf } from "../claims/liveness.ts";
 import { project, sh, startNew, ws } from "../testkit.ts";
-import { stalledDelegations } from "./stall.ts";
+import { stalledDelegations } from "../../knowledge/changes/state.ts";
 
 // reason: each case spawns canon several times; a loaded machine took longer than bun's 5 s default
 setDefaultTimeout(60_000);

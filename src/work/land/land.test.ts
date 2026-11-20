@@ -331,7 +331,7 @@ describe("work land", () => {
     writeFileSync(join(open.worktree, "wip.txt"), "wip\n");
     sh(open.worktree, "add", "wip.txt");
     sh(open.worktree, "commit", "-qm", "wip");
-    stop(ws(open.worktree), "finish wip", undefined, true);
+    stop(ws(open.worktree), "finish wip", undefined, true, { reason: "partial" });
 
     const r = clean(ws(root), quiet);
     if (!r.ok) throw new Error(r.error.message);

@@ -29,7 +29,7 @@ test("BR-2498: only the named worker can claim, binding the first full actor and
   const wrong = cli(f.root, "agent:s7:w2", "work", "start", f.change); expect(wrong.code).toBe(1); expect(wrong.text).toContain("w1"); expect(claim(f.root, f.change)).toBeNull();
   const started = cli(f.root, "agent:s7:w1", "work", "start", f.change); expect(started).toMatchObject({ code: 0 }); expect(started.text).toContain(f.worktree); expect(started.text).toContain("agent:s1"); expect(started.text).toContain(sh(f.root, "rev-parse", "main")); expect(started.text).toContain("epoch 1");
   expect(claim(f.root, f.change)).toMatchObject({ holder: "agent:s7:w1", delegation_epoch: 1 });
-  expect(cli(f.worktree, "agent:s7:w1", "work", "stop", "--next", "resume", "--release").code).toBe(0);
+  expect(cli(f.worktree, "agent:s7:w1", "work", "stop", "--reason", "partial", "--next", "resume", "--release").code).toBe(0);
   const other = cli(f.root, "agent:s8:w1", "work", "start", f.change); expect(other.code).toBe(1); expect(other.text).toContain("agent:s7:w1"); expect(claim(f.root, f.change)).toBeNull();
   expect(cli(f.root, "agent:s7:w1", "work", "start", f.change).code).toBe(0);
 });
@@ -57,18 +57,18 @@ test("BR-2498: accept-design reports every intervening contract change and answe
   const other = cli(f.worktree, "agent:s8:w1", "work", "accept-design", f.change); expect(other.code).toBe(5); expect(claim(f.root, f.change)).toEqual(before);
   const r = cli(f.worktree, "agent:s7:w1", "work", "accept-design", f.change); expect(r).toMatchObject({ code: 0 }); expect(r.text).toContain("canon/product.md"); expect(r.text).toContain("#7"); expect(r.text).toContain("Keep compatibility."); expect(claim(f.root, f.change)?.delegation_epoch).toBe(3);
   const again = cli(f.worktree, "agent:s7:w1", "work", "accept-design", f.change); expect(again.code).toBe(0); expect(again.text).toContain("已是最新");
-  expect(cli(f.worktree, "agent:s7:w1", "work", "stop", "--next", "done", "--release").code).toBe(0);
+  expect(cli(f.worktree, "agent:s7:w1", "work", "stop", "--reason", "partial", "--next", "done", "--release").code).toBe(0);
   expect(cli(f.root, "agent:s7:w1", "work", "accept-design", f.change).code).toBe(5);
 });
 
 test("BR-2498: stale epochs and a taken-over expired claim reject worker stop, renewal and drop without mutation", () => {
   const f = fixture(); expect(cli(f.root, "agent:s7:w1", "work", "start", f.change).code).toBe(0); redispatch(f);
   const before = claim(f.root, f.change);
-  expect(cli(f.worktree, "agent:s7:w1", "work", "stop", "--next", "stale", "--release").code).toBe(5);
+  expect(cli(f.worktree, "agent:s7:w1", "work", "stop", "--reason", "partial", "--next", "stale", "--release").code).toBe(5);
   expect(cli(f.root, "agent:s7:w1", "work", "drop", f.change).code).toBe(5); expect(claim(f.root, f.change)).toEqual(before);
   const w = ws(f.root); w.db.db.query("UPDATE claims SET holder='agent:s1',expires_at='2000-01-01' WHERE subject=?").run(f.change); w.db.close();
   const taken = claim(f.root, f.change);
-  expect(cli(f.worktree, "agent:s7:w1", "work", "stop", "--next", "old", "--release").code).toBe(5);
+  expect(cli(f.worktree, "agent:s7:w1", "work", "stop", "--reason", "partial", "--next", "old", "--release").code).toBe(5);
   expect(cli(f.root, "agent:s7:w1", "work", "drop", f.change).code).toBe(5);
   expect(claim(f.root, f.change)).toEqual(taken); expect(sh(f.worktree, "rev-parse", "--is-inside-work-tree")).toBe("true");
 });

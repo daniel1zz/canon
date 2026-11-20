@@ -30,3 +30,16 @@ export function delegationNotice(db: CoordDb, subject: string): string[] {
   if (d.ended) return [`${subject}: delegation to ${d.worker} ended at ${d.ended}, taken back by design owner ${d.owner}; epoch ${d.epoch}; delegate it again to hand it to a worker`];
   return [`${subject}: delegated to ${d.worker}; design owner ${d.owner}; revision ${d.revision}; epoch ${d.epoch}; acceptor ${d.acceptor ?? "none"}${pending ? `; new design pending: canon work accept-design ${subject}` : ""}`];
 }
+
+/**
+ * Ends the delegation in force on `subject` because the change was dropped (BR-2574): as a take ends it (the epoch rises,
+ * `ended` is set, BR-2500), with a `delegation.end` event naming the command; nothing when none is in force.
+ */
+export function endOnDrop(db: CoordDb, actor: string, subject: string, by: "canon work drop" | "canon change drop"): boolean {
+  const d = delegation(db, subject);
+  if (!d || d.ended !== null) return false;
+  const at = new Date().toISOString();
+  db.db.query("UPDATE delegations SET epoch = ?, ended = ? WHERE subject = ? AND ended IS NULL").run(d.epoch + 1, at, subject);
+  db.event(actor, "delegation.end", subject, { by, worker: d.worker, owner: d.owner, epoch: d.epoch + 1 });
+  return true;
+}

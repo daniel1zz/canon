@@ -44,12 +44,12 @@ describe("Codex coordination identity", () => {
     const claim = db.query<{ holder: string; worktree: string }, []>("SELECT holder, worktree FROM claims").get()!;
     db.close();
     expect(claim.holder).toBe("agent:codex-session-a:child-1");
-    const other = cli(claim.worktree, envFor({ CODEX_THREAD_ID: "session-b" }), "work", "stop", "--next", "attempt");
+    const other = cli(claim.worktree, envFor({ CODEX_THREAD_ID: "session-b" }), "work", "stop", "--reason", "partial", "--next", "attempt");
     expect(other.code).toBe(5);
     expect(other.err).toContain("claimed by agent:codex-session-a:child-1");
-    const parent = cli(claim.worktree, envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "session-a" }), "work", "stop", "--next", "parent attempt");
+    const parent = cli(claim.worktree, envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "session-a" }), "work", "stop", "--reason", "partial", "--next", "parent attempt");
     expect(parent.code).toBe(5);
-    expect(cli(claim.worktree, child, "work", "stop", "--next", "continue without --as").code).toBe(0);
+    expect(cli(claim.worktree, child, "work", "stop", "--reason", "partial", "--next", "continue without --as").code).toBe(0);
     const after = new Database(join(root, ".git/canon/state.db"), { readonly: true });
     const event = after.query<{ actor: string; worktree: string }, []>("SELECT actor, worktree FROM events ORDER BY id DESC LIMIT 1").get()!;
     expect(event.actor).toBe("agent:codex-session-a:child-1");
@@ -103,7 +103,7 @@ describe("Codex coordination identity", () => {
     const after = new Database(join(root, ".git/canon/state.db"), { readonly: true });
     expect(after.query<{ holder: string }, []>("SELECT holder FROM claims").get()!.holder).toBe("agent:codex-session-a");
     after.close();
-    const formerChild = cli(claim.worktree, envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "child-1" }), "work", "stop", "--next", "still a child without --as");
+    const formerChild = cli(claim.worktree, envFor({ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "child-1" }), "work", "stop", "--reason", "partial", "--next", "still a child without --as");
     expect(formerChild.code).toBe(5);
     expect(formerChild.err).toContain("claimed by agent:codex-session-a");
   });

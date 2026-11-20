@@ -109,7 +109,7 @@ describe("lifecycle hooks", () => {
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "setup then after_start; a planned change");
     const first = start(ws(root), { change: "C-1" }, quiet);
-    if (first.ok) stop(ws(first.value.worktree), "later", undefined, true); // a live claim refuses every start (BR-2011)
+    if (first.ok) stop(ws(first.value.worktree), "later", undefined, true, { reason: "partial" }); // a live claim refuses every start (BR-2011)
     const again = start(ws(root), { change: "C-1" }, quiet); // the worktree exists: no setup, after_start again
     expect(first.ok && again.ok && again.value.created).toBe(false);
     if (!first.ok) return;
@@ -119,7 +119,7 @@ describe("lifecycle hooks", () => {
 
   test("BR-2058: stop without a claim is not found and after_stop does not run", () => {
     const root = configured(`  after_stop: touch after-stop-ran\n`);
-    expect(stop(ws(root), "x", undefined, false).ok).toBe(false);
+    expect(stop(ws(root), "x", undefined, false, { reason: "partial" }).ok).toBe(false);
     expect(existsSync(join(root, "after-stop-ran"))).toBe(false);
     expect(hookRuns(root)).toEqual([]);
   });
@@ -127,7 +127,7 @@ describe("lifecycle hooks", () => {
   test("BR-2058: after_stop runs after the handoff is recorded, with the next step; its exit code changes nothing", () => {
     const root = configured(`  after_stop:\n    - exit 9\n    - 'echo "$CANON_NEXT" > next.txt'\n`);
     const s = startNew(root, "Pausing");
-    const r = stop(ws(s.worktree), "land it", undefined, false);
+    const r = stop(ws(s.worktree), "land it", undefined, false, { reason: "partial" });
     expect(r.ok).toBe(true);
     expect(readFileSync(join(s.worktree, "next.txt"), "utf8").trim()).toBe("land it");
     expect(handoffs(ws(root).db).map((h) => h.next)).toEqual(["land it"]);

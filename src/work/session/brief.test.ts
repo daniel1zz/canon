@@ -45,7 +45,7 @@ describe("canon work status", () => {
     const empty = canon(root, "work", "status");
     expect([empty.code, empty.out]).toEqual([0, "Claims:\nLanding queue:\nLandings with no result yet:\nHandoffs:\nQuestions waiting for a human: 0\n"]);
     const s = startNew(root, "Status");
-    stop(ws(s.worktree), "land it", undefined, false);
+    stop(ws(s.worktree), "land it", undefined, false, { reason: "partial" });
     ask(ws(root).db, "agent:a", null, "which way?", []);
     const text = canon(root, "work", "status").out.split("\n");
     expect(text[0]).toBe("Claims:");
@@ -53,7 +53,7 @@ describe("canon work status", () => {
     expect(text[2]).toBe("Landing queue:");
     expect(text[3]).toBe("Landings with no result yet:");
     expect(text[4]).toBe("Handoffs:");
-    expect(text[5]).toMatch(new RegExp(`^  ${s.change}\\s+next: land it  \\(agent:a, \\S+\\)$`));
+    expect(text[5]).toMatch(new RegExp(`^  ${s.change}\\s+partial: next: land it  \\(agent:a, \\S+\\)$`));
     expect(text[6]).toBe("Questions waiting for a human: 1");
     const data = JSON.parse(canon(root, "work", "status", "--json").out);
     expect(Object.keys(data)).toEqual(["chores", "claims", "queue", "landings", "resolving", "handoffs", "questions", "design_requests", "urgent"]);
@@ -123,18 +123,18 @@ describe("stop while the worktree is being deleted", () => {
   test("BR-2025: stop in a worktree a clean or drop is removing right now exits 5, saying so, and records no handoff; once that hold is dead it exits 3", async () => {
     const root = project();
     const s = startNew(root, "Going");
-    stop(ws(s.worktree), "release it", undefined, true);
+    stop(ws(s.worktree), "release it", undefined, true, { reason: "partial" });
     const db = ws(root).db;
     db.db.query("DELETE FROM handoffs").run();
     const hold = holdClaim(db, s.change, s.worktree, "human:x");
     if (!hold.ok) throw new Error(hold.error.message);
-    const r = canon(s.worktree, "work", "stop", "--next", "x");
+    const r = canon(s.worktree, "work", "stop", "--reason", "partial", "--next", "x");
     expect(r.code).toBe(5);
     expect(r.err).toContain("being deleted");
     expect(db.db.query("SELECT 1 FROM handoffs").all()).toEqual([]);
     const dead = await deadProcess();
     db.db.query("UPDATE claims SET pid = ?, pid_start = ? WHERE subject = ?").run(dead.pid, dead.start, s.change);
-    expect(canon(s.worktree, "work", "stop", "--next", "x").code).toBe(3);
+    expect(canon(s.worktree, "work", "stop", "--reason", "partial", "--next", "x").code).toBe(3);
   });
 });
 
@@ -296,7 +296,7 @@ describe("the lessons reminder comes last", () => {
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "domain");
     const s = startNew(root, "Notes");
-    const stopped = canon(s.worktree, "work", "stop", "--next", "write the rule");
+    const stopped = canon(s.worktree, "work", "stop", "--reason", "partial", "--next", "write the rule");
     expect(stopped.code).toBe(0);
     const stopLines = stopped.out.trim().split("\n");
     expect(stopLines.at(-1)).toBe(LESSON_REMINDER);

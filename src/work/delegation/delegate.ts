@@ -4,7 +4,7 @@ import { git } from "../../kernel/git.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { proseIds } from "../../knowledge/links/links.ts";
 import { section, RULE_SECTION } from "../../knowledge/documents/templates.ts";
-import type { Change, Corpus } from "../../knowledge/documents/model.ts";
+import type { Change, Corpus, Doc } from "../../knowledge/documents/model.ts";
 import { corpusOf } from "../session/session.ts";
 import { branchSubject } from "../session/subject.ts";
 import type { Say, Workspace } from "../workspace.ts";
@@ -53,6 +53,35 @@ function changeAt(ws: Workspace, revision: string, subject: string): Result<{ co
   return change ? ok({ corpus: corpus.value, change }) : err("not_found", `${subject} does not exist`);
 }
 
+/**
+ * The contract items a delegation of `change` fixes (BR-2497): its rules, their `will_amend` targets, the rules and
+ * decisions their 规则 section names (one level), canon/product.md and `extra` paths; by path, with the document id when
+ * the item is a document. A rule or decision id no document has is `unpublished`. `docOf` looks a document up by id.
+ * `canon work delegate` and the change states (BR-2571's ready-delegatable) both use it, so they judge alike.
+ */
+export function contractWanted(docOf: (id: string) => Doc | undefined, types: Corpus["types"], change: Change, extra: readonly string[]): { wanted: Map<string, string | undefined>; unpublished: Set<string> } {
+  const wanted = new Map<string, string | undefined>();
+  const unpublished = new Set<string>();
+  const add = (name: string) => {
+    const doc = docOf(name);
+    if (doc) wanted.set(doc.path, doc.id);
+    else if (/^(BR|D)-\d+$/.test(name)) unpublished.add(name);
+    else wanted.set(name, undefined);
+  };
+  for (const id of change.rules) {
+    add(id);
+    const rule = docOf(id);
+    if (rule?.kind !== "rule") continue;
+    for (const target of rule.willAmend ?? []) add(target);
+    for (const ref of proseIds(types, id, section(rule.body, RULE_SECTION) ?? "")) {
+      if (/^(BR|D)-\d+$/.test(ref)) add(ref);
+    }
+  }
+  add("canon/product.md");
+  for (const path of extra) add(path);
+  return { wanted, unpublished };
+}
+
 export function delegate(ws: Workspace, subject: string, worker: string, contracts: readonly string[], say: Say): Result<Delegation> {
   if (isWorker(ws.actor) || ws.actor === "agent:unknown") return err("invalid", "only a recognized primary session can delegate work");
   if (!/^[A-Za-z0-9_-]+$/.test(worker)) return err("invalid", "--to is letters, digits, - and _ only");
@@ -74,25 +103,7 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
   const config = configAt(ws, revision.value);
   const paths = designPathsOf(ws, config);
   if (!paths.ok) return paths;
-  const wanted = new Map<string, string | undefined>();
-  const unpublished = new Set<string>();
-  const add = (name: string) => {
-    const doc = main.value.docs.find((d) => d.id === name) ?? task.value.corpus.docs.find((d) => d.id === name);
-    if (doc) wanted.set(doc.path, doc.id);
-    else if (/^(BR|D)-\d+$/.test(name)) unpublished.add(name);
-    else wanted.set(name, undefined);
-  };
-  for (const id of task.value.change.rules) {
-    add(id);
-    const rule = main.value.docs.find((d) => d.id === id) ?? task.value.corpus.docs.find((d) => d.id === id);
-    if (rule?.kind !== "rule") continue;
-    for (const target of rule.willAmend ?? []) add(target);
-    for (const ref of proseIds(main.value.types, id, section(rule.body, RULE_SECTION) ?? "")) {
-      if (/^(BR|D)-\d+$/.test(ref)) add(ref);
-    }
-  }
-  add("canon/product.md");
-  for (const path of [...paths.value, ...contracts]) add(path);
+  const { wanted, unpublished } = contractWanted((id) => main.value.docs.find((d) => d.id === id) ?? task.value.corpus.docs.find((d) => d.id === id), main.value.types, task.value.change, [...paths.value, ...contracts]);
   const base = branch ? git(ws.primary, "merge-base", revision.value, tip.value) : revision;
   if (!base.ok) return base;
   const manifest: ContractItem[] = [];

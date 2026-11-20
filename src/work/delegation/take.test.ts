@@ -54,7 +54,7 @@ test("BR-2500 BR-2498 BR-2501: the design owner takes back a worker of another p
   const main = sh(f.root, "rev-parse", "main");
   writeFileSync(join(f.worktree, "app.txt"), "late worker edit\n"); sh(f.worktree, "commit", "-qam", "late");
   expect(cli(f.worktree, "agent:s7:w1", "work", "land").code).toBe(5);
-  expect(cli(f.worktree, "agent:s7:w1", "work", "stop", "--next", "x", "--release").code).toBe(5);
+  expect(cli(f.worktree, "agent:s7:w1", "work", "stop", "--reason", "partial", "--next", "x", "--release").code).toBe(5);
   expect(cli(f.root, "agent:s7:w1", "work", "drop", f.change).code).toBe(5);
   expect(sh(f.root, "rev-parse", "main")).toBe(main); expect(state(f.root, f.change).claim?.holder).toBe("agent:s1");
 });
@@ -114,7 +114,7 @@ test("BR-2500 BR-2100 BR-2104: a lapsed delegated claim passes to no one but its
   const before = state(f.root, f.change);
   expect(cli(f.root, "agent:s2", "work", "start", f.change).code).toBe(5);
   expect(cli(f.worktree, "agent:s2", "work", "land").code).toBe(5);
-  expect(cli(f.worktree, "agent:s2", "work", "stop", "--next", "x", "--release").code).toBe(5);
+  expect(cli(f.worktree, "agent:s2", "work", "stop", "--reason", "partial", "--next", "x", "--release").code).toBe(5);
   expect(state(f.root, f.change)).toEqual(before); expect(events(f.root, "claim.take").filter((e) => e.from)).toEqual([]);
   writeFileSync(join(f.worktree, "app.txt"), "owner finishes\n"); sh(f.worktree, "commit", "-qam", "finish");
   const r = cli(f.worktree, "agent:s1", "work", "land"); expect(r).toMatchObject({ code: 0 });
@@ -134,7 +134,7 @@ test("BR-2500 BR-2100: an expired lease on a delegated change goes to the owner'
 test("BR-2500 BR-2100 BR-2104: a lapsed lease whose worker process still runs in another session is not taken over automatically, and --stopped is refused too", () => {
   const f = fixture(); setClaim(f.root, f.change, ALIVE(), "2000-01-01T00:00:00.000Z");
   const before = state(f.root, f.change);
-  for (const [cwd, args] of [[f.root, ["work", "start", f.change]], [f.worktree, ["work", "land"]], [f.worktree, ["work", "stop", "--next", "x", "--release"]]] as const) {
+  for (const [cwd, args] of [[f.root, ["work", "start", f.change]], [f.worktree, ["work", "land"]], [f.worktree, ["work", "stop", "--reason", "partial", "--next", "x", "--release"]]] as const) {
     const r = cli(cwd, "agent:s1", ...args);
     expect(r.code).toBe(5); expect(r.text).toContain("still running"); expect(r.text).toContain(`canon work take ${f.change} --from w1 --stopped`);
   }

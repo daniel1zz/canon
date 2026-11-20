@@ -6,6 +6,7 @@ import { basename, join } from "node:path";
 import type { Say, Workspace } from "../workspace.ts";
 import { claimOfWorktree, deletionOf, holdClaim, liveClaims, unholdClaim, releaseClaim, releaseOwnClaim, renewClaim, takeClaim } from "../claims/claims.ts";
 import { writeHandoff } from "./handoffs.ts";
+import { reasonArg, whyOn } from "./reason.ts";
 import { sessionProcess } from "../claims/liveness.ts";
 import { runHooksSync } from "../hooks/hooks.ts";
 import { inFlight, noticeOverlaps } from "./overlap.ts";
@@ -342,7 +343,13 @@ export const LESSON_REMINDER =
 /** The longest `--next` a handoff takes (BR-2465): the next step, not a log; details belong in the change file. */
 export const HANDOFF_NEXT_MAX = 2000;
 
-export function stop(ws: Workspace, next: string, note: string | undefined, release: boolean, say: Say = () => {}): Result<string> {
+/**
+ * `reason` is the handoff's reason as given (BR-2025): its form is checked before anything else, what an `owner` reason
+ * waits on once the claimed change is known; nothing is recorded when either is wrong.
+ */
+export function stop(ws: Workspace, next: string, note: string | undefined, release: boolean, reason: { reason: unknown; on?: unknown }, say: Say = () => {}): Result<string> {
+  const given = reasonArg(reason.reason, reason.on);
+  if (!given.ok) return given;
   // reason: one 42 KB handoff made canon work status print 65 KB to every session (BR-2465)
   if (next.length > HANDOFF_NEXT_MAX) return err("invalid", `--next is ${next.length} characters; a handoff names the next step in at most ${HANDOFF_NEXT_MAX} (BR-2465): write the details into the change file and point to them`);
   // Release too goes through the holder check: only the holder lets its claim go (BR-2104).
@@ -355,7 +362,9 @@ export function stop(ws: Workspace, next: string, note: string | undefined, rele
     if (going) return err("conflict", `${going.subject}'s worktree ${ws.root} is being deleted by \`canon work clean\` or \`canon work drop\` right now; nothing was recorded`);
     return err("not_found", "this worktree holds no change; nothing to hand off");
   }
-  writeHandoff(ws.db, { subject: claim.subject, worktree: ws.root, actor: ws.actor, next, note: note ?? null });
+  const why = whyOn(ws, claim.subject, given.value);
+  if (!why.ok) return why;
+  writeHandoff(ws.db, { subject: claim.subject, worktree: ws.root, actor: ws.actor, next, note: note ?? null, reason: why.value.reason, on: why.value.on });
   if (release) releaseClaim(ws.db, claim.subject, ws.actor);
   // after_stop runs once the handoff is recorded and never changes the result (BR-2058).
   runHooksSync({ db: ws.db, actor: ws.actor, event: "after_stop", change: claim.subject, cwd: ws.root, env: { CANON_NEXT: next }, port: ws.config.ports ? () => portFor(ws.db, ws.actor, claim.subject, ws.config.ports!, ws.root) : noPort }, ws.config.hooks.after_stop, say);

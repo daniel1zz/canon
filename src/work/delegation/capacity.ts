@@ -3,7 +3,7 @@ import { ok, type Result } from "../../kernel/result.ts";
 import type { Corpus } from "../../knowledge/documents/model.ts";
 import { machineNow, type Machine } from "../session/load.ts";
 import type { Workspace } from "../workspace.ts";
-import { stalledDelegations } from "./stall.ts";
+import { changeStates, isClosed } from "../../knowledge/changes/state.ts";
 
 /**
  * Machine capacity when a delegation would add a worker (BR-2526, D-136): memory pressure, the 5-minute load per CPU,
@@ -36,10 +36,10 @@ export function readings(env: Readonly<Record<string, string | undefined>> = pro
 
 /** Reads the machine and works out which delegations in force hold no slot. */
 export function measure(ws: Workspace, main: Corpus, read: () => { memory: Memory | undefined; machine: Machine | undefined } = readings): Result<Capacity> {
-  const stalled = stalledDelegations(ws);
-  if (!stalled.ok) return stalled;
-  const closed = main.docs.filter((d) => d.kind === "change" && d.status !== "open").map((d) => d.id);
-  return ok({ ...read(), free: new Set([...closed, ...stalled.value.map((s) => s.subject)]) });
+  // reason: closed and stalled are the change state's to say, a branch-only change dropped since included (BR-2526, BR-2571)
+  const all = changeStates(ws, { corpus: main, backlog: [], delegatable: false });
+  if (!all.ok) return all;
+  return ok({ ...read(), free: new Set(all.value.states.filter((s) => isClosed(s) || s.stalled !== undefined).map((s) => s.id)) });
 }
 
 /** The signals that could not be read, in the order the rule names them (BR-2526). */

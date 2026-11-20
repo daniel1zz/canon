@@ -174,7 +174,7 @@ describe("canon uninstall", () => {
     writeFileSync(join(wt, "wip.txt"), "wip\n");
     git(wt, "add", "wip.txt");
     git(wt, "commit", "-qm", "wip");
-    expect(canon(wt, env, "work", "stop", "--next", "later", "--release").code).toBe(0);
+    expect(canon(wt, env, "work", "stop", "--reason", "partial", "--next", "later", "--release").code).toBe(0);
     expect(canon(root, env, "uninstall").code).toBe(0);
     expect(canon(other, env, "sync").code).toBe(0);
     const r = canon(other, env, "uninstall");

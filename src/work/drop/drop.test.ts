@@ -12,7 +12,7 @@ import { handoffs } from "../session/handoffs.ts";
 
 /** The holder frees its claim first: a live claim refuses every drop, the same actor included (BR-2064). */
 function released<T extends { worktree: string }>(s: T): T {
-  const r = stop(ws(s.worktree), "drop it", undefined, true);
+  const r = stop(ws(s.worktree), "drop it", undefined, true, { reason: "partial" });
   if (!r.ok) throw new Error(r.error.message);
   return s;
 }

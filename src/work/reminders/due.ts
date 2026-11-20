@@ -1,7 +1,7 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { openFindings, type OpenFinding } from "../../knowledge/review/findings/findings.ts";
 import { questions } from "../humans/questions.ts";
-import { stalledDelegations } from "../delegation/stall.ts";
+import { stalledDelegations } from "../../knowledge/changes/state.ts";
 import { pendingRequests } from "../delegation/requests.ts";
 import { pressure, readings } from "../delegation/capacity.ts";
 import { isWorker } from "../delegation/worker.ts";
@@ -174,7 +174,7 @@ function workerItems(ws: Workspace): DueItem[] {
       const newDesign = claim?.holder === ws.actor && claim.delegation_epoch !== null && claim.delegation_epoch !== d.epoch;
       if (moved && moved.actor !== ws.actor && (!mine || mine.id < moved.id) && (takenAway || newDesign)) {
         items.push(takenAway
-          ? { key: `delegation:${subject}`, since: moved.ts, summary: `taken back by design owner ${d.owner}`, next: `canon work stop --next "<what is left>" --release` }
+          ? { key: `delegation:${subject}`, since: moved.ts, summary: `taken back by design owner ${d.owner}`, next: `canon work stop --reason partial --next "<what is left>" --release` }
           : { key: `delegation:${subject}`, since: moved.ts, summary: `delegated again with a new design (epoch ${d.epoch})`, next: `canon work accept-design ${subject}` });
       }
     }

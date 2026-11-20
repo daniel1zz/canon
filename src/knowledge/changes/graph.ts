@@ -1,7 +1,6 @@
 import { ok, type Result } from "../../kernel/result.ts";
 import type { Change, Corpus, Feature, Release } from "../documents/model.ts";
-import { changeIdsOnBranches, listedChanges, type ListedChange } from "../../work/session/inflight.ts";
-import { mainCorpus } from "../../work/session/session.ts";
+import { changeStates, hasFile, type ChangeState, type Filed } from "./state.ts";
 import type { Workspace } from "../../work/workspace.ts";
 import { releaseScope } from "../releases/features.ts";
 import { dependencyEdges, waitingJson, waitingMark } from "./deps.ts";
@@ -16,40 +15,44 @@ export type GraphState = "landed" | "in_progress" | "waiting" | "ready";
 export const GRAPH_ORDER: readonly GraphState[] = ["landed", "in_progress", "waiting", "ready"];
 export const GRAPH_LABEL: Readonly<Record<GraphState, string>> = { landed: "已合入", in_progress: "进行中", waiting: "在等", ready: "可开始" };
 
-/** What the graph reads: main's changes and those only on change branches, and which ids have a change branch. */
+/** What the graph reads: every change's state (BR-2571), main's changes and those only on change branches. */
 export interface GraphInputs {
-  readonly listed: readonly ListedChange[];
-  readonly branches: ReadonlySet<string>;
+  readonly states: readonly Filed[];
 }
 
 export interface GraphNode {
-  readonly listed: ListedChange;
+  readonly listed: Filed;
   readonly state: GraphState;
 }
 
-/** Reads the changes the way `canon overview` does: main's latest commit plus changes only on their branches (BR-2570, BR-2291). */
+/** Reads the changes the way `canon overview` does: main's latest commit plus changes only on their branches, each with its state (BR-2570, BR-2571). */
 export function graphInputs(ws: Workspace): Result<GraphInputs> {
-  const main = mainCorpus(ws);
-  if (!main.ok) return main;
-  const listing = listedChanges(ws, main.value, [], () => true);
-  if (!listing.ok) return listing;
-  const branches = changeIdsOnBranches(ws);
-  if (!branches.ok) return branches;
-  return ok({ listed: listing.value.listed, branches: branches.value });
+  const all = changeStates(ws, { backlog: [], delegatable: false });
+  if (!all.ok) return all;
+  return ok({ states: all.value.states.filter(hasFile) });
 }
 
 /**
- * THE one place a change's state in the graph is decided (BR-2570), first match wins; undefined for a dropped change,
- * which is not drawn. C-631's change-state module (D-151 part 一) replaces the body of this function: it reads the
- * same listed change and maps its main state onto these four.
+ * A change's state in the graph, mapped from its primary state (BR-2570, BR-2571): the state module is the one place a
+ * change's state is decided; undefined for a dropped or missing change, which is not drawn.
  */
-export function graphState(l: ListedChange, branches: ReadonlySet<string>): GraphState | undefined {
-  const c = l.change;
-  if (c.status === "dropped") return undefined;
-  if (c.status === "done" && l.onBranch.length === 0) return "landed";
-  // reason: a branch saying done has not landed, so it is still being worked on (BR-2570, BR-2294)
-  if (c.status === "done" || l.claimed || l.handoff !== undefined || branches.has(c.id)) return "in_progress";
-  return l.waiting.length > 0 ? "waiting" : "ready";
+export function graphState(s: ChangeState): GraphState | undefined {
+  switch (s.state) {
+    case "landed":
+      return "landed";
+    case "dropped":
+    case "missing":
+      return undefined;
+    case "waiting-owner":
+    case "waiting-deps":
+      return "waiting";
+    case "ready-delegatable":
+    case "ready-self":
+      // reason: a change with a branch was started; nobody on it now is still work in progress, not new work (BR-2570, BR-2291)
+      return s.hasBranch ? "in_progress" : "ready";
+    default:
+      return "in_progress";
+  }
 }
 
 /** Which changes belong to a release (its own id, releases merged into it, its features) or to a feature (BR-2570, BR-2561). */
@@ -63,10 +66,10 @@ const num = (id: string) => Number(id.split("-")[1]);
 
 /** The graph's nodes in order: a change after the ones it depends on that are drawn too, otherwise by number; a cycle's changes by number (BR-2570). */
 export function changeGraph(inputs: GraphInputs, member: (c: Change) => boolean): GraphNode[] {
-  const nodes = inputs.listed
+  const nodes = inputs.states
     .filter((l) => member(l.change))
     .flatMap((l) => {
-      const state = graphState(l, inputs.branches);
+      const state = graphState(l);
       return state ? [{ listed: l, state }] : [];
     })
     .sort((a, b) => num(a.listed.change.id) - num(b.listed.change.id));

@@ -3,7 +3,6 @@ import { err, ok, type Result } from "../../kernel/result.ts";
 import type { Workspace } from "../workspace.ts";
 import { liveClaim } from "../claims/claims.ts";
 import { handoffs } from "../session/handoffs.ts";
-import { corpusOf } from "../session/session.ts";
 
 /**
  * A delegated change nobody is working on (BR-2522, #255): its delegation is in force, no claim on it still binds (none,
@@ -22,37 +21,13 @@ export interface StalledDelegation {
   readonly handoff?: string;
 }
 
+// reason: a change closed on main is finished whatever its delegation record says; whether it is closed (main, or a
+// branch-only change dropped since) is the change state's to say, which leaves out a closed change's stall (BR-2522, BR-2571)
 /**
- * Whether a change is closed (`done` or `dropped`) on main. Main's corpus is read once, on the first question, so a
- * caller with no candidate never reads it.
+ * The delegations in force that are stalled at `now` by BR-2522's two conditions, whatever their change's state: whether
+ * the change is closed (landed or dropped) is the change state's to say (BR-2571), which reads this.
  */
-// reason: a change closed on main is finished whatever its delegation record says; a landing does not end the record (BR-2522, BR-2497, #264)
-export function closedOnMainReader(ws: Workspace): (subject: string) => Result<boolean> {
-  let closed: ReadonlySet<string> | undefined;
-  return (subject) => {
-    if (!closed) {
-      const main = corpusOf(ws, ws.config.main);
-      if (!main.ok) return main;
-      closed = new Set(main.value.docs.filter((d) => d.kind === "change" && d.status !== "open").map((d) => d.id));
-    }
-    return ok(closed.has(subject));
-  };
-}
-
-/** The delegation records `canon work status` lists: every one whose change is not closed on main (BR-2497). */
-export function listedDelegations(ws: Workspace): Result<string[]> {
-  const closedOnMain = closedOnMainReader(ws);
-  const out: string[] = [];
-  for (const row of ws.db.db.query<{ subject: string }, []>("SELECT subject FROM delegations ORDER BY subject").all()) {
-    const done = closedOnMain(row.subject);
-    if (!done.ok) return done;
-    if (!done.value) out.push(row.subject);
-  }
-  return ok(out);
-}
-
-/** The delegated changes stalled at `now` (BR-2522). */
-export function stalledDelegations(ws: Workspace, now: number = Date.now()): Result<StalledDelegation[]> {
+export function stallCandidates(ws: Workspace, now: number = Date.now()): Result<StalledDelegation[]> {
   const rows = ws.db.db.query<{ subject: string; worker: string; owner: string }, []>("SELECT subject, worker, owner FROM delegations WHERE ended IS NULL ORDER BY subject").all();
   if (rows.length === 0) return ok([]);
   const refs = git(ws.primary, "for-each-ref", "--format=%(committerdate:iso-strict) %(refname:short)", "refs/heads/change/");
@@ -69,7 +44,6 @@ export function stalledDelegations(ws: Workspace, now: number = Date.now()): Res
   };
   const notes = new Map(handoffs(ws.db).map((h) => [h.subject, h.next]));
   const out: StalledDelegation[] = [];
-  const closedOnMain = closedOnMainReader(ws);
   for (const r of rows) {
     if (liveClaim(ws.db, r.subject)) continue;
     const delegated = ws.db.db
@@ -80,9 +54,6 @@ export function stalledDelegations(ws: Workspace, now: number = Date.now()): Res
     if (times.length === 0) continue;
     const since = times.reduce((a, b) => (Date.parse(a) >= Date.parse(b) ? a : b));
     if (now - Date.parse(since) < ws.config.delegationStallMs) continue;
-    const done = closedOnMain(r.subject);
-    if (!done.ok) return done;
-    if (done.value) continue;
     const handoff = notes.get(r.subject);
     out.push({ subject: r.subject, worker: r.worker, owner: r.owner, since, ...(lastCommit ? { lastCommit } : {}), ...(handoff ? { handoff } : {}) });
   }

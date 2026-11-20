@@ -126,6 +126,7 @@ export function linkFindings(corpus: Corpus): Finding[] {
         else if (!of.some((x) => x.id === sid)) out.push({ path: c.path, rule: "ref-dangling", message: `${c.id} \`depends_on\` names ${ref}, but ${doc} has no success criterion ${sid}` });
       }
     }
+    if (c.landedIn !== undefined && c.status !== "done") out.push({ path: c.path, rule: "file-invalid", message: `${c.id} is ${c.status}, but \`landed_in\` is only for a done change: canon change close writes both (BR-2573)` });
     if (c.doneBy === c.id) out.push({ path: c.path, rule: "file-invalid", message: `${c.id} \`done_by\` names itself: name the change that did its work instead (BR-2561)` });
   }
   // reason: only this tree's change files are edges; a branch's edge counts once it lands, so a cycle two branches make is refused at the second landing (BR-2565, D-149)

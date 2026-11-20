@@ -201,7 +201,7 @@ describe("dependencies not satisfied are not offered to start", () => {
 
   test("BR-2564: an open dependency marks the change waiting in change list and keeps it off the brief's line to take; once it lands done it is ready", () => {
     const root = repo({ "changes/C-3.md": change(3, "open"), "changes/C-5.md": change(5, "open", "depends_on: [C-3]\n"), "changes/C-6.md": change(6, "open") });
-    expect(line(listed(root), "C-5")).toContain("(waiting for C-3)");
+    expect(line(listed(root), "C-5")).toContain("(waiting-deps; waiting for C-3)");
     expect(json(root, "C-5")).toEqual([{ id: "C-3", state: "open" }]);
     expect(json(root, "C-6")).toEqual([]);
     const brief = cli(root, "brief").out;
@@ -213,7 +213,7 @@ describe("dependencies not satisfied are not offered to start", () => {
     expect(cli(root, "overview").out).toContain("C-5 Change 5  (waiting for C-3)");
     write(root, { "changes/C-3.md": change(3, "done") });
     sh(root, "commit", "-qam", "C-3 lands");
-    expect(line(listed(root), "C-5")).not.toContain("waiting");
+    expect(line(listed(root), "C-5")).not.toContain("waiting for");
     expect(cli(root, "brief").out.split("\n").find((l) => l.includes("take the first unclaimed"))).toContain("C-5");
   });
 

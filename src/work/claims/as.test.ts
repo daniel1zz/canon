@@ -68,7 +68,7 @@ describe("--as makes the actor agent:<session>:<name> (BR-2023)", () => {
 
   test("BR-2023: stop, land and drop take --as too; the claim's holder and the handoff name the subagent", async () => {
     const { root, id, wt } = await claimedBy("abc");
-    const stop = await canon(wt, {}, "work", "stop", "--next", "x", "--as", "abc");
+    const stop = await canon(wt, {}, "work", "stop", "--reason", "partial", "--next", "x", "--as", "abc");
     expect(stop.code).toBe(0);
     expect(db(root).db.query<{ actor: string }, [string]>("SELECT actor FROM handoffs WHERE subject = ?").get(id)?.actor).toBe(`${S}:abc`);
     const drop = await canon(root, {}, "work", "drop", id, "--as", "abc");
@@ -104,9 +104,9 @@ describe("a claim held by a subagent refuses the main session and other subagent
     expect(land.code).toBe(5);
     expect(land.err).toContain(`canon work take ${id} --from abc`);
     expect(land.err).toContain("do not work in this worktree unless you are that subagent");
-    const stop = await canon(wt, {}, "work", "stop", "--release", "--next", "x");
+    const stop = await canon(wt, {}, "work", "stop", "--reason", "partial", "--release", "--next", "x");
     expect(stop.code).toBe(5);
-    const p = Bun.spawnSync(["sh", "-c", `cd ${wt} && bun ${CLI} work stop --next x`], { cwd: root, env: { ...process.env, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SESSION, CANON_ACTOR: "" } as Record<string, string> });
+    const p = Bun.spawnSync(["sh", "-c", `cd ${wt} && bun ${CLI} work stop --reason partial --next x`], { cwd: root, env: { ...process.env, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: SESSION, CANON_ACTOR: "" } as Record<string, string> });
     expect(p.exitCode).toBe(5);
     expect(holderOf(root, id)).toBe(`${S}:abc`);
     expect(db(root).db.query("SELECT 1 FROM handoffs WHERE subject = ?").get(id)).toBeNull();
@@ -116,15 +116,15 @@ describe("a claim held by a subagent refuses the main session and other subagent
 
   test("BR-2104: another subagent is refused; the holding subagent renews with --as and without it is refused", async () => {
     const { root, id, wt } = await claimedBy("abc");
-    expect((await canon(wt, {}, "work", "stop", "--next", "x", "--as", "def")).code).toBe(5);
-    expect((await canon(wt, {}, "work", "stop", "--next", "x", "--as", "abc")).code).toBe(0);
+    expect((await canon(wt, {}, "work", "stop", "--reason", "partial", "--next", "x", "--as", "def")).code).toBe(5);
+    expect((await canon(wt, {}, "work", "stop", "--reason", "partial", "--next", "x", "--as", "abc")).code).toBe(0);
     expect((await canon(wt, {}, "work", "land")).code).toBe(5); // forgot --as: now agent:<session>
     expect(holderOf(root, id)).toBe(`${S}:abc`);
   }, TIMED);
 
   test("BR-2104: a claim recorded without a name is held by the session: another agent of it may stop, a subagent with --as is refused", async () => {
     const { root, id, wt } = await claimedBy(undefined);
-    expect((await canon(wt, {}, "work", "stop", "--next", "x")).code).toBe(0);
+    expect((await canon(wt, {}, "work", "stop", "--reason", "partial", "--next", "x")).code).toBe(0);
     expect(holderOf(root, id)).toBe(S);
     const r = await canon(wt, {}, "work", "land", "--as", "abc");
     expect(r.code).toBe(5);
@@ -156,7 +156,7 @@ describe("canon work take (BR-2336)", () => {
     expect(ev.length).toBe(1);
     expect([ev[0]!.actor, ev[0]!.subject, JSON.parse(ev[0]!.detail)]).toEqual([S, s.change, { from: "abc", by: "main-session", worktree: s.worktree }]);
     expect(events(root, "claim.take").length).toBe(2); // owner and worker starts: handover is not claim.take
-    expect((await canon(s.worktree, {}, "work", "stop", "--next", "go on")).code).toBe(0);
+    expect((await canon(s.worktree, {}, "work", "stop", "--reason", "partial", "--next", "go on")).code).toBe(0);
     expect((await canon(s.worktree, {}, "work", "land", "--finish")).code).toBe(0);
   }, TIMED);
 

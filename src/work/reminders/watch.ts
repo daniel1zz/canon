@@ -49,7 +49,7 @@ function nextFor(e: EventRow): string {
     case "delegation.refuse": return "canon work due";
     case "design.answer":
     case "delegation.update": return `canon work accept-design ${s}`;
-    case "claim.handover": return `canon work stop --next "<what is left>" --release`;
+    case "claim.handover": return `canon work stop --reason partial --next "<what is left>" --release`;
     default: return "canon work due";
   }
 }

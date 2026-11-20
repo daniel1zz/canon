@@ -1,8 +1,8 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
-import { appendFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { memoryNow, type MemorySources } from "../../kernel/machine.ts";
-import type { Corpus } from "../../knowledge/documents/model.ts";
+import { mainCorpus } from "../session/session.ts";
 import { project, sh, startNew, ws } from "../testkit.ts";
 import { measure, readings, refusal } from "./capacity.ts";
 
@@ -101,15 +101,21 @@ test("BR-2526: an unmeasured signal is skipped, said in one line each, and recor
   expect(events(f.root, "delegation.create")[0]!.detail.unmeasured).toEqual(["memory", "load"]);
 });
 
-test("BR-2526: a delegation whose change is closed on main, or that is stalled, holds no slot", () => {
+test("BR-2526 BR-2571: a delegation whose change is closed on main, or that is stalled, holds no slot", () => {
   const f = fixture(0);
+  const doc = (id: string, status: string) => `---\nid: ${id}\ntitle: ${id}\nstatus: ${status}\nrules: []\n---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n`;
+  mkdirSync(join(f.root, "canon/changes"), { recursive: true });
+  writeFileSync(join(f.root, "canon/changes/C-90.md"), doc("C-90", "done"));
+  writeFileSync(join(f.root, "canon/changes/C-92.md"), doc("C-92", "open"));
+  sh(f.root, "add", "-A"); sh(f.root, "commit", "-qm", "changes");
   const w = ws(f.root);
   try {
     const old = new Date(Date.now() - 2 * 3_600_000).toISOString();
     for (const s of ["C-90", "C-91", "C-92"]) w.db.db.query("INSERT INTO delegations(subject,worker,owner,revision,epoch,manifest,task_hash) VALUES (?,?,?,?,?,?,?)").run(s, "w", "agent:s1", "x", 1, "[]", "h");
     w.db.db.query("INSERT INTO events(ts, actor, kind, subject, detail) VALUES (?,?,?,?,?)").run(old, "agent:s1", "delegation.create", "C-91", "{}");
-    const corpus = { docs: [{ id: "C-90", kind: "change", status: "done" }, { id: "C-92", kind: "change", status: "open" }] } as unknown as Corpus;
-    const cap = measure(w, corpus, () => ({ memory: { tight: false, text: "memory pressure normal" }, machine: { load5: 1, cpus: 8 } }));
+    const corpus = mainCorpus(w);
+    if (!corpus.ok) throw new Error(corpus.error.message);
+    const cap = measure(w, corpus.value, () => ({ memory: { tight: false, text: "memory pressure normal" }, machine: { load5: 1, cpus: 8 } }));
     expect(cap.ok && [...cap.value.free].sort()).toEqual(["C-90", "C-91"]);
     expect(cap.ok && refusal({ ...w, config: { ...w.config, delegateMaxWorkers: 2 } } as typeof w, cap.value)).toBeUndefined();
     expect(cap.ok && refusal({ ...w, config: { ...w.config, delegateMaxWorkers: 1 } } as typeof w, cap.value)?.reasons).toEqual(["1 of delegate_max_workers (1) in use"]);

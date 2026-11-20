@@ -56,14 +56,15 @@ function backlog(root: string, text: string) {
   sh(root, "commit", "-qm", "backlog");
 }
 
-const rows = (out: string) => out.split("\n").filter(Boolean);
+// reason: the state mark that now leads every line is BR-2572's, tested in state.test.ts; these tests are about BR-2291's marks after it
+const rows = (out: string) => out.split("\n").filter(Boolean).map((l) => l.replace(/  \(([a-z-]+)(?::[^;)]*)?(?:; |\))/, (_m) => (_m.endsWith(")") ? "" : "  (")));
 const ids = (out: string) => rows(out).map((l) => l.split(/\s+/)[0]);
 const PICK = "with no task, take the first unclaimed, not ambiguous one: ";
 
 describe("changes that so far exist only on their branch", () => {
   test("BR-2291: a released, handed-off change only on its branch is listed first, marked, in change list, --json and brief", () => {
     const { root, wt, branch } = withBranchOnly();
-    expect(canon(wt, "work", "stop", "--release", "--next", "land it").code).toBe(0);
+    expect(canon(wt, "work", "stop", "--reason", "partial", "--release", "--next", "land it").code).toBe(0);
 
     const list = canon(root, "change", "list");
     expect(list.code).toBe(0);
@@ -86,7 +87,7 @@ describe("changes that so far exist only on their branch", () => {
 
   test("BR-2291: a claim that still binds is marked claimed; the backlog still comes first", () => {
     const { root, wt, branch } = withBranchOnly();
-    expect(canon(wt, "work", "stop", "--next", "land it").code).toBe(0);
+    expect(canon(wt, "work", "stop", "--reason", "partial", "--next", "land it").code).toBe(0);
     expect(rows(canon(root, "change", "list").out)[0]).toBe(`${id(2)}      open       Only on branch  (on branch ${branch}; handoff: land it; claimed)`);
     expect(canon(root, "brief").out).toContain(`${PICK}${id(2)} (on branch ${branch}, handoff, claimed), ${id(1)}\n`);
 
@@ -296,7 +297,7 @@ describe("brief's unfinished changes", () => {
 describe("brief in a claimed worktree", () => {
   test("BR-2024: a change only on its branch shows in the main checkout's brief, never in another change's worktree", () => {
     const { root, wt, branch } = withBranchOnly();
-    expect(canon(wt, "work", "stop", "--release", "--next", "land it").code).toBe(0);
+    expect(canon(wt, "work", "stop", "--reason", "partial", "--release", "--next", "land it").code).toBe(0);
     const other = canon(root, "work", "start", id(1));
     expect(other.code).toBe(0);
     const mine = canon(other.out.match(/cd (.+)/)![1]!.trim(), "brief").out;
@@ -314,10 +315,10 @@ describe("started work in the owner's order", () => {
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "fixture");
     const db = ws(root).db;
-    writeHandoff(db, { subject: id(2), worktree: null, actor: "agent:b", next: "go on", note: null });
+    writeHandoff(db, { subject: id(2), worktree: null, actor: "agent:b", next: "go on", note: null, reason: "partial", on: null });
     expect(ids(canon(root, "change", "list").out)).toEqual([id(3), id(1), id(2), id(4)]);
     db.db.query("DELETE FROM handoffs").run();
-    writeHandoff(db, { subject: id(4), worktree: null, actor: "agent:b", next: "go on", note: null });
+    writeHandoff(db, { subject: id(4), worktree: null, actor: "agent:b", next: "go on", note: null, reason: "partial", on: null });
     expect(ids(canon(root, "change", "list").out)).toEqual([id(3), id(1), id(4), id(2)]);
   });
 });

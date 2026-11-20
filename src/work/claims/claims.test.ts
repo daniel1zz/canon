@@ -214,7 +214,7 @@ describe("only the holder works in its worktree", () => {
     const root = project();
     const s = startNew(root, "Held");
     const b = ws(s.worktree, "agent:b");
-    expect(stop(b, "x", undefined, false).ok).toBe(false);
+    expect(stop(b, "x", undefined, false, { reason: "partial" }).ok).toBe(false);
     expect((await land(ws(s.worktree, "agent:b"), FAST, quiet)).kind).toBe("refused");
     const d = ws(root).db;
     const kinds = d.db.query<{ kind: string }, []>("SELECT kind FROM events WHERE kind IN ('claim.refuse','land.refuse') ORDER BY id").all().map((e) => e.kind);

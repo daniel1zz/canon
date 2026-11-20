@@ -108,6 +108,8 @@ export interface Change extends Base {
   readonly dependsOn?: readonly string[];
   /** On a dropped change, the change that did its work instead (`done_by`, BR-2561, BR-2564). */
   readonly doneBy?: string;
+  /** On a done change closed by `canon change close`, the commit on main that carried its work (`landed_in`, BR-2573). */
+  readonly landedIn?: string;
   /** The success criteria this change advances (`advances: [R-5/S1]`), or why it advances none (`"none: <reason>"`) (BR-2517). */
   readonly advances?: Advances;
   /** Questions the owner answered that confirm the goal changes this change lands (`owner_answers`, BR-2510). */

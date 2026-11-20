@@ -70,7 +70,7 @@ function started(root: string, title = "maintenance") {
 test("BR-2457: released chores resume from their branch without documents or events", () => {
   const root = project();
   const a = started(root);
-  const stopped = cli(a.worktree, "work", "stop", "--next", "continue tooling", "--release");
+  const stopped = cli(a.worktree, "work", "stop", "--reason", "partial", "--next", "continue tooling", "--release");
   expect(stopped.exitCode).toBe(0);
   expect(stopped.stdout.toString()).not.toContain("## 教训");
   const brief = cli(a.worktree, "brief");
@@ -93,7 +93,7 @@ test("BR-2457: duplicate branch identities and mismatching claims refuse without
   const missing = cli(root, "chore", "start", "chore-00000000-0000-4000-8000-000000000000");
   expect([missing.exitCode, missing.stderr.toString()]).toEqual([3, expect.stringContaining("no chore branch")]);
   const a = started(root);
-  expect(cli(a.worktree, "work", "stop", "--next", "continue", "--release").exitCode).toBe(0);
+  expect(cli(a.worktree, "work", "stop", "--reason", "partial", "--next", "continue", "--release").exitCode).toBe(0);
   const duplicate = `chore/${a.subject.slice(6)}-duplicate`;
   sh(root, "branch", duplicate, "main");
   const ambiguous = cli(root, "chore", "start", a.subject);
@@ -167,7 +167,7 @@ test("BR-2458 BR-2091: a light change file needs no sections, a change without c
 test("BR-2458: clean keeps an unfinished empty chore and drop archives unpublished work", () => {
   const root = project();
   const a = started(root);
-  expect(cli(a.worktree, "work", "stop", "--next", "later", "--release").exitCode).toBe(0);
+  expect(cli(a.worktree, "work", "stop", "--reason", "partial", "--next", "later", "--release").exitCode).toBe(0);
   const clean = cli(root, "work", "clean", a.subject);
   expect(clean.exitCode).toBe(0);
   expect(existsSync(a.worktree)).toBe(true);
@@ -223,7 +223,7 @@ test("BR-2458 BR-2199: released work cannot land anonymously and hook identity s
   writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: none\nhooks:\n  before_land: 'test "$CANON_KIND" = chore && test -z "$CANON_CHANGE" && test -n "$CANON_SUBJECT"'\n  after_land: "true"\n`);
   sh(root, "commit", "-qam", "hooks");
   const a = started(root);
-  expect(cli(a.worktree, "work", "stop", "--next", "later", "--release").exitCode).toBe(0);
+  expect(cli(a.worktree, "work", "stop", "--reason", "partial", "--next", "later", "--release").exitCode).toBe(0);
   expect(cli(a.worktree, "chore", "land").exitCode).toBe(2);
   expect(ws(root).db.db.query("SELECT * FROM queue").all()).toEqual([]);
   expect(cli(root, "chore", "start", a.subject).exitCode).toBe(0);
