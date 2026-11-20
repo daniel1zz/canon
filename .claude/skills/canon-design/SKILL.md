@@ -57,6 +57,7 @@ Read only the files of the mode you need. Cross-cutting references (`references/
 | Performance | latency-sensitive paths, large data | set a budget and show the design meets it |
 | Observability | new component | what is logged or recorded, and how a failure is noticed |
 | Data privacy | PII or other user data | classify its sensitivity; encryption at rest and in transit; retention period and deletion; audit trail of who reads or changes it |
+| Refusals | the design makes a command refuse, wait or stop work | remind first, refuse rarely. Refuse only to keep main correct and the documents truthful, to prevent lost data or a security problem, to protect the machine's capacity, or because the owner asked for this block; name which one, and stop only the work related to the problem. Everything else gets a stated standard and a reminder when it concerns the current work; the session judges relevance, decides, and writes down why, where the owner can see it. "A reminder was ignored once" is not a reason to refuse: make the reminder reach the session and show only what is related |
 
 ## 4. Record the design
 

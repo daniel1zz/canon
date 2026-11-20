@@ -113,6 +113,13 @@ describe("rule review prompt", () => {
     expect(prompt).toContain("a defect only between documents this landing does not change is a `note`");
   });
 
+  test("BR-2009: the instructions make a new refusal outside the four allowed kinds, or one that stops unrelated work, a note suggesting a reminder", () => {
+    const { root, corpus } = corpusOf(files);
+    const prompt = reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 4)));
+    expect(prompt).toContain("refuse, wait or stop work");
+    expect(prompt).toContain("give a `note` naming the refusal and suggesting a stated standard plus a reminder instead");
+  });
+
   test("BR-2484: after asking for every defect, the prompt treats text that names its replacement as history and asks for each defect once", () => {
     const { root, corpus } = corpusOf(files);
     const prompt = reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 4)));
