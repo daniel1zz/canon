@@ -4,7 +4,6 @@ import { join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { git } from "../../kernel/git.ts";
 import { DUPLICATE_CRITERIA, NO_VERDICT, parseAnswer, runReviews, type AnswerParser, type ReviewLimits, type ReviewVerdict } from "./review.ts";
-import { run, LABEL } from "./code-review.ts";
 import { addedLines } from "../check/restatement/restatement.ts";
 
 /**
@@ -189,8 +188,9 @@ export function quoteIsOld(text: string, quote: string, changed: ReadonlySet<num
 const ALREADY = "(already released) ";
 
 /**
- * The release check's answer parser (BR-2411, D-107): a `duplication` finding whose every place is quoted from text the last
- * release already shipped becomes a note; one that touches a changed line, has no places or quotes words not found still blocks.
+ * The release check's answer parser (BR-2411, D-107): every finding is a note. A `duplication` whose every place is
+ * quoted from text the last release already shipped is marked `(already released) `; the others are said as they are.
+ * None blocks publishing (D-139).
  */
 export function releaseParser(texts: readonly ShippedText[], guide: string, baseline: Baseline | undefined): AnswerParser {
   const sources = new Map<string, { text: string; changed: Set<number> }>();
@@ -208,23 +208,20 @@ export function releaseParser(texts: readonly ShippedText[], guide: string, base
     const parsed = parseAnswer(answer);
     if (!parsed.ok) return parsed;
     const list = (answer as { findings?: unknown }).findings;
-    // reason: an answer without finding objects carries no places, so nothing in it can be shown to be old (D-107)
-    if (!Array.isArray(list) || !list.every((f) => f !== null && typeof f === "object")) return parsed;
-    let blocking = false;
+    // reason: an answer in the format before BR-2367 gives no criterion and no places, and nothing in it blocks either (D-139)
+    if (!Array.isArray(list) || !list.every((f) => f !== null && typeof f === "object")) return ok({ verdict: "ok", findings: parsed.value.findings, ...(parsed.value.wording ? { wording: parsed.value.wording } : {}) });
     const findings = list.map((f, i) => {
-      const { criterion, text, places } = f as { criterion?: unknown; text?: unknown; places?: unknown };
-      if (criterion === "note") return parsed.value.findings[i]!;
-      if (old(places)) return `${ALREADY}${String(text)}`;
-      blocking = true;
-      return parsed.value.findings[i]!;
+      const { criterion, places } = f as { criterion?: unknown; places?: unknown };
+      // reason: every finding is a note now, so it is printed without the criterion name that used to read as a block (D-139)
+      const text = parsed.value.findings[i]!.replace(/^\[duplication\] /, "");
+      return criterion !== "note" && old(places) ? `${ALREADY}${text}` : text;
     });
-    return ok({ verdict: blocking ? "block" : "ok", findings });
+    return ok({ verdict: "ok", findings });
   };
 }
 
-/** One earlier verdict on the same texts, so the paid review runs once per set of texts (BR-2411). */
+/** The findings of an earlier check on the same texts, so the paid review runs once per set of texts (BR-2411). */
 export interface EarlierVerdict {
-  readonly verdict: "ok" | "block";
   readonly findings: readonly string[];
 }
 
@@ -245,9 +242,8 @@ export interface ReleaseCheckEnv {
 
 export interface ReleaseCheck {
   readonly hash: string;
-  readonly verdict: "ok" | "block";
   readonly findings: readonly string[];
-  /** True when an earlier verdict on the same texts was used and the review command did not run. */
+  /** True when the findings of an earlier check on the same texts were used and the review command did not run. */
   readonly reused: boolean;
   /** True when the texts are exactly the last release's: nothing changed can repeat anything, the review command did not run (D-107). */
   readonly unchanged?: boolean;
@@ -260,39 +256,15 @@ export async function releaseCheck(e: ReleaseCheckEnv): Promise<Result<ReleaseCh
   if (texts.length === 0) return err("io", `no canon-* skill under ${join(e.cwd, ".claude", "skills")}`);
   const hash = releaseHash(texts, e.guide, e.baseline);
   const b = e.baseline;
-  // reason: with no changed line no duplicate can block (D-107), so the paid review is not run
-  if (b && b.guide === e.guide && texts.every((t) => b.texts.get(t.path) === t.text)) return ok({ hash, verdict: "ok", findings: [], reused: false, unchanged: true, calls: 0 });
+  // reason: with no changed line no duplicate is new (D-107), so the paid review is not run, though it could say nothing new
+  if (b && b.guide === e.guide && texts.every((t) => b.texts.get(t.path) === t.text)) return ok({ hash, findings: [], reused: false, unchanged: true, calls: 0 });
   const earlier = e.earlier(hash);
-  if (earlier) return ok({ hash, verdict: earlier.verdict, findings: earlier.findings, reused: true, calls: 0 });
+  if (earlier) return ok({ hash, findings: earlier.findings, reused: true, calls: 0 });
   const prompts = releasePrompts(texts, e.guide, e.budgetBytes, e.baseline);
   if (!prompts.ok) return prompts;
   const v = await runReviews(e.reviewer, e.cwd, prompts.value, e.limits, e.parallel, releaseParser(texts, e.guide, e.baseline));
   if (!v.ok) return v;
   e.record(hash, v.value);
-  return ok({ hash, verdict: v.value.verdict, findings: v.value.findings, reused: false, calls: prompts.value.length });
+  return ok({ hash, findings: v.value.findings, reused: false, calls: prompts.value.length });
 }
 
-export const RELEASE_ISSUE_TITLE = "Release check: canon's shipped skills repeat a requirement";
-
-/**
- * Names the block on GitHub the way the post-land code review does (BR-2072): a comment on the open `canon-review` issue with
- * this title, else a new issue with it. Returns the issue's URL or number.
- */
-export function reportBlock(cwd: string, gh: string, green: string, findings: readonly string[]): Result<string> {
-  const list = run(gh, ["issue", "list", "--state", "open", "--label", LABEL, "--search", `"${RELEASE_ISSUE_TITLE}" in:title`, "--json", "number,title"], cwd);
-  if (!list.ok) return list;
-  const open = (JSON.parse(list.value || "[]") as { number: number; title: string }[]).find((i) => i.title === RELEASE_ISSUE_TITLE);
-  const body = [
-    `The release check of \`${green.slice(0, 9)}\` blocked: \`dist/canon\` and \`dist/skills\` were not published and still hold the previous release.`,
-    "",
-    ...findings.map((f) => `- ${f}`),
-    "",
-    `Reproduce: in a checkout of \`${green.slice(0, 9)}\`, \`bun scripts/release.ts --check\`. Fix the skill text in a change; the next green commit publishes.`,
-  ].join("\n");
-  if (open) {
-    const c = run(gh, ["issue", "comment", String(open.number), "--body", body], cwd);
-    return c.ok ? ok(`#${open.number}`) : c;
-  }
-  const c = run(gh, ["issue", "create", "--title", RELEASE_ISSUE_TITLE, "--label", LABEL, "--body", body], cwd);
-  return c.ok ? ok(c.value.trim()) : c;
-}

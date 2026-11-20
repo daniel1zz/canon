@@ -2,7 +2,7 @@ import { git } from "../../../kernel/git.ts";
 import type { Say, Workspace } from "../../workspace.ts";
 import { changeIdsOnBranches } from "../../session/inflight.ts";
 import { readWorkConfig } from "../../workspace.ts";
-import { backlogNotes, check, noteLine, staleReportNotes, type Finding } from "../../../knowledge/check/check.ts";
+import { backlogNotes, check, checkNotes, noteLine, staleReportNotes, type Finding } from "../../../knowledge/check/check.ts";
 import { reportsFor } from "../../verify/changes.ts";
 import { backlogAt } from "../../../knowledge/documents/backlog.ts";
 import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../../../knowledge/check/sources.ts";
@@ -92,6 +92,8 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   const findings = check(input);
   for (const n of backlogNotes(input)) say(noteLine(n));
   for (const n of staleReportNotes(input)) say(noteLine(n));
+  // reason: what this work should still complete in its documents is said, never refused (D-139)
+  for (const n of checkNotes(input)) say(noteLine(n));
   if (findings.length > 0) return refuse("check", `canon check: ${findings.length} finding(s)`, findings);
   // An id the landing adds must not be one another change's worktree allocated (BR-2362, #140).
   const allocated = landingAllocations({ db: ws.db, primary: ws.primary, wt, worktree: v.worktree, base: base.value, head: head.value, corpus: read.corpus });
@@ -119,7 +121,7 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   if (scope.linksOnly.length > 0) say(`review: ${scope.linksOnly.length} file(s) only re-recorded references, not reviewed`);
   if (scope.sourcesOnly.length > 0) say(`review: ${scope.sourcesOnly.length} decision(s) only changed their 来源 lines, which the landing checks; not reviewed`);
   // Sources new to main are checked once, here, on the tree that becomes main (BR-2111).
-  const sourceFailures = await checkSources(wt, base.value, entries, read.corpus.docs, opts.fetcher ?? httpFetch);
+  const sourceFailures = await checkSources(wt, base.value, entries, read.corpus.docs, opts.fetcher ?? httpFetch, say);
   if (sourceFailures.length > 0) return refuse("source", `decision sources do not hold:\n${sourceFailures.map((f) => `  - ${f}`).join("\n")}`);
   // reason: how a landing is reviewed (the command, its limit, the standing instruction list) comes from main's already-landed
   // config, never from the change's own tree: a change that swaps the reviewer would otherwise review itself (BR-2074, #115)
@@ -145,18 +147,18 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
 }
 
 /**
- * BR-2111: a decision added by this landing cites at least one source under its options, and every source
- * line not already on main (in that decision) is verified against what it names. A source that cannot be
- * fetched fails too: an unverified quote never reaches main.
+ * BR-2111: every source line a decision added by this landing gives that is not already on main (in that decision) is
+ * verified against what it names. A source that cannot be fetched fails too: an unverified quote never reaches main. A
+ * new decision citing no source at all is a note, not a refusal (D-139).
  */
-async function checkSources(wt: string, base: string, entries: readonly { status: string; path: string }[], docs: readonly Doc[], fetcher: Fetcher): Promise<string[]> {
+async function checkSources(wt: string, base: string, entries: readonly { status: string; path: string }[], docs: readonly Doc[], fetcher: Fetcher, say: Say): Promise<string[]> {
   const failures: string[] = [];
   const touched = new Map(entries.filter((e) => e.status !== "D" && e.path.startsWith("canon/decisions/")).map((e) => [e.path, e.status]));
   for (const d of docs) {
     if (d.kind !== "decision" || !touched.has(d.path)) continue;
     const now = sources(d.body).sources;
     if (touched.get(d.path) === "A" && now.length === 0) {
-      failures.push(`${d.id} is new and cites no source under ${OPTIONS_SECTION} (来源：<URL or repository path> “<quote>”)`);
+      say(`note: ${d.id} is new and cites no source under ${OPTIONS_SECTION} (来源：<URL or repository path> “<quote>”): add one where it rests on an outside fact; the landing goes on (BR-2111, D-139)`);
       continue;
     }
     const old = git(wt, "show", `${base}:${d.path}`);

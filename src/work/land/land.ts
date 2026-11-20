@@ -108,12 +108,15 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
   if (!ws.config.floor) return early("no-floor", "canon/config.yaml has no `floor` command; nothing proves the tree is sound");
   const clean = isClean(wt);
   if (!clean.ok || !clean.value) return early("dirty", "the worktree has uncommitted changes; commit them first");
-  // reason: a failure canon work test found on this branch is not landed on the hope that the floor catches it, even after more commits; with floor_timing: after it would reach main (BR-2463)
+  // reason: a run canon work test left failing on this branch may be stale or an environment fluke, and the landing runs
+  // the tests this change makes relevant itself (BR-2542); it is said as a note, never refused (BR-2463, D-139)
   const left = failedOnBranch(ws.db, wt, main);
-  if ("error" in left) return early("environment", `cannot read this branch's commits to check the test runs: ${left.error}`);
-  if (left.files.length > 0 || left.typecheck !== null) {
+  if ("error" in left) {
+    say(`note: cannot read this branch's commits to check what canon work test left failing: ${left.error}; the landing goes on (BR-2463)`);
+  } else if (left.files.length > 0 || left.typecheck !== null) {
     const what = [...(left.files.length > 0 ? [`${left.files.length} test file(s) failed: ${left.files.join(", ")}`] : []), ...(left.typecheck !== null ? [`the typecheck exited ${left.typecheck}`] : [])].join("; ");
-    return early("tests", `canon work test on this branch left failures not run again since: ${what}. Fix them and run them again, or if they were a fluke, just run them again: canon work test ${left.files.join(" ")}`.trimEnd());
+    const rerun = left.files.length > 0 ? `canon work test ${left.files.join(" ")}` : "canon work test";
+    say(`note: canon work test on this branch left failures not run again since: ${what}; the landing goes on and runs the tests this change makes relevant itself (BR-2542, BR-2463); to clear this, run them again: ${rerun}`);
   }
   // reason: a refusal its content and main alone decide comes again on the same content and main; said now, without
   // waiting a turn in the queue (BR-2388, #154). Before the close commit, so there is nothing to take back.

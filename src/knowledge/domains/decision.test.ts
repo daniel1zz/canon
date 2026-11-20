@@ -39,23 +39,23 @@ const added = (wt: string, name: string) => {
 };
 
 describe("a new domain is a decision", () => {
-  test("BR-2446: a domain this work adds with no decision naming it is refused; a domain that was already there is not", () => {
+  test("BR-2446: a domain this work adds with no decision naming it is said as a note and exits 0; a domain that was already there is not", () => {
     const root = fixture();
     const change = startNew(root, "加领域");
     added(change.worktree, "shipping");
     const r = canon(change.worktree, "check");
-    expect(r.code).toBe(1);
-    expect(r.out).toContain("domain-no-decision");
-    expect(r.out).toContain("domain shipping is new");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("note: canon/rules/shipping/README.md: domain shipping is new");
+    expect(r.out).not.toContain("domain-no-decision");
     expect(r.out).not.toContain("domain billing is new"); // billing was there before this work
   });
 
-  test("BR-2446: a decision this work writes, or one already on main, that names the domain lets it through", () => {
+  test("BR-2446: a decision this work writes, or one already on main, that names the domain silences the note", () => {
     const root = fixture();
     const change = startNew(root, "加领域");
     added(change.worktree, "shipping");
     put(change.worktree, { [`canon/decisions/${id("D", 1)}.md`]: decision(1, "proposed", "新领域 `shipping` 只管发货。") });
-    expect(canon(change.worktree, "check").out).not.toContain("domain-no-decision");
+    expect(canon(change.worktree, "check").out).not.toContain("domain shipping is new");
 
     const onMain = fixture();
     put(onMain, { [`canon/decisions/${id("D", 2)}.md`]: decision(2, "accepted", "`shipping` 只管发货。") });
@@ -63,15 +63,16 @@ describe("a new domain is a decision", () => {
     sh(onMain, "commit", "-qm", "decision first");
     const later = startNew(onMain, "加领域");
     added(later.worktree, "shipping");
-    expect(canon(later.worktree, "check").out).not.toContain("domain-no-decision");
+    expect(canon(later.worktree, "check").out).not.toContain("domain shipping is new");
   });
 
-  test("BR-2446: a superseded decision does not count, and naming only the enclosing domain does not name the subdomain", () => {
+  test("BR-2446: a superseded decision does not count, and naming only the enclosing domain does not name the subdomain; both are notes", () => {
     const root = fixture();
     const change = startNew(root, "加领域");
     added(change.worktree, "shipping");
     put(change.worktree, { [`canon/decisions/${id("D", 1)}.md`]: decision(1, "superseded", "`shipping` 只管发货。") });
-    expect(canon(change.worktree, "check").out).toContain("domain shipping is new");
+    expect(canon(change.worktree, "check").code).toBe(0);
+    expect(canon(change.worktree, "check").out).toContain("note: canon/rules/shipping/README.md: domain shipping is new");
 
     put(change.worktree, { "canon/rules/billing/refunds/README.md": "# refunds\n\n## 术语\n\n- **x**：y\n" });
     put(change.worktree, { [`canon/decisions/${id("D", 1)}.md`]: decision(1, "accepted", "`billing` 和 `shipping` 都在。") });
@@ -90,6 +91,6 @@ describe("a new domain is a decision", () => {
   test("BR-2446: in the main checkout, outside any change, nothing is reported", () => {
     const root = fixture();
     added(root, "shipping");
-    expect(canon(root, "check").out).not.toContain("domain-no-decision");
+    expect(canon(root, "check").out).not.toContain("domain shipping is new");
   });
 });

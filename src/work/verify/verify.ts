@@ -10,7 +10,7 @@ import { FILE_PLACEHOLDER } from "./config-keys.ts";
 import { caseNames, readReport, REPORT_PLACEHOLDER } from "./report.ts";
 import { loadReports, recordReport } from "./ledger.ts";
 import { runSelectCommand } from "./select-command.ts";
-import { backlogNotes, check, noteLine, staleReportNotes } from "../../knowledge/check/check.ts";
+import { backlogNotes, check, checkNotes, noteLine, staleReportNotes } from "../../knowledge/check/check.ts";
 import { testFilesFor } from "../../knowledge/check/tests.ts";
 import { budgetHint, sessionText } from "../../knowledge/check/session-text.ts";
 import { changesOf, paths, reportsFor } from "./changes.ts";
@@ -421,6 +421,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
   for (const n of staleReportNotes(input)) say(noteLine(n)); // never a failure (BR-2345)
   for (const n of backlogNotes(input)) say(noteLine(n)); // never a failure (BR-2150, #112)
+  for (const n of checkNotes(input)) say(noteLine(n)); // never a failure (D-139)
   say(findings.length === 0 ? "canon check: ok" : `canon check: ${findings.length} finding(s)`);
   // reason: this run already has the reports the landing reads, so the rules it would leave 待重新执行 are said here; a note, never a failure (BR-2456, D-141)
   const missing = missingEvidence(ws, read.corpus, subject);

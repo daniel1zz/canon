@@ -6,7 +6,7 @@ import { CoordDb } from "../../work/db.ts";
 import { readConfig } from "../../invocation/config.ts";
 import { readCorpus } from "../documents/read.ts";
 import { testFilesFor } from "./tests.ts";
-import { check, staleReportNotes } from "./check.ts";
+import { check, checkNotes, staleReportNotes } from "./check.ts";
 import type { TestReports } from "../../work/verify/ledger.ts";
 import type { TestCase } from "../../work/verify/report.ts";
 import { verify } from "./sources.ts";
@@ -306,9 +306,11 @@ describe("decision options and sources", () => {
     ({ [`canon/decisions/${d(n)}.md`]: `---\nid: ${d(n)}\ntitle: X\nstatus: accepted\n---\n## 背景\n\nB.\n\n## 方案\n\n${options}\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n` });
   const run = (files: Record<string, string>, rule: string) =>
     check({ root: repo(files), ...readCorpus(repo(files)), testFiles: [] }).filter((f) => f.rule === rule).map((f) => f.message).sort();
+  const noteRun = (files: Record<string, string>, rule: string) =>
+    checkNotes({ root: repo(files), ...readCorpus(repo(files)), testFiles: [] }).filter((f) => f.rule === rule).map((f) => f.message).sort();
 
-  test("BR-2109: options must be a real choice: two or more, each taken or rejected, at least one of each", () => {
-    const got = run(
+  test("BR-2109: options must be a real choice: two or more, each taken or rejected, at least one of each; the problems are notes", () => {
+    const got = noteRun(
       {
         ...decision(1, "1. A：采用。"),
         ...decision(2, "1. A：采用。\n2. B：采用。"),
@@ -319,9 +321,9 @@ describe("decision options and sources", () => {
     );
     expect(got).toEqual(
       [
-        `${d(1)} has 1 option(s) under ## 方案; a choice needs at least two`,
-        `${d(2)} no option under ## 方案 is 否决`,
-        `${d(3)} option "C。负责人这次没有选，不做。" says neither 采用 nor 否决`,
+        `${d(1)} has 1 option(s) under ## 方案; a choice needs at least two (BR-2109)`,
+        `${d(2)} no option under ## 方案 is 否决 (BR-2109)`,
+        `${d(3)} option "C。负责人这次没有选，不做。" says neither 采用 nor 否决 (BR-2109)`,
       ].sort(),
     );
   });

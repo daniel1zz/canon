@@ -3,7 +3,7 @@ import { corpusOf, entry, EXIT, json, must, say, workspace, type DomainCommands 
 import { git } from "../../kernel/git.ts";
 import { guideFor } from "../../invocation/guide.ts";
 import { architectureHints } from "./architecture.ts";
-import { backlogNotes, check, domainNameNotes, noteLine, staleReportNotes } from "./check.ts";
+import { backlogNotes, check, checkNotes, domainNameNotes, noteLine, staleReportNotes } from "./check.ts";
 import { designBasisNote } from "./design-basis/design-basis.ts";
 import { reportsFor } from "../../work/verify/changes.ts";
 import { architectureBase, changeIdsOnBranches, listedBefore } from "../../work/session/inflight.ts";
@@ -45,6 +45,8 @@ const checkCmd = defineCommand({
     // reason: files changed by others since their last report still count by their older report, said once (BR-2345)
     for (const n of staleReportNotes(input)) console.error(noteLine(n));
     for (const n of domainNameNotes(input)) console.error(noteLine(n));
+    // reason: what this work should still complete in its documents is said, never refused (D-139)
+    for (const n of checkNotes(input)) console.error(noteLine(n));
     const work = must(thisWorkChanges(ws, read.corpus));
     // reason: a restatement this work wrote is said and never fails the check; the rule review is what blocks it (BR-2403, D-84)
     if (work) for (const r of workRestatements(ws.root, must(workBase(ws.root, ws.config.main)), read.corpus, work.changed)) console.error(`note: ${restatementLine(r)}`);

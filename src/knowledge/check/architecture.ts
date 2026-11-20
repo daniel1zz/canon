@@ -155,17 +155,12 @@ export interface ArchitectureInput {
   readonly architecture?: ArchitectureBase;
 }
 
-/** The findings of A3, A4 and A5; none when the overview is missing or holds only its headings (D-65). */
+/** The findings of A4; none when the overview is missing or holds only its headings (D-65). An overview that cites a superseded decision states something false. */
 export function architectureFindings(input: ArchitectureInput): ArchitectureFinding[] {
   const text = overviewText(input.root);
   if (!hasContent(text)) return [];
-  const { root, corpus } = input;
+  const { corpus } = input;
   const out: ArchitectureFinding[] = [];
-
-  // A3: only the work that adds a domain or shared path is refused for not naming it (like BR-2150); older gaps are `architectureHints`.
-  for (const w of unlisted(root, corpus, text!, input.architecture).added) {
-    out.push({ path: ARCHITECTURE_FILE, rule: "architecture-unlisted", message: `${w.what} is new, but ${ARCHITECTURE_FILE} names no \`${w.dir}\`; write that directory in backticks under the container that owns it (D-65)` });
-  }
 
   // A4: a decision the overview names was replaced.
   const named = referenced(corpus, text!);
@@ -175,10 +170,29 @@ export function architectureFindings(input: ArchitectureInput): ArchitectureFind
     const by = corpus.docs.find((x): x is Decision => x.kind === "decision" && x.supersedes.includes(id));
     out.push({ path: ARCHITECTURE_FILE, rule: "architecture-superseded", message: `names ${id}, which is superseded${by ? ` by ${by.id}` : ""}; read what replaced it, update the overview and name the current decision (D-65)` });
   }
+  return out;
+}
+
+/**
+ * The notes of A3 and A5 (D-139): the overview misses a code directory this work added, or has not caught up with a new
+ * link to a decision it names. Neither is the overview saying something false, so neither refuses anything; none when the
+ * overview is missing or holds only its headings (D-65).
+ */
+export function architectureNotes(input: ArchitectureInput): ArchitectureFinding[] {
+  const text = overviewText(input.root);
+  if (!hasContent(text)) return [];
+  const { root, corpus } = input;
+  const out: ArchitectureFinding[] = [];
+
+  // A3: only the work that adds a domain or shared path is noted for not naming it (like BR-2150); older gaps are `architectureHints`.
+  for (const w of unlisted(root, corpus, text!, input.architecture).added) {
+    out.push({ path: ARCHITECTURE_FILE, rule: "architecture-unlisted", message: `${w.what} is new, but ${ARCHITECTURE_FILE} names no \`${w.dir}\`; write that directory in backticks under the container that owns it (BR-2352, D-65)` });
+  }
 
   // A5: a new link (`supersedes` or `amends`) to a decision the overview names needs the overview edited in the same work, or a change file saying it is not affected.
   const since = input.architecture?.since;
   const refs = input.architecture?.refs ?? [];
+  const named = referenced(corpus, text!);
   const fresh: { by: Decision; target: string }[] = [];
   for (const d of corpus.docs) {
     if (d.kind !== "decision") continue;
@@ -194,7 +208,7 @@ export function architectureFindings(input: ArchitectureInput): ArchitectureFind
     if (!said) {
       for (const { by, target } of fresh) {
         const how = by.supersedes.includes(target) ? "supersedes" : "amends";
-        out.push({ path: by.path, rule: "architecture-unreviewed", message: `${by.id} ${how} ${target}, which ${ARCHITECTURE_FILE} names; update the overview in the same change, or write the line "总览不受影响：<原因>" in the change file (D-65)` });
+        out.push({ path: by.path, rule: "architecture-unreviewed", message: `${by.id} ${how} ${target}, which ${ARCHITECTURE_FILE} names; update the overview in the same change, or write the line "总览不受影响：<原因>" in the change file (BR-2354, D-65)` });
       }
     }
   }

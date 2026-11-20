@@ -337,7 +337,7 @@ const lastEvent = (wt: string) => {
 };
 
 describe("a landing after canon work test", () => {
-  test("BR-2463: failures canon work test left on the commit refuse the landing before it queues; a passing rerun of those files on the same commit lets it land", () => {
+  test("BR-2463: failures canon work test left on the branch are said as a note and the landing goes on", () => {
     const flag = join(mkdtempSync(join(tmpdir(), "canon-flaky-")), "fail");
     const { root, wt } = fixture(undefined, { "run.sh": `echo "$1" >> runs.log\nif [ -e ${flag} ]; then echo "flaky in $1"; exit 1; fi\n` });
     write(wt, { "src/a.ts": "export const a = 2;\n" });
@@ -345,21 +345,14 @@ describe("a landing after canon work test", () => {
     sh(wt, "commit", "-qm", "a changes");
     writeFileSync(flag, "");
     expect(canon(wt, "work", "test").code).toBe(1);
-    const refused = canon(wt, "work", "land");
-    expect(refused.code).toBe(1);
-    expect(refused.err).toContain("tests");
-    expect(refused.err).toContain("not run again since: 2 test file(s) failed: src/b.test.ts, src/c.test.ts");
-    expect(refused.err).toContain("canon work test src/b.test.ts src/c.test.ts");
-    expect(sh(root, "log", "-1", "--format=%s", "main")).not.toContain("a changes"); // not queued, main did not move
-    rmSync(flag);
-    expect(canon(wt, "work", "test", "src/c.test.ts").code).toBe(0);
-    const one = canon(wt, "work", "land");
-    expect([one.code, one.err.includes("1 test file(s) failed: src/b.test.ts")]).toEqual([1, true]);
-    expect(canon(wt, "work", "test", "src/b.test.ts").code).toBe(0);
-    expect(canon(wt, "work", "land").code).toBe(0);
+    const landed = canon(wt, "work", "land");
+    expect(landed.code).toBe(0);
+    expect(landed.out).toContain("note: canon work test on this branch left failures not run again since: 2 test file(s) failed: src/b.test.ts, src/c.test.ts");
+    expect(landed.out).toContain("canon work test src/b.test.ts src/c.test.ts");
+    expect(sh(root, "log", "-1", "--format=%s", "main")).toContain("a changes"); // queued and landed
   });
 
-  test("BR-2463: a failing run with uncommitted edits does not refuse the landing", () => {
+  test("BR-2463: a failing run with uncommitted edits is not said", () => {
     const flag = join(mkdtempSync(join(tmpdir(), "canon-flaky-")), "fail");
     const { wt } = fixture(undefined, { "run.sh": `echo "$1" >> runs.log\nif [ -e ${flag} ]; then exit 1; fi\n` });
     write(wt, { "src/a.ts": "export const a = 2;\n" });
@@ -368,10 +361,12 @@ describe("a landing after canon work test", () => {
     sh(wt, "add", "-A");
     sh(wt, "commit", "-qm", "a changes");
     rmSync(flag);
-    expect(canon(wt, "work", "land").code).toBe(0);
+    const landed = canon(wt, "work", "land");
+    expect(landed.code).toBe(0);
+    expect(landed.out).not.toContain("left failures not run again");
   });
 
-  test("BR-2463: a commit made after a failing run does not clear it; only a passing run of those files on the branch does", () => {
+  test("BR-2463: a commit made after a failing run does not clear the note; only a passing run of those files on the branch does", () => {
     const flag = join(mkdtempSync(join(tmpdir(), "canon-flaky-")), "fail");
     const { wt } = fixture(undefined, { "run.sh": `echo "$1" >> runs.log\nif [ -e ${flag} ]; then exit 1; fi\n` });
     write(wt, { "src/a.ts": "export const a = 2;\n" });
@@ -382,10 +377,25 @@ describe("a landing after canon work test", () => {
     rmSync(flag);
     write(wt, { "README.md": "a doc edit after the tests\n" });
     sh(wt, "commit", "-qam", "docs only");
-    const refused = canon(wt, "work", "land");
-    expect([refused.code, refused.err.includes("not run again since: 2 test file(s) failed: src/b.test.ts, src/c.test.ts")]).toEqual([1, true]);
-    expect(canon(wt, "work", "test", "src/b.test.ts", "src/c.test.ts").code).toBe(0);
-    expect(canon(wt, "work", "land").code).toBe(0);
+    const landed = canon(wt, "work", "land");
+    expect(landed.code).toBe(0);
+    expect(landed.out).toContain("not run again since: 2 test file(s) failed: src/b.test.ts, src/c.test.ts");
+  });
+
+  test("BR-2463: files a passing rerun cleared are no longer said; the files still failing are", () => {
+    const flag = join(mkdtempSync(join(tmpdir(), "canon-flaky-")), "fail");
+    const { wt } = fixture(undefined, { "run.sh": `echo "$1" >> runs.log\nif [ -e ${flag} ]; then exit 1; fi\n` });
+    write(wt, { "src/a.ts": "export const a = 2;\n" });
+    sh(wt, "add", "-A");
+    sh(wt, "commit", "-qm", "a changes");
+    writeFileSync(flag, "");
+    expect(canon(wt, "work", "test").code).toBe(1);
+    rmSync(flag);
+    expect(canon(wt, "work", "test", "src/c.test.ts").code).toBe(0);
+    const landed = canon(wt, "work", "land");
+    expect(landed.code).toBe(0);
+    expect(landed.out).toContain("left failures not run again since: 1 test file(s) failed: src/b.test.ts");
+    expect(landed.out).toContain("canon work test src/b.test.ts");
   });
 });
 

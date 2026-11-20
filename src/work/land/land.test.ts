@@ -230,7 +230,7 @@ describe("work land", () => {
     expect(again.kind === "refused" && again.message).not.toContain("nothing changed since");
   });
 
-  describe("BR-2111: a new decision needs a source; each source new to main is verified against its file or page", () => {
+  describe("BR-2111: a new decision with no source at all is a note; each source new to main is verified against its file or page and a quote that does not hold refuses the landing", () => {
     const decision = (options: string) =>
       `---\nid: D-1\ntitle: Pick\nstatus: accepted\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n${options}\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
     const pages: Record<string, string> = { "https://ok.example/a": "<html><body><p>refunds are&nbsp;allowed\n  within 30 days</p></body></html>" };
@@ -246,15 +246,19 @@ describe("work land", () => {
       writeFileSync(join(s.worktree, "canon/decisions/D-1.md"), decision(options));
       sh(s.worktree, "add", "-A");
       sh(s.worktree, "commit", "-qm", "decision");
-      const out = await land(ws(s.worktree), { ...FAST, fetcher }, quiet);
-      if (out.kind !== "refused") return out.kind;
+      const said: string[] = [];
+      const out = await land(ws(s.worktree), { ...FAST, fetcher }, (line) => said.push(line));
+      if (out.kind !== "refused") {
+        const notes = said.filter((l) => l.startsWith("note: D-1 is new and cites no source"));
+        return [out.kind, ...notes].join("; ");
+      }
       // reason: a source path that is no file, or a file without its quote, is reported by canon check before the source step (BR-2110, BR-2252)
       if (out.findings) return `${out.reason}: ${out.findings.map((f) => `${f.rule} ${f.message}`).join(" ")}`;
       return `${out.reason}: ${out.message.split("\n").slice(1).join(" ").trim()}`;
     };
     // reason: one landing per test, not eight in one, so each case has the whole timeout to itself under load (C-111).
     const cases: [string, string, string][] = [
-      ["No source", "", "source: - D-1 is new and cites no source under ## 方案 (来源：<URL or repository path> “<quote>”)"],
+      ["No source", "", "landed; note: D-1 is new and cites no source under ## 方案 (来源：<URL or repository path> “<quote>”): add one where it rests on an outside fact; the landing goes on (BR-2111, D-139)"],
       ["File ok", "   - 来源：refund.txt “export function refund(order)”", "landed"],
       ["File wrong", "   - 来源：refund.txt “export function refund(item)”", "check: source-quote-missing D-1: refund.txt does not contain “export function refund(item)” (- 来源：refund.txt “export function refund(item)”)"],
       ["File missing", "   - 来源：missing.txt “export function refund(order)”", "check: source-malformed D-1: - 来源：missing.txt “export function refund(order)” (missing.txt is not a file in the repository)"],

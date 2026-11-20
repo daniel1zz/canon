@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { land } from "../../../work/land/land.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../../work/testkit.ts";
@@ -7,6 +7,12 @@ import { readCorpus } from "../../documents/read.ts";
 import { designStats, renderDesignStats } from "../../../work/stats/design.ts";
 import { reviewPrompt } from "../../review/review.ts";
 import { DEFAULT_DESIGN_SIGNALS, designBasisNote, revisionReasonFindings, touchedClasses } from "./design-basis.ts";
+
+const MAIN = join(import.meta.dir, "../../../invocation/main.ts");
+function canon(cwd: string, ...args: string[]) {
+  const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:test" } });
+  return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
+}
 
 const changeFile = (wt: string, id: string) => {
   const dir = join(wt, "canon/changes");
@@ -54,7 +60,7 @@ describe("one-way-door classes (BR-2491)", () => {
 describe("why a decision revises another (BR-2492)", () => {
   const decision = (id: string, extra: string) => `---\nid: ${id}\ntitle: ${id}\nstatus: proposed\n${extra}---\n\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
 
-  test("BR-2492: a decision this work adds that amends or supersedes another existing decision needs a known revised_because, undetermined included; a reference to itself or to nothing is not asked for one; one already on main is not checked", () => {
+  test("BR-2492: a decision this work adds that amends or supersedes another existing decision without a known revised_because is a note, undetermined included; a reference to itself or to nothing is not asked for one; one already on main is not checked", () => {
     const root = project();
     const s = startNew(root, "Revise");
     const dir = join(s.worktree, "canon/decisions");
@@ -77,6 +83,18 @@ describe("why a decision revises another (BR-2492)", () => {
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "revisions");
     expect(revisionReasonFindings(s.worktree, corpusAt(s.worktree), sh(s.worktree, "rev-parse", "HEAD"))).toEqual([]); // already there before this work
+    // canon check says it as a note and exits 0
+    const clean = startNew(root, "Note a missing reason");
+    mkdirSync(join(clean.worktree, "canon/decisions"), { recursive: true });
+    writeFileSync(join(clean.worktree, "canon/decisions/D-1.md"), decision("D-1", ""));
+    sh(clean.worktree, "add", "-A");
+    sh(clean.worktree, "commit", "-qm", "first decision");
+    writeFileSync(join(clean.worktree, "canon/decisions/D-2.md"), decision("D-2", "amends:\n  - D-1\n"));
+    sh(clean.worktree, "add", "-A");
+    sh(clean.worktree, "commit", "-qm", "amends without a reason");
+    const r = canon(clean.worktree, "check");
+    expect(r.code).toBe(0);
+    expect(r.err).toContain("note: canon/decisions/D-2.md: D-2 revises D-1 but names no `revised_because`");
   });
 });
 

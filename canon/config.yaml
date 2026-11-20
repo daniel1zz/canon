@@ -83,7 +83,7 @@ hooks:
   after_green:
     # main 的后台 floor 通过后，从这个测过的提交发布主 checkout 的 dist/canon（PATH 上的 canon）和它安装的 dist/skills，
     # 不从没测过的 main 构建：合入了把命令行弄坏的变更时，修复变更还能用旧的 canon 合进来（D-31、BR-2222）。
-    # 发布前把所有 canon-* skill 和工作说明一起做一次重复评审，拦截时不发布、提 issue、退出码 1（D-91、BR-2411、BR-2412）
+    # 发布前把所有 canon-* skill 和工作说明一起做一次重复评审，重复发现只作提示、不影响发布；评审跑不了时不发布、退出码 4（D-91、BR-2411、BR-2412、D-139）
     - "bun scripts/release.ts"
 # 每个检查的复审日期（BR-2069）：到期后 `canon stats` 把它列为待复审
 check_reviews:

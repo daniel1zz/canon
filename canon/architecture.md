@@ -13,7 +13,7 @@ title: 架构总览
 - **git**：一切的底座。main 是一个分支，每个变更一个 worktree 和分支；canon 的协调数据放在 git 公共目录里。
 - **Claude Code、Codex**：会话运行在宿主中。按明确目标将同一份 skill 分发到 `.claude/skills` 或 `.agents/skills`，合并宿主的 hook 和 Codex 原生指令入口。运行时边界归一化会话、子线程和工具事件，共用协调与问答佐证流程；`canon usage` 仍只读 Claude 的会话记录（D-101）。
 - **项目配置的 reviewer**：新建项目按明确的安装目标选初始评审命令，已有配置不自动更换；用于合入后的规则评审、重复评审和措辞判断（BR-2239）、canon finding reconcile 的合并评审（BR-2461），命令由 `canon/config.yaml` 的 `review` 配置；合入后的代码评审也是项目自己配的；canon 仓库发布前的发布评审用同一个 `review` 命令（BR-2411）。
-- **GitHub**：`canon issues` 列出开着的 issue（`src/work/issues`，只读，关闭用 `gh`）；canon 仓库的发布评审拦截时新建或评论一个 `canon-review` issue（BR-2411）；决策里引用的网址在合入时被抓取核对；`remote` 指向它时合入后把 main 推上去。
+- **GitHub**：`canon issues` 列出开着的 issue（`src/work/issues`，只读，关闭用 `gh`）；决策里引用的网址在合入时被抓取核对；`remote` 指向它时合入后把 main 推上去。
 - **项目自己的命令**：floor、类型检查、测试、选测试的命令（`test_select_command`）、挑选相关文档的命令（`related_pick_command`，可选，通常是一个便宜模型；只有 `canon context <编号>` 和 `canon work review` 运行它，编辑 hook、`canon check` 和合入不运行，BR-2443）、`setup`、生命周期 hook，由 `canon/config.yaml` 配置，canon 只运行它们、看退出码；测试命令把 JUnit XML 报告写到 `{report}`，canon 读报告里有哪些测试、跑没跑，不认语言（D-64）。
 
 决策：D-1、D-2、D-9、D-45、D-51、D-64、D-101。
@@ -75,7 +75,7 @@ title: 架构总览
 
 canon 这个仓库在 `canon/config.yaml` 里配了下面这些，是项目配置，不是 canon 的部件：
 
-- **`dist/canon` 和 `dist/skills`**：只在主 checkout 里，PATH 上的 canon 指向 `dist/canon`，它装进项目的 skill 来自 `dist/skills`（指向 `skills-<提交>` 的符号链接）。`after_green` 运行 `scripts/release.ts`：先把测过的提交里所有 `canon-*` 的 SKILL.md 和工作说明放在一起做一次重复评审（同样的文字只评审一次；以上一次发布为基线，只拦碰到改动行的重复，发布成功时记 `release.published` 作为下一次的基线，D-107），通过才从这个提交编译二进制、复制 skill、切换链接；编译可以和别的发布并行，检查当前版本、放置、切换和清理在 `<git 公共目录>/canon/publish.lock` 的互斥段里做，段内重读当前版本（BR-2412）；拦截时什么也不发布，提一个 `canon-review` issue，退出码 1。不从没测过的 main 构建，构建时把被发布的提交嵌进二进制（D-31、D-91、D-107、D-116、BR-2411、BR-2412）。
+- **`dist/canon` 和 `dist/skills`**：只在主 checkout 里，PATH 上的 canon 指向 `dist/canon`，它装进项目的 skill 来自 `dist/skills`（指向 `skills-<提交>` 的符号链接）。`after_green` 运行 `scripts/release.ts`：先把测过的提交里所有 `canon-*` 的 SKILL.md 和工作说明放在一起做一次重复评审（同样的文字只评审一次；以上一次发布为基线，重复发现作为 `note:` 打印、不拦发布，发布成功时记 `release.published` 作为下一次的基线，D-107），然后从这个提交编译二进制、复制 skill、切换链接；编译可以和别的发布并行，检查当前版本、放置、切换和清理在 `<git 公共目录>/canon/publish.lock` 的互斥段里做，段内重读当前版本（BR-2412）；评审跑不了（没有评审命令、命令失败）时什么也不发布，退出码 4。不从没测过的 main 构建，构建时把被发布的提交嵌进二进制（D-31、D-91、D-107、D-116、BR-2411、BR-2412）。
 - **`scripts/review-api.sh`**：`review` 配的命令，经 `scripts/review_openai.py` 直接调用 OpenAI 格式的 chat completions 接口，用 gpt-6.1-terra 做规则评审，也用于发布评审（`CANON_REVIEW_KIND=release`）；地址、key、模型和 effort 在主 checkout 的 `.claude/review.local.json`（不进 git），缺了就以 2 退出，不换别的模型；python 从空环境启动，会话的 hook、MCP 和其他 key 都带不进去（负责人 2026-11-15，照 zhushenkongjian）。本仓库在 `after_land` 里用 `CANON_CODE_REVIEW_AI` 把合入后的代码评审（`scripts/code-review.ts`）也换成同一个命令；代码评审的默认命令仍按 BR-2070。
 - **`scripts/code-review.ts`**：`after_land` 配的命令，攒批后让 `claude -p` 评审合入的代码，只找安全和并发问题，发现的提成 GitHub issue；没到点时在后台留一个等待进程（`--wait`，协调数据库的 `code_review_waiter` 保证只有一个），到点评审后退出（D-59、D-68）。
 - **floor**：类型检查加 `scripts/test.sh`；`floor_timing: after`、`land_batch_max: 4`。

@@ -3,22 +3,20 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, readlinkSync, writeFi
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { project, sh } from "../../work/testkit.ts";
-import { quoteIsOld, releasePrompts, reportBlock, RELEASE_ISSUE_TITLE, type ShippedText } from "./release-review.ts";
+import { quoteIsOld, releasePrompts, type ShippedText } from "./release-review.ts";
 import { Database } from "bun:sqlite";
 
 const SCRIPT = join(import.meta.dir, "../../../scripts/release.ts");
 
 /**
- * A canon-like repository with two shipped skills and a project skill, a reviewer that saves each prompt and its
- * CANON_REVIEW_KIND and answers from `answer.json`, and a `gh` stand-in that logs its calls and lists `open.json`.
+ * A canon-like repository with two shipped skills and a project skill, and a reviewer that saves each prompt and its
+ * CANON_REVIEW_KIND and answers from `answer.json`.
  */
-function releaseRepo(answer: unknown, open: unknown[] = []) {
+function releaseRepo(answer: unknown) {
   const root = project();
   const tools = mkdtempSync(join(tmpdir(), "canon-release-tools-"));
   writeFileSync(join(tools, "answer.json"), JSON.stringify(answer));
-  writeFileSync(join(tools, "open.json"), JSON.stringify(open));
   writeFileSync(join(tools, "review.sh"), `#!/bin/sh\nn=$(ls ${tools} | grep -c '^prompt-')\ncat > ${tools}/prompt-$n.txt\necho "$CANON_REVIEW_KIND" >> ${tools}/kind.txt\ncat ${tools}/answer.json\n`);
-  writeFileSync(join(tools, "gh.sh"), `#!/bin/sh\necho "$@" >> ${tools}/gh.log\nif [ "$2" = list ]; then cat ${tools}/open.json; fi\nif [ "$2" = create ]; then echo https://github.com/o/r/issues/9; fi\n`);
   writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: sh ${join(tools, "review.sh")}\n`);
   for (const [name, text] of [["canon-a", "Always run the tests before landing."], ["canon-b", "Run the tests before you land."], ["mine", "Project skill."]] as const) {
     mkdirSync(join(root, `.claude/skills/${name}`), { recursive: true });
@@ -31,13 +29,12 @@ function releaseRepo(answer: unknown, open: unknown[] = []) {
       cwd: root,
       stdout: "pipe",
       stderr: "pipe",
-      env: { ...process.env, CANON_GREEN: sh(root, "rev-parse", "HEAD"), CANON_PRIMARY: root, CANON_GH: `sh ${join(tools, "gh.sh")}`, CANON_RELEASE_BUILD: "fake", CANON_ACTOR: "agent:test" },
+      env: { ...process.env, CANON_GREEN: sh(root, "rev-parse", "HEAD"), CANON_PRIMARY: root, CANON_RELEASE_BUILD: "fake", CANON_ACTOR: "agent:test" },
     });
     return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
   };
   const prompts = () => (existsSync(tools) ? Bun.spawnSync(["sh", "-c", `ls ${tools} | grep -c '^prompt-' || true`]).stdout.toString().trim() : "0");
-  const ghLog = () => (existsSync(join(tools, "gh.log")) ? readFileSync(join(tools, "gh.log"), "utf8") : "");
-  return { root, tools, run, prompts, ghLog };
+  return { root, tools, run, prompts };
 }
 
 describe("release check (BR-2411)", () => {
@@ -63,7 +60,7 @@ describe("release check (BR-2411)", () => {
     expect(prompts()).toBe("1");
   });
 
-  test("BR-2411 BR-2367 D-107: after a release only a duplicate touching a line changed since then blocks; one quoted wholly from released text is a note; no places or a quote not found still blocks", () => {
+  test("BR-2411 BR-2367 D-107 D-139: a duplicate is a note and never blocks; one quoted wholly from released text is marked (already released), one touching a changed line, one without places and one quoting words not found are said as notes and publishing goes on", () => {
     const { root, tools, run, prompts } = releaseRepo({ findings: [] });
     expect(run().code).toBe(0);
     const first = sh(root, "rev-parse", "HEAD");
@@ -89,19 +86,28 @@ describe("release check (BR-2411)", () => {
     expect(prompt).toContain(`Lines added or changed since the last release in .claude/skills/canon-b/SKILL.md (line number, then the line):\n6: Keep each commit small.`);
     expect(prompt).toContain("Lines added or changed since the last release in .claude/skills/canon-a/SKILL.md: none.");
     answer([{ file: ".claude/skills/canon-a/SKILL.md", quote: "Always run the tests before landing." }, { file: ".claude/skills/canon-b/SKILL.md", quote: "Keep each commit small." }]);
-    expect(run("--check").code).toBe(1);
+    const changed = run("--check");
+    expect(changed.code).toBe(0);
+    expect(changed.out).toContain("note: canon-a and canon-b both require tests before landing");
+    expect(changed.out).not.toContain("(already released)");
     answer(undefined);
-    expect(run("--check").code).toBe(1);
+    const noPlaces = run("--check");
+    expect(noPlaces.code).toBe(0);
+    expect(noPlaces.out).toContain("note: canon-a and canon-b both require tests before landing");
     answer([{ file: ".claude/skills/canon-a/SKILL.md", quote: "Always run the tests before landing." }, { file: ".claude/skills/canon-b/SKILL.md", quote: "words that are nowhere" }]);
-    expect(run("--check").code).toBe(1);
+    const notFound = run("--check");
+    expect(notFound.code).toBe(0);
+    expect(notFound.out).toContain("note: canon-a and canon-b both require tests before landing");
   });
 
-  test("BR-2411 D-107: with nothing released yet every line counts as changed, so any duplication blocks", () => {
-    const { tools, run } = releaseRepo({ findings: [{ criterion: "duplication", text: "a repeats b", places: [{ file: ".claude/skills/canon-a/SKILL.md", quote: "Always run the tests before landing." }] }] });
-    const r = run("--check");
-    expect(r.code).toBe(1);
+  test("BR-2411 D-107 D-139: with nothing released yet every line counts as changed; a duplication is a note and publishing goes on", () => {
+    const { tools, run, root } = releaseRepo({ findings: [{ criterion: "duplication", text: "a repeats b", places: [{ file: ".claude/skills/canon-a/SKILL.md", quote: "Always run the tests before landing." }] }] });
+    const r = run();
+    expect(r.code).toBe(0);
     expect(r.out).toContain("baseline: none");
+    expect(r.out).toContain("note: a repeats b");
     expect(readFileSync(join(tools, "prompt-0.txt"), "utf8")).toContain("all of them (there is no earlier release)");
+    expect(existsSync(join(root, "dist/canon"))).toBe(true);
   });
 
   test("BR-2411 D-107: a quote is matched with whitespace as one space and is old only when every place it is found avoids the changed lines", () => {
@@ -112,26 +118,27 @@ describe("release check (BR-2411)", () => {
     expect(quoteIsOld(text, "absent", new Set())).toBe(false);
   });
 
-  test("BR-2411: a block publishes nothing, prints the findings, files one issue and exits 1; the next run with the same texts reuses the block without a review or a second issue", () => {
-    const { root, run, prompts, ghLog } = releaseRepo({ findings: [{ criterion: "duplication", text: "canon-a and canon-b both require running the tests before landing" }] });
+  test("BR-2411 D-139: a duplication is a note, --check only prints, the next run reuses the findings without a review and publishes anyway", () => {
+    const { root, run, prompts } = releaseRepo({ findings: [{ criterion: "duplication", text: "canon-a and canon-b both require running the tests before landing" }] });
     mkdirSync(join(root, "dist"), { recursive: true });
     writeFileSync(join(root, "dist/canon"), "previous release\n");
-    const r = run();
-    expect(r.code).toBe(1);
-    expect(r.err).toContain("blocked, nothing published");
-    expect(r.err).toContain("canon-a and canon-b both require running the tests before landing");
-    expect(r.err).toContain("https://github.com/o/r/issues/9");
+    const check = run("--check");
+    expect(check.code).toBe(0);
+    expect(check.err).toBe("");
+    expect(check.out).toContain("note: canon-a and canon-b both require running the tests before landing");
     expect(readFileSync(join(root, "dist/canon"), "utf8")).toBe("previous release\n");
     expect(existsSync(join(root, "dist/skills"))).toBe(false);
-    expect(ghLog()).toContain(`issue create --title ${RELEASE_ISSUE_TITLE} --label canon-review`);
-    const again = run();
-    expect(again.code).toBe(1);
-    expect(again.err).toContain("canon-a and canon-b both require");
+    const r = run();
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("findings reused");
+    expect(r.out).toContain("note: canon-a and canon-b both require running the tests before landing");
+    expect(readFileSync(join(root, "dist/canon"), "utf8")).not.toBe("previous release\n");
+    expect(existsSync(join(root, "dist/skills"))).toBe(true);
     expect(prompts()).toBe("1");
-    expect(ghLog().match(/issue create/g)?.length).toBe(1);
-    // --check reviews the current checkout and files nothing
-    expect(run("--check").code).toBe(1);
-    expect(ghLog().match(/issue create/g)?.length).toBe(1);
+    const again = run();
+    expect(again.code).toBe(0);
+    expect(again.out).toContain("nothing changed");
+    expect(prompts()).toBe("1");
   });
 
   test("BR-2411: with no review command configured the check exits 4 and publishes nothing", () => {
@@ -151,14 +158,6 @@ describe("release check (BR-2411)", () => {
     expect(r.code).toBe(4);
     expect(r.err).toContain("could not run");
     expect(existsSync(join(root, "dist/canon"))).toBe(false);
-  });
-
-  test("BR-2411: a block with an open issue of the same title becomes a comment on it", () => {
-    const { root, tools, ghLog } = releaseRepo({ findings: [] }, [{ number: 31, title: RELEASE_ISSUE_TITLE }]);
-    const named = reportBlock(root, `sh ${join(tools, "gh.sh")}`, "abc1234567", ["x repeats y"]);
-    expect(named.ok && named.value).toBe("#31");
-    expect(ghLog()).toContain("issue comment 31 --body");
-    expect(ghLog()).not.toContain("issue create");
   });
 
   test("BR-2411: over review_max_prompt_kb the skills are split so every two of them meet in one call, each call within the budget; too small a budget is refused with the sizes", () => {

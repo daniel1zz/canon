@@ -12,7 +12,7 @@ import { caseNames, REPORT_RECIPES } from "../../work/verify/report.ts";
 import type { TestReports } from "../../work/verify/ledger.ts";
 import { historyOf, pathFindings } from "./paths.ts";
 import { listFindings } from "./lists.ts";
-import { architectureFindings, type ArchitectureBase, type ArchitectureRule } from "./architecture.ts";
+import { architectureFindings, architectureNotes, type ArchitectureBase, type ArchitectureRule } from "./architecture.ts";
 import { revisionReasonFindings } from "./design-basis/design-basis.ts";
 import { businessFindings } from "../domains/business.ts";
 import { domainDecisionFindings } from "../domains/decision.ts";
@@ -49,16 +49,16 @@ export type CheckRule =
   | "rule-no-statement" // an active or planned rule has no non-empty "## 规则" section
   | "rule-no-example" // an active or planned rule without `untested:` has no example in "## 例子"
   | "example-before-change" // a current rule's "## 例子" states how the product behaved before the change (BR-2301)
-  | "rule-business-unmapped" // a rule this work added or changed names no business its domain lists (BR-2431)
-  | "decision-rule-unlinked" // a decision's 决定 names, in a line this work wrote, a rule that does not name it back (BR-2469)
-  | "domain-no-decision" // a domain this work adds that no current decision names (BR-2446)
+  | "rule-business-unmapped" // a rule this work added or changed names no business its domain lists: only ever a note (BR-2431, D-139)
+  | "decision-rule-unlinked" // a decision's 决定 names, in a line this work wrote, a rule that does not name it back: only ever a note (BR-2469, D-139)
+  | "domain-no-decision" // a domain this work adds that no current decision names: only ever a note (BR-2446, D-139)
   | "domain-code-missing" // a domain README lists a code path that does not exist (BR-2079)
   | "domain-name-technical" // a domain named after a technical layer: only ever a note, never a finding (BR-2318)
   | "domain-code-declared" // a README lists `code:` where the layout gives the location (BR-2117)
   | "code-layout" // with code_root: a domain without its directory, or a directory no domain or shared entry owns (BR-2118)
   | "proposal-unapplied" // canon/proposals/<C-n>/ still holds rule proposals of a change that is not open (BR-2525)
-  | "decision-options" // a decision's options section shows no real choice (BR-2109)
-  | "decision-revision-reason" // a decision this work adds revises another without a known `revised_because` (BR-2492)
+  | "decision-options" // a decision's options section shows no real choice: only ever a note (BR-2109, D-139)
+  | "decision-revision-reason" // a decision this work adds revises another without a known `revised_because`: only ever a note (BR-2492, D-139)
   | "source-malformed" // a source line in a decision's options does not name a target and quote it (BR-2110)
   | "source-quote-missing" // a current decision's source names a repository file that no longer holds its quote (BR-2252)
   | "doc-missing-section" // a document lacks a section its type requires, or the section is empty (BR-2091)
@@ -261,12 +261,6 @@ export function check(input: CheckInput): Finding[] {
   // reason: a declaration that says `finding` reports every document, not only this work's: it must hold for all (BR-2549)
   for (const f of itemFindings(input.corpus)) findings.push({ path: f.path, rule: "item-mismatch", message: f.message });
   findings.push(...architectureFindings(input));
-  // reason: `architecture.since` is this work's base commit, which is also what "added or changed by this work" means here (BR-2431, BR-2344)
-  for (const f of businessFindings(input.root, input.corpus, input.architecture?.since)) findings.push({ path: f.path, rule: "rule-business-unmapped", message: f.message });
-  for (const f of commitmentFindings(input.root, input.corpus, input.architecture?.since)) findings.push({ path: f.path, rule: "decision-rule-unlinked", message: f.message });
-  for (const f of revisionReasonFindings(input.root, input.corpus, input.architecture?.since)) findings.push({ path: f.path, rule: "decision-revision-reason", message: f.message });
-  // reason: `architecture.refs` is what was there before this work, which is also what "a domain this work adds" means here (BR-2446, BR-2352)
-  for (const f of domainDecisionFindings(input.root, input.corpus, input.architecture?.refs)) findings.push({ path: f.path, rule: "domain-no-decision", message: f.message });
   // reason: proposals are applied by the design owner before the change closes; ones left behind were never applied (BR-2525, #254)
   const proposalsDir = join(input.root, "canon/proposals");
   if (existsSync(proposalsDir)) {
@@ -282,6 +276,29 @@ export function check(input: CheckInput): Finding[] {
     findings.push({ path: s.doc.path, rule: "link-stale", message: `\`links\` records ${s.id}, which the text of ${s.doc.id} no longer names as a rule or decision: delete that line from \`links\` (BR-2426)` });
   }
   return findings;
+}
+
+/**
+ * The reminders `canon check` prints as notes and never counts as findings (D-139): what this work should still complete
+ * in its documents. None of them says a document is false, so none refuses a landing: a rule that names no business,
+ * a decision whose options show no real choice or whose revision names no reason, a new domain, or an overview that has
+ * not caught up.
+ */
+export function checkNotes(input: CheckInput): Finding[] {
+  const out: Finding[] = [];
+  for (const d of input.corpus.docs) {
+    if (d.kind !== "decision") continue;
+    for (const p of optionProblems(d.body)) out.push({ path: d.path, rule: "decision-options", message: `${d.id} ${p.message} (BR-2109)` });
+  }
+  // reason: `architecture.since` is this work's base commit, which is also what "added or changed by this work" means here (BR-2431, BR-2344)
+  const since = input.architecture?.since;
+  for (const f of businessFindings(input.root, input.corpus, since)) out.push({ path: f.path, rule: "rule-business-unmapped", message: f.message });
+  for (const f of commitmentFindings(input.root, input.corpus, since)) out.push({ path: f.path, rule: "decision-rule-unlinked", message: f.message });
+  for (const f of revisionReasonFindings(input.root, input.corpus, since)) out.push({ path: f.path, rule: "decision-revision-reason", message: f.message });
+  // reason: `architecture.refs` is what was there before this work, which is also what "a domain this work adds" means here (BR-2446, BR-2352)
+  for (const f of domainDecisionFindings(input.root, input.corpus, input.architecture?.refs)) out.push({ path: f.path, rule: "domain-no-decision", message: f.message });
+  out.push(...architectureNotes(input));
+  return out;
 }
 
 /**
@@ -390,7 +407,6 @@ function structureFindings(root: string, corpus: Corpus): Finding[] {
       out.push({ path: d.path, rule: "template-unfilled", message: `${d.id} still contains a template placeholder line` });
     }
     if (d.kind === "decision") {
-      for (const p of optionProblems(d.body)) out.push({ path: d.path, rule: "decision-options", message: `${d.id} ${p.message}` });
       const found = sources(d.body);
       for (const line of found.malformed) out.push({ path: d.path, rule: "source-malformed", message: `${d.id}: ${line} (want 来源：<URL or repository path> “<quote of at least ${MIN_QUOTE} characters>”)` });
       // reason: a path that is no file (a word such as arXiv taken as a path) is found here, not only at landing (BR-2110, BR-2111);

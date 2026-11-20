@@ -32,6 +32,8 @@ const domain = (body: string): Domain => ({ name: "billing", path: "canon/rules/
 function fixture() {
   const root = project();
   put(root, {
+    "canon/config.yaml": "floor: test ! -e FAIL\ntests: []\nreview: none\ncode_root: src\n",
+    "src/billing/.keep": "",
     "canon/rules/billing/README.md": readme("billing", "- **退款**：钱怎么退回去\n- **对账**：每天和银行对一次账"),
     "canon/rules/billing/BR-9.md": rule(9, "退款"),
     "canon/rules/billing/BR-10.md": rule(10),
@@ -61,36 +63,38 @@ describe("the businesses a domain README lists", () => {
   test("BR-2430: a domain created by canon rule domain has a 业务 section to fill", () => {
     const root = fixture();
     const change = startNew(root, "新建领域");
-    expect(canon(change.worktree, "rule", "domain", "shipping", "--code", "src/shipping").code).toBe(0);
+    expect(canon(change.worktree, "rule", "domain", "shipping").code).toBe(0);
     expect(readFileSync(join(change.worktree, "canon/rules/shipping/README.md"), "utf8")).toContain("## 业务");
   });
 });
 
 describe("canon check on the business of a rule this work touched", () => {
-  test("BR-2431: a rule this work adds or changes must name a business its domain lists", () => {
+  test("BR-2431: canon check says a rule this work adds or changes with no business its domain lists as a note and exits 0", () => {
     const root = fixture();
     const change = startNew(root, "改规则");
     put(change.worktree, { "canon/rules/billing/BR-12.md": rule(12) });
     const added = canon(change.worktree, "check");
-    expect(added.code).toBe(1);
-    expect(added.out + added.err).toContain("rule-business-unmapped");
-    expect(added.out + added.err).toContain("BR-12 has no `business`");
-    expect(added.out + added.err).toContain("domain billing lists: 退款, 对账");
+    expect(added.code).toBe(0);
+    expect(added.err).toContain("note: canon/rules/billing/BR-12.md: BR-12 has no `business`");
+    expect(added.err).toContain("domain billing lists: 退款, 对账");
+    expect(added.out).not.toContain("rule-business-unmapped");
 
     put(change.worktree, { "canon/rules/billing/BR-12.md": rule(12, "退款") });
-    expect((canon(change.worktree, "check").out + canon(change.worktree, "check").err)).not.toContain("rule-business-unmapped");
+    expect((canon(change.worktree, "check").out + canon(change.worktree, "check").err)).not.toContain("BR-12 has no `business`");
   });
 
-  test("BR-2431: a business its domain does not list is refused, and so is a domain with no 业务 section", () => {
+  test("BR-2431: a business its domain does not list, and a domain with no 业务 section, are said as notes and exit 0", () => {
     const root = fixture();
     const change = startNew(root, "改规则");
     put(change.worktree, { "canon/rules/billing/BR-12.md": rule(12, "退货") });
     const unlisted = canon(change.worktree, "check");
-    expect(unlisted.out + unlisted.err).toContain("BR-12 names business “退货”, which domain billing does not list");
+    expect(unlisted.code).toBe(0);
+    expect(unlisted.err).toContain("BR-12 names business “退货”, which domain billing does not list");
 
-    put(change.worktree, { "canon/rules/shipping/README.md": readme("shipping"), "canon/rules/shipping/BR-13.md": rule(13, "配送") });
+    put(change.worktree, { "src/shipping/.keep": "", "canon/rules/shipping/README.md": readme("shipping"), "canon/rules/shipping/BR-13.md": rule(13, "配送") });
     const noSection = canon(change.worktree, "check");
-    expect(noSection.out + noSection.err).toContain("canon/rules/shipping/README.md has no ## 业务 section yet");
+    expect(noSection.code).toBe(0);
+    expect(noSection.err).toContain("canon/rules/shipping/README.md has no ## 业务 section yet");
   });
 
   test("BR-2431: a rule whose only change is its links records is not reported; a body edit with it is", () => {

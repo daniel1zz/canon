@@ -52,13 +52,14 @@ const kinds = (root: string) => {
 };
 
 describe("architecture overview lists every domain's code directory", () => {
-  test("BR-2352: a new domain whose directory the overview does not name is refused by canon check", () => {
+  test("BR-2352: a new domain whose directory the overview does not name is said as a note on standard error and exits 0", () => {
     const root = fixture();
     addRefunds(root);
     const r = kinds(root);
-    expect(r.code).toBe(1);
-    expect(r.kinds).toEqual(["architecture-unlisted"]);
-    expect(canon(root, "check").out).toContain("`src/billing/refunds`");
+    expect(r.code).toBe(0);
+    expect(r.kinds).toEqual([]);
+    expect(r.err).toContain("note: canon/architecture.md: domain billing/refunds is new");
+    expect(r.err).toContain("`src/billing/refunds`");
   });
 
   test("BR-2352: naming the directory whole counts, with a trailing slash too; a child path, a code block or a longer path do not", () => {
@@ -71,15 +72,18 @@ describe("architecture overview lists every domain's code directory", () => {
     ] as const) {
       const root = fixture(`## 容器\n\n${body}`);
       addRefunds(root);
-      expect(kinds(root).kinds).toEqual(listed ? [] : ["architecture-unlisted"]);
+      const r = kinds(root);
+      expect([r.code, r.err.includes("domain billing/refunds is new")]).toEqual(listed ? [0, false] : [0, true]);
     }
   });
 
-  test("BR-2352: a new shared path the overview does not name is refused", () => {
+  test("BR-2352: a new shared path the overview does not name is said as a note", () => {
     const root = fixture();
     put(root, { "canon/config.yaml": "floor: test ! -e FAIL\ntests: []\nreview: none\ncode_root: src\nshared: [src/kernel]\n", "src/kernel/.keep": "" });
-    expect(kinds(root).kinds).toEqual(["architecture-unlisted"]);
-    expect(canon(root, "check").out).toContain("shared path src/kernel");
+    const r = kinds(root);
+    expect(r.code).toBe(0);
+    expect(r.kinds).toEqual([]);
+    expect(r.err).toContain("note: canon/architecture.md: shared path src/kernel is new");
   });
 
   test("BR-2352: a domain that was already there is only a hint on standard error, exit 0", () => {
@@ -108,26 +112,27 @@ describe("architecture overview lists every domain's code directory", () => {
     expect(kinds(noRoot)).toMatchObject({ code: 0, kinds: [] });
   });
 
-  test("BR-2352: a landing that adds a domain without naming its directory is refused for check", async () => {
+  test("BR-2352: a landing that adds a domain without naming its directory says the note and lands", async () => {
     const root = fixture();
     const s = startNew(root, "Add refunds");
     addRefunds(s.worktree);
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "refunds");
-    const out = await land(ws(s.worktree), FAST, () => {});
-    expect(out.kind === "refused" && out.reason).toBe("check");
-    expect(JSON.stringify(out)).toContain("architecture-unlisted");
+    const said: string[] = [];
+    const out = await land(ws(s.worktree), FAST, (line) => said.push(line));
+    expect(out.kind).toBe("landed");
+    expect(said.join("\n")).toContain("note: canon/architecture.md: domain billing/refunds is new");
   });
 
-  test("BR-2352: canon work test in a worktree that adds a domain without naming it reports architecture-unlisted", () => {
+  test("BR-2352: canon work test in a worktree that adds a domain without naming it says the note", () => {
     const root = fixture();
     const s = startNew(root, "Add refunds");
     addRefunds(s.worktree);
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "refunds");
     const r = canon(s.worktree, "work", "test");
-    expect(r.out + r.err).toContain("architecture-unlisted");
-    expect(r.code).not.toBe(0);
+    expect(r.out).toContain("note: canon/architecture.md: domain billing/refunds is new");
+    expect(r.code).toBe(0);
   });
 });
 
@@ -181,14 +186,14 @@ describe("a new link to a decision the overview names needs the overview looked 
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "work");
   };
-  const unreviewed = (root: string) => canon(root, "check", "--json").out.includes("architecture-unreviewed");
+  const unreviewed = (root: string) => canon(root, "check").err.includes(`${id("D", 9)} amends ${id("D", 5)}`);
 
-  test("BR-2354: a decision that amends a named decision, without touching the overview, is reported at the new decision's file", () => {
+  test("BR-2354: a decision that amends a named decision, without touching the overview, is said as a note at the new decision's file and exits 0", () => {
     const root = fixture();
     amend(root);
     const r = canon(root, "check");
-    expect(r.code).toBe(1);
-    expect(r.out).toContain(`architecture-unreviewed canon/decisions/${id("D", 9)}.md: ${id("D", 9)} amends ${id("D", 5)}`);
+    expect(r.code).toBe(0);
+    expect(r.err).toContain(`note: canon/decisions/${id("D", 9)}.md: ${id("D", 9)} amends ${id("D", 5)}`);
   });
 
   test("BR-2354: editing the overview in the same work satisfies it", () => {
@@ -222,7 +227,7 @@ describe("a new link to a decision the overview names needs the overview looked 
   test("BR-2354: a proposed superseding decision counts too", () => {
     const root = fixture();
     put(root, { [`canon/decisions/${id("D", 9)}.md`]: decision(9, "proposed", `supersedes: ${id("D", 5)}\nrevised_because: requirement\n`) });
-    expect(unreviewed(root)).toBe(true);
+    expect(canon(root, "check").err).toContain(`${id("D", 9)} supersedes ${id("D", 5)}`);
   });
 
   test("BR-2354: a decision pointing at one the overview does not name, a link that was already there, a backticked id and an empty overview report nothing", () => {
@@ -242,22 +247,27 @@ describe("a new link to a decision the overview names needs the overview looked 
     expect(unreviewed(empty)).toBe(false);
   });
 
-  test("BR-2354: a landing that amends a named decision without touching the overview is refused for check; saying so in its change file lands it", async () => {
+  test("BR-2354: a landing that amends a named decision without touching the overview says the note and lands; the line saying the overview is not affected removes it", async () => {
     const root = fixture();
     const s = startNew(root, "Amend D-5");
     amend(s.worktree);
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "amend");
-    const refused = await land(ws(s.worktree), FAST, () => {});
-    expect(refused.kind === "refused" && refused.reason).toBe("check");
-    expect(JSON.stringify(refused)).toContain("architecture-unreviewed");
-    const file = join(s.worktree, "canon/changes", readdirSync(join(s.worktree, "canon/changes")).find((f) => f.startsWith(s.change))!);
-    const text = (await Bun.file(file).text()).replace("## 任务", "总览不受影响：D-9 只改了评审的措辞\n\n## 任务");
-    writeFileSync(file, text);
-    sh(s.worktree, "commit", "-qam", "say it");
-    const out = await land(ws(s.worktree), FAST, () => {});
-    expect(JSON.stringify(out)).not.toContain("refused");
+    const said: string[] = [];
+    const out = await land(ws(s.worktree), FAST, (line) => said.push(line));
     expect(out.kind).toBe("landed");
+    expect(said.join("\n")).toContain(`${id("D", 9)} amends ${id("D", 5)}, which canon/architecture.md names`);
+    const second = startNew(root, "Amend D-5 again");
+    put(second.worktree, { [`canon/decisions/${id("D", 10)}.md`]: decision(10, "accepted", `amends:\n  - ${id("D", 5)}\nrevised_because: requirement\n`) });
+    const file = join(second.worktree, "canon/changes", readdirSync(join(second.worktree, "canon/changes")).find((f) => f.startsWith(second.change))!);
+    const text = (await Bun.file(file).text()).replace("## 任务", "总览不受影响：D-10 只改了评审的措辞\n\n## 任务");
+    sh(second.worktree, "add", "-A");
+    sh(second.worktree, "commit", "-qm", "amend and say so");
+    writeFileSync(file, text);
+    sh(second.worktree, "commit", "-qam", "say it");
+    const saidAgain: string[] = [];
+    expect((await land(ws(second.worktree), FAST, (line) => saidAgain.push(line))).kind).toBe("landed");
+    expect(saidAgain.join("\n")).not.toContain(`${id("D", 10)} amends ${id("D", 5)}`);
   });
 });
 

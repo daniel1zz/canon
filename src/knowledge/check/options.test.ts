@@ -5,13 +5,20 @@ import { dirname, join } from "node:path";
 import { readCorpus } from "../documents/read.ts";
 import { isPlaceholderLine, templateFor } from "../documents/templates.ts";
 import { BUILTIN_TYPES } from "../documents/types.ts";
-import { check } from "./check.ts";
+import { checkNotes } from "./check.ts";
 import { optionProblems } from "./sources.ts";
+import { project, startNew } from "../../work/testkit.ts";
 
 // Fixture ids are assembled at runtime so this file does not itself name decisions when canon check scans the repo.
 const d = (n: number) => ["D", n].join("-");
 const body = (options: string) => `## 背景\n\nB.\n\n## 方案\n\n${options}\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
 const messages = (options: string) => optionProblems(body(options)).map((p) => p.message);
+
+const MAIN = join(import.meta.dir, "../../invocation/main.ts");
+function canon(cwd: string, ...args: string[]) {
+  const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:test" } });
+  return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
+}
 
 function repo(files: Record<string, string>): string {
   const root = mkdtempSync(join(tmpdir(), "canon-options-"));
@@ -49,7 +56,19 @@ describe("decision options (BR-2109)", () => {
     expect(messages("1. A：采用。\n2. <方案二>：<采用或否决，以及理由>")).toEqual(["has 1 option(s) under ## 方案; a choice needs at least two"]);
   });
 
-  test("BR-2109: checked whatever the status; a decision without a 方案 section is not checked", () => {
+  test("BR-2109: canon check says an options section with no real choice as a note on standard error and exits 0", () => {
+    const root = project();
+    const change = startNew(root, "weak options");
+    const path = `canon/decisions/${d(1)}.md`;
+    mkdirSync(join(change.worktree, "canon/decisions"), { recursive: true });
+    writeFileSync(join(change.worktree, path), `---\nid: ${d(1)}\ntitle: Pick\nstatus: accepted\n---\n${body("1. A：采用。")}`);
+    const r = canon(change.worktree, "check");
+    expect(r.code).toBe(0);
+    expect(r.out).not.toContain("decision-options");
+    expect(r.err).toContain(`note: ${path}: ${d(1)} has 1 option(s) under ## 方案; a choice needs at least two (BR-2109)`);
+  });
+
+  test("BR-2109: a note, never a finding: checked whatever the status; a decision without a 方案 section is not checked", () => {
     const decision = (n: number, status: string, text: string) => ({ [`canon/decisions/${d(n)}.md`]: `---\nid: ${d(n)}\ntitle: X${n}\nstatus: ${status}\n---\n${text}` });
     const types = BUILTIN_TYPES.map((t) => (t.name === "decision" ? { ...t, sections: ["背景", "决定"] } : t));
     const root = repo({
@@ -58,7 +77,7 @@ describe("decision options (BR-2109)", () => {
       ...decision(3, "superseded", body("1. A：采用。")),
       ...decision(4, "accepted", "## 背景\n\nB.\n\n## 决定\n\nA.\n"),
     });
-    const got = check({ root, ...readCorpus(root, types), testFiles: [] }).filter((f) => f.rule === "decision-options").map((f) => f.path);
+    const got = checkNotes({ root, ...readCorpus(root, types), testFiles: [] }).filter((f) => f.rule === "decision-options").map((f) => f.path);
     expect(got.sort()).toEqual([1, 2, 3].map((n) => `canon/decisions/${d(n)}.md`));
   });
 });

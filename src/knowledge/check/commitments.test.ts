@@ -29,7 +29,9 @@ const decision = (n: number, decided: string, after = "无。") =>
 function fixture() {
   const root = project();
   put(root, {
-    "canon/rules/billing/README.md": "# billing\n\n## 业务\n\n- **退款**：钱怎么退回去\n",
+    "canon/config.yaml": "floor: test ! -e FAIL\ntests: []\nreview: none\ncode_root: src\n",
+    "src/billing/.keep": "",
+    "canon/rules/billing/README.md": "# billing\n\n## 术语\n\n- **x**：y\n\n## 业务\n\n- **退款**：钱怎么退回去\n",
     "canon/rules/billing/BR-9.md": rule(9),
     "canon/rules/billing/BR-10.md": rule(10, "按 D-1 退款。"),
     "canon/decisions/D-1.md": decision(1, "采用方案 1，按 BR-10。"),
@@ -40,33 +42,32 @@ function fixture() {
 }
 
 describe("a decision's commitments reach the rules that hold them", () => {
-  test("BR-2469: a rule 决定 names in a new decision must name it back; a planned rule does, a retired one or one cited in backticks does not count", () => {
+  test("BR-2469: a rule 决定 names in a new decision that does not name it back is said as a note and exits 0; a planned rule does, a retired one or one cited in backticks does not count", () => {
     const root = fixture();
     const wt = startNew(root, "新决策").worktree;
     put(wt, { "canon/decisions/D-2.md": decision(2, "1. 退款立即到账，按 BR-9。\n2. 对账按 BR-10。\n3. 新的提醒按 BR-11。\n4. 背景里的 `BR-12` 不算。"), "canon/rules/billing/BR-11.md": rule(11, "提醒，见 D-2。", "planned") });
     const r = canon(wt, "check");
-    expect(r.code).toBe(1);
-    expect(r.all).toContain("decision-rule-unlinked");
-    expect(r.all).toContain("D-2's 决定 names BR-9 in a line this work wrote, but BR-9 does not name D-2");
-    expect(r.all).toContain("D-2's 决定 names BR-10 in a line this work wrote, but BR-10 does not name D-2");
+    expect(r.code).toBe(0);
+    expect(r.err).toContain("note: canon/decisions/D-2.md: D-2's 决定 names BR-9 in a line this work wrote, but BR-9 does not name D-2");
+    expect(r.err).toContain("D-2's 决定 names BR-10 in a line this work wrote, but BR-10 does not name D-2");
     expect(r.all).not.toContain("names BR-11 in a line");
     expect(r.all).not.toContain("names BR-12 in a line");
     put(wt, { "canon/rules/billing/BR-9.md": rule(9, "立即到账（D-2）。"), "canon/rules/billing/BR-10.md": rule(10, "按 D-1、D-2 退款。") });
-    expect(canon(wt, "check").all).not.toContain("decision-rule-unlinked");
+    expect(canon(wt, "check").all).not.toContain("does not name D-2");
     put(wt, { "canon/rules/billing/BR-11.md": rule(11, "提醒，见 D-2。", "retired") });
     expect(canon(wt, "check").all).toContain("D-2's 决定 names BR-11 in a line this work wrote, but BR-11 is retired");
   });
 
-  test("BR-2469: only lines of 决定 this work wrote are checked, so an old decision touched elsewhere needs no migration", () => {
+  test("BR-2469: only lines of 决定 this work wrote are checked, so an old decision touched elsewhere needs no migration and one this work writes is a note", () => {
     const root = fixture();
     put(root, { "canon/decisions/D-3.md": decision(3, "按 BR-9。") });
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "an old decision whose rule does not name it");
     const wt = startNew(root, "改后果").worktree;
     put(wt, { "canon/decisions/D-3.md": decision(3, "按 BR-9。", "后果改了。") });
-    expect(canon(wt, "check").all).not.toContain("decision-rule-unlinked");
+    expect(canon(wt, "check").all).not.toContain("does not name D-3");
     put(wt, { "canon/decisions/D-3.md": decision(3, "按 BR-9，立即到账。", "后果改了。") });
-    expect(canon(wt, "check").all).toContain("D-3's 决定 names BR-9 in a line this work wrote, but BR-9 does not name D-3");
+    expect(canon(wt, "check").err).toContain("note: canon/decisions/D-3.md: D-3's 决定 names BR-9 in a line this work wrote, but BR-9 does not name D-3");
   });
 
   test("BR-2469: in the main checkout, outside any change, nothing is reported", () => {
