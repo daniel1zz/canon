@@ -15,3 +15,13 @@ if (process.env["CANON_TEST_SCRIPT"] !== "1") {
   );
   process.exit(2);
 }
+
+// reason: full runs queue machine-wide (BR-2576); scripts/test.sh gives the run one temporary queue, but test files run in
+// parallel processes, so a test that holds its fixture's floor open would make other files' fixture landings wait for the
+// slot and time out. Each test process gets its own queue; spawns that pass { ...process.env } carry it (C-639).
+{
+  const { mkdtempSync } = await import("node:fs");
+  const { join } = await import("node:path");
+  const { tmpdir } = await import("node:os");
+  process.env["CANON_MACHINE_DIR"] = mkdtempSync(join(tmpdir(), "canon-machine-"));
+}

@@ -76,8 +76,9 @@ describe("a full test run queues machine-wide", () => {
     expect(c.lines[0]).toStartWith("canon: waiting for a full test run slot: 2 full run(s) ahead on this machine: C-1 (/wt/C-1, running 0 min), C-2 (/wt/C-2, waiting);");
     a.release("passed");
     const sb = await pb;
-    await Bun.sleep(150);
-    expect(c.lines[1]).toContain("1 full run(s) ahead on this machine: C-2 (/wt/C-2, running 0 min)");
+    // reason: C-3 notices the count fall when C-1's entry goes, which can be before C-2 writes its start; wait for the line, not a fixed time (C-639)
+    for (const until = Date.now() + 5000; c.lines.length < 2 && Date.now() < until; ) await Bun.sleep(20);
+    expect(c.lines[1]).toContain("1 full run(s) ahead on this machine: C-2 (/wt/C-2, ");
     sb.release("passed");
     (await pc).release("passed");
   });
