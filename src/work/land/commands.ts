@@ -56,10 +56,11 @@ function landingCommand(chore: boolean) { return defineCommand({
     recordExit(run);
     const out = await land(ws, { finish, timeoutMs, guide: WORKFLOW_GUIDE, run }, say);
     if (out.kind === "landed") {
+      // reason: the main session hears the agenda where its landing ends; a worker's main session hears it through watch (BR-2584, BR-2528).
+      // It comes before the red-main lines, which end the output with the lessons reminder last (BR-2306, BR-2163).
+      if (!isWorker(ws.actor)) for (const line of afterLandLines(ws, out)) say(line);
       for (const line of redMainLandingLines(ws.db)) say(line);
       if (out.finished && !isChore(out.change)) say(LESSON_REMINDER);
-      // reason: the main session hears the agenda where its landing ends; a worker's main session hears it through watch (BR-2584, BR-2528)
-      if (!isWorker(ws.actor)) for (const line of afterLandLines(ws, out)) say(line);
       return;
     }
     if (out.kind === "timeout") {

@@ -1,5 +1,5 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { project, sh, startNew, ws } from "../testkit.ts";
 
@@ -59,8 +59,9 @@ test("BR-2499: the design owner answers after landing the design and redelegates
 test("BR-2499: a request follows the change to a new design owner; only the current owner answers, and only once", () => {
   const f = fixture();
   expect(cli(f.worktree, "agent:s7:w1", "work", "need-design", f.change, "pending question").code).toBe(0);
-  // agent:s1's session ended; agent:s2 redelegates the change once the worker let it go
+  // agent:s1's session ended; once the worker let it go and the delegation stalled, agent:s2 redelegates it (BR-2526)
   expect(cli(f.worktree, "agent:s7:w1", "work", "stop", "--reason", "partial", "--next", "wait", "--release").code).toBe(0);
+  appendFileSync(join(f.root, "canon/config.yaml"), "delegation_stall_minutes: 0.0001\n"); sh(f.root, "commit", "-qam", "stall threshold"); Bun.sleepSync(50);
   expect(cli(f.root, "agent:s2", "work", "delegate", f.change, "--to", "w1").code).toBe(0);
   expect(cli(f.root, "agent:s2", "brief").text).toContain("Design request #1");
   expect(cli(f.root, "agent:s1", "brief").text).not.toContain("Design request #1");

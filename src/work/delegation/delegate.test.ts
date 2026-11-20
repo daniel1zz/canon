@@ -1,6 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { project, sh, startNew, ws } from "../testkit.ts";
 
@@ -30,7 +30,7 @@ function fixture(firstRule = rule("BR-50")) {
 }
 function dispatch(root: string, change: string, actor = "agent:s1", name = "w1", extra: string[] = []) { return cli(root, actor, "work", "delegate", change, "--to", name, ...extra); }
 function record(root: string, change: string) {
-  const w = ws(root); try { const r = w.db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE subject = ? AND kind LIKE 'delegation.%' ORDER BY id DESC LIMIT 1").get(change); return r ? JSON.parse(r.detail) : undefined; } finally { w.db.close(); }
+  const w = ws(root); try { const r = w.db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE subject = ? AND kind IN ('delegation.create', 'delegation.update') ORDER BY id DESC LIMIT 1").get(change); return r ? JSON.parse(r.detail) : undefined; } finally { w.db.close(); }
 }
 
 test("BR-2497: dispatch pins main, one-level references and committed task, releasing only its owner's claim", () => {
@@ -107,8 +107,14 @@ test("BR-2497: redelegation keeps an active acceptor, refuses renaming it and cl
   expect(dispatch(f.root, f.change, "agent:s1", "w2").code).toBe(5); expect(record(f.root, f.change).epoch).toBe(2);
   const w2 = ws(f.root); w2.db.db.query("UPDATE claims SET holder = ? WHERE subject = ?").run("agent:s1", f.change); w2.db.close();
   expect(dispatch(f.root, f.change).code).toBe(0); expect(record(f.root, f.change)).toMatchObject({ epoch: 3, acceptor: null });
-  expect(dispatch(f.root, f.change, "agent:s2", "w2").code).toBe(0);
-  expect(record(f.root, f.change)).toMatchObject({ epoch: 4, owner: "agent:s2", worker: "w2", previous: { owner: "agent:s1", worker: "w1", epoch: 3 } });
+  // nobody holds the claim: the design owner may rename the worker
+  expect(dispatch(f.root, f.change, "agent:s1", "w2").code).toBe(0);
+  expect(record(f.root, f.change)).toMatchObject({ epoch: 4, owner: "agent:s1", worker: "w2", previous: { owner: "agent:s1", worker: "w1", epoch: 3 } });
+  // another session may take it over only once the delegation is stalled (BR-2526)
+  expect(dispatch(f.root, f.change, "agent:s2", "w3").code).toBe(5); expect(record(f.root, f.change).epoch).toBe(4);
+  appendFileSync(join(f.root, "canon/config.yaml"), "delegation_stall_minutes: 0.0001\n"); sh(f.root, "commit", "-qam", "stall threshold"); Bun.sleepSync(50);
+  expect(dispatch(f.root, f.change, "agent:s2", "w3").code).toBe(0);
+  expect(record(f.root, f.change)).toMatchObject({ epoch: 5, owner: "agent:s2", worker: "w3", previous: { owner: "agent:s1", worker: "w2", epoch: 4 } });
 });
 
 test("BR-2497: invalid actors, names, missing or closed changes and other primary holders refuse", () => {
