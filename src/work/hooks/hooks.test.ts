@@ -75,6 +75,7 @@ describe("lifecycle hooks", () => {
   });
 
   test("BR-2057 BR-2014: before_land runs before the floor, so a red floor still follows it; a canon check refusal means it never runs", async () => {
+    // the landing has no wording judgement step any more (BR-2239, D-141): canon check is the step before before_land that refuses here
     const root = configured(`  before_land: 'touch "${"$"}CANON_WORKTREE/../before-land-ran"'\n`);
     const s = startNew(root, "Red");
     writeFileSync(join(s.worktree, "FAIL"), "x");

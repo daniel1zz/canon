@@ -6,6 +6,7 @@ import type { Workspace } from "../workspace.ts";
 import { age, dueItems, renderDue } from "./due.ts";
 import { watchDue, RECOMPUTE_MS } from "./watch.ts";
 import { lastEventId } from "../stats/window.ts";
+import { behaviourHash } from "../../knowledge/documents/behaviour.ts";
 
 // reason: each case spawns canon or git several times; a loaded machine took longer than bun's 5 s default
 setDefaultTimeout(60_000);
@@ -226,4 +227,35 @@ test("BR-2529, BR-2024: a Claude Code main session's brief lists what is due and
   const worker = cli(root, "agent:s7:w1", ["brief"], { CLAUDECODE: "1" });
   expect(worker.out).not.toContain("Due now");
   expect(worker.out).not.toContain("Monitor");
+});
+
+test("BR-2527 BR-2241: a change done on main whose landing left a rule without evidence is due as unverified: until a done change records the rule's current text; one not landed is not", () => {
+  const root = fresh();
+  const id = ["BR", 3].join("-");
+  const rule = `---\nid: ${id}\ntitle: Refund\nbusiness: x\n---\n## 规则\n\nRefunds go back.\n\n## 例子\n\n- refund → shown\n`;
+  const change = (n: number, status: string, passes = "") => `---\nid: C-${n}\ntitle: Work ${n}\nstatus: ${status}\nrules: [${id}]\n${passes}---\n\n## 为什么\n\nx\n`;
+  mkdirSync(join(root, "canon/rules/billing"), { recursive: true });
+  mkdirSync(join(root, "canon/changes"), { recursive: true });
+  writeFileSync(join(root, "canon/rules/billing/README.md"), "# billing\n\n## 业务\n\n- **x**：y\n");
+  writeFileSync(join(root, `canon/rules/billing/${id}.md`), rule);
+  writeFileSync(join(root, "canon/changes/C-7.md"), change(7, "done"));
+  writeFileSync(join(root, "canon/changes/C-8.md"), change(8, "open"));
+  sh(root, "add", "-A"); sh(root, "commit", "-qm", "C-7 landed without evidence");
+  const w = ws(root);
+  w.db.event("agent:a", "execution.unverified", "C-7", { rules: [id] });
+  w.db.event("agent:a", "execution.unverified", "C-8", { rules: [id] }); // C-8 is still open: its landing did not happen
+  const items = dueItems(w, Date.now(), CALM);
+  expect(items.ok).toBe(true);
+  const keys = items.ok ? items.value.map((i) => i.key) : [];
+  expect(keys).toContain("unverified:C-7");
+  expect(keys).not.toContain("unverified:C-8");
+  const item = items.ok ? items.value.find((i) => i.key === "unverified:C-7")! : undefined;
+  expect(item?.summary).toContain(`landed with ${id} 待重新执行`);
+  expect(item?.next).toContain("land --finish");
+  // a later done change records the rule's current text: nothing is due any more
+  const hash = behaviourHash(rule);
+  writeFileSync(join(root, "canon/changes/C-9.md"), change(9, "done", `passes:\n  ${id}: "${hash} test"\n`));
+  sh(root, "add", "-A"); sh(root, "commit", "-qm", "C-9 executed it");
+  const later = dueItems(ws(root), Date.now(), CALM);
+  expect(later.ok && later.value.map((i) => i.key)).not.toContain("unverified:C-7");
 });

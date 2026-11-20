@@ -107,6 +107,7 @@ describe("landing with floor_timing: after", () => {
   });
 
   test("BR-2218: in after mode the change's own steps still refuse: a canon check finding keeps main where it was", async () => {
+    // the change's own steps are canon check, the sources and before_land; the wording judgement runs after the landing (BR-2239, D-141)
     const root = configured("floor: exit 1\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
     const before = sh(root, "rev-parse", "main");
     const s = startNew(root, "Bad ref");

@@ -3,11 +3,13 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, w
 import { dirname, join } from "node:path";
 import { land } from "../land/land.ts";
 import { previewReview } from "../../knowledge/review/preview.ts";
+import { judgeLandedWording } from "../../knowledge/review/landed-wording.ts";
+import { reviewTree } from "../land/checks/review-tree.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { openFindings } from "../../knowledge/review/findings/findings.ts";
 import { behaviourHash } from "../../knowledge/documents/behaviour.ts";
 import type { Change } from "../../knowledge/documents/model.ts";
-import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { FAST, project, quiet, reviewLandings, sh, startNew, ws } from "../testkit.ts";
 import { recordReport } from "../verify/ledger.ts";
 import { commentOnly, newSideHunks } from "./evidence.ts";
 import type { TestCase } from "../verify/report.ts";
@@ -89,6 +91,25 @@ const changeOn = (root: string, _where: "main" | "HEAD", change: string): Change
 
 const hashOf = (root: string, n: number) => behaviourHash(readCorpus(root).corpus.docs.find((d) => d.id === br(n))!.body);
 
+/** A say that keeps the lines, to read what the landing said. */
+function collect(): { lines: string[]; say: (line: string) => void } {
+  const lines: string[] = [];
+  return { lines, say: (line: string) => lines.push(line) };
+}
+
+/**
+ * BR-2241: `id` landed without evidence: the change is done on main with no record for it, the landing said so, and an
+ * execution.unverified event names it for canon work due.
+ */
+function landedUnverified(root: string, change: string, id: string, out: { kind: string }, lines: readonly string[]) {
+  expect(out.kind).toBe("landed");
+  expect(changeOn(root, "main", change).status).toBe("done");
+  expect(changeOn(root, "main", change).passes[id]).toBeUndefined();
+  expect(lines.join("\n")).toContain(`evidence: ${id}: no evidence of this execution; it lands as 待重新执行`);
+  const ev = ws(root).db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = 'execution.unverified' AND subject = ? ORDER BY id DESC LIMIT 1").get(change);
+  expect(JSON.parse(ev!.detail).rules).toContain(id);
+}
+
 /** Lands a first change that migrates, so main holds pass records and later changes write only their own. */
 async function migrated(root: string): Promise<void> {
   const s = startNew(root, "Migrate");
@@ -108,21 +129,17 @@ describe("evidence at --finish (BR-2241)", () => {
     expect(changeOn(root, "main", s.change).passes).toEqual({ [br(1)]: { hash: hashOf(root, 1), method: "test", wording: false } });
   }, TIMED);
 
-  test("BR-2241: touching only another rule's test refuses with reason evidence, before any close commit", async () => {
+  test("BR-2241: touching only another rule's test is no evidence: the change lands without a record for the rule, says so and records execution.unverified (D-141)", async () => {
     const root = fixture();
     await migrated(root);
     const s = startNew(root, "Wrong test");
-    // the examples change, so this is not a wording-only edit for the landing's wording judgement (BR-2243, BR-2239): it needs evidence
+    // the examples change, so this is not a wording-only edit (BR-2243): it needs evidence
     setChange(s.worktree, s.change, [br(1)]);
     write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { examples: "- input 1 → output 10" }), "src/billing/a.test.ts": testFile([1, 2]).replace("toBe(2)", "toBe(2); // other") });
-    const head = sh(s.worktree, "rev-parse", "HEAD");
-    const main = sh(root, "rev-parse", "main");
-    const out = await land(ws(s.worktree), FINISH, quiet);
-    expect(out.kind === "refused" && out.reason).toBe("evidence");
-    expect(out.kind === "refused" && out.message).toContain(br(1));
-    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(head); // no close commit
-    expect(sh(root, "rev-parse", "main")).toBe(main);
-    expect(changeOn(s.worktree, "HEAD", s.change).status).toBe("open");
+    const c = collect();
+    const out = await land(ws(s.worktree), FINISH, c.say);
+    landedUnverified(root, s.change, br(1), out, c.lines);
+    expect(c.lines.join("\n")).toContain("canon work due lists them");
   }, TIMED);
 
   test("BR-2241: a changed line in a skipped test is no evidence", async () => {
@@ -131,8 +148,8 @@ describe("evidence at --finish (BR-2241)", () => {
     const s = startNew(root, "Skipped");
     setChange(s.worktree, s.change, [br(1)]);
     write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { examples: "- input 1 → output 10" }), "src/billing/b.test.ts": `it.skip("${br(1)}: later", () => {\n  expect(10).toBe(10);\n});\n` });
-    const out = await land(ws(s.worktree), FINISH, quiet);
-    expect(out.kind === "refused" && out.reason).toBe("evidence");
+    const c = collect();
+    landedUnverified(root, s.change, br(1), await land(ws(s.worktree), FINISH, c.say), c.lines);
   }, TIMED);
 
   test("BR-2241: a test changed in an earlier landing of the same change counts at the --finish landing that changes only documents", async () => {
@@ -148,22 +165,23 @@ describe("evidence at --finish (BR-2241)", () => {
     expect(changeOn(root, "main", s.change).passes[br(1)]).toMatchObject({ method: "test" });
   }, TIMED);
 
-  test("BR-2241: an untested rule with an acceptance line closes with an acceptance record; a line without → and result is refused", async () => {
-    const root = fixture({ files: { [`canon/rules/billing/${br(3)}.md`]: ruleText(3, { untested: "provider" }) } });
-    await migrated(root);
-    const s = startNew(root, "Accept");
-    setChange(s.worktree, s.change, [br(3)], `- ${br(3)}：在沙箱下单退款`);
-    write(s.worktree, { [`canon/rules/billing/${br(3)}.md`]: ruleText(3, { untested: "provider", examples: "- refund → shown" }) });
-    const refused = await land(ws(s.worktree), FINISH, quiet);
-    expect(refused.kind === "refused" && refused.reason).toBe("evidence");
-    expect(refused.kind === "refused" && refused.message).toContain("## 验收");
-    const path = changePath(s.worktree, s.change);
-    writeFileSync(path, readFileSync(path, "utf8").replace("在沙箱下单退款", "在沙箱下单退款 → 服务商后台显示已退"));
-    sh(s.worktree, "commit", "-qam", "acceptance");
-    const out = await land(ws(s.worktree), FINISH, quiet);
-    expect(out.kind).toBe("landed");
-    expect(changeOn(root, "main", s.change).passes).toEqual({ [br(3)]: { hash: hashOf(root, 3), method: "acceptance", wording: false } });
-  }, TIMED);
+  test("BR-2241: an untested rule with an acceptance line closes with an acceptance record; a line without → and result is no evidence, so it lands with none", async () => {
+    const accept = async (line: string) => {
+      const root = fixture({ files: { [`canon/rules/billing/${br(3)}.md`]: ruleText(3, { untested: "provider" }) } });
+      await migrated(root);
+      const s = startNew(root, "Accept");
+      setChange(s.worktree, s.change, [br(3)], `- ${br(3)}：${line}`);
+      write(s.worktree, { [`canon/rules/billing/${br(3)}.md`]: ruleText(3, { untested: "provider", examples: "- refund → shown" }) });
+      const c = collect();
+      return { root, s, c, out: await land(ws(s.worktree), FINISH, c.say) };
+    };
+    const bare = await accept("在沙箱下单退款");
+    landedUnverified(bare.root, bare.s.change, br(3), bare.out, bare.c.lines);
+    expect(bare.c.lines.join("\n")).toContain("## 验收");
+    const full = await accept("在沙箱下单退款 → 服务商后台显示已退");
+    expect(full.out.kind).toBe("landed");
+    expect(changeOn(full.root, "main", full.s.change).passes).toEqual({ [br(3)]: { hash: hashOf(full.root, 3), method: "acceptance", wording: false } });
+  }, TIMED * 2);
 
   test("BR-2241: a listed rule whose hash already has another change's record, or that is planned or retired, needs no evidence and gets no record", async () => {
     const root = fixture({ files: { [`canon/rules/billing/${br(4)}.md`]: ruleText(4, { status: "planned" }), [`canon/rules/billing/${br(5)}.md`]: ruleText(5, { untested: "x" }) } });
@@ -204,7 +222,8 @@ describe("evidence from the report's lines (BR-2241, D-64)", () => {
       db.db.query("DELETE FROM test_reports WHERE path = ? AND blob = ?").run(file, sh(s.worktree, "hash-object", file));
       if (o.record !== false) report(db, s.worktree, file, text, false);
     }
-    return { root, s, out: await land(ws(s.worktree), FINISH, quiet) };
+    const c = collect();
+    return { root, s, lines: c.lines, out: await land(ws(s.worktree), FINISH, c.say) };
   };
 
   test("BR-2241: without line numbers in the report, a change anywhere in the file that has a running test naming the rule is evidence of method test-file", async () => {
@@ -238,19 +257,19 @@ describe("evidence from the report's lines (BR-2241, D-64)", () => {
   });
 
   test("BR-2241: with line numbers the same edit to another rule's test is not evidence", async () => {
-    const { out } = await run({ lines: true, edit: (t) => t.replace("toBe(2)", "toBe(2); // other") });
-    expect(out.kind === "refused" && out.reason).toBe("evidence");
+    const { root, s, out, lines } = await run({ lines: true, edit: (t) => t.replace("toBe(2)", "toBe(2); // other") });
+    landedUnverified(root, s.change, br(1), out, lines);
   }, TIMED);
 
   test("BR-2241: a line before the first testcase belongs to no test, so it is no evidence", async () => {
-    const { out } = await run({ lines: true, edit: (t) => `// header\n${t}`.replace("// header\nit(", "// header changed\nit(") });
-    expect(out.kind === "refused" && out.reason).toBe("evidence");
+    const { root, s, out, lines } = await run({ lines: true, edit: (t) => `// header\n${t}`.replace("// header\nit(", "// header changed\nit(") });
+    landedUnverified(root, s.change, br(1), out, lines);
   }, TIMED);
 
-  test("BR-2241: a changed test file with no report for its content gives no evidence, and canon check names the missing report", async () => {
+  test("BR-2241 BR-2344: a changed test file with no report for its content gives no evidence; with no test_command to run it, canon check refuses the landing for the missing report", async () => {
     const { s, out } = await run({ lines: true, record: false, edit: (t) => t.replace("toBe(1)", "toBe(1); // output 10") });
-    expect(out.kind === "refused" && out.reason).toBe("evidence");
-    expect(out.kind === "refused" && out.message).toContain("canon work test has recorded a report for its current content");
+    expect(out.kind === "refused" && out.reason).toBe("check");
+    expect(out.kind === "refused" && JSON.stringify(out.findings)).toContain("test-report-missing");
     const r = Bun.spawnSync(["bun", join(import.meta.dir, "..", "..", "invocation", "main.ts"), "check"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
     expect(r.exitCode).toBe(1);
     expect(r.stdout.toString()).toContain("test-report-missing");
@@ -258,21 +277,21 @@ describe("evidence from the report's lines (BR-2241, D-64)", () => {
 });
 
 describe("rules a change edits without listing them (BR-2241, issue #104)", () => {
-  test("BR-2241: an example edit to a rule left out of rules: needs evidence like a listed one; with its test changed it gets a record", async () => {
-    const root = fixture();
-    await migrated(root);
-    const s = startNew(root, "Unlisted edit");
-    setChange(s.worktree, s.change, []);
-    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { examples: "- input 1 → output 10" }) });
-    const head = sh(s.worktree, "rev-parse", "HEAD");
-    const refused = await land(ws(s.worktree), FINISH, quiet);
-    expect(refused.kind === "refused" && refused.reason).toBe("evidence");
-    expect(refused.kind === "refused" && refused.message).toContain(br(1));
-    expect(sh(s.worktree, "rev-parse", "HEAD")).toBe(head);
-    write(s.worktree, { "src/billing/a.test.ts": testFile([1, 2]).replace("toBe(1)", "toBe(1); // output 10") });
-    const out = await land(ws(s.worktree), FINISH, quiet);
-    expect(out.kind).toBe("landed");
-    expect(changeOn(root, "main", s.change).passes).toEqual({ [br(1)]: { hash: hashOf(root, 1), method: "test", wording: false } });
+  test("BR-2241: an example edit to a rule left out of rules: is executed like a listed one: without evidence it lands with no record; with its test changed it gets one", async () => {
+    const edit = async (withTest: boolean) => {
+      const root = fixture();
+      await migrated(root);
+      const s = startNew(root, "Unlisted edit");
+      setChange(s.worktree, s.change, []);
+      write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { examples: "- input 1 → output 10" }), ...(withTest ? { "src/billing/a.test.ts": testFile([1, 2]).replace("toBe(1)", "toBe(1); // output 10") } : {}) });
+      const c = collect();
+      return { root, s, c, out: await land(ws(s.worktree), FINISH, c.say) };
+    };
+    const bare = await edit(false);
+    landedUnverified(bare.root, bare.s.change, br(1), bare.out, bare.c.lines);
+    const tested = await edit(true);
+    expect(tested.out.kind).toBe("landed");
+    expect(changeOn(tested.root, "main", tested.s.change).passes).toEqual({ [br(1)]: { hash: hashOf(tested.root, 1), method: "test", wording: false } });
   }, TIMED * 2);
 
   test("BR-2241 BR-2243: a statement-only edit to a rule left out of rules: goes to the review as a wording judgement", async () => {
@@ -309,15 +328,14 @@ describe("rules a change edits without listing them (BR-2241, issue #104)", () =
     expect(changeOn(root, "main", s.change).passes).toEqual({});
   }, TIMED);
 
-  test("BR-2241: a new active rule left out of rules: needs evidence", async () => {
+  test("BR-2241: a new active rule left out of rules: is executed: with no evidence it lands as 待重新执行", async () => {
     const root = fixture();
     await migrated(root);
     const s = startNew(root, "New rule");
     setChange(s.worktree, s.change, []);
     write(s.worktree, { [`canon/rules/billing/${br(6)}.md`]: ruleText(6, { untested: "provider" }) });
-    const out = await land(ws(s.worktree), FINISH, quiet);
-    expect(out.kind === "refused" && out.reason).toBe("evidence");
-    expect(out.kind === "refused" && out.message).toContain(br(6));
+    const c = collect();
+    landedUnverified(root, s.change, br(6), await land(ws(s.worktree), FINISH, c.say), c.lines);
   }, TIMED);
 });
 
@@ -382,6 +400,16 @@ describe("planned rules made active (BR-2240)", () => {
 describe("wording-only edits (BR-2243, BR-2239)", () => {
   const promptOf = (root: string) => join(root, "..", `${root.split("/").pop()}-prompt.txt`);
   const reviewing = (root: string, answer: string) => `cat > ${promptOf(root)}; echo '${answer}'`;
+  /** A review command that counts its calls in `<root>-asked` and keeps each prompt in `<prompt>-<n>`; `answer` gives the reply to call n. */
+  const counting = (root: string, first: string, rest: string = first) =>
+    `n=$(cat ${root}-asked 2>/dev/null || echo 0); echo $((n + 1)) > ${root}-asked; cat > ${promptOf(root)}-$n; if [ "$n" = 0 ]; then echo '${first}'; else echo '${rest}'; fi`;
+  const asked = (root: string) => (existsSync(`${root}-asked`) ? Number(readFileSync(`${root}-asked`, "utf8").trim()) : 0);
+  const reworded = { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) };
+  const lastEvent = (root: string, kind: string) => {
+    const row = ws(root).db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = ? ORDER BY id DESC LIMIT 1").get(kind);
+    return row ? (JSON.parse(row.detail) as Record<string, unknown>) : undefined;
+  };
+  const wordingFindings = (root: string) => openFindings(ws(root).db).filter((f) => f.criterion === "wording");
 
   async function wordingProject(answer: (root: string) => string | undefined) {
     const root = fixture();
@@ -396,9 +424,17 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     return { root, s };
   }
 
-  test("BR-2358 BR-2239: canon work review asks the landing's wording judgement of a statement-only edit and reports wording; the change stays open", async () => {
+  /** Lands the change with --finish, then runs the reviews queued after it (BR-2441): the landing's outcome and lines, what the reviews said. */
+  async function landThenReview(root: string, wt: string) {
+    const c = collect();
+    const out = await land(ws(wt), FINISH, c.say);
+    const said = await reviewLandings(root);
+    return { out, landing: c.lines.join("\n"), review: said.join("\n") };
+  }
+
+  test("BR-2358 BR-2239: canon work review asks the wording judgement of a statement-only edit and reports wording; the change stays open", async () => {
     const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`));
-    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+    write(s.worktree, reworded);
     const out = await previewReview(ws(s.worktree), undefined);
     expect(out.kind).toBe("ok");
     expect(out.kind === "ok" && out.wording).toEqual([{ id: br(1), answer: "wording" }]);
@@ -406,108 +442,103 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     expect(changeOn(s.worktree, "HEAD", s.change).status).toBe("open");
   }, TIMED);
 
-  test("BR-2358 BR-2239: canon work review reports a behaviour answer as what the landing would refuse, with exit 0; an edit with new evidence asks nothing", async () => {
+  test("BR-2358 BR-2239: canon work review reports a behaviour answer as an open finding the review after landing would record, with exit 0; an edit with new evidence asks nothing", async () => {
     const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":{"verdict":"behaviour","quote":"Statement one, changed.","requires":"a changed statement"}}}`));
     write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, changed." }) });
     const cli = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "review"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
     expect(cli.exitCode).toBe(0);
-    expect(cli.stdout.toString()).toContain(`wording judgement: ${br(1)}: behaviour: “Statement one, changed.” requires a changed statement; the landing would refuse it as a wording-only edit: change a line in a running test whose title names ${br(1)}`);
+    expect(cli.stdout.toString()).toContain(`wording judgement: ${br(1)}: behaviour: “Statement one, changed.” requires a changed statement; the review after landing would record it as an open finding on ${br(1)}: change a line in a running test whose title names ${br(1)}`);
     write(s.worktree, { "src/billing/a.test.ts": testFile([1, 2]).replace("toBe(1)", "toBe(1); // changed") });
     const after = await previewReview(ws(s.worktree), undefined);
     expect(after.kind === "ok" && after.wording).toEqual([]);
     expect(readFileSync(promptOf(root), "utf8")).not.toContain("# Wording judgements");
   }, TIMED);
 
-  test("BR-2358 BR-2239: with review: none, canon work review says the wording-only record has no one to judge it and the landing would refuse it; exit 0", async () => {
+  test("BR-2358 BR-2239: with review: none, canon work review says the wording-only record has no one to judge it and would land unjudged; exit 0", async () => {
     const { s } = await wordingProject(() => "none");
-    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+    write(s.worktree, reworded);
     const cli = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "review"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: "agent:a" } });
     expect(cli.exitCode).toBe(0);
-    expect(cli.stdout.toString()).toContain(`wording judgement: ${br(1)}: no review command to judge it; the landing would refuse it as a wording-only edit`);
+    expect(cli.stdout.toString()).toContain(`wording judgement: ${br(1)}: no review command to judge it; it would land as a wording-only edit nobody judged`);
   }, TIMED);
 
-  test("BR-2243 BR-2239: only the statement changed and the review answers wording: the record copies the method with wording; the prompt had the judgement", async () => {
-    const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`));
-    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+  test("BR-2243 BR-2239: only the statement changed: the landing records the method with wording and calls no model; the review after it asks the wording judgement first, apart from the rule review", async () => {
+    const { root, s } = await wordingProject((r) => counting(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`));
+    write(s.worktree, reworded);
     const out = await land(ws(s.worktree), FINISH, quiet);
     expect(out.kind).toBe("landed");
+    expect(asked(root)).toBe(0); // the landing itself calls no model (D-141)
     expect(changeOn(root, "main", s.change).passes).toEqual({ [br(1)]: { hash: hashOf(root, 1), method: "migration", wording: true } });
-    const prompt = readFileSync(promptOf(root), "utf8");
+    const said = (await reviewLandings(root)).join("\n");
+    const prompt = readFileSync(`${promptOf(root)}-0`, "utf8");
     expect(prompt).toContain("# Wording judgements");
     expect(prompt).toContain("Statement 1.");
     expect(prompt).toContain("Statement one, reworded.");
-    expect(prompt).not.toContain("# Domain: billing"); // the landing asks the wording judgement only; the rule review runs after it
-    const ev = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'review.wording' ORDER BY id DESC LIMIT 1").get()!;
-    expect(JSON.parse(ev.detail).wording).toEqual({ [br(1)]: "wording" });
-    expect(ws(root).db.db.query("SELECT 1 FROM events WHERE kind IN ('review.ok', 'review.block')").get()).toBeNull();
+    expect(prompt).not.toContain("# Domain: billing"); // the wording judgement is its own call; the rule review is the next one
+    expect(said).toContain(`wording judgement: ${br(1)}: wording; its earlier pass carries over`);
+    expect(lastEvent(root, "review.wording")?.["wording"]).toEqual({ [br(1)]: "wording" });
+    expect(wordingFindings(root)).toEqual([]);
   }, TIMED);
 
-  test("BR-2239 BR-2014: the review answering behaviour, or giving no wording field, refuses with reason review naming the rule before the floor runs; the change stays open", async () => {
+  test("BR-2239 BR-2014 BR-2022: the review answering behaviour, or giving no wording field, does not refuse: the change lands, the floor runs, and the review after it opens a wording finding on the rule naming the change", async () => {
     for (const answer of [`{"verdict":"ok","findings":[],"wording":{"${br(1)}":{"verdict":"behaviour","quote":"Statement one, reworded.","requires":"a changed statement"}}}`, `{"verdict":"ok","findings":[]}`]) {
       const { root, s } = await wordingProject((r) => reviewing(r, answer));
-      write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+      write(s.worktree, reworded);
       rmSync(`${root}-floor-ran`, { force: true }); // the fixture's own landings ran the floor
-      const out = await land(ws(s.worktree), FINISH, quiet);
-      expect(out.kind === "refused" && out.reason).toBe("review");
-      expect(out.kind === "refused" && out.message).toContain(br(1));
-      if (answer.includes("quote")) expect(out.kind === "refused" && out.message).toContain(`${br(1)}: the review answered behaviour: “Statement one, reworded.” requires a changed statement`);
-      expect(existsSync(`${root}-floor-ran`)).toBe(false);
-      expect(changeOn(s.worktree, "HEAD", s.change).status).toBe("open");
+      const r = await landThenReview(root, s.worktree);
+      expect(r.out.kind).toBe("landed");
+      expect(existsSync(`${root}-floor-ran`)).toBe(true);
+      expect(changeOn(root, "main", s.change).status).toBe("done");
+      const found = wordingFindings(root);
+      expect(found).toHaveLength(1);
+      expect(found[0]).toMatchObject({ ids: [br(1)], change: s.change });
+      expect(found[0]!.text).toContain(answer.includes("quote") ? `the review answered behaviour: “Statement one, reworded.” requires a changed statement` : "the review answered nothing");
+      expect(r.review).toContain("not confirmed as wording-only edits");
     }
   }, TIMED * 2);
 
-  test("BR-2239, BR-2216: an answer canon cannot read is asked once more with the error; a readable second answer lands, a second unreadable one refuses saying it asked twice (#227)", async () => {
-    const counted = (root: string, second: string) => `n=$(cat ${root}-asked 2>/dev/null || echo 0); echo $((n + 1)) > ${root}-asked; cat > ${promptOf(root)}-$n; if [ "$n" = 0 ]; then echo '{"findings":["${br(1)} changes when the line shows"]}'; else echo '${second}'; fi`;
-    const good = await wordingProject((r) => counted(r, `{"findings":[],"wording":{"${br(1)}":"wording"}}`));
-    write(good.s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
-    const said: string[] = [];
-    const out = await land(ws(good.s.worktree), FINISH, (l: string) => said.push(l));
-    expect(out.kind).toBe("landed");
-    expect(readFileSync(`${good.root}-asked`, "utf8").trim()).toBe("2");
-    expect(said.join("\n")).toContain("wording judgement: the answer could not be read");
+  test("BR-2239, BR-2216: an answer canon cannot read is asked once more with the error; a readable second answer is the judgement, a second unreadable one fails the review after landing saying it asked twice (#227)", async () => {
+    const good = await wordingProject((r) => counting(r, `{"findings":["${br(1)} changes when the line shows"]}`, `{"findings":[],"wording":{"${br(1)}":"wording"}}`));
+    write(good.s.worktree, reworded);
+    const g = await landThenReview(good.root, good.s.worktree);
+    expect(g.out.kind).toBe("landed");
+    expect(g.review).toContain("wording judgement: the answer could not be read");
+    expect(g.review).toContain(`wording judgement: ${br(1)}: wording`);
     const again = readFileSync(`${promptOf(good.root)}-1`, "utf8");
     expect(again.startsWith(readFileSync(`${promptOf(good.root)}-0`, "utf8"))).toBe(true);
     expect(again).toContain("# Your previous answer could not be read");
     expect(again).toContain("no findings with a criterion");
-    const bad = await wordingProject((r) => counted(r, `{"findings":[{"criterion":"note"}]}`));
-    write(bad.s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
-    const refused = await land(ws(bad.s.worktree), FINISH, quiet);
-    expect(refused.kind === "refused" && refused.reason).toBe("review");
-    expect(refused.kind === "refused" && refused.message).toContain("asked twice; neither answer could be read");
-    expect(readFileSync(`${bad.root}-asked`, "utf8").trim()).toBe("2");
-    expect(changeOn(bad.s.worktree, "HEAD", bad.s.change).status).toBe("open");
+    const bad = await wordingProject((r) => counting(r, `{"findings":["${br(1)} changes when the line shows"]}`, `{"findings":[{"criterion":"note"}]}`));
+    write(bad.s.worktree, reworded);
+    const b = await landThenReview(bad.root, bad.s.worktree);
+    expect(b.out.kind).toBe("landed");
+    expect(asked(bad.root)).toBe(2); // the rule review is not run once the judgement failed
+    expect(String(lastEvent(bad.root, "review.fail")?.["message"])).toContain("asked twice; neither answer could be read");
+    expect(changeOn(bad.root, "main", bad.s.change).status).toBe("done");
   }, TIMED * 2);
 
-  test("BR-2239: two unreadable answers that carry text refuse with the reviewer's words in full and a review.unparsed event; no finding is opened (#252)", async () => {
+  test("BR-2239: two unreadable answers that carry text fail the review after landing with the reviewer's words in full and a review.unparsed event; no finding is opened (#252)", async () => {
     const { root, s } = await wordingProject((r) => reviewing(r, `{"findings":["${br(1)} changes when the line shows"]}`));
-    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
-    const out = await land(ws(s.worktree), FINISH, quiet);
-    expect(out.kind === "refused" && out.reason).toBe("review");
-    expect(out.kind === "refused" && out.message).toContain(`what the reviewer wrote:\n  - ${br(1)} changes when the line shows`);
-    expect(out.kind === "refused" && out.message).not.toContain("asked twice; neither answer could be read");
-    const ev = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'review.unparsed' ORDER BY id DESC LIMIT 1").get()!;
-    expect(JSON.parse(ev.detail).texts).toEqual([`${br(1)} changes when the line shows`]);
-    expect(openFindings(ws(root).db)).toEqual([]); // only this landing is refused: nothing stays open to block other sessions (BR-2464)
-    expect(changeOn(s.worktree, "HEAD", s.change).status).toBe("open");
-    // a reviewer that prints plain prose, no JSON: the prose is shown whole
-    const long = `I think the statement now says something new. ${"x".repeat(400)}`;
-    const prose = await wordingProject((r) => reviewing(r, long));
-    write(prose.s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
-    const refused = await land(ws(prose.s.worktree), FINISH, quiet);
-    expect(refused.kind === "refused" && refused.reason).toBe("review");
-    expect(refused.kind === "refused" && refused.message).toContain(`  - ${long}`);
-  }, TIMED * 2);
-
-  test("BR-2239: a review command that fails is not asked again (#227)", async () => {
-    const { root, s } = await wordingProject((r) => `n=$(cat ${r}-asked 2>/dev/null || echo 0); echo $((n + 1)) > ${r}-asked; cat > /dev/null; echo boom >&2; exit 3`);
-    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
-    const out = await land(ws(s.worktree), FINISH, quiet);
-    expect(out.kind === "refused" && out.reason).toBe("review");
-    expect(out.kind === "refused" && out.message).not.toContain("asked twice");
-    expect(readFileSync(`${root}-asked`, "utf8").trim()).toBe("1");
+    write(s.worktree, reworded);
+    const r = await landThenReview(root, s.worktree);
+    expect(r.out.kind).toBe("landed");
+    const message = String(lastEvent(root, "review.fail")?.["message"]);
+    expect(message).toContain(`what the reviewer wrote:\n  - ${br(1)} changes when the line shows`);
+    expect(message).not.toContain("asked twice; neither answer could be read");
+    expect(lastEvent(root, "review.unparsed")?.["texts"]).toEqual([`${br(1)} changes when the line shows`]);
+    expect(openFindings(ws(root).db)).toEqual([]);
   }, TIMED);
 
-  test("BR-2239: a behaviour answer without a quote found in the rule's 规则 now counts as wording, and the landing says so (#256)", async () => {
+  test("BR-2239: a review command that fails is not asked again (#227); the landing is not affected", async () => {
+    const { root, s } = await wordingProject((r) => `n=$(cat ${r}-asked 2>/dev/null || echo 0); echo $((n + 1)) > ${r}-asked; cat > /dev/null; echo boom >&2; exit 3`);
+    write(s.worktree, reworded);
+    const r = await landThenReview(root, s.worktree);
+    expect(r.out.kind).toBe("landed");
+    expect(String(lastEvent(root, "review.fail")?.["message"])).not.toContain("asked twice");
+    expect(asked(root)).toBe(1);
+  }, TIMED);
+
+  test("BR-2239: a behaviour answer without a quote found in the rule's 规则 now counts as wording, and the review says so (#256)", async () => {
     for (const answer of [
       `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"behaviour"}}`, // the old bare string: no quote
       `{"verdict":"ok","findings":[],"wording":{"${br(1)}":{"verdict":"behaviour","quote":"Statement one, never written.","requires":"a changed statement"}}}`, // a quote that is not in the rule
@@ -515,57 +546,98 @@ describe("wording-only edits (BR-2243, BR-2239)", () => {
     ]) {
       const { root, s } = await wordingProject((r) => reviewing(r, answer));
       write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement   one,\n reworded." }) });
-      const said: string[] = [];
-      const out = await land(ws(s.worktree), FINISH, (l: string) => said.push(l));
-      expect(out.kind).toBe("landed");
-      expect(said.join("\n")).toContain(`wording judgement: ${br(1)}: behaviour without a quote from the rule: treated as wording`);
-      const ev = ws(root).db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'review.wording' ORDER BY id DESC LIMIT 1").get()!;
-      expect(JSON.parse(ev.detail)).toMatchObject({ wording: { [br(1)]: "wording" }, unquoted: [br(1)] });
+      const r = await landThenReview(root, s.worktree);
+      expect(r.out.kind).toBe("landed");
+      expect(r.review).toContain(`wording judgement: ${br(1)}: behaviour without a quote from the rule: treated as wording`);
+      expect(lastEvent(root, "review.wording")).toMatchObject({ wording: { [br(1)]: "wording" }, unquoted: [br(1)] });
+      expect(wordingFindings(root)).toEqual([]);
     }
     // the quote is compared with whitespace squashed, so a quote across the rule's line break still stands
-    const { s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":{"verdict":"behaviour","quote":"Statement one, reworded.","requires":"a changed statement"}}}`));
+    const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":{"verdict":"behaviour","quote":"Statement one, reworded.","requires":"a changed statement"}}}`));
     write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement   one,\n reworded." }) });
-    const refused = await land(ws(s.worktree), FINISH, quiet);
-    expect(refused.kind === "refused" && refused.reason).toBe("review");
+    await landThenReview(root, s.worktree);
+    expect(wordingFindings(root)).toHaveLength(1);
   }, TIMED * 4);
 
-  test("BR-2361 BR-2239: a review that answered behaviour is not reused for the same prompt: the review command runs again", async () => {
-    const { root, s } = await wordingProject((r) => `echo run >> ${promptOf(r)}.runs; cat > /dev/null; echo '{"verdict":"ok","findings":[],"wording":{"${br(1)}":{"verdict":"behaviour","quote":"Statement one, reworded.","requires":"a changed statement"}}}'`);
-    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
-    for (let i = 0; i < 2; i++) {
-      const out = await land(ws(s.worktree), FINISH, quiet);
-      expect(out.kind === "refused" && out.reason).toBe("review");
-    }
-    expect(readFileSync(`${promptOf(root)}.runs`, "utf8").trim().split("\n")).toHaveLength(2);
-    expect(ws(root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'review.reused'").get()?.n).toBe(0);
+  test("BR-2296 BR-2239: a wording judgement that runs past review_timeout_minutes is stopped and fails the review after landing; the landing is not affected", async () => {
+    const { root, s } = await wordingProject((r) => `cat > /dev/null; echo $$ > ${r}-pid; exec sleep 30`);
+    writeFileSync(join(root, "canon/config.yaml"), readFileSync(join(root, "canon/config.yaml"), "utf8") + "review_timeout_minutes: 0.05\n");
+    sh(root, "commit", "-qam", "3 s review limit");
+    write(s.worktree, reworded);
+    const r = await landThenReview(root, s.worktree);
+    expect(r.out.kind).toBe("landed");
+    expect(String(lastEvent(root, "review.fail")?.["message"])).toContain("did not finish within");
+    expect(changeOn(root, "main", s.change).status).toBe("done");
   }, TIMED);
 
-  test("BR-2239 BR-2074: with no review command, review unset or review: none, the wording record is refused with reason review", async () => {
+  test("BR-2366 BR-2239: the wording judgement after landing runs with CANON_REVIEW_KIND=land", async () => {
+    const { root, s } = await wordingProject((r) => `printenv CANON_REVIEW_KIND >> ${r}-kind; cat > /dev/null; echo '{"findings":[],"wording":{"${br(1)}":"wording"}}'`);
+    write(s.worktree, reworded);
+    await landThenReview(root, s.worktree);
+    expect(readFileSync(`${root}-kind`, "utf8").trim().split("\n")[0]).toBe("land");
+  }, TIMED);
+
+  test("BR-2490 BR-2239: the wording judgement after landing is outside the review budget: a budget of one call still lets the rule review run beside it", async () => {
+    const { root, s } = await wordingProject((r) => counting(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`));
+    writeFileSync(join(root, "canon/config.yaml"), readFileSync(join(root, "canon/config.yaml"), "utf8") + "review_max_calls: 1\n");
+    sh(root, "commit", "-qam", "one review call");
+    write(s.worktree, reworded);
+    const r = await landThenReview(root, s.worktree);
+    expect(r.out.kind).toBe("landed");
+    expect(asked(root)).toBe(2); // the wording judgement, then the one rule review call the budget allows
+    expect(lastEvent(root, "review.fail")).toBeUndefined();
+  }, TIMED);
+
+  test("BR-2361 BR-2239: a judgement that confirmed every rule is reused for the same prompt and command; one that answered behaviour is asked again", async () => {
+    const q = [{ id: br(1), title: "Rule 1", before: "Statement 1.", after: "Statement one, reworded.", examples: "- input 1 → output 1" }];
+    const cases: [string, number][] = [
+      [`{"findings":[],"wording":{"${br(1)}":"wording"}}`, 1],
+      [`{"findings":[],"wording":{"${br(1)}":{"verdict":"behaviour","quote":"Statement one, reworded.","requires":"a changed statement"}}}`, 2],
+    ];
+    for (const [answer, runs] of cases) {
+      const root = fixture();
+      const command = counting(root, answer);
+      const main = sh(root, "rev-parse", "main");
+      const tree = reviewTree(ws(root), {}, main);
+      for (let i = 0; i < 2; i++) {
+        const r = await judgeLandedWording(ws(root), { change: "C-1", head: main, reviewerAt: main, at: "before" }, quiet, command, { timeoutMs: 60_000, kind: "land" }, tree, q);
+        expect(r.ok).toBe(true);
+      }
+      expect(tree.release().ok).toBe(true);
+      expect(asked(root)).toBe(runs);
+    }
+  }, TIMED);
+
+  test("BR-2239 BR-2074: with no review command, review unset or review: none, the wording record lands unjudged and the landing says so", async () => {
     // "" is unset (BR-2074); "none" is the explicit opt-out, which still leaves nobody to judge the wording
     for (const review of ["", "none"]) {
-      const { s } = await wordingProject(() => review);
-      write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
-      const out = await land(ws(s.worktree), FINISH, quiet);
-      expect(out.kind === "refused" && out.reason).toBe("review");
-      expect(out.kind === "refused" && out.message).toContain("no review command");
+      const { root, s } = await wordingProject(() => review);
+      write(s.worktree, reworded);
+      const c = collect();
+      const out = await land(ws(s.worktree), FINISH, c.say);
+      expect(out.kind).toBe("landed");
+      expect(c.lines.join("\n")).toContain(`the wording-only records of ${br(1)} were not judged`);
+      expect(changeOn(root, "main", s.change).passes[br(1)]).toMatchObject({ wording: true });
     }
   }, TIMED * 2);
 
-  test("BR-2239 BR-2010: the review runs for the wording record even when this landing changes no rule file", async () => {
+  test("BR-2239 BR-2010 BR-2441: the review after landing asks the wording judgement even when this landing changes no rule file", async () => {
     const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`));
-    write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded." }) });
+    write(s.worktree, reworded);
     expect((await land(ws(s.worktree), FAST, quiet)).kind).toBe("landed");
+    await reviewLandings(root); // the rule review of the reworded rule
     writeFileSync(promptOf(root), "");
-    const out = await land(ws(s.worktree), FINISH, quiet);
-    expect(out.kind).toBe("landed");
+    const r = await landThenReview(root, s.worktree);
+    expect(r.out.kind).toBe("landed");
     expect(readFileSync(promptOf(root), "utf8")).toContain(`## ${br(1)} Rule 1`);
+    expect(readFileSync(promptOf(root), "utf8")).toContain("# Wording judgements");
   }, TIMED);
 
-  test("BR-2243: a changed example gives no wording path: without a test the landing is refused with reason evidence", async () => {
-    const { s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`));
+  test("BR-2243: a changed example gives no wording path: without a test the rule lands with no record", async () => {
+    const { root, s } = await wordingProject((r) => reviewing(r, `{"verdict":"ok","findings":[],"wording":{"${br(1)}":"wording"}}`));
     write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { statement: "Statement one, reworded.", examples: "- input 1 → output 11" }) });
-    const out = await land(ws(s.worktree), FINISH, quiet);
-    expect(out.kind === "refused" && out.reason).toBe("evidence");
+    const c = collect();
+    landedUnverified(root, s.change, br(1), await land(ws(s.worktree), FINISH, c.say), c.lines);
   }, TIMED);
 
   test("BR-2243: a rule moved to a subdomain with only its statement changed still finds its earlier version", async () => {
@@ -687,14 +759,14 @@ describe("migration (BR-2245)", () => {
     expect(changeOn(root, "main", s.change).passes).toEqual({ [br(3)]: { hash: hashOf(root, 3), method: "test", wording: false } });
   }, TIMED);
 
-  test("BR-2245: in the first close, a tested rule the change edits without listing it is executed, not migrated", async () => {
+  test("BR-2245: in the first close, a tested rule the change edits without listing it is executed, not migrated: with no evidence it gets no record at all", async () => {
     const root = fixture();
     const s = startNew(root, "First, unlisted edit");
     setChange(s.worktree, s.change, []);
     write(s.worktree, { [`canon/rules/billing/${br(1)}.md`]: ruleText(1, { examples: "- input 1 → output 10" }) });
-    const out = await land(ws(s.worktree), FINISH, quiet);
-    expect(out.kind === "refused" && out.reason).toBe("evidence");
-    expect(out.kind === "refused" && out.message).toContain(br(1));
+    const c = collect();
+    landedUnverified(root, s.change, br(1), await land(ws(s.worktree), FINISH, c.say), c.lines);
+    expect(changeOn(root, "main", s.change).passes).toEqual({ [br(2)]: { hash: hashOf(root, 2), method: "migration", wording: false } });
   }, TIMED);
 
   test("BR-2245: a hand-written migration record in a landing after main holds records is refused with reason passes", async () => {

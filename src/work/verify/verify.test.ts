@@ -482,14 +482,14 @@ describe("canon work test type check and canon check", () => {
     expect(lastEvent(wt)).toMatchObject({ failed: 0, check: 1 });
   });
 
-  test("BR-2456: a rule whose examples the change edited with no test line changed is listed as missing evidence and fails the run; changing a line in its test clears it", () => {
+  test("BR-2456: a rule whose examples the change edited with no test line changed is listed as landing 待重新执行, a note that does not fail the run; changing a line in its test clears it", () => {
     const { root, wt } = fixture();
     write(wt, { [`canon/rules/core/${rule}.md`]: ruleText("x").replace("- a → b", "- a → c") });
     sh(wt, "commit", "-qam", "examples");
     const r = canon(wt, "work", "test");
-    expect(r.code).toBe(1);
+    expect(r.code).toBe(0); // a note, not a failure: the landing does not refuse it (D-141)
     expect(r.out).toContain(`evidence: ${rule}: change a line in a running test whose title names ${rule}`);
-    expect(r.out).toContain("evidence: 1 rule(s) the landing would refuse for missing evidence (BR-2241)");
+    expect(r.out).toContain("evidence: 1 rule(s) would land as 待重新执行, with no pass record (BR-2241); a note, not a failure");
     expect(r.out).toContain("canon check: ok");
     expect(lastEvent(wt)).toMatchObject({ evidence: 1 });
     write(wt, { "src/e.test.ts": `it("${rule}: names the rule, now a → c", () => {});\n` });

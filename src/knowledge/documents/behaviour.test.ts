@@ -47,6 +47,7 @@ describe("pass records in a change's front matter", () => {
   };
 
   test("BR-2237: a hash and a method, with or without wording, is valid and read", () => {
+    // a record with wording copies the earlier method for a statement-only edit; the review after landing checks it (BR-2243, BR-2239)
     expect(repo(`passes:\n  ${br(1)}: "3f2a9c0d1e4b5a67 test"\n`)).toEqual([]);
     expect(repo(`passes:\n  ${br(1)}: "3f2a9c0d1e4b5a67 acceptance wording"\n`)).toEqual([]);
     expect(repo(`passes:\n  ${br(1)}: "3f2a9c0d1e4b5a67 test-file"\n`)).toEqual([]); // evidence only down to the file (BR-2241)

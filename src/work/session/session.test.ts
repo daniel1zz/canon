@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { claims, holdClaim, takeClaim } from "../claims/claims.ts";
@@ -493,7 +493,7 @@ describe("same-file overlap", () => {
     expect(notices(root)).toEqual([]);
   });
 
-  test("BR-2062 BR-2241: a --finish landing refused for missing evidence prints no overlap notice", async () => {
+  test("BR-2062 BR-2161: a --finish landing refused for missing lessons prints no overlap notice", async () => {
     const root = project();
     const a = startNew(root, "A");
     const b = startNew(root, "B");
@@ -502,9 +502,14 @@ describe("same-file overlap", () => {
     const id = ["BR", 1].join("-");
     commitFile(a.worktree, `canon/rules/billing/${id}.md`, `---\nid: ${id}\ntitle: Refund\nuntested: provider\n---\n## 规则\n\nRefunds go back.\n\n## 例子\n\n- refund → shown\n`);
     commitFile(a.worktree, "shared.txt", "a\n");
+    // reason: missing evidence no longer refuses (BR-2241, D-141); the change's empty 教训 section does, before the queue (BR-2161)
+    const dir = join(a.worktree, "canon/changes");
+    const path = join(dir, readdirSync(dir).find((f) => f === `${a.change}.md` || f.startsWith(`${a.change}-`))!);
+    writeFileSync(path, readFileSync(path, "utf8").replace("## 教训\n\n无。\n", "## 教训\n\n"));
+    sh(a.worktree, "commit", "-qam", "no lessons");
     const lines: string[] = [];
     const out = await land(ws(a.worktree), { ...FAST, finish: true }, (l) => lines.push(l));
-    expect(out.kind === "refused" && out.reason).toBe("evidence");
+    expect(out.kind === "refused" && out.reason).toBe("lessons");
     expect(lines.some((l) => l.startsWith("overlap:"))).toBe(false);
     expect(notices(root)).toEqual([]);
   });

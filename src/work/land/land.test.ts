@@ -114,6 +114,7 @@ describe("work land", () => {
     sh(s.worktree, "commit", "-qm", "x");
     const out = await land(ws(s.worktree), FAST, quiet);
     // the commit the checks ran on is the one that lands, and the one a review after landing would review (BR-2441)
+    // the checks are canon check and before_land; no wording judgement runs in the landing (BR-2239, D-141)
     expect(out.kind === "landed" && out.sha).toBe(sh(s.worktree, "rev-parse", "HEAD"));
   });
 
@@ -209,8 +210,9 @@ describe("work land", () => {
     expect(queued.kind === "refused" && queued.message.includes("nothing changed since")).toBe(false);
   });
 
-  test("BR-2388: a refusal by the landing's wording judgement (reason review) is not repeated without queueing", () => {
+  test("BR-2388: only a canon check refusal is repeated before queueing; a source refusal, which fetches pages, is not", () => {
     expect(CONTENT_REASONS).toEqual(["check"]);
+    expect(CONTENT_REASONS).not.toContain("source");
   });
 
   test("BR-2388: a floor refusal is not repeated without queueing", async () => {
