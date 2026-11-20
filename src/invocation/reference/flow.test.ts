@@ -1,6 +1,7 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
 import { existsSync, readFileSync, realpathSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
+import { parse } from "yaml";
 import { CONFIG_KEYS } from "../config.ts";
 import { FLOW } from "../flow.ts";
 import { project, sh } from "../../work/testkit.ts";
@@ -191,6 +192,41 @@ describe("canon config --flow page", () => {
     const embedded = html.match(/<script id="data" type="application\/json">([^<]*)<\/script>/);
     expect(embedded).not.toBeNull();
     expect(JSON.parse(embedded![1]!)).toEqual(JSON.parse(json.out));
+  });
+
+  test("BR-2541: every key's yaml reads back as the value shown; an unset hook entry has the placeholder", () => {
+    const root = withConfig(`${BASE}code_root: src\nshared: [src/kernel]\n`);
+    Bun.spawnSync(["mkdir", "-p", join(root, "src/kernel")]);
+    writeFileSync(join(root, "src/kernel/a.ts"), "");
+    const r = canon(root, "config", "--flow", "--json");
+    expect(r.code).toBe(0);
+    const f = JSON.parse(r.out) as FlowView;
+    expect(parse(keyIn(step(f, "test.check"), "shared").yaml)).toEqual({ shared: ["src/kernel"] });
+    expect(parse(keyIn(step(f, "start.claim"), "claim_lease_hours").yaml)).toEqual({ claim_lease_hours: 12 });
+    expect(parse(keyIn(step(f, "after.push"), "remote").yaml)).toEqual({ remote: null });
+    expect(parse(keyIn(step(f, "after.after_land"), "hooks.after_land").yaml)).toEqual({ hooks: { after_land: "<命令>" } });
+    for (const k of f.stages.flatMap((s) => s.steps.flatMap((st) => st.keys))) {
+      const back = parse(k.yaml) as Record<string, unknown>;
+      const [base, part] = k.key.split(".");
+      const shown = k.set ? k.value : k.default;
+      if (part === undefined) expect(back).toEqual({ [base!]: shown });
+      else expect(back).toEqual({ [base!]: { [part]: shown ?? "<命令>" } });
+    }
+  });
+
+  test("BR-2541: the page has no form, makes no request, has only the filter checkbox, and its scripts parse", () => {
+    const root = withConfig(BASE);
+    expect(canon(root, "config", "--flow").code).toBe(0);
+    const html = readFileSync(join(root, ".canon/flow.html"), "utf8");
+    expect(html.startsWith("<!doctype html>")).toBe(true);
+    for (const bad of ["<form", "fetch(", "XMLHttpRequest", "WebSocket"]) expect(html).not.toContain(bad);
+    const inputs = html.match(/<input[^>]*>/g) ?? [];
+    expect(inputs).toHaveLength(1);
+    expect(inputs[0]).toContain('type="checkbox"');
+    const scripts = [...html.matchAll(/<script>([\s\S]*?)<\/script>/g)].map((m) => m[1]!);
+    expect(scripts.length).toBeGreaterThan(0);
+    // reason: constructing a Function parses its body without running it, so a syntax error in the page script fails here (BR-2541)
+    for (const src of scripts) expect(() => new Function(src)).not.toThrow();
   });
 
   test("BR-2541: canon config without --flow writes no page", () => {

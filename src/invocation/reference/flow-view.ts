@@ -16,7 +16,16 @@ export interface FlowKeyView extends KeyView {
   readonly off?: string;
   /** For a required key: what fails without it. */
   readonly why?: string;
+  /** What to write in canon/config.yaml for this value; read back as YAML it gives the value shown (BR-2541). */
+  readonly yaml: string;
 }
+
+/** A hook entry that is not set is shown with this placeholder, to be replaced by a real command. */
+export const COMMAND_PLACEHOLDER = "<命令>";
+
+// reason: a JSON value is valid YAML on one line, so the snippet reads back as exactly the value shown (BR-2541)
+const yamlOf = (key: string, value: unknown) => `${key}: ${value === null || value === undefined ? "" : JSON.stringify(value)}`;
+const yamlOfPart = (key: string, part: string, value: unknown) => `${key}:\n  ${part}: ${JSON.stringify(value ?? COMMAND_PLACEHOLDER)}`;
 
 export interface FlowStepView {
   readonly id: StepId;
@@ -65,12 +74,13 @@ export function viewFlow(configPath: string, config: Config, views: readonly Key
       const kind = { role: role.kind, ...(role.kind === "optional" ? { off: role.off } : {}), ...(role.kind === "required" ? { why: role.why } : {}) };
       const part = k.flow.part?.(id);
       if (part === undefined) {
-        keys.push({ ...v, ...kind });
+        keys.push({ ...v, ...kind, yaml: yamlOf(k.key, v.set ? v.value : v.default) });
         continue;
       }
       // reason: a mapping key shows only the entry this step uses, so each hook step lists its own event (BR-2540)
       const written = v.set && typeof v.value === "object" && v.value !== null && Object.hasOwn(v.value, part);
-      keys.push({ ...v, ...kind, key: `${k.key}.${part}`, set: written, value: written ? (v.value as Record<string, unknown>)[part] : null, default: null });
+      const value = written ? (v.value as Record<string, unknown>)[part] : null;
+      keys.push({ ...v, ...kind, key: `${k.key}.${part}`, set: written, value, default: null, yaml: yamlOfPart(k.key, part, value) });
     }
     return {
       id,

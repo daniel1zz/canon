@@ -162,15 +162,9 @@ const SCRIPT = `
     ).join("") + "</div></div></section>"
   ).join("");
 
-  const yaml = (k) => {
-    const v = k.set ? k.value : k.default;
-    const text = v === null ? "" : JSON.stringify(v);
-    const dot = k.key.indexOf(".");
-    return dot < 0 ? k.key + ": " + text : k.key.slice(0, dot) + ":\\n  " + k.key.slice(dot + 1) + ": " + (text || '"<命令>"');
-  };
   const how = (k) => (k.role === "required" ? "<b>不能关：</b>" + esc(k.why) : k.role === "optional" ? "<b>怎么关：</b>" + esc(k.off) : "");
   const card = (k) => {
-    const y = yaml(k);
+    const y = k.yaml;
     return '<div class="kcard"><div class="row"><span class="kname">' + esc(k.key) + '</span><span class="chip k-' + k.role + '">' + ({ required: "必需", optional: "可选", tunable: "可调" })[k.role] + "</span>" +
       (k.set ? '<span class="key set">本项目写了</span>' : "") + "</div>" +
       '<dl class="vals"><dt>当前</dt><dd>' + esc(shown(k)) + "</dd>" + (k.set && k.default !== null ? "<dt>默认</dt><dd>" + esc(JSON.stringify(k.default)) + "</dd>" : "") + "</dl>" +
