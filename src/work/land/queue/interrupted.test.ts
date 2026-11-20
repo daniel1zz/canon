@@ -264,6 +264,30 @@ describe("the next landing and the other commands report a killed landing", () =
     expect(d["queue"]).toEqual([1]);
   }, TIMED);
 
+  test("BR-2309 BR-2458: a chore's landing killed in its floor: the next chore land takes back its close commit with the light change file, then lands it once", async () => {
+    const root = project();
+    const pidfile = `${root}.floor.pid`;
+    const slow = { CANON_TEST_SLOW: "1", CANON_TEST_PIDFILE: pidfile };
+    writeFileSync(join(root, "canon/config.yaml"), `floor: 'test -z "$CANON_TEST_SLOW" || { echo $$ > "$CANON_TEST_PIDFILE"; exec sleep ${HANG_SECONDS}; }'\ntests: []\nreview: none\n`);
+    sh(root, "commit", "-qam", "slow floor");
+    const started = await run(root, ["chore", "start", "killed chore"]);
+    const [, subject, wt] = started.out.match(/(chore-[0-9a-f-]+) → (.+) \(branch /)!;
+    writeFileSync(join(wt!, "app.txt"), "chore\n");
+    sh(wt!, "commit", "-qam", "chore work");
+    const lander = spawnCanon(wt!, ["chore", "land"], slow);
+    await waitFor("the floor to start", () => existsSync(pidfile));
+    await kill9({ pidfile } as ReturnType<typeof slowProject>, lander);
+    expect(sh(wt!, "log", "-1", "--format=%s")).toBe(`canon: close ${subject}`);
+    const r = await run(wt!, ["chore", "land"]);
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("landing INTERRUPTED");
+    expect(r.out).toContain("reopened"); // the close commit, with the light change file it added
+    expect(r.out + r.err).toContain(`${subject} completed as C-1`);
+    expect(sh(root, "log", "--format=%s", "main").split("\n").filter((l) => l.startsWith("canon: close"))).toEqual([`canon: close ${subject}`]);
+    expect(sh(root, "ls-tree", "--name-only", "main", "canon/changes/")).toBe("canon/changes/C-1-killed-chore.md");
+    expect(detail(root, "land.interrupt")["close_commit_reopened"]).toBe(true);
+  }, TIMED);
+
   test("BR-2309: a landing killed after the close commit and before it queued is reported by the next landing, which takes the close commit back", async () => {
     const root = project();
     const s = startNew(root, "Killed before queueing");
