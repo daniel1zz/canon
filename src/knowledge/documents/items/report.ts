@@ -24,7 +24,7 @@ export function sectionItems(doc: Doc, types: readonly DocType[]): SectionItems[
   const out: SectionItems[] = [];
   for (const [name, declaration] of Object.entries(type.items)) {
     const text = section(doc.body, `## ${name}`) ?? "";
-    out.push({ section: name, declaration, items: readSectionItems(type.name, name, text, declaration) });
+    out.push({ section: name, declaration, items: readSectionItems(text, declaration) });
   }
   return out;
 }

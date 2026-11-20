@@ -18,6 +18,11 @@ export interface ItemDeclaration {
   readonly slots: Readonly<Record<string, SlotType>>;
   /** Indented sub-items, read on their own; no further children. */
   readonly children?: { readonly format: string; readonly slots: Readonly<Record<string, SlotType>> };
+  /**
+   * When splitting gives exactly one item and this regular expression matches its text, the section has no items
+   * (BR-2547): the section's way of saying "there is nothing here", such as a change's lone `无` (BR-2551).
+   */
+  readonly none?: string;
   /** What canon check does with an item it cannot read or that lacks a required slot (BR-2549); default note. */
   readonly onMismatch: "note" | "finding";
 }

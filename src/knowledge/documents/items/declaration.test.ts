@@ -74,6 +74,18 @@ describe("declaration checks", () => {
     expect(r.error.message).toContain("finding");
   });
 
+  test("BR-2546: none is optional and must be a valid regular expression", () => {
+    const valid = items({ format: "{text}", slots: { text: "text" }, none: "^无$" });
+    expect(valid.ok).toBe(true);
+    if (!valid.ok) throw new Error("unreachable");
+    expect(valid.value["教训"]?.none).toBe("^无$");
+    const bad = items({ format: "{text}", slots: { text: "text" }, none: "^无(" });
+    expect(bad.ok).toBe(false);
+    if (bad.ok) throw new Error("unreachable");
+    expect(bad.error.message).toContain("types.adr.items.教训.none");
+    expect(bad.error.message).toContain("not a valid regular expression");
+  });
+
   test("BR-2546: a project cannot declare a section the built-in change type already declares, but may declare another of its sections", () => {
     const redeclared = repo("types:\n  change:\n    items:\n      教训:\n        format: '{text}'\n        slots:\n          text: text\n");
     const r = readConfig(redeclared);

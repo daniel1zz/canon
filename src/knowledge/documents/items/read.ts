@@ -1,4 +1,4 @@
-import { isPlaceholderLine, LESSONS_SECTION, LIST_MARKER } from "../templates.ts";
+import { isPlaceholderLine, LIST_MARKER } from "../templates.ts";
 import type { ItemDeclaration, ReadItem, SlotType } from "./model.ts";
 import { parseTemplate, type TemplatePart } from "./template.ts";
 
@@ -22,19 +22,30 @@ interface Draft {
 /** A sub-item's list marker, with the indentation that makes it one (BR-2547). */
 const CHILD_MARKER = /^\s+(?:[-*+]|\d+[.)])\s+/;
 const INDENTED = /^\s/;
-const LESSONS_SECTION_NAME = LESSONS_SECTION.replace(/^## /, "");
 
 /**
- * Reads one declared section (BR-2547). The built-in change type's `教训` is the one section whose declaration says
- * a lone `无…` line holds no lessons (BR-2551), so both `canon check` and `canon show --json` read it the same way.
+ * Reads one declared section (BR-2547). When splitting gives exactly one item and the declaration's `none` regular
+ * expression matches it, the section has no items: that is how a section says it holds nothing, such as a change's
+ * lone `无` (BR-2551).
  */
-export function readSectionItems(typeName: string, section: string, text: string, declaration: ItemDeclaration): ReadItem[] {
-  if (typeName === "change" && section === LESSONS_SECTION_NAME) {
-    const lines = text.split("\n").map((line) => line.trim()).filter((line) => line !== "");
-    // reason: BR-2551 defines the lone `无` (or `无：<why>`) line as no lesson at all, not as an item that lacks a destination
-    if (lines.length === 1 && lines[0]!.startsWith("无")) return [];
+export function readSectionItems(text: string, declaration: ItemDeclaration): ReadItem[] {
+  const drafts = splitItems(text, declaration.children !== undefined);
+  if (drafts.length === 1 && declaration.none !== undefined) {
+    let none: RegExp;
+    try {
+      none = new RegExp(declaration.none);
+    } catch (e) {
+      // reason: the config is checked when it is read (BR-2546), so only a declaration built in code reaches this
+      throw new Error(`the declaration's none is not a valid regular expression: ${(e as Error).message}`);
+    }
+    if (none.test(rawOf(drafts[0]!))) return [];
   }
-  return splitItems(text, declaration.children !== undefined).map((draft) => readDraft(draft, declaration));
+  return drafts.map((draft) => readDraft(draft, declaration));
+}
+
+/** An item's text without its list marker, its lines joined by one space (BR-2547). */
+function rawOf(draft: Draft): string {
+  return draft.parts.filter((part) => part !== "").join(" ");
 }
 
 /** Splits a section's text into items: top-level list items when there are any, otherwise one item per non-empty line (BR-2547). */
@@ -52,11 +63,19 @@ function splitItems(text: string, childrenDeclared: boolean): Draft[] {
   const drafts: Draft[] = [];
   let item: { parts: string[]; children: Draft[] } | undefined;
   let child: { parts: string[]; children: Draft[] } | undefined;
+  // reason: before the first top-level list item a line is no item's continuation, so each non-empty line is an item of its
+  // own, as in a section without list items; BR-2547's none example reads `无` and `- 另一条` as two items
+  let leading = true;
   for (const line of lines) {
     if (LIST_MARKER.test(line)) {
+      leading = false;
       item = { parts: [line.replace(LIST_MARKER, "").trim()], children: [] };
       drafts.push(item);
       child = undefined;
+    } else if (leading) {
+      const text = line.replace(CHILD_MARKER, "").trim();
+      if (text === "") continue;
+      drafts.push({ parts: [text], children: [] });
     } else if (CHILD_MARKER.test(line)) {
       if (item === undefined) continue;
       const sub = line.replace(CHILD_MARKER, "").trim();
@@ -69,7 +88,6 @@ function splitItems(text: string, childrenDeclared: boolean): Draft[] {
       }
     } else {
       const trimmed = line.trim();
-      // reason: text before the first top-level list item is no item's; a blank line adds no space (BR-2547)
       if (trimmed === "" || item === undefined) continue;
       if (childrenDeclared && child !== undefined && INDENTED.test(line)) child.parts.push(trimmed);
       else item.parts.push(trimmed);

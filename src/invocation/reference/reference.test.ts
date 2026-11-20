@@ -192,6 +192,9 @@ describe("the config schema", () => {
     { config: { types: { spec: { prefix: "SP", dir: "specs", items: { 选项: { format: "{text}", slots: { text: "colour" } } } } } }, ok: false },
     { config: { types: { spec: { prefix: "SP", dir: "specs", items: { 选项: { format: "{text}(?: → {dest})", slots: { text: "text", dest: "text" } } } } } }, ok: false, wider: true },
     { config: { types: { change: { items: { 教训: { format: "{text}", slots: { text: "text" } } } } } }, ok: false, wider: true },
+    // BR-2546: `none` is a string the schema takes and canon checks as a regular expression
+    { config: { types: { spec: { prefix: "SP", dir: "specs", items: { 教训: { format: "{text}", slots: { text: "text" }, none: "^无$" } } } } }, ok: true },
+    { config: { types: { spec: { prefix: "SP", dir: "specs", items: { 教训: { format: "{text}", slots: { text: "text" }, none: "^无(" } } } } }, ok: false, wider: true },
   ];
 
   test("BR-2175: the schema and canon's own reading agree; where they differ the schema is the wider one", () => {

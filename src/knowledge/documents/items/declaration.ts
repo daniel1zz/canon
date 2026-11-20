@@ -10,7 +10,7 @@ import { parseTemplate, type TemplatePart } from "./template.ts";
 
 const SLOT_KINDS = ["text", "id", "ids", "enum", "pattern"] as const;
 const SLOT_KEYS = new Set<string>([...SLOT_KINDS, "required"]);
-const DECLARATION_KEYS = new Set(["format", "slots", "children", "on_mismatch"]);
+const DECLARATION_KEYS = new Set(["format", "slots", "children", "on_mismatch", "none"]);
 const CHILD_KEYS = new Set(["format", "slots"]);
 
 const isMapping = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null && !Array.isArray(v);
@@ -59,10 +59,17 @@ function parseDeclaration(at: string, raw: unknown): Result<ItemDeclaration> {
   if (onMismatch !== undefined && onMismatch !== "note" && onMismatch !== "finding") {
     return err("invalid", `\`${at}.on_mismatch\` must be \`note\` or \`finding\`, not ${JSON.stringify(onMismatch)}`);
   }
+  const none = raw["none"];
+  if (none !== undefined) {
+    if (typeof none !== "string") return err("invalid", `\`${at}.none\` must be a regular expression written as a string`);
+    const bad = regexProblem(none, false);
+    if (bad !== undefined) return err("invalid", `\`${at}.none\`: ${bad}`);
+  }
   return ok({
     format: template.value.format,
     slots: template.value.slots,
     ...(children !== undefined ? { children } : {}),
+    ...(none !== undefined ? { none: none as string } : {}),
     // reason: a declaration that does not say how to treat a mismatch only notes it; refusing needs D-139 (BR-2546, BR-2549)
     onMismatch: onMismatch === "finding" ? "finding" : "note",
   });
@@ -142,12 +149,13 @@ function slotOf(at: string, kind: (typeof SLOT_KINDS)[number], def: Record<strin
 }
 
 /** Why a pattern cannot be used: it does not compile alone, or not as one group inside a template (BR-2546). */
-function regexProblem(pattern: string): string | undefined {
+function regexProblem(pattern: string, embed = true): string | undefined {
   try {
     new RegExp(pattern);
   } catch (e) {
     return `not a valid regular expression (${(e as Error).message})`;
   }
+  if (!embed) return undefined;
   try {
     new RegExp(`(?<canonSlot>${pattern})`);
   } catch (e) {

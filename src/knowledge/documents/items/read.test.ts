@@ -5,7 +5,7 @@ import { readSectionItems } from "./read.ts";
 
 /** Reading items by a declaration (BR-2547) and the built-in change type's lessons (BR-2551). */
 
-const lessons = (text: string) => readSectionItems("change", "教训", text, LESSONS_DECLARATION);
+const lessons = (text: string) => readSectionItems(text, LESSONS_DECLARATION);
 
 /** `{text}(?: → {dest})` without the required destination, so a missing one is read rather than reported. */
 const ARROW: ItemDeclaration = {
@@ -14,7 +14,7 @@ const ARROW: ItemDeclaration = {
   onMismatch: "note",
 };
 
-const reading = (declaration: ItemDeclaration, text: string) => readSectionItems("adr", "选项", text, declaration);
+const reading = (declaration: ItemDeclaration, text: string) => readSectionItems(text, declaration);
 
 describe("reading an item's slots", () => {
   test("BR-2547: {text}(?: → {dest}) reads text and dest from a lesson", () => {
@@ -80,6 +80,13 @@ describe("splitting a section into items", () => {
 
   test("BR-2547: template placeholder lines are no items", () => {
     expect(reading(ARROW, "<每条一行：…>")).toEqual([]);
+  });
+
+  test("BR-2547: a declaration's none pattern makes a single matching item mean the section has no items", () => {
+    const declaration: ItemDeclaration = { format: "{text}", slots: { text: { kind: "text" } }, none: "^无$", onMismatch: "note" };
+    expect(reading(declaration, "无")).toEqual([]);
+    const both = reading(declaration, "无\n- 另一条");
+    expect(both.map((i) => i.raw)).toEqual(["无", "另一条"]);
   });
 });
 

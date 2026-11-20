@@ -18,6 +18,9 @@ export const LESSONS_DECLARATION: ItemDeclaration = {
     // reason: `\S.*` keeps the value non-empty even after trimming, so ` → ` with nothing after it is no value at all (BR-2551)
     dest: { kind: "pattern", pattern: "\\S.*", required: true },
   },
+  // reason: a lone 无 line, or 无 followed by an explanation, says the change has no lessons (BR-2551); `none` gives BR-2547 the
+  // generic way to make one such line no item, instead of a special case in the reader
+  none: "^无(?:$|[。.：:（(，,]|新增)",
   onMismatch: "note",
 };
 

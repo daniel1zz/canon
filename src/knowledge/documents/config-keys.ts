@@ -52,6 +52,8 @@ const ITEM_DECLARATION_SCHEMA: JsonSchema = {
     slots: { type: "object", additionalProperties: SLOT_SCHEMA },
     children: TEMPLATE_SCHEMA,
     on_mismatch: { enum: ["note", "finding"] },
+    // The schema cannot say a string is a valid regular expression; readTypes refuses one that is not (BR-2546).
+    none: { type: "string" },
   },
 };
 
