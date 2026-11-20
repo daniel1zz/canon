@@ -113,10 +113,10 @@ describe("quality standards", () => {
       [`canon/quality/${Q(3)}.md`]: standard(3, front("联机", "status: retired\nretired_reason: 不做联机\n")),
     });
     const lines = canon(root, "quality", "list").out.trim().split("\n").map((l) => l.replace(/\s+/g, " "));
-    expect(lines).toEqual([`${Q(9)} draft 标准9 方面 战斗手感 判定 owner (负责人未确认)`, `${Q(10)} active 标准10 方面 音效 判定 owner`]);
+    expect(lines).toEqual([`${Q(9)} draft 标准9 方面 战斗手感 判定 owner (负责人未确认) 判定状态 没判过`, `${Q(10)} active 标准10 方面 音效 判定 owner 判定状态 没判过`]);
     expect(canon(root, "quality", "list", "--all").out).toContain(Q(3));
     const json = JSON.parse(canon(root, "quality", "list", "--json").out);
-    expect(json[0]).toEqual({ id: Q(9), status: "draft", title: "标准9", aspect: "战斗手感", judge: "owner", covers: ["."], confirmed: false });
+    expect(json[0]).toEqual({ id: Q(9), status: "draft", title: "标准9", aspect: "战斗手感", judge: "owner", covers: ["."], confirmed: false, verdict: null });
     expect(json[1].confirmed).toBe(true);
   });
 
@@ -193,7 +193,7 @@ describe("quality standards", () => {
     const r = canon(root, "quality", "status");
     expect(r.code).toBe(0);
     expect(r.out.trim().split("\n")).toEqual([
-      `战斗手感  ${Q(1)} active, ${Q(2)} draft(负责人未确认)`,
+      `战斗手感  ${Q(1)} active 判定状态 没判过, ${Q(2)} draft(负责人未确认) 判定状态 没判过`,
       "音效  推迟：「demo 之后」",
       "联机  未覆盖",
       `不在方面清单里：${Q(4)} (性能)`,
@@ -202,7 +202,7 @@ describe("quality standards", () => {
     const json = JSON.parse(canon(root, "quality", "status", "--json").out);
     expect(json.aspects[2]).toEqual({ name: "联机", state: "uncovered", reason: null, standards: [] });
     expect(json.aspects[1]).toMatchObject({ name: "音效", state: "deferred", reason: "「demo 之后」" });
-    expect(json.aspects[0].standards).toEqual([{ id: Q(1), status: "active" }, { id: Q(2), status: "draft" }]);
+    expect(json.aspects[0].standards).toEqual([{ id: Q(1), status: "active", verdict: null }, { id: Q(2), status: "draft", verdict: null }]);
     expect(json.unlisted).toEqual([Q(4)]);
   });
 

@@ -3,6 +3,7 @@ import { corpusOf, entry, fail, json, must, say, workspace, type DomainCommands 
 import type { Quality } from "../documents/model.ts";
 import { createDoc } from "../documents/write.ts";
 import { refuseOnGuardedMain } from "../documents/guarded.ts";
+import { recordVerdict, standingJson, standings, standingText, type Standing } from "./verdicts.ts";
 import { aspectList, coverage, DECISION_LABEL, overviewQualityLine, qualitySummary, type AspectView } from "./aspects.ts";
 
 /** `canon quality`: quality standards (Q-n) and the product's aspects (D-145, D-146). */
@@ -12,10 +13,15 @@ const byNumber = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.
 const UNCONFIRMED = "(负责人未确认)";
 
 /** One aspect's line of `canon quality status` (BR-2557). */
-function aspectLine(v: AspectView): string {
+function aspectLine(v: AspectView, stand: ReadonlyMap<string, Standing>): string {
   if (v.aspect.decision) return `${v.aspect.name}  ${DECISION_LABEL[v.aspect.decision.kind]}：${v.aspect.decision.reason}`;
   if (v.state === "uncovered") return `${v.aspect.name}  未覆盖`;
-  return `${v.aspect.name}  ${v.standards.map((q) => `${q.id} ${q.status}${q.status === "draft" ? UNCONFIRMED : ""}`).join(", ")}`;
+  return `${v.aspect.name}  ${v.standards.map((q) => `${q.id} ${q.status}${q.status === "draft" ? UNCONFIRMED : ""}${stand.has(q.id) ? ` ${standingText(stand.get(q.id)!)}` : ""}`).join(", ")}`;
+}
+
+/** Each standard in force's state, by id (BR-2589); a failure to read git is said loudly (exit 4), never shown as no state. */
+function standMap(ws: ReturnType<typeof workspace>, corpus: Parameters<typeof standings>[1]): Map<string, Standing> {
+  return new Map(must(standings(ws, corpus)).map((s) => [s.q.id, s]));
 }
 
 const quality = defineCommand({
@@ -46,14 +52,43 @@ const quality = defineCommand({
         if (!list.aspects.some((a) => a.name === aspect)) console.error(`canon: aspect ${aspect} is not listed in ${list.path}: add \`- **${aspect}**\` under \`## 方面\` there, or canon check reports it (BR-2555)`);
       },
     }),
+    verdict: defineCommand({
+      meta: { description: "Record a verdict on a quality standard at a build commit: pass or fail, who judged, the evidence path; an event, no file. The owner's verdict (--by owner) cites an answered canon human question" },
+      args: {
+        id: { type: "positional", required: true, description: "The quality standard (Q-1)" },
+        result: { type: "string", required: true, description: "pass or fail" },
+        evidence: { type: "string", required: true, description: "Path of the recording, screenshot or report" },
+        commit: { type: "string", description: "The build commit judged (default: the tip of main)" },
+        by: { type: "string", description: "test, agent or owner (default: the standard's judge)" },
+        question: { type: "string", description: "For --by owner: the number of the answered canon human question" },
+      },
+      run({ args }) {
+        const ws = workspace();
+        const { corpus } = corpusOf(ws);
+        const question = args.question === undefined ? undefined : Number(args.question);
+        // reason: a question number that is not a whole number is a usage error, not a missing question (BR-2587)
+        if (question !== undefined && (!Number.isInteger(question) || question < 1)) fail({ code: "invalid", message: `--question must be a question number, got ${JSON.stringify(args.question)} (BR-2587)` });
+        const out = must(recordVerdict(ws, corpus, {
+          id: String(args.id).trim().toUpperCase(),
+          result: String(args.result),
+          evidence: String(args.evidence ?? ""),
+          ...(typeof args.commit === "string" ? { commit: args.commit } : {}),
+          ...(typeof args.by === "string" ? { by: args.by } : {}),
+          ...(question !== undefined ? { question } : {}),
+        }));
+        say(out.line);
+      },
+    }),
     list: defineCommand({
       meta: { description: "List quality standards in force (draft and active; --all for retired ones too)" },
       args: { all: { type: "boolean", description: "Include retired standards" }, json: { type: "boolean" } },
       run({ args }) {
         const ws = workspace();
-        const rows = corpusOf(ws).corpus.docs.filter((d): d is Quality => d.kind === "quality" && (Boolean(args.all) || d.status !== "retired")).sort(byNumber);
-        if (args.json) return json(rows.map((q) => ({ id: q.id, status: q.status, title: q.title, aspect: q.aspect, judge: q.judge, covers: q.covers, confirmed: q.status === "active" })));
-        for (const q of rows) say(`${q.id.padEnd(8)} ${q.status.padEnd(8)} ${q.title}  方面 ${q.aspect}  判定 ${q.judge}${q.status === "draft" ? `  ${UNCONFIRMED}` : ""}`);
+        const { corpus } = corpusOf(ws);
+        const rows = corpus.docs.filter((d): d is Quality => d.kind === "quality" && (Boolean(args.all) || d.status !== "retired")).sort(byNumber);
+        const stand = standMap(ws, corpus);
+        if (args.json) return json(rows.map((q) => ({ id: q.id, status: q.status, title: q.title, aspect: q.aspect, judge: q.judge, covers: q.covers, confirmed: q.status === "active", verdict: stand.has(q.id) ? standingJson(stand.get(q.id)!) : null })));
+        for (const q of rows) say(`${q.id.padEnd(8)} ${q.status.padEnd(8)} ${q.title}  方面 ${q.aspect}  判定 ${q.judge}${q.status === "draft" ? `  ${UNCONFIRMED}` : ""}${stand.has(q.id) ? `  ${standingText(stand.get(q.id)!)}` : ""}`);
         if (rows.length === 0) say("(no quality standards)");
       },
     }),
@@ -64,16 +99,17 @@ const quality = defineCommand({
         const ws = workspace();
         const { corpus } = corpusOf(ws);
         const c = coverage(corpus);
+        const stand = standMap(ws, corpus);
         const summary = overviewQualityLine(qualitySummary(corpus));
         if (args.json) {
           return json({
-            aspects: c.views.map((v) => ({ name: v.aspect.name, state: v.state, reason: v.aspect.decision?.reason ?? null, standards: v.standards.map((q) => ({ id: q.id, status: q.status })) })),
+            aspects: c.views.map((v) => ({ name: v.aspect.name, state: v.state, reason: v.aspect.decision?.reason ?? null, standards: v.standards.map((q) => ({ id: q.id, status: q.status, verdict: stand.has(q.id) ? standingJson(stand.get(q.id)!) : null })) })),
             unlisted: c.unlisted.map((q) => q.id),
             summary,
           });
         }
         if (c.views.length === 0) say(`(no aspects: ${c.list.path} lists none)`);
-        for (const v of c.views) say(aspectLine(v));
+        for (const v of c.views) say(aspectLine(v, stand));
         if (c.unlisted.length > 0) say(`不在方面清单里：${c.unlisted.map((q) => `${q.id} (${q.aspect})`).join(", ")}`);
         say(summary);
       },

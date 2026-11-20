@@ -31,6 +31,12 @@ interface Row {
   readonly witness: string | null;
 }
 
+/** An answer that is the owner's: a human at a terminal, or an agent's relay whose words match Claude Code's question-tool record (BR-2331, BR-2276, BR-2587). */
+export function isOwnersAnswer(r: { readonly answered_by: string | null; readonly relayed: string | null; readonly witness: string | null }): boolean {
+  const byHuman = r.answered_by?.startsWith("human:") === true && r.relayed === null;
+  return byHuman || (r.relayed !== null && r.witness === "match");
+}
+
 /**
  * The most recently answered question that names `ship <id>` decides (BR-2331, D-61): a later `no` revokes an earlier `yes`.
  * It counts when it was answered yes by a human at a terminal, or relayed by an agent whose words match what Claude Code's
@@ -49,8 +55,7 @@ export function ownerConfirmation(db: CoordDb, id: string): Confirmation {
   if (latest.relayed !== null && !YES.test(latest.relayed.trim())) {
     return { ok: false, message: `the owner did not confirm shipping ${id}: question #${latest.id} was answered ${JSON.stringify(latest.answer)}, but the owner's relayed words are ${JSON.stringify(latest.relayed)}, not yes; ${how}` };
   }
-  const byHuman = latest.answered_by?.startsWith("human:") === true && latest.relayed === null;
-  if (byHuman || (latest.relayed !== null && latest.witness === "match")) return { ok: true, question: latest.id };
+  if (isOwnersAnswer(latest)) return { ok: true, question: latest.id };
   // reason: a relay canon cannot tie to the question tool's record is an agent's word, not the owner's (BR-2276, D-61)
   return { ok: false, message: `question #${latest.id} (ship ${id}) was answered yes, but the answer is not the owner's: ${latest.relayed === null ? `${latest.answered_by} is not a human` : `the relayed words do not match Claude Code's question-tool record (${latest.witness ?? "not checked"}, BR-2276)`}; ${how}` };
 }

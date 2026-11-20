@@ -245,6 +245,33 @@ describe("canon release ship: shipping and the landing gate", () => {
     expect(agent(root, "release", "ship", R(1), "--timeout", "5").code).toBe(0);
   });
 
+  const QUALITY = {
+    "canon/quality/README.md": "# 质量标准\n\n## 方面\n\n- **战斗手感**：\n",
+    "canon/quality/Q-1.md": "---\nid: Q-1\ntitle: 标准1\naspect: 战斗手感\njudge: agent\ncovers: [.]\n---\n\n## 门槛\n\n首领场地约 640×400。\n\n## 来源\n\n- 暖雪实测\n",
+  };
+
+  test("BR-2593: release status R-1 and a ship refused for the missing yes name the standards not proven; no such line when every one is proven", () => {
+    const root = fixture(QUALITY);
+    const status = agent(root, "release", "status", R(1));
+    expect(status.out).toContain("质量标准没证明：Q-1 没判过（写进发布问题，canon quality status）");
+    const refused = agent(root, "release", "ship", R(1));
+    expect(refused.code).toBe(1);
+    expect(refused.err).toContain("质量标准没证明：Q-1 没判过");
+    expect(refused.err).toContain("put them in the question");
+    expect(agent(root, "quality", "verdict", "Q-1", "--result", "pass", "--evidence", "e").code).toBe(0);
+    expect(agent(root, "release", "status", R(1)).out).not.toContain("质量标准没证明");
+    expect(agent(root, "release", "ship", R(1)).err).not.toContain("质量标准没证明");
+  });
+
+  test("BR-2593 BR-2333: with the owner's yes and every rule passed, a release ships although a standard is not proven, and says so", () => {
+    const root = fixture(QUALITY);
+    ask(root, question(1), "yes");
+    const r = agent(root, "release", "ship", R(1), "--timeout", "5");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("质量标准没证明：Q-1 没判过");
+    expect(r.out).toContain(`shipped ${R(1)}`);
+  });
+
   test("BR-2334 BR-2332 BR-2331: with the relayed yes recorded by the question tool it lands R-1 shipped at main's commit, tags it, and canon check passes", () => {
     const root = fixture();
     const sha = sh(root, "rev-parse", "main").trim();

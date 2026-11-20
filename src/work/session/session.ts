@@ -13,6 +13,7 @@ import { inFlight, noticeOverlaps } from "./overlap.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { openFindings } from "../../knowledge/review/findings/findings.ts";
 import { findingsOn, startLines } from "../reminders/related.ts";
+import { relatedLines, relatedStandings } from "../../knowledge/quality/related.ts";
 import { recordSettles } from "../reminders/handled.ts";
 import { slugify, type Change, type Corpus } from "../../knowledge/documents/model.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
@@ -68,6 +69,14 @@ function remindOwed(ws: Workspace, change: string, rules: readonly string[], say
   if (!found.ok) return say(`note: cannot list the open review findings: ${found.error.message}`);
   const lines = startLines(found.value);
   if (lines.length > 0) say(lines.join("\n"));
+  // reason: related quality standards are listed with the same first-start reminder, never a hold (BR-2592, D-139)
+  const onMain = mainCorpus(ws);
+  if (!onMain.ok) return say(`note: cannot list the related quality standards: ${onMain.error.message}`);
+  const domains = new Set(rules.flatMap((id) => { const r = onMain.value.docs.find((d) => d.kind === "rule" && d.id === id); return r?.kind === "rule" ? [r.domain] : []; }));
+  const related = relatedStandings(ws, onMain.value, { domains });
+  if (!related.ok) return say(`note: cannot list the related quality standards: ${related.message}`);
+  const q = relatedLines(related.standings, change);
+  if (q.length > 0) say(q.join("\n"));
 }
 
 /** Whether a change was started before: it has a branch of its own (BR-2530 reminds only at a first start). */

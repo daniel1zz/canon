@@ -7,6 +7,7 @@ import { flakyFiles, revertedChanges } from "../watch/revert.ts";
 import type { Workspace } from "../workspace.ts";
 import type { Change, Corpus } from "../../knowledge/documents/model.ts";
 import { executionStates } from "../execution/state.ts";
+import { standings, STATE_LABEL as VERDICT_LABEL, type Standing } from "../../knowledge/quality/verdicts.ts";
 import { criteriaWithDoc, releasesInProgress, releaseViews } from "../../knowledge/releases/current.ts";
 
 /**
@@ -130,6 +131,22 @@ function failedReviews(ws: Workspace): DueItem[] {
     });
 }
 
+/** The quality standards that did not pass or are stale, one item each (BR-2591, D-145); their state is worked out in knowledge/quality (BR-2589). */
+export function qualityItems(ws: Workspace, corpus: Corpus): DueItem[] {
+  const all = standings(ws, corpus);
+  // reason: a state that cannot be read is said, never dropped as if every standard were proven (BR-2591)
+  if (!all.ok) return [item("quality:unavailable", "quality-unavailable", null, `the quality standards' verdicts could not be read: ${all.error.message}`, "canon quality status", "canon quality status", "judge", 2)];
+  const items: DueItem[] = [];
+  for (const s of all.value) {
+    if (s.state !== "failed" && s.state !== "stale") continue;
+    const v = s.verdict!;
+    const said = s.state === "failed" ? `${VERDICT_LABEL.failed} (${v.by}${v.self ? ", self-judged" : ""}, ${v.ts.slice(0, 10)})` : s.commitMissing ? `${VERDICT_LABEL.stale}: its build commit ${v.commit.slice(0, 9)} is gone` : `${VERDICT_LABEL.stale}: ${s.landings} landed on its paths since ${v.ts.slice(0, 10)}, limit ${s.threshold}`;
+    const next = `fix, then canon quality verdict ${s.q.id} --result pass --evidence <path>; or canon work handled quality:${s.q.id} --not-doing "<why>"`;
+    items.push(item(`quality:${s.q.id}`, s.state === "failed" ? "quality-failed" : "quality-stale", v.ts, `${s.q.id} [${s.q.aspect}] ${clip(s.q.title, 60)}: ${said}`, next, "canon quality verdict <Q-n> --result pass --evidence <path>, or canon work handled quality:<Q-n>", "judge", 2));
+  }
+  return items;
+}
+
 /**
  * A main session's items (BR-2527): what affects main's correctness, what blocks others, the rest; and what waits on the
  * owner. `states` are the change states (BR-2571), `corpus` main's documents.
@@ -158,6 +175,7 @@ export function mainItems(ws: Workspace, now: number, states: readonly ChangeSta
   items.push(...unverifiedItems(ws, corpus));
   // reason: a flaky test is a reminder for a week, not a hold (BR-2534)
   for (const f of flakyFiles(ws, now)) items.push(item(`flaky:${f.file}`, "flaky", f.since, "failed in the background floor and passed when run again unchanged", "open an issue for this flaky test (one per file), then fix or quarantine it", "open an issue for each flaky test, then fix or quarantine it", "judge", 2));
+  items.push(...qualityItems(ws, corpus));
   for (const q of questions(ws.db, "pending")) {
     items.push(item(`question:${q.id}`, "question", q.asked_at, clip(q.question), `ask the owner in the conversation, then canon human answer ${q.id} "<answer>" --relayed "<their words>"`, `ask the owner, then canon human answer <n> "<answer>" --relayed "<their words>"`, "owner", 2));
   }

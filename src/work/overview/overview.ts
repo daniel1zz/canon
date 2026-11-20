@@ -8,6 +8,7 @@ import { CRITERION_LABEL, criteriaCountLine } from "../../knowledge/releases/cri
 import { allCriteria, criteriaWithDoc, headLine, releasesInProgress, releaseViews, type CurrentRelease } from "../../knowledge/releases/current.ts";
 import { releaseStatuses } from "../../knowledge/releases/status.ts";
 import { STATE_LABEL, STATE_ORDER } from "../execution/state.ts";
+import { standings, verdictLine, verdictSummary } from "../../knowledge/quality/verdicts.ts";
 import { briefQualityLine, overviewQualityLine, qualitySummary, type QualitySummary } from "../../knowledge/quality/aspects.ts";
 import { executionStates } from "../execution/state.ts";
 import { agenda, agendaJson, summaryLines, type Agenda } from "../reminders/agenda.ts";
@@ -51,6 +52,8 @@ export interface Overview {
   /** The releases in progress (BR-2505): every active one, else the lowest planned one; empty when none. */
   readonly releases: readonly CurrentRelease[];
   readonly quality: QualitySummary;
+  /** The verdict states of the standards in force (BR-2590), or why they could not be worked out; undefined where not asked for or there is no standard. */
+  readonly verdicts: ReturnType<typeof verdictSummary> | string | undefined;
   /** The agenda, or why it could not be worked out; undefined where it was not asked for (the brief). */
   readonly agenda: Agenda | string | undefined;
   readonly changes: readonly Filed[];
@@ -113,9 +116,16 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean; re
     // reason: the same states, so the batch is never a second computation of which changes are open (BR-2505, D-149)
     batch = states.filter(hasFile).filter((s) => !isClosed(s) && s.change.release === undefined && s.change.feature === undefined);
   }
+  const summary = qualitySummary(corpus.value);
+  let verdicts: Overview["verdicts"];
+  if (opts.agenda !== false && summary.standards > 0) {
+    const s = standings(ws, corpus.value);
+    verdicts = s.ok ? verdictSummary(s.value) : s.error.message;
+  }
   return ok({
     releases,
-    quality: qualitySummary(corpus.value),
+    quality: summary,
+    verdicts,
     agenda: a,
     changes: changes.slice(0, CHANGES_SHOWN),
     changesMore: Math.max(0, changes.length - CHANGES_SHOWN),
@@ -189,6 +199,8 @@ export function overviewLines(o: Overview): string[] {
   }
   // reason: one line after the releases every time, a reminder when nothing is set or an aspect is uncovered (BR-2505, BR-2558)
   out.push(overviewQualityLine(o.quality));
+  if (typeof o.verdicts === "string") out.push(`质量判定 unavailable: ${o.verdicts}`);
+  else if (o.verdicts) out.push(verdictLine(o.verdicts));
   out.push("", "## 议程");
   if (typeof o.agenda === "string") out.push(`agenda unavailable: ${o.agenda}`);
   else {
@@ -231,7 +243,7 @@ export function overviewJson(o: Overview): Record<string, unknown> {
       criteria: criteriaWithDoc(r).filter((x) => !r.merged.some((m) => m.doc.id === x.doc)).map(({ doc, c }) => ({ doc, id: c.id, text: c.text, state: c.state })),
       merged: { ids: r.merged.map((m) => m.doc.id), criteria: counted(r.merged.flatMap((m) => m.criteria)) },
     })),
-    quality: { standards: o.quality.standards, drafts: o.quality.drafts, uncovered: o.quality.uncovered, none: o.quality.none },
+    quality: { standards: o.quality.standards, drafts: o.quality.drafts, uncovered: o.quality.uncovered, none: o.quality.none, ...(o.verdicts && typeof o.verdicts !== "string" ? { verdicts: o.verdicts } : {}) },
     agenda: typeof o.agenda === "object" ? agendaJson(o.agenda) : { error: o.agenda ?? null },
     changes: o.changes.map((s) => ({ id: s.id, title: s.change.title, state: s.state, mark: stateMark(s) })),
     changes_more: o.changesMore,

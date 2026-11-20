@@ -1,3 +1,4 @@
+import { releaseLineOf } from "../quality/related.ts";
 import { readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { defineCommand } from "citty";
@@ -57,8 +58,12 @@ const release = defineCommand({
         // reason: the linked changes are workload beside the status, never part of done (BR-2328, BR-2568)
         const work = workloadOf(ws, corpus);
         if (args.json) return json(one ? statusJson(one, true, work(one.release)) : all.map((s) => statusJson(s, false, work(s.release))));
-        if (one) for (const l of detailLines(one, work(one.release))) say(l);
-        else {
+        if (one) {
+          for (const l of detailLines(one, work(one.release))) say(l);
+          // reason: the standards not proven are for the owner to weigh when saying yes, never a ship condition (BR-2593, D-145)
+          const q = releaseLineOf(ws, corpus);
+          if (q) say(q);
+        } else {
           for (const s of all) say(summaryLine(s, work(s.release)));
           if (all.length === 0) say("(no releases)");
         }

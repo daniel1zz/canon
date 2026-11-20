@@ -7,6 +7,7 @@ import { changeStates, isClosed } from "../../knowledge/changes/state.ts";
 import type { Workspace } from "../workspace.ts";
 import { findingItems, renderDue, type DueItem } from "./due.ts";
 import { holds, outcomes } from "./handled.ts";
+import { relatedLines, relatedStandings } from "../../knowledge/quality/related.ts";
 
 /**
  * The open findings that concern one piece of work (BR-2530, BR-2584): those naming any of `ids` (its rules, its own id,
@@ -51,13 +52,14 @@ export function afterLandLines(ws: Workspace, landed: { sha: string; change: str
   const corpus = mainCorpus(ws);
   if (!corpus.ok) return [`agenda unavailable: ${corpus.error.message}`];
   const ids = new Set<string>();
+  const files: string[] = [];
   const doc = corpus.value.docs.find((d): d is Change => d.kind === "change" && (d.id === landed.change || d.chore === landed.change));
   if (doc) for (const id of [doc.id, ...doc.rules]) ids.add(id);
   // reason: a chore names no rules, so the documents its commit changed say what it touched (BR-2584)
   const paths = git(ws.primary, "-c", "core.quotePath=false", "diff", "--name-only", `${landed.sha}^`, landed.sha);
   if (paths.ok) {
     const byPath = new Map(corpus.value.docs.map((d) => [d.path, d.id]));
-    for (const p of paths.value.split("\n")) { const id = byPath.get(p); if (id) ids.add(id); }
+    for (const p of paths.value.split("\n")) { if (p !== "") files.push(p); const id = byPath.get(p); if (id) ids.add(id); }
   }
   const a = agenda(ws, { now });
   if (!a.ok) return [`agenda unavailable: ${a.error.message}`];
@@ -65,5 +67,9 @@ export function afterLandLines(ws: Workspace, landed: { sha: string; change: str
   if (!found.ok) return [`agenda unavailable: ${found.error.message}`];
   const out = summary(a.value, now);
   if (found.value.related.length > 0) out.push(`Findings on what ${doc?.id ?? landed.change ?? landed.sha.slice(0, 9)} touched:`, ...found.value.related.map((it) => `  ${renderDue(it, now)}`));
+  // reason: the standards whose range the landing touched are listed whatever their state; a landing is never refused for it (BR-2592, D-139)
+  const related = relatedStandings(ws, corpus.value, { files });
+  if (!related.ok) out.push(`quality standards unavailable: ${related.message}`);
+  else out.push(...relatedLines(related.standings, doc && doc.id === landed.change ? doc.id : null));
   return out;
 }

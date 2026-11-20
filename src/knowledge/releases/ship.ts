@@ -9,6 +9,7 @@ import { findDoc } from "../query/query.ts";
 import { parseDocFile } from "../documents/docfile.ts";
 import type { Release } from "../documents/model.ts";
 import { setMeta } from "../documents/write.ts";
+import { releaseLineOf } from "../quality/related.ts";
 import { ownerConfirmation, shipBlockers } from "./gate.ts";
 
 /** `canon release ship R-n` (D-61): the conditions, the owner's recorded answer, and the change that lands the snapshot. */
@@ -42,7 +43,10 @@ export async function shipRelease(ws: Workspace, id: string, timeoutMs: number, 
   const blockers = shipBlockers(onMain.value, executionStates(ws.primary, onMain.value, ws.config.floorTiming), doc.id);
   if (blockers.length > 0) return refuse("refused", `${doc.id} cannot ship yet (every rule tagged with it must be passed):\n${blockers.map((b) => `  - ${b}`).join("\n")}`);
   const confirmed = ownerConfirmation(ws.db, doc.id);
-  if (!confirmed.ok) return refuse("refused", confirmed.message);
+  // reason: the unproven standards go into the question the owner answers; they never change the ship conditions (BR-2593, D-145)
+  const unproven = releaseLineOf(ws, onMain.value);
+  if (!confirmed.ok) return refuse("refused", unproven ? `${confirmed.message}\n${unproven}: put them in the question` : confirmed.message);
+  if (unproven) say(unproven);
   // reason: the chore patches main's copy of the release, so it must still be what the acceptance saw (D-105)
   const onAccepted = git(ws.primary, "show", `${sha.value}:${doc.path}`);
   if (!onTip.ok || !onAccepted.ok || onTip.value !== onAccepted.value) return refuse("refused", `${doc.id} changed on ${ws.config.main} since the accepted commit ${sha.value.slice(0, 9)}; run canon accept again, then ship`);
