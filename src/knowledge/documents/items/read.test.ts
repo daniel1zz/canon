@@ -82,6 +82,18 @@ describe("splitting a section into items", () => {
     expect(reading(ARROW, "<每条一行：…>")).toEqual([]);
   });
 
+  test("BR-2547: with several optional parts the match with the most present wins, and on a tie the earlier part wins", () => {
+    const declaration: ItemDeclaration = {
+      format: "{text}(?: → {a})(?: → {b})",
+      slots: { text: { kind: "text" }, a: { kind: "pattern", pattern: "\\S.*" }, b: { kind: "pattern", pattern: "\\S.*" } },
+      onMismatch: "note",
+    };
+    // both parts present beat either one alone
+    expect(reading(declaration, "- x → y → z")[0]?.slots).toEqual({ text: "x", a: "y", b: "z" });
+    // one arrow: either part could be the one present, so the earlier part wins
+    expect(reading(declaration, "- x → y")[0]?.slots).toEqual({ text: "x", a: "y" });
+  });
+
   test("BR-2547: a declaration's none pattern makes a single matching item mean the section has no items", () => {
     const declaration: ItemDeclaration = { format: "{text}", slots: { text: { kind: "text" } }, none: "^无$", onMismatch: "note" };
     expect(reading(declaration, "无")).toEqual([]);
