@@ -21,11 +21,12 @@ export const STATE_LABEL: Readonly<Record<ExecutionState["kind"], string>> = { p
 export const STATE_ORDER: readonly ExecutionState["kind"][] = ["planned", "passed", "waiting", "rerun"];
 
 /** The state of every rule that is not retired, by id. `root` is a checkout of the repository that holds refs/canon/green. */
-export function executionStates(root: string, corpus: Corpus, timing: FloorTiming): Map<string, ExecutionState> {
+export function executionStates(root: string, corpus: Corpus, timing: FloorTiming, only?: ReadonlySet<string>): Map<string, ExecutionState> {
   const done = corpus.docs.filter((d): d is Change => d.kind === "change" && d.status === "done").sort((a, b) => Number(b.id.split("-")[1]) - Number(a.id.split("-")[1]));
   const green = timing === "after" ? greenPasses(root) : undefined;
   const out = new Map<string, ExecutionState>();
-  for (const rule of corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status !== "retired")) {
+  // reason: a caller that needs a few rules (the agenda's unverified items, BR-2527) does not pay for every rule's state
+  for (const rule of corpus.docs.filter((d): d is Rule => d.kind === "rule" && d.status !== "retired" && (only === undefined || only.has(d.id)))) {
     if (rule.status === "planned") {
       out.set(rule.id, { kind: "planned" });
       continue;

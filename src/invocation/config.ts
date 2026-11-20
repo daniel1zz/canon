@@ -12,7 +12,6 @@ import { claimKeys } from "../work/claims/config-keys.ts";
 import { landKeys } from "../work/land/config-keys.ts";
 import { sessionKeys } from "../work/session/config-keys.ts";
 import { delegationKeys } from "../work/delegation/config-keys.ts";
-import { reminderKeys } from "../work/reminders/config-keys.ts";
 import { statsKeys } from "../work/stats/config-keys.ts";
 import { verifyKeys } from "../work/verify/config-keys.ts";
 import { watchKeys } from "../work/watch/config-keys.ts";
@@ -28,7 +27,7 @@ import type { ConfigKey, FieldsOf, KeySet } from "./key.ts";
  * Every key is declared (name, type, default, validation, doc) by the domain that uses it, in `config-keys.ts` in that
  * domain's directory; this file only composes them, so it changes when a domain is added, not when a key is (C-135).
  */
-const DOMAINS = [hookKeys, checkKeys, documentKeys, reviewKeys, claimKeys, landKeys, sessionKeys, delegationKeys, reminderKeys, statsKeys, verifyKeys, watchKeys, remoteKeys, linksKeys, queryKeys] as const;
+const DOMAINS = [hookKeys, checkKeys, documentKeys, reviewKeys, claimKeys, landKeys, sessionKeys, delegationKeys, statsKeys, verifyKeys, watchKeys, remoteKeys, linksKeys, queryKeys] as const;
 
 type Sections = typeof DOMAINS[number];
 type UnionToIntersection<U> = (U extends unknown ? (x: U) => void : never) extends (x: infer I) => void ? I : never;
@@ -66,6 +65,8 @@ const RETIRED: Readonly<Record<string, string>> = {
   // reason: open review findings no longer hold new changes back, they are reminded instead (BR-2530, D-136)
   debt_max_findings: "open review findings no longer hold new changes back; canon work start and canon work due remind of them instead (BR-2530, D-136)",
   debt_max_age_hours: "open review findings no longer hold new changes back; canon work start and canon work due remind of them instead (BR-2530, D-136)",
+  // reason: watch says only what changes, never again on a timer (BR-2528, D-151)
+  remind_every_minutes: "canon work watch no longer repeats open items on a timer; it says only what changes (BR-2528, D-151)",
 };
 
 export function readConfig(root: string): Result<Config> {

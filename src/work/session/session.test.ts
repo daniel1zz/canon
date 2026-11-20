@@ -853,41 +853,53 @@ describe("start and clean leave nothing half made", () => {
 });
 
 describe("open review findings remind at a start and never hold it back", () => {
-  const owe = (root: string, ageHours = 5, count = 2) => {
+  const owe = (root: string, ageHours = 5, count = 2, ids: readonly string[] = []) => {
     const db = ws(root).db;
-    const add = (id: number) => db.db.query("INSERT INTO review_findings(identity, criterion, ids, docs, text, change, event, sha, opened_at) VALUES (?, 'contradiction', '[]', '[]', 'x contradicts y', 'C-9', 1, 'abc', ?)").run(`identity-${id}`, new Date(Date.now() - ageHours * 3_600_000).toISOString());
+    const add = (id: number) => db.db.query("INSERT INTO review_findings(identity, criterion, ids, docs, text, change, event, sha, opened_at) VALUES (?, 'contradiction', ?, ?, 'x contradicts y', 'C-9', 1, 'abc', ?)").run(`identity-${id}-${Math.random()}`, JSON.stringify(ids), JSON.stringify(ids), new Date(Date.now() - ageHours * 3_600_000).toISOString());
     for (let i = 1; i <= count; i++) add(i);
     return db;
   };
   const changesIn = (root: string) => sh(root, "for-each-ref", "--format=%(refname:short)", "refs/heads/change/");
   const cli = (root: string, ...args: string[]) => Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), ...args], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+  const onMain = (root: string, rules = "[BR-3]") => {
+    mkdirSync(join(root, "canon/changes"), { recursive: true });
+    writeFileSync(join(root, "canon/changes/C-5.md"), `---\nid: C-5\ntitle: Waiting\nstatus: open\nrules: ${rules}\n---\n\n## 为什么\n\nW.\n\n## 要改什么\n\nX.\n`);
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "a change waits on main");
+  };
 
-  test("BR-2530: six findings, the oldest open 5 hours, do not hold a new change back; the start goes ahead and then lists them with their age and next command", () => {
+  test("BR-2530: a first start lists the findings naming its rules with their age and next command, and the others in one line; it is not held back", () => {
     const root = project();
-    const db = owe(root, 5, 6);
+    onMain(root);
+    const db = owe(root, 5, 1, ["BR-3"]);
+    owe(root, 5, 5);
     const said: string[] = [];
-    const r = start(ws(root), { title: "New feature" }, (l) => said.push(l));
+    const r = start(ws(root), { change: "C-5" }, (l) => said.push(l));
     expect(r.ok ? "" : r.error.message).toBe("");
-    const text = said.join("\n");
-    expect(text).toContain("note: review work is owed (BR-2530):");
-    for (let i = 1; i <= 6; i++) expect(text).toMatch(new RegExp(`  finding:${i} 5h00m untriaged \\[contradiction\\] -: x contradicts y → canon finding tier ${i} A\\|B\\|C`));
-    // reason: the reminder follows the start's own lines, never replaces them (BR-2530)
-    expect(said.findIndex((l) => l.startsWith("note: review work is owed"))).toBe(said.length - 1);
+    const note = said.at(-1)!;
+    expect(note.split("\n")).toEqual([
+      "note: review findings on what this change touches (BR-2530):",
+      expect.stringMatching(/^  finding:1 5h00m untriaged \[contradiction\] BR-3: x contradicts y → canon finding tier 1 A\|B\|C/),
+      "note: 5 other open review finding(s): canon work due",
+    ]);
     expect(db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'start.refuse'").get()!.n).toBe(0);
   });
 
-  test("BR-2530: twelve findings list ten and point at canon work due; a change on main not started yet reminds too", () => {
+  test("BR-2530: twelve related findings list ten and point at canon work due; unrelated ones alone are one line, also for a new change", () => {
     const root = project();
-    mkdirSync(join(root, "canon/changes"), { recursive: true });
-    writeFileSync(join(root, "canon/changes/C-5.md"), "---\nid: C-5\ntitle: Waiting\nstatus: open\n---\n\n## 为什么\n\nW.\n\n## 要改什么\n\nX.\n");
-    sh(root, "add", "-A");
-    sh(root, "commit", "-qm", "a change waits on main");
-    owe(root, 1, 12);
+    onMain(root);
+    owe(root, 1, 12, ["BR-3"]);
     const said: string[] = [];
     expect(start(ws(root), { change: "C-5" }, (l) => said.push(l)).ok).toBe(true);
-    const note = said.find((l) => l.startsWith("note: review work is owed"))!;
+    const note = said.at(-1)!;
     expect(note.split("\n").filter((l) => /^  finding:\d+ /.test(l))).toHaveLength(10);
     expect(note).toContain("  … and 2 more: canon work due");
+    const other = project();
+    owe(other, 1, 6);
+    const fresh: string[] = [];
+    expect(start(ws(other), { title: "New feature" }, (l) => fresh.push(l)).ok).toBe(true);
+    expect(fresh.at(-1)).toBe("note: 6 other open review finding(s): canon work due");
+    expect(fresh.join("\n")).not.toContain("on what this change touches");
   });
 
   test("BR-2530: no reminder without findings, when resuming a change already started, for --fix-main or for a chore", () => {
@@ -895,30 +907,34 @@ describe("open review findings remind at a start and never hold it back", () => 
     const quietSaid: string[] = [];
     const before = start(ws(root), { title: "Started earlier" }, (l) => quietSaid.push(l));
     if (!before.ok) throw new Error(before.error.message);
-    expect(quietSaid.join("\n")).not.toContain("review work is owed");
+    expect(quietSaid.join("\n")).not.toContain("review finding");
     owe(root);
     stop(ws(before.value.worktree), "hand over", undefined, true, { reason: "partial" });
     const said: string[] = [];
     expect(start(ws(root), { change: before.value.change }, (l) => said.push(l)).ok).toBe(true);
     expect(startChore(ws(root), { title: "settle the findings" }, (l) => said.push(l)).ok).toBe(true);
     expect(start(ws(root), { title: "fix main" }, (l) => said.push(l), { fixMain: true }).ok).toBe(true);
-    expect(said.join("\n")).not.toContain("review work is owed");
+    expect(said.join("\n")).not.toContain("review finding");
   });
 
-  test("BR-2530: a finding waiting on the owner's answer is not listed", () => {
+  test("BR-2530 BR-2583: a finding waiting on the owner's answer, or handed to a change, is in neither line", () => {
     const root = project();
-    const db = owe(root, 1, 1);
+    const db = owe(root, 1, 2);
     db.db.query("INSERT INTO questions(subject, asked_by, question, options, multi, asked_at) VALUES (NULL, 'agent:x', 'which way?', '[]', 0, ?)").run(new Date().toISOString());
-    db.db.query("UPDATE review_findings SET question = (SELECT MAX(id) FROM questions)").run();
+    db.db.query("UPDATE review_findings SET question = (SELECT MAX(id) FROM questions) WHERE id = 1").run();
+    expect(start(ws(root), { title: "Settle #2" }, quiet, { settles: [2] }).ok).toBe(true);
     const said: string[] = [];
     expect(start(ws(root), { title: "Free" }, (l) => said.push(l)).ok).toBe(true);
-    expect(said.join("\n")).not.toContain("review work is owed");
+    expect(said.join("\n")).not.toContain("review finding");
   });
 
-  test("BR-2530: --settles names open findings; one not open is refused with exit 3 and a settles event and leaves nothing; bad numbers are usage errors", () => {
+  test("BR-2530 BR-2583: --settles names open findings and hands them to the new change; one not open is refused with exit 3 and a settles event and leaves nothing; bad numbers are usage errors", () => {
     const root = project();
     const db = owe(root);
-    expect(start(ws(root), { title: "Settle #1" }, quiet, { settles: [1] }).ok).toBe(true);
+    const settled = start(ws(root), { title: "Settle #1" }, quiet, { settles: [1] });
+    expect(settled.ok).toBe(true);
+    // reason: --settles hands the finding to the change it opened (BR-2583)
+    expect(db.db.query<{ subject: string; to: string; via: string }, []>("SELECT subject, json_extract(detail, '$.to') AS \"to\", json_extract(detail, '$.via') AS via FROM events WHERE kind = 'reminder.handled'").all()).toEqual([{ subject: "finding:1", to: settled.ok ? settled.value.change : "", via: "settles" }]);
     db.db.query("UPDATE review_findings SET closed_at = ? WHERE id = 2").run(new Date().toISOString());
     const before = changesIn(root);
     const bad = start(ws(root), { title: "Settle #2 and #9" }, quiet, { settles: [2, 9] });

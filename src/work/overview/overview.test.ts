@@ -17,7 +17,7 @@ const C = (n: number) => id("C", n);
 const BR = (n: number) => id("BR", n);
 
 function canon(cwd: string, ...args: string[]) {
-  const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+  const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a", CANON_MACHINE: "normal,1,8" } });
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
 }
 
@@ -37,12 +37,13 @@ const release = (n: number, status: string, criteria = "内容", extra = "") =>
   `---\nid: ${R(n)}\ntitle: 版本${n}\nstatus: ${status}\n${extra}---\n\n## 目标\n\n内容\n\n## 成功标准\n\n${criteria}\n\n## 故事地图切片\n\n内容\n`;
 const change = (n: number, status: string, body = "", front = "") => `---\nid: ${C(n)}\ntitle: 变更${n}\nstatus: ${status}\nrules: []\n${front}---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n${body}`;
 const PLAN = "## 计划\n\n| 步骤 | 内容 | 依赖 |\n|---|---|---|\n| 1 | 建表 | - |\n| 2 | 接口 | 1 |\n";
+const CHORE = "chore-0f0f0f0f-0000-4000-8000-000000000000";
 const CRITERIA = `- S1 规则全过。（已满足：${C(4)}）\n- S2 负责人玩通。（待负责人）\n- S3 没人解释也能玩。`;
 
 /**
  * R-1 shipped, R-2 planned, R-3 active with three criteria (met by C-4, owner, unmarked) and one planned rule; C-4 done;
- * C-5 open with a two-step plan; C-6..C-11 open. Landings: C-4, then a chore, then C-9. One pending question, a tier C
- * and a tier A finding.
+ * C-5 open with a two-step plan; C-6..C-11 open; C-12 a light change done for a chore. Landings: C-4, then the chore,
+ * then C-9. One pending question, a tier C and a tier A finding.
  */
 function fixture(): string {
   const root = project();
@@ -55,11 +56,12 @@ function fixture(): string {
     [`canon/changes/${C(4)}.md`]: change(4, "done"),
     [`canon/changes/${C(5)}.md`]: change(5, "open", PLAN),
     ...Object.fromEntries([6, 7, 8, 9, 10, 11].map((n) => [`canon/changes/${C(n)}.md`, change(n, "open")])),
+    [`canon/changes/${C(12)}.md`]: change(12, "done", "", `chore: ${CHORE}\n`).replace("title: 变更12", "title: 轻变更12"),
   });
   const db = ws(root).db.db;
   const land = db.query("INSERT INTO events(ts, actor, kind, subject, detail) VALUES (?, 'agent:a', 'land.ok', ?, '{}')");
   land.run("2026-11-16T05:32:56.142Z", C(4));
-  land.run("2026-11-16T06:00:00.000Z", "chore-0f0f0f0f-0000-4000-8000-000000000000");
+  land.run("2026-11-16T06:00:00.000Z", CHORE);
   land.run("2026-11-16T07:42:40.496Z", C(9));
   ask(ws(root).db, "agent:a", null, "要不要发布？\n第二行", ["是", "否"]);
   const finding = db.query("INSERT INTO review_findings(identity, criterion, ids, docs, text, event, opened_at, tier) VALUES (?, 'contradiction', ?, ?, ?, 1, '2026-11-16T00:00:00Z', ?)");
@@ -69,144 +71,133 @@ function fixture(): string {
 }
 
 const squash = (s: string) => s.replace(/ {2,}/g, " ");
+const HISTORY = "细节：canon overview --history";
 
 describe("canon overview", () => {
-  test("BR-2505: six sections in order, from the current release and its criteria down to recent landings; BR-2504: each criterion by its marker", () => {
+  test("BR-2505: four sections, the current release with one line per criterion, the agenda, what is in flight, the history outline; no plan section", () => {
     const r = canon(fixture(), "overview");
     expect(r.code).toBe(0);
-    expect(squash(r.out).trim().split("\n")).toEqual([
+    expect(r.out.trim().split("\n")).toEqual([
       "## 当前版本",
-      `${R(3)} active 版本3 规划中 1 已通过 0 待 main 测试 0 待重新执行 0 成功标准 已满足 1/3 变更 已合入 0 进行中 0 在等 0 可开始 0 未完成`,
-      "成功标准 3 条：已满足 1 未满足 0 待负责人 1 未证明 1",
-      ` [已满足] S1 规则全过。 证据：${C(4)}`,
-      " [待负责人] S2 负责人玩通。",
-      " [未证明] S3 没人解释也能玩。",
+      `${R(3)}  active  版本3`,
+      "规则 1 条：规划中 1  已通过 0  待 main 测试 0  待重新执行 0",
+      "成功标准 3 条：已满足 1  未满足 0  待负责人 1  未证明 1",
+      `  [已满足] ${R(3)}/S1 规则全过。`,
+      `  [待负责人] ${R(3)}/S2 负责人玩通。`,
+      `  [未证明] ${R(3)}/S3 没人解释也能玩。`,
       NO_QUALITY,
       "",
-      "## 计划",
-      `${C(5)} 变更5 已完成 0/2 (0%) 进行中 0 可开始 1 被挡住 1`,
+      "## 议程",
+      "judge: 1: finding:2",
+      `owner: 3: finding:1, question:1, criterion:${R(3)}/S2`,
       "",
-      "## 等负责人",
-      "问题 #1 要不要发布？",
-      `意见 #1 ${BR(6)}: 矛盾`,
-      `成功标准 ${R(3)}: 负责人玩通。`,
+      "## 正在做和在等",
+      "(none)",
       "",
-      "## 待办顺序",
-      ...[5, 6, 7, 8, 9].map((n) => `${C(n)} 变更${n}`),
-      "… 还有 2 个（canon change list）",
-      "",
-      "## 当前这一批（没挂版本或模块，AI 会话自己定的）",
-      ...[5, 6, 7, 8, 9, 10, 11].map((n) => `${C(n)} 变更${n}`),
-      "",
-      "## 最近合入",
-      `${C(9)} 变更9 2026-11-16 07:42 UTC （没写 advances）`,
-      `${C(4)} 变更4 2026-11-16 05:32 UTC （没写 advances）`,
+      "## 历史",
+      `${C(9)} 变更9  2026-11-16 07:42 UTC`,
+      `${C(12)} 轻变更12  2026-11-16 06:00 UTC`,
+      `${C(4)} 变更4  2026-11-16 05:32 UTC`,
+      HISTORY,
     ]);
+    expect(r.out).not.toContain("## 计划");
   });
 
   test("BR-2505: with no active release the lowest planned one stands in with a hint; with none at all the section says so and the rest still comes", () => {
     const root = fixture();
     write(root, { [`canon/releases/${R(3)}.md`]: release(3, "planned", CRITERIA), [`canon/releases/${R(10)}.md`]: release(10, "planned") });
     const fallback = canon(root, "overview").out.split("\n");
-    expect(squash(fallback[1]!)).toStartWith(`${R(2)} planned 版本2 `);
-    expect(fallback[2]).toBe("(没有 active 的版本，取编号最小的 planned；正在做的版本把 status 改成 active)");
-    expect(fallback[3]).toBe("成功标准 0 条：已满足 0  未满足 0  待负责人 0  未证明 0");
+    expect(fallback.slice(1, 5)).toEqual([`${R(2)}  planned  版本2`, "(没有 active 的版本，取编号最小的 planned；正在做的版本把 status 改成 active)", "规则 0 条：规划中 0  已通过 0  待 main 测试 0  待重新执行 0", "成功标准 0 条：已满足 0  未满足 0  待负责人 0  未证明 0"]);
     write(root, Object.fromEntries([2, 3, 10].map((n) => [`canon/releases/${R(n)}.md`, release(n, "shipped", "内容", `shipped_at: ${"b".repeat(40)}\n`)])));
     const none = canon(root, "overview");
     expect(none.code).toBe(0);
-    expect(none.out.split("\n").slice(0, 5)).toEqual(["## 当前版本", "(no release in progress)", NO_QUALITY, "", "## 计划"]);
-    expect(none.out).toContain("## 最近合入");
+    expect(none.out.split("\n").slice(0, 5)).toEqual(["## 当前版本", "(no release in progress)", NO_QUALITY, "", "## 议程"]);
+    expect(none.out).toContain("## 历史");
   });
 
-  test("BR-2505: with no plans, nothing waiting, no open change and no landing each section says so", () => {
-    const root = project();
-    const r = canon(root, "overview");
+  test("BR-2505: with nothing on the agenda, nothing in flight and no landing each section says so", () => {
+    const r = canon(project(), "overview");
     expect(r.code).toBe(0);
-    expect(r.out.trim().split("\n")).toEqual(["## 当前版本", "(no release in progress)", NO_QUALITY, "", "## 计划", "(no plans)", "", "## 等负责人", "(nothing)", "", "## 待办顺序", "(none)", "", "## 当前这一批（没挂版本或模块，AI 会话自己定的）", "(none)", "", "## 最近合入", "(none)"]);
+    expect(r.out.trim().split("\n")).toEqual(["## 当前版本", "(no release in progress)", NO_QUALITY, "", "## 议程", "(nothing)", "", "## 正在做和在等", "(none)", "", "## 历史", HISTORY]);
   });
 
-  test("BR-2505: a claimed change carries its mark in the order", () => {
-    const root = project();
-    const started = startNew(root, "做点事");
-    const line = canon(root, "overview").out.split("\n").find((l) => l.startsWith(started.change));
-    expect(line).toContain("claimed");
-  });
-
-  test("BR-2505: the current batch lists every open change naming neither a release nor a feature, those only on a branch too; --json has them as current_batch", () => {
+  test("BR-2505: changes in progress or waiting are listed with their state or what they wait for; ready ones are not", () => {
     const root = project();
     write(root, {
-      [`canon/releases/${R(2)}.md`]: release(2, "planned", "内容", "features: [F-1]\n"),
-      "canon/features/F-1.md": "---\nid: F-1\ntitle: 模块1\nstatus: active\n---\n\n## 目标\n\nx\n",
-      [`canon/changes/${C(4)}.md`]: change(4, "open", "", "feature: F-1\n"),
-      [`canon/changes/${C(5)}.md`]: change(5, "open", "", `release: ${R(2)}\n`),
       [`canon/changes/${C(6)}.md`]: change(6, "open"),
-      [`canon/changes/${C(3)}.md`]: change(3, "done"),
+      [`canon/changes/${C(7)}.md`]: change(7, "open", "", `depends_on: [${C(6)}]\n`),
     });
-    const branchOnly = startNew(root, "只在分支上");
+    const started = startNew(root, "做点事");
     const out = canon(root, "overview").out.split("\n");
-    const at = out.indexOf("## 当前这一批（没挂版本或模块，AI 会话自己定的）");
-    expect(at).toBeGreaterThan(out.indexOf("## 待办顺序"));
-    expect(out.slice(at + 1, out.indexOf("## 最近合入") - 1)).toEqual([`${branchOnly.change} 只在分支上`, `${C(6)} 变更6`]);
-    const o = JSON.parse(canon(root, "overview", "--json").out);
-    expect(o.current_batch).toEqual([{ id: branchOnly.change, title: "只在分支上" }, { id: C(6), title: "变更6" }]);
-    write(root, { [`canon/changes/${C(6)}.md`]: change(6, "done") });
-    sh(branchOnly.worktree, "checkout", "-q", "--detach");
-    sh(root, "branch", "-D", `change/${branchOnly.change}`);
-    expect(canon(root, "overview").out).toContain("## 当前这一批（没挂版本或模块，AI 会话自己定的）\n(none)");
+    const at = out.indexOf("## 正在做和在等");
+    expect(out.slice(at + 1, out.indexOf("## 历史") - 1)).toEqual([`${C(7)} 变更7  waiting-deps: ${C(6)}`, `${started.change} 做点事  in-progress`]);
+    const json = JSON.parse(canon(root, "overview", "--json").out);
+    expect(json.changes.map((c: { id: string; state: string }) => [c.id, c.state])).toEqual([[C(7), "waiting-deps"], [started.change, "in-progress"]]);
   });
 
   test("BR-2505: --json holds the same content", () => {
     const o = JSON.parse(canon(fixture(), "overview", "--json").out);
     expect(o.releases).toHaveLength(1);
-    expect(o.releases[0]).toMatchObject({ id: R(3), status: "active", fallback: false, counts: { planned: 1, passed: 0 }, features: [] });
+    expect(o.releases[0]).toMatchObject({ id: R(3), status: "active", fallback: false, rules: { planned: 1, passed: 0 }, merged: { ids: [] } });
     expect(o.releases[0].criteria).toEqual([
-      { id: "S1", text: "规则全过。", state: "met", evidence: [C(4)], advanced_by: [] },
-      { id: "S2", text: "负责人玩通。", state: "owner", evidence: [], advanced_by: [] },
-      { id: "S3", text: "没人解释也能玩。", state: "unproven", evidence: [], advanced_by: [] },
+      { doc: R(3), id: "S1", text: "规则全过。", state: "met" },
+      { doc: R(3), id: "S2", text: "负责人玩通。", state: "owner" },
+      { doc: R(3), id: "S3", text: "没人解释也能玩。", state: "unproven" },
     ]);
-    expect(o.plans).toEqual([{ id: C(5), title: "变更5", total: 2, done: 0, percent: 0 }]);
-    expect(o.waiting.questions.map((q: { id: number }) => q.id)).toEqual([1]);
-    expect(o.waiting.findings.map((f: { id: number }) => f.id)).toEqual([1]);
-    expect(o.waiting.criteria).toEqual([{ doc: R(3), text: "负责人玩通。" }]);
-    expect(o.backlog.map((b: { id: string }) => b.id)).toEqual([5, 6, 7, 8, 9].map(C));
-    expect(o.backlog_more).toBe(2);
-    expect(o.landed).toEqual([{ id: C(9), title: "变更9", at: "2026-11-16T07:42:40.496Z", advances: null }, { id: C(4), title: "变更4", at: "2026-11-16T05:32:56.142Z", advances: null }]);
+    expect(o.plans).toBeUndefined();
+    expect(o.agenda.owner.map((i: { key: string }) => i.key)).toEqual(["finding:1", "question:1", `criterion:${R(3)}/S2`]);
+    expect(o.agenda.judge.map((i: { key: string }) => i.key)).toEqual(["finding:2"]);
+    expect(o.changes).toEqual([]);
+    expect(o.landed).toEqual([{ id: C(9), title: "变更9", at: "2026-11-16T07:42:40.496Z" }, { id: C(12), title: "轻变更12", at: "2026-11-16T06:00:00.000Z" }, { id: C(4), title: "变更4", at: "2026-11-16T05:32:56.142Z" }]);
     expect(JSON.parse(canon(project(), "overview", "--json").out).releases).toEqual([]);
+  });
+
+  test("BR-2505: --history gives the landings with what they advanced", () => {
+    const r = canon(fixture(), "overview", "--history");
+    expect(r.code).toBe(0);
+    expect(r.out.trim().split("\n")).toEqual([
+      "## 最近 7 天的目标改动",
+      "(none)",
+      "",
+      "## 最近合入",
+      `${C(9)} 变更9 2026-11-16 07:42 UTC  （没写 advances）`,
+      `${C(12)} 轻变更12 2026-11-16 06:00 UTC  （没写 advances）`,
+      `${C(4)} 变更4 2026-11-16 05:32 UTC  （没写 advances）`,
+    ]);
+    expect(JSON.parse(canon(fixture(), "overview", "--history", "--json").out).landed[0]).toEqual({ id: C(9), title: "变更9", at: "2026-11-16T07:42:40.496Z", advances: null });
   });
 });
 
 describe("canon brief: the overall progress summary", () => {
-  test("BR-2506: where no change is claimed, the release without rule counts, its criteria counts, plans not done and what waits for the owner", () => {
+  test("BR-2506: where no change is claimed, the release with its criteria counts and no plan, owner or stall line; those are the agenda's", () => {
     const lines = canon(fixture(), "brief").out.split("\n");
     const at = lines.indexOf("Overall progress (canon overview):");
     expect(at).toBeGreaterThan(-1);
-    expect(lines.slice(at + 1, at + 4)).toEqual([
-      `  ${R(3)}  active  版本3  成功标准 3 条：已满足 1  未满足 0  待负责人 1  未证明 1`,
-      `  plans not done: ${C(5)} 0/2 (0%)`,
-      "  waiting for the owner: 1 question(s), 1 tier-C finding(s), 1 criterion(s)",
-    ]);
+    expect(lines.slice(at + 1, at + 3)).toEqual([`  ${R(3)}  active  版本3  成功标准 3 条：已满足 1  未满足 0  待负责人 1  未证明 1`, `  quality: ${lines[at + 2]!.slice("  quality: ".length)}`]);
+    expect(lines.join("\n")).not.toContain("plans not done");
+    expect(lines.join("\n")).not.toContain("waiting for the owner:");
     expect(at).toBeLessThan(lines.findIndex((l) => l.startsWith("Open changes in the owner's order")));
   });
 
-  test("BR-2506: a fallback release is marked; a finished plan and nothing waiting add no line; a claimed worktree prints no summary", () => {
+  test("BR-2506: a fallback release is marked; a claimed worktree prints no summary", () => {
     const root = project();
-    write(root, { [`canon/releases/${R(2)}.md`]: release(2, "planned"), [`canon/changes/${C(4)}.md`]: change(4, "done", PLAN.replace("| 2 | 接口 | 1 |\n", "")), [`canon/changes/${C(5)}.md`]: change(5, "done", "", `plan: ${C(4)}\nsteps: [1]\n`) });
+    write(root, { [`canon/releases/${R(2)}.md`]: release(2, "planned") });
     const lines = canon(root, "brief").out.split("\n");
     const at = lines.indexOf("Overall progress (canon overview):");
-    expect(lines.slice(at + 1, at + 3)).toEqual([`  ${R(2)}  planned  版本2  成功标准 0 条：已满足 0  未满足 0  待负责人 0  未证明 0  (no release is active: the lowest planned one)`, expect.not.stringMatching(/^ {2}(plans|waiting)/)]);
+    expect(lines[at + 1]).toBe(`  ${R(2)}  planned  版本2  成功标准 0 条：已满足 0  未满足 0  待负责人 0  未证明 0  (no release is active: the lowest planned one)`);
     const started = startNew(root, "做点事");
     expect(canon(started.worktree, "brief").out).not.toContain("Overall progress");
   });
 
-  test("BR-2506: with nothing at all there is no summary; with no release but a question waiting, the release line says so", () => {
+  test("BR-2506: with nothing at all there is no summary, also with a question waiting (the agenda has it)", () => {
     const root = project();
     // reason: quality standards all accounted for (BR-2558 case 3), so only this rule's own parts could print a summary
     write(root, { "canon/quality/README.md": "# 质量\n\n## 方面\n\n- **联机**：不适用：canon human #3\n" });
     expect(canon(root, "brief").out).not.toContain("Overall progress");
     ask(ws(root).db, "agent:a", null, "要不要发布？", ["是", "否"]);
-    const lines = canon(root, "brief").out.split("\n");
-    const at = lines.indexOf("Overall progress (canon overview):");
-    expect(lines.slice(at + 1, at + 3)).toEqual(["  no release in progress", "  waiting for the owner: 1 question(s), 0 tier-C finding(s), 0 criterion(s)"]);
+    const out = canon(root, "brief").out;
+    expect(out).not.toContain("Overall progress");
+    expect(out).toContain("  owner: 1: question:1");
   });
 });
 
@@ -222,21 +213,18 @@ describe("recent changes to the goal", () => {
     if (r.exitCode !== 0) throw new Error(r.stderr.toString());
   };
 
-  test("BR-2505 BR-2506: a commit of the last 7 days that changed a criterion is listed in the overview and named in the brief; an older one is not", () => {
+  test("BR-2505 BR-2506: a commit of the last 7 days that changed a criterion is counted in the outline, given in full by --history and named in the brief; an older one is not", () => {
     const root = project();
     commitAt(root, { [`canon/releases/${R(3)}.md`]: release(3, "active", "- S1 甲") }, "add release", 20);
     commitAt(root, { [`canon/releases/${R(3)}.md`]: release(3, "active", "- S1 甲\n- S2 乙") }, "old goal change", 8);
     expect(canon(root, "overview").out).not.toContain("最近 7 天的目标改动");
     commitAt(root, { [`canon/releases/${R(3)}.md`]: release(3, "active", "- S1 甲\n- S2 乙\n- S3 支持手柄。") }, "加手柄", 3);
-    const lines = canon(root, "overview").out.split("\n");
-    const at = lines.indexOf("最近 7 天的目标改动：");
-    expect(at).toBeGreaterThan(-1);
-    expect(lines[at + 1]).toMatch(/^ {2}[0-9a-f]{9} 加手柄$/);
-    expect(lines[at + 2]).toBe(`    ${R(3)}: success criterion added or reworded: 支持手柄。`);
-    expect(lines[at + 3]).toBe("");
+    expect(canon(root, "overview").out).toContain(`最近 7 天的目标改动：${R(3)} 1 处\n`);
+    const lines = canon(root, "overview", "--history").out.split("\n");
+    expect(lines.slice(0, 3)).toEqual(["## 最近 7 天的目标改动", expect.stringMatching(/^[0-9a-f]{9} 加手柄$/), `  ${R(3)}: success criterion added or reworded: 支持手柄。`]);
     const sha = sh(root, "rev-parse", "--short=9", "HEAD").trim();
-    expect(canon(root, "brief").out).toContain(`  goal changed in the last 7 days: ${sha} (canon overview)`);
-    expect(JSON.parse(canon(root, "overview", "--json").out).goal_changes).toHaveLength(1);
+    expect(canon(root, "brief").out).toContain(`  goal changed in the last 7 days: ${sha} (canon overview --history)`);
+    expect(JSON.parse(canon(root, "overview", "--json").out).goal_changes).toEqual([{ doc: R(3), count: 1 }]);
   });
 });
 
@@ -245,44 +233,38 @@ describe("releases made of features", () => {
   const feature = (n: number, status: string, criteria: string) => `---\nid: ${F(n)}\ntitle: 模块${n}\nstatus: ${status}\n---\n\n## 目标\n\n内容\n\n## 范围\n\n内容\n\n## 不做\n\n内容\n\n## 成功标准\n\n${criteria}\n`;
   const advancing = (n: number, status: string, advances: string) => `---\nid: ${C(n)}\ntitle: 变更${n}\nstatus: ${status}\nrules: []\nadvances: ${advances}\n---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n`;
 
-  test("BR-2505 BR-2506: every active release with its features' criteria, the changes advancing each, and what each landing advanced; the brief counts a release with its features", () => {
+  test("BR-2505 BR-2506: every active release with its features' criteria by their first sentence, dropped features left out; the brief counts a release with its features", () => {
     const root = project();
     write(root, {
-      [`canon/releases/${R(3)}.md`]: release(3, "active", "- S1 负责人玩通。（待负责人）").replace("status: active\n", `status: active\nfeatures: [${F(1)}, ${F(2)}]\n`),
+      [`canon/releases/${R(3)}.md`]: release(3, "active", "- S1 负责人玩通。还要录屏。（待负责人）").replace("status: active\n", `status: active\nfeatures: [${F(1)}, ${F(2)}]\n`),
       [`canon/releases/${R(5)}.md`]: release(5, "active", "- S1 甲"),
       [`canon/features/${F(1)}.md`]: feature(1, "active", "- S1 五个分支各有构筑通关。（未满足）\n- S2 有引导。"),
       [`canon/features/${F(2)}.md`]: feature(2, "dropped", "- S1 不做了"),
       [`canon/changes/${C(7)}.md`]: advancing(7, "done", `[${F(1)}/S1]`),
-      [`canon/changes/${C(9)}.md`]: advancing(9, "open", `[${F(1)}/S1, ${R(3)}/S1]`),
-      [`canon/changes/${C(10)}.md`]: advancing(10, "dropped", `[${F(1)}/S1]`),
       [`canon/changes/${C(11)}.md`]: advancing(11, "done", '"none: 修 YAML"'),
     });
     const land = ws(root).db.db.query("INSERT INTO events(ts, actor, kind, subject, detail) VALUES (?, 'agent:a', 'land.ok', ?, '{}')");
     land.run("2026-11-16T05:00:00.000Z", C(7));
     land.run("2026-11-16T06:00:00.000Z", C(11));
     const lines = canon(root, "overview").out.split("\n");
-    const end = lines.indexOf("## 计划");
-    expect(lines.slice(1, end - 1).map(squash)).toEqual([
-      `${R(3)} active 版本3 规划中 0 已通过 0 待 main 测试 0 待重新执行 0 成功标准 已满足 0/3 变更 已合入 0 进行中 0 在等 0 可开始 0 未完成`,
-      "成功标准 1 条：已满足 0 未满足 0 待负责人 1 未证明 0",
-      ` [待负责人] S1 负责人玩通。 推进：${C(9)}`,
-      ` 模块 ${F(1)} 模块1 成功标准 2 条：已满足 0 未满足 1 待负责人 0 未证明 1`,
-      ` [未满足] S1 五个分支各有构筑通关。 推进：${C(9)}, ${C(7)}`,
-      " [未证明] S2 有引导。",
-      `${R(5)} active 版本5 规划中 0 已通过 0 待 main 测试 0 待重新执行 0 成功标准 已满足 0/1 变更 已合入 0 进行中 0 在等 0 可开始 0 未完成`,
-      "成功标准 1 条：已满足 0 未满足 0 待负责人 0 未证明 1",
-      " [未证明] S1 甲",
-      NO_QUALITY,
+    expect(lines.slice(1, lines.indexOf("## 议程") - 2)).toEqual([
+      `${R(3)}  active  版本3`,
+      "规则 0 条：规划中 0  已通过 0  待 main 测试 0  待重新执行 0",
+      "成功标准 3 条：已满足 0  未满足 1  待负责人 1  未证明 1",
+      `  [待负责人] ${R(3)}/S1 负责人玩通。`,
+      `  [未满足] ${F(1)}/S1 五个分支各有构筑通关。`,
+      `  [未证明] ${F(1)}/S2 有引导。`,
+      `${R(5)}  active  版本5`,
+      "规则 0 条：规划中 0  已通过 0  待 main 测试 0  待重新执行 0",
+      "成功标准 1 条：已满足 0  未满足 0  待负责人 0  未证明 1",
+      `  [未证明] ${R(5)}/S1 甲`,
     ]);
-    expect(lines).toContain(`成功标准 ${R(3)}: 负责人玩通。`);
-    expect(lines.map(squash)).toContain(`${C(11)} 变更11 2026-11-16 06:00 UTC （不推进：修 YAML）`);
-    expect(lines.map(squash)).toContain(`${C(7)} 变更7 2026-11-16 05:00 UTC → ${F(1)}/S1`);
+    expect(lines).toContain(`owner: 1: criterion:${R(3)}/S1`);
+    const history = canon(root, "overview", "--history").out.split("\n").map(squash);
+    expect(history).toContain(`${C(11)} 变更11 2026-11-16 06:00 UTC （不推进：修 YAML）`);
+    expect(history).toContain(`${C(7)} 变更7 2026-11-16 05:00 UTC → ${F(1)}/S1`);
     const brief = canon(root, "brief").out.split("\n");
     const at = brief.indexOf("Overall progress (canon overview):");
     expect(brief.slice(at + 1, at + 3)).toEqual([`  ${R(3)}  active  版本3  成功标准 3 条：已满足 0  未满足 1  待负责人 1  未证明 1`, `  ${R(5)}  active  版本5  成功标准 1 条：已满足 0  未满足 0  待负责人 0  未证明 1`]);
-    const json = JSON.parse(canon(root, "overview", "--json").out);
-    expect(json.releases.map((r: { id: string }) => r.id)).toEqual([R(3), R(5)]);
-    expect(json.releases[0].features[0].criteria[0]).toEqual({ id: "S1", text: "五个分支各有构筑通关。", state: "unmet", evidence: [], advanced_by: [C(9), C(7)] });
-    expect(json.landed[0].advances).toEqual({ none: "修 YAML" });
   });
 });

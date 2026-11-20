@@ -25,7 +25,7 @@ import { claimOfWorktree, claimsWithState, type ClaimState } from "../claims/cla
 import { questions } from "../humans/questions.ts";
 import { activeQueue, keptPlaces } from "../land/queue/queue.ts";
 import { marks } from "../land/queue/urgent.ts";
-import { dueItems, renderDue } from "../reminders/due.ts";
+import { agenda, summary } from "../reminders/agenda.ts";
 import { isWorker } from "../delegation/worker.ts";
 import { attemptIn, describeAttempt, goneLanders, openAttempts } from "../land/queue/interrupted.ts";
 import { openWorkspace, type Workspace } from "../workspace.ts";
@@ -265,15 +265,12 @@ const brief = defineCommand({
 /** The text of the Monitor hint `canon brief` prints in a Claude Code main session (BR-2529). */
 export const MONITOR_HINT = "Keep canon work watch running under Monitor (timeout 30 min); when it expires, re-arm with --since <the last event number it printed>.";
 
-/** BR-2529: `Due now` with the due list when it is not empty; the Monitor hint whenever the session runs in Claude Code. */
-function dueSection(ws: Workspace, env: Readonly<Record<string, string | undefined>>): string[] {
+/** BR-2529: the agenda summary when the agenda is not empty; the Monitor hint whenever the session runs in Claude Code. */
+function agendaSection(ws: Workspace, env: Readonly<Record<string, string | undefined>>): string[] {
   const out: string[] = [];
-  const due = dueItems(ws);
-  if (!due.ok) out.push(`Cannot list what is due: ${due.error.message}`);
-  else if (due.value.length > 0) {
-    const now = Date.now();
-    out.push("Due now (canon work due):", ...due.value.map((it) => `  ${renderDue(it, now)}`));
-  }
+  const a = agenda(ws);
+  if (!a.ok) out.push(`Cannot work out the agenda: ${a.error.message}`);
+  else out.push(...summary(a.value));
   if (env["CLAUDECODE"] === "1") out.push(MONITOR_HINT);
   return out;
 }
@@ -322,7 +319,7 @@ function briefState(ws: Workspace, env: Readonly<Record<string, string | undefin
     // into a change's session they draw it into work that is not its own (BR-2024)
     // The whole progress first, so a session starts from the release and not from the latest small change (BR-2506);
     // a failure is said in one line, never fatal: the rest of the brief still comes.
-    const progress = overview(ws, { ruleCounts: false });
+    const progress = overview(ws, { ruleCounts: false, agenda: false });
     if (progress.ok) for (const line of briefSummary(progress.value)) say(line);
     else say(`Overall progress unavailable: ${progress.error.message}`);
     // Commits on main the remote lacks, counted locally; like the handoffs, only where no change is claimed (BR-2261, BR-2024).
@@ -377,8 +374,8 @@ function briefState(ws: Workspace, env: Readonly<Record<string, string | undefin
     if (owed.length) say(`Waiting for the owner, not ready to start (ask them; canon human pending): ${owed.join(", ")}`);
     const onMainAlready = of("awaiting-close").map((s) => s.id);
     if (onMainAlready.length) say(`Work already on main, close it instead of starting it (canon change close <C-n> --commit <commit>): ${onMainAlready.join(", ")}`);
-    // The main session's due list and, in Claude Code, the standing watch; a worker runs headless and has neither (BR-2529, D-136).
-    if (!isWorker(ws.actor)) for (const line of dueSection(ws, env)) say(line);
+    // The main session's agenda summary and, in Claude Code, the standing watch; a worker runs headless and has neither (BR-2529, D-151).
+    if (!isWorker(ws.actor)) for (const line of agendaSection(ws, env)) say(line);
   }
   // The schema editors read for canon/config.yaml, from this canon; a failure is said, never fatal (BR-2176).
   const schema = writeSchemaFile(ws.root);

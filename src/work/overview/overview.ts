@@ -1,28 +1,34 @@
 import { git } from "../../kernel/git.ts";
-import { stalledLine, type StalledDelegation } from "../delegation/stall.ts";
-import { changeStates, hasFile, marksOf, type ChangeState, type Filed } from "../../knowledge/changes/state.ts";
+import { changeStates, hasFile, stateMark, type Filed } from "../../knowledge/changes/state.ts";
+import { waitingMark } from "../../knowledge/changes/deps.ts";
 import { ok, type Result } from "../../kernel/result.ts";
 import { goalChangesBetween } from "../../knowledge/releases/goal-landing.ts";
-import { backlogAt } from "../../knowledge/documents/backlog.ts";
-import type { Advances, Change, Corpus, Feature, Release } from "../../knowledge/documents/model.ts";
-import { planStatuses, summaryLine as planLine, type PlanStatus } from "../../knowledge/plans/status.ts";
-import { CRITERION_LABEL, criteriaCountLine, criteriaOf, type Criterion } from "../../knowledge/releases/criteria.ts";
-import { releaseStatuses, summaryLine as releaseLine, type ReleaseStatus, type Workload } from "../../knowledge/releases/status.ts";
-import { changeGraph, memberOf, workload } from "../../knowledge/changes/graph.ts";
-import { releaseScope } from "../../knowledge/releases/features.ts";
+import type { Advances, Change, Corpus } from "../../knowledge/documents/model.ts";
+import { CRITERION_LABEL, criteriaCountLine } from "../../knowledge/releases/criteria.ts";
+import { allCriteria, criteriaWithDoc, headLine, releasesInProgress, releaseViews, type CurrentRelease } from "../../knowledge/releases/current.ts";
+import { releaseStatuses } from "../../knowledge/releases/status.ts";
+import { STATE_LABEL, STATE_ORDER } from "../execution/state.ts";
 import { briefQualityLine, overviewQualityLine, qualitySummary, type QualitySummary } from "../../knowledge/quality/aspects.ts";
-import { openFindings, type OpenFinding } from "../../knowledge/review/findings/findings.ts";
 import { executionStates } from "../execution/state.ts";
-import { questions, type Question } from "../humans/questions.ts";
+import { agenda, agendaJson, summaryLines, type Agenda } from "../reminders/agenda.ts";
 import { mainCorpus } from "../session/session.ts";
 import { isChore } from "../session/subject.ts";
 import type { Workspace } from "../workspace.ts";
 
-/** `canon overview` (BR-2505, D-129): the whole progress from the current release down, each part computed by its own domain. */
+/**
+ * `canon overview` (BR-2505, D-129, D-151 part 4): the current state only. The current release with its criteria, the
+ * agenda (work/reminders), the changes in progress or waiting, and an outline of the history; `--history` gives the
+ * detail. Each part is computed by its own domain; this one only picks and orders.
+ */
 
-/** How many changes of the owner's order, and how many landings, the overview names (BR-2505). */
-const BACKLOG_SHOWN = 5;
-const LANDED_SHOWN = 5;
+/** How many landings the outline and the detail name, and the most changes in progress or waiting listed (BR-2505). */
+const LANDED_OUTLINE = 3;
+export const LANDED_DETAIL = 10;
+const CHANGES_SHOWN = 15;
+/** How far back the goal changes go (BR-2505, BR-2506). */
+const GOAL_DAYS = 7;
+/** The primary states listed under `## 正在做和在等` (BR-2505); stalled, refused, awaiting close and ready ones are on the agenda. */
+const IN_FLIGHT: ReadonlySet<string> = new Set(["in-queue", "in-progress", "delegated", "handed-off", "waiting-owner", "waiting-deps"]);
 
 export interface Landed {
   readonly id: string;
@@ -33,55 +39,23 @@ export interface Landed {
   readonly advances: Advances | undefined;
 }
 
-/** A criterion with the changes whose `advances` name it, the highest numbers first (BR-2505, BR-2517). */
-export interface CriterionView extends Criterion {
-  readonly advancedBy: readonly string[];
-}
-
-export interface FeatureView {
-  readonly doc: Feature;
-  readonly criteria: readonly CriterionView[];
-}
-
-export interface CurrentRelease {
-  readonly doc: Release;
-  /** No release is active: the lowest-numbered planned one stands in (BR-2505). */
-  readonly fallback: boolean;
-  /** Its rule counts; left out of the brief, which cannot afford computing every rule's execution state (BR-2506). */
-  readonly status: ReleaseStatus | undefined;
-  readonly criteria: readonly CriterionView[];
-  /** The features it lists that exist and are not dropped, in its order (BR-2505), then those of releases merged into it (BR-2521). */
-  readonly features: readonly FeatureView[];
-  /** The dropped releases merged into it, with their own criteria (BR-2521). */
-  readonly merged: readonly { readonly doc: Release; readonly criteria: readonly CriterionView[] }[];
-  /** The workload of its linked changes, with the rule counts only (BR-2328, BR-2570). */
-  readonly work?: Workload;
-}
-
-export interface Overview {
-  /** The releases in progress (BR-2505): every active one, else the lowest planned one; empty when none. */
-  readonly releases: readonly CurrentRelease[];
-  readonly plans: readonly PlanStatus[];
-  readonly waiting: { readonly questions: readonly Question[]; readonly findings: readonly OpenFinding[]; readonly criteria: readonly { readonly doc: string; readonly text: string }[]; readonly stalled: readonly StalledDelegation[] };
-  readonly backlog: readonly Filed[];
-  readonly backlogMore: number;
-  /** Open changes naming neither a release nor a feature: the scope AI sessions chose themselves, all of them (BR-2505, D-148). */
-  readonly currentBatch: readonly Filed[];
-  readonly landed: readonly Landed[];
-  /** Commits on main of the last GOAL_DAYS days that changed the goal, newest first (BR-2505, BR-2510). */
-  readonly goalChanges: readonly GoalCommit[];
-  /** How far quality standards cover the product's aspects on main (BR-2558). */
-  readonly quality: QualitySummary;
-}
-
 export interface GoalCommit {
   readonly sha: string;
   readonly subject: string;
   readonly changes: readonly string[];
 }
 
-/** How far back the overview and the brief show changes to the goal (BR-2505, BR-2506). */
-const GOAL_DAYS = 7;
+export interface Overview {
+  /** The releases in progress (BR-2505): every active one, else the lowest planned one; empty when none. */
+  readonly releases: readonly CurrentRelease[];
+  readonly quality: QualitySummary;
+  /** The agenda, or why it could not be worked out; undefined where it was not asked for (the brief). */
+  readonly agenda: Agenda | string | undefined;
+  readonly changes: readonly Filed[];
+  readonly changesMore: number;
+  readonly goalCommits: readonly GoalCommit[];
+  readonly landed: readonly Landed[];
+}
 
 /** main's commits of the last GOAL_DAYS days that changed a release's or feature's goal, worked out from git each time (BR-2510). */
 function goalCommits(ws: Workspace): GoalCommit[] {
@@ -100,160 +74,132 @@ function goalCommits(ws: Workspace): GoalCommit[] {
   return out;
 }
 
-const number = (id: string) => Number(id.split("-")[1]);
-
-/** The releases in progress (BR-2505): every active one by number, else the lowest-numbered planned one. */
-export function releasesInProgress(corpus: Corpus): { doc: Release; fallback: boolean }[] {
-  const of = (status: string) => corpus.docs.filter((d): d is Release => d.kind === "release" && d.status === status).sort((a, b) => number(a.id) - number(b.id));
-  const active = of("active");
-  if (active.length > 0) return active.map((doc) => ({ doc, fallback: false }));
-  const planned = of("planned")[0];
-  return planned ? [{ doc: planned, fallback: true }] : [];
+/** The goal changes counted by the release or feature they are in, by id (BR-2505's outline). */
+export function goalCounts(commits: readonly GoalCommit[]): { doc: string; count: number }[] {
+  const counts = new Map<string, number>();
+  for (const g of commits) for (const c of g.changes) {
+    const doc = /^([A-Za-z]+-\d+)/.exec(c)?.[1];
+    if (doc) counts.set(doc, (counts.get(doc) ?? 0) + 1);
+  }
+  // reason: by kind, then by number, so R-2 comes before R-12
+  return [...counts].sort(([a], [b]) => a.split("-")[0]!.localeCompare(b.split("-")[0]!) || Number(a.split("-")[1]) - Number(b.split("-")[1])).map(([doc, count]) => ({ doc, count }));
 }
 
-/** How many changes advancing a criterion the overview names (BR-2505). */
-const ADVANCED_SHOWN = 3;
-
-/**
- * The releases `picks` with their own criteria and their features' (dropped ones left out), each criterion with the
- * changes on main advancing it (BR-2505); `statuses` gives the rule counts when computed.
- */
-export function releaseViews(corpus: Corpus, picks: readonly { doc: Release; fallback: boolean }[], statuses: readonly ReleaseStatus[] = []): CurrentRelease[] {
-  const changes = corpus.docs.filter((d): d is Change => d.kind === "change" && d.status !== "dropped").sort((a, b) => number(b.id) - number(a.id));
-  const view = (docId: string, body: string): CriterionView[] =>
-    criteriaOf(body, corpus.types).map((c) => ({
-      ...c,
-      advancedBy: changes.filter((ch) => ch.advances?.kind === "criteria" && ch.advances.refs.includes(`${docId}/${c.id}`)).slice(0, ADVANCED_SHOWN).map((ch) => ch.id),
-    }));
-  return picks.map(({ doc, fallback }) => {
-    const scope = releaseScope(corpus, doc);
-    return {
-      doc,
-      fallback,
-      status: statuses.find((s) => s.release.id === doc.id),
-      criteria: view(doc.id, doc.body),
-      features: [...scope.features]
-        .map((f) => corpus.docs.find((d): d is Feature => d.kind === "feature" && d.id === f))
-        .filter((f): f is Feature => f !== undefined && f.status !== "dropped")
-        .map((f) => ({ doc: f, criteria: view(f.id, f.body) })),
-      merged: scope.merged.map((m) => ({ doc: m, criteria: view(m.id, m.body) })),
-    };
-  });
-}
-
-/** Everything the overview shows, read from main's documents and the coordination state. */
-export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean }): Result<Overview> {
+/** Everything the overview shows, read from main's documents and the coordination state; `agenda: false` for the brief, which prints the agenda itself. */
+export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean; readonly agenda?: boolean; readonly landed?: number }): Result<Overview> {
   const corpus = mainCorpus(ws);
   if (!corpus.ok) return corpus;
-  const backlog = backlogAt(ws.primary, ws.config.main, ws.config.types);
-  if (!backlog.ok) return backlog;
-  // reason: read once with every change, as the brief does: plans count done ones too, the order only open ones (BR-2373, BR-2149)
-  // reason: every change's state from the one place that computes it (BR-2571, D-151)
-  const every = changeStates(ws, { corpus: corpus.value, backlog: backlog.value, delegatable: false });
-  if (!every.ok) return every;
-  const filed = every.value.states.filter(hasFile);
   const current = releasesInProgress(corpus.value);
   const statuses = current.length > 0 && opts.ruleCounts ? releaseStatuses(corpus.value, executionStates(ws.root, corpus.value, ws.config.floorTiming)) : [];
-  const views = releaseViews(corpus.value, current, statuses);
-  // reason: the line is the one `canon release status` prints, workload included; read only when the rule counts are (BR-2505, BR-2328)
-  const releases = statuses.length > 0 ? views.map((r) => ({ ...r, work: workload(changeGraph({ states: filed }, memberOf(corpus.value, r.doc))) })) : views;
-  const owner = releases.flatMap((r) => [
-    ...r.criteria.filter((c) => c.state === "owner").map((c) => ({ doc: r.doc.id, text: c.text })),
-    ...[...r.features, ...r.merged].flatMap((f) => f.criteria.filter((c) => c.state === "owner").map((c) => ({ doc: f.doc.id, text: c.text }))),
-  ]);
-  const open = filed.filter((l) => l.change.status === "open" || (l.onBranch.length > 0 && l.change.status === "done"));
-  // reason: a delegation nobody works on waits for its design owner, so it is listed with what waits for the owner (BR-2522, #255)
-  const stalled = every.value.states.flatMap((s) => (s.stalled ? [s.stalled] : []));
+  const releases = releaseViews(corpus.value, current, statuses);
+  let changes: Filed[] = [];
+  let a: Agenda | string | undefined;
+  if (opts.agenda !== false) {
+    // reason: every change's state from the one place that computes it, read once with the agenda (BR-2571, D-151)
+    const got = agenda(ws);
+    a = got.ok ? got.value : got.error.message;
+    let states = got.ok ? got.value.states : undefined;
+    if (!states) {
+      const every = changeStates(ws, { corpus: corpus.value, delegatable: false });
+      if (!every.ok) return every;
+      states = every.value.states;
+    }
+    changes = states.filter(hasFile).filter((s) => IN_FLIGHT.has(s.state));
+  }
   return ok({
     releases,
-    plans: planStatuses(corpus.value, filed.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 })), new Set(stalled.map((s) => s.subject))),
-    waiting: {
-      questions: questions(ws.db, "pending"),
-      findings: openFindings(ws.db).filter((f) => f.tier === "C"),
-      criteria: owner,
-      stalled,
-    },
-    backlog: open.slice(0, BACKLOG_SHOWN),
-    backlogMore: Math.max(0, open.length - BACKLOG_SHOWN),
-    // reason: no progress is computed for it; it is listed so the owner sees what AI sessions chose to deliver (BR-2505, P7)
-    currentBatch: open.filter((l) => l.change.status === "open" && l.change.release === undefined && l.change.feature === undefined),
-    landed: landed(ws, corpus.value),
-    goalChanges: goalCommits(ws),
     quality: qualitySummary(corpus.value),
+    agenda: a,
+    changes: changes.slice(0, CHANGES_SHOWN),
+    changesMore: Math.max(0, changes.length - CHANGES_SHOWN),
+    goalCommits: goalCommits(ws),
+    landed: landed(ws, corpus.value, opts.landed ?? LANDED_OUTLINE),
   });
 }
 
-/** The latest landings of changes, newest first, chores left out (BR-2505). */
-export function landed(ws: Workspace, corpus: Corpus): Landed[] {
+/**
+ * The latest landings, newest first (BR-2505): a change's own, and a chore's under the light change main has for it
+ * (BR-2458); other chores are left out.
+ */
+export function landed(ws: Workspace, corpus: Corpus, n: number = LANDED_OUTLINE): Landed[] {
   const rows = ws.db.db.query<{ ts: string; subject: string | null }, []>("SELECT ts, subject FROM events WHERE kind = 'land.ok' ORDER BY id DESC").all();
+  const changes = corpus.docs.filter((d): d is Change => d.kind === "change");
   const out: Landed[] = [];
   const seen = new Set<string>();
   for (const r of rows) {
-    if (out.length >= LANDED_SHOWN) break;
-    if (!r.subject || isChore(r.subject) || seen.has(r.subject)) continue;
-    seen.add(r.subject);
-    const doc = corpus.docs.find((d) => d.id === r.subject);
-    out.push({ id: r.subject, title: doc?.title, at: r.ts, advances: doc?.kind === "change" ? doc.advances : undefined });
+    if (out.length >= n) break;
+    if (!r.subject) continue;
+    // reason: a light change has a C number once its chore landed; the landing is listed under it (BR-2505, BR-2458)
+    const doc = isChore(r.subject) ? changes.find((c) => c.chore === r.subject) : changes.find((c) => c.id === r.subject);
+    if (isChore(r.subject) && !doc) continue;
+    const id = doc?.id ?? r.subject;
+    if (seen.has(id)) continue;
+    seen.add(id);
+    out.push({ id, title: doc?.title, at: r.ts, advances: doc?.advances });
   }
   return out;
 }
 
-/** A release without its rule counts: id, status, title, as `canon release status` starts its line (BR-2506). */
-export const headLine = (r: Release) => `${r.id}  ${r.status}  ${r.title}`;
 const FALLBACK = "(没有 active 的版本，取编号最小的 planned；正在做的版本把 status 改成 active)";
-
-const firstLine = (s: string) => s.split("\n")[0]!.trim();
 const minute = (iso: string) => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
 
-/** One criterion's line (BR-2505): state, id, text, evidence, the changes advancing it. */
-const criterionLine = (c: CriterionView) =>
-  `[${CRITERION_LABEL[c.state]}] ${c.id} ${c.text}${c.evidence.length > 0 ? `  证据：${c.evidence.join(", ")}` : ""}${c.advancedBy.length > 0 ? `  推进：${c.advancedBy.join(", ")}` : ""}`;
+/** A criterion's first sentence: up to the first 。！？, or all of it (BR-2505). */
+export const firstSentence = (text: string): string => /^.*?[。！？]/.exec(text)?.[0] ?? text;
 
-/** All criteria of a release in progress: its own and its features' (BR-2506). */
-export const allCriteria = (r: CurrentRelease): Criterion[] => [...r.criteria, ...r.features.flatMap((f) => f.criteria), ...r.merged.flatMap((m) => m.criteria)];
+/** The rule-count line of a release in progress (BR-2505). */
+function rulesLine(r: CurrentRelease): string | undefined {
+  if (!r.status) return undefined;
+  const total = STATE_ORDER.reduce((n, k) => n + r.status!.counts[k], 0);
+  return `规则 ${total} 条：${STATE_ORDER.map((k) => `${STATE_LABEL[k]} ${r.status!.counts[k]}`).join("  ")}`;
+}
 
 /** What a landed change says it advanced (BR-2505, BR-2517). */
 const advancesMark = (a: Advances | undefined) => (a === undefined ? "  （没写 advances）" : a.kind === "none" ? `  （不推进：${a.reason}）` : `  → ${a.refs.join(", ")}`);
 
-const questionLine = (q: Question) => `问题 #${q.id} ${firstLine(q.question)}`;
-const findingLine = (f: OpenFinding) => `意见 #${f.id} ${f.ids.length > 0 ? f.ids.join(", ") : "-"}: ${firstLine(f.text)}`;
-
-/** The heading of the open changes in no release or feature (BR-2505). */
-export const CURRENT_BATCH = "## 当前这一批（没挂版本或模块，AI 会话自己定的）";
-
-/** The six sections of `canon overview` (BR-2505). */
+/** The four sections of `canon overview` (BR-2505). */
 export function overviewLines(o: Overview): string[] {
   const out: string[] = ["## 当前版本"];
   if (o.releases.length === 0) out.push("(no release in progress)");
   for (const r of o.releases) {
-    out.push(r.status ? releaseLine(r.status, r.work) : headLine(r.doc));
+    out.push(headLine(r.doc));
     if (r.fallback) out.push(FALLBACK);
-    out.push(criteriaCountLine(r.criteria), ...r.criteria.map((c) => `  ${criterionLine(c)}`));
-    for (const f of r.features) out.push(`  模块 ${f.doc.id} ${f.doc.title}  ${criteriaCountLine(f.criteria)}`, ...f.criteria.map((c) => `    ${criterionLine(c)}`));
-    for (const m of r.merged) out.push(`  并入 ${m.doc.id} ${m.doc.title}  ${criteriaCountLine(m.criteria)}`, ...m.criteria.map((c) => `    ${criterionLine(c)}`));
+    const rules = rulesLine(r);
+    if (rules) out.push(rules);
+    out.push(criteriaCountLine(allCriteria(r)));
+    // reason: merged releases are one summary line; their criteria are counted above, not listed (BR-2505, BR-2521)
+    for (const { doc, c } of criteriaWithDoc(r).filter((x) => !r.merged.some((m) => m.doc.id === x.doc))) out.push(`  [${CRITERION_LABEL[c.state]}] ${doc}/${c.id} ${firstSentence(c.text)}`);
+    if (r.merged.length > 0) out.push(`并入 ${r.merged.length} 个版本：${r.merged.map((m) => m.doc.id).join(", ")}  ${criteriaCountLine(r.merged.flatMap((m) => m.criteria))}`);
   }
   // reason: one line after the releases every time, a reminder when nothing is set or an aspect is uncovered (BR-2505, BR-2558)
   out.push(overviewQualityLine(o.quality));
-  if (o.goalChanges.length > 0) {
-    out.push(`最近 ${GOAL_DAYS} 天的目标改动：`);
-    for (const g of o.goalChanges) out.push(`  ${g.sha.slice(0, 9)} ${g.subject}`, ...g.changes.map((c) => `    ${c}`));
+  out.push("", "## 议程");
+  if (typeof o.agenda === "string") out.push(`agenda unavailable: ${o.agenda}`);
+  else {
+    const lines = o.agenda ? summaryLines(o.agenda) : [];
+    out.push(...(lines.length > 0 ? lines : ["(nothing)"]));
   }
-  out.push("", "## 计划", ...(o.plans.length > 0 ? o.plans.map(planLine) : ["(no plans)"]));
-  const waiting = [...o.waiting.questions.map(questionLine), ...o.waiting.findings.map(findingLine), ...o.waiting.criteria.map((c) => `成功标准 ${c.doc}: ${c.text}`), ...o.waiting.stalled.map(stalledLine)];
-  out.push("", "## 等负责人", ...(waiting.length > 0 ? waiting : ["(nothing)"]));
-  out.push("", "## 待办顺序");
-  if (o.backlog.length === 0) out.push("(none)");
-  for (const l of o.backlog) {
-    const marks = marksOf(l, false);
-    out.push(`${l.change.id} ${l.change.title}${marks.length > 0 ? `  (${marks.join(", ")})` : ""}`);
-  }
-  if (o.backlogMore > 0) out.push(`… 还有 ${o.backlogMore} 个（canon change list）`);
-  out.push("", CURRENT_BATCH, ...(o.currentBatch.length > 0 ? o.currentBatch.map((l) => `${l.change.id} ${l.change.title}`) : ["(none)"]));
+  out.push("", "## 正在做和在等");
+  if (o.changes.length === 0) out.push("(none)");
+  for (const s of o.changes) out.push(`${s.id} ${s.change.title}  ${s.state === "waiting-deps" ? `waiting-deps: ${waitingMark(s.waiting)?.replace(/^waiting for /, "") ?? ""}` : stateMark(s)}`);
+  if (o.changesMore > 0) out.push(`… 还有 ${o.changesMore} 个（canon change list）`);
+  out.push("", "## 历史");
+  const counts = goalCounts(o.goalCommits);
+  if (counts.length > 0) out.push(`最近 ${GOAL_DAYS} 天的目标改动：${counts.map((c) => `${c.doc} ${c.count} 处`).join("，")}`);
+  for (const l of o.landed) out.push(`${l.id}${l.title ? ` ${l.title}` : ""}  ${minute(l.at)}`);
+  out.push("细节：canon overview --history");
+  return out;
+}
+
+/** `canon overview --history` (BR-2505): the goal changes in full and the latest landings with what they advanced. */
+export function historyLines(o: Overview): string[] {
+  const out = [`## 最近 ${GOAL_DAYS} 天的目标改动`];
+  if (o.goalCommits.length === 0) out.push("(none)");
+  for (const g of o.goalCommits) out.push(`${g.sha.slice(0, 9)} ${g.subject}`, ...g.changes.map((c) => `  ${c}`));
   out.push("", "## 最近合入", ...(o.landed.length > 0 ? o.landed.map((l) => `${l.id}${l.title ? ` ${l.title}` : ""} ${minute(l.at)}${advancesMark(l.advances)}`) : ["(none)"]));
   return out;
 }
 
-const criterionJson = (c: CriterionView) => ({ id: c.id, text: c.text, state: c.state, evidence: c.evidence, advanced_by: c.advancedBy });
+const counted = (criteria: readonly { state: string }[]) => Object.fromEntries(["met", "unmet", "owner", "unproven"].map((k) => [k, criteria.filter((c) => c.state === k).length]));
 
 /** The `--json` form (BR-2505). */
 export function overviewJson(o: Overview): Record<string, unknown> {
@@ -263,41 +209,36 @@ export function overviewJson(o: Overview): Record<string, unknown> {
       title: r.doc.title,
       status: r.doc.status,
       fallback: r.fallback,
-      ...(r.status ? { counts: r.status.counts } : {}),
-      criteria: r.criteria.map(criterionJson),
-      features: r.features.map((f) => ({ id: f.doc.id, title: f.doc.title, criteria: f.criteria.map(criterionJson) })),
-      merged: r.merged.map((m) => ({ id: m.doc.id, title: m.doc.title, criteria: m.criteria.map(criterionJson) })),
+      rules: r.status ? r.status.counts : null,
+      criteria: criteriaWithDoc(r).filter((x) => !r.merged.some((m) => m.doc.id === x.doc)).map(({ doc, c }) => ({ doc, id: c.id, text: c.text, state: c.state })),
+      merged: { ids: r.merged.map((m) => m.doc.id), criteria: counted(r.merged.flatMap((m) => m.criteria)) },
     })),
-    plans: o.plans.map((p) => ({ id: p.change.id, title: p.change.title, total: p.steps.length, done: p.counts.done, percent: p.percent })),
-    waiting: {
-      questions: o.waiting.questions.map((q) => ({ id: q.id, question: q.question })),
-      findings: o.waiting.findings.map((f) => ({ id: f.id, ids: f.ids, text: f.text })),
-      criteria: o.waiting.criteria.map((c) => ({ doc: c.doc, text: c.text })),
-      stalled: o.waiting.stalled,
-    },
-    backlog: o.backlog.map((l) => ({ id: l.change.id, title: l.change.title, marks: marksOf(l, false) })),
-    backlog_more: o.backlogMore,
-    current_batch: o.currentBatch.map((l) => ({ id: l.change.id, title: l.change.title })),
-    landed: o.landed.map((l) => ({ id: l.id, title: l.title ?? null, at: l.at, advances: l.advances === undefined ? null : l.advances.kind === "none" ? { none: l.advances.reason } : l.advances.refs })),
-    goal_changes: o.goalChanges.map((g) => ({ sha: g.sha, subject: g.subject, changes: g.changes })),
     quality: { standards: o.quality.standards, drafts: o.quality.drafts, uncovered: o.quality.uncovered, none: o.quality.none },
+    agenda: typeof o.agenda === "object" ? agendaJson(o.agenda) : { error: o.agenda ?? null },
+    changes: o.changes.map((s) => ({ id: s.id, title: s.change.title, state: s.state, mark: stateMark(s) })),
+    changes_more: o.changesMore,
+    goal_changes: goalCounts(o.goalCommits),
+    landed: o.landed.map((l) => ({ id: l.id, title: l.title ?? null, at: l.at })),
   };
 }
 
-/** The brief's summary of the first three sections, where no change is claimed (BR-2506). */
+/** The `--history --json` form (BR-2505). */
+export function historyJson(o: Overview): Record<string, unknown> {
+  return {
+    goal_commits: o.goalCommits.map((g) => ({ sha: g.sha, subject: g.subject, changes: g.changes })),
+    landed: o.landed.map((l) => ({ id: l.id, title: l.title ?? null, at: l.at, advances: l.advances === undefined ? null : l.advances.kind === "none" ? { none: l.advances.reason } : l.advances.refs })),
+  };
+}
+
+/** The brief's progress summary, where no change is claimed (BR-2506): the releases in progress, recent goal changes, quality. */
 export function briefSummary(o: Overview): string[] {
-  const notDone = o.plans.filter((p) => p.counts.done < p.steps.length);
-  const { questions: q, findings: f, criteria: c, stalled: st } = o.waiting;
   const quality = briefQualityLine(o.quality);
   // reason: with nothing to say the brief stays the bare guide (BR-2024, BR-2506)
-  if (o.releases.length === 0 && notDone.length === 0 && q.length + f.length + c.length + st.length === 0 && o.goalChanges.length === 0 && quality === undefined) return [];
+  if (o.releases.length === 0 && o.goalCommits.length === 0 && quality === undefined) return [];
   const out = ["Overall progress (canon overview):"];
   for (const r of o.releases) out.push(`  ${headLine(r.doc)}  ${criteriaCountLine(allCriteria(r))}${r.fallback ? "  (no release is active: the lowest planned one)" : ""}`);
   if (o.releases.length === 0) out.push("  no release in progress");
-  if (notDone.length > 0) out.push(`  plans not done: ${notDone.map((p) => `${p.change.id} ${p.counts.done}/${p.steps.length} (${p.percent}%)`).join(", ")}`);
-  if (o.goalChanges.length > 0) out.push(`  goal changed in the last ${GOAL_DAYS} days: ${o.goalChanges.map((g) => g.sha.slice(0, 9)).join(", ")} (canon overview)`);
-  if (q.length + f.length + c.length > 0) out.push(`  waiting for the owner: ${q.length} question(s), ${f.length} tier-C finding(s), ${c.length} criterion(s)`);
-  if (st.length > 0) out.push(`  stalled delegations: ${st.map((s) => s.subject).join(", ")} (canon work status)`);
+  if (o.goalCommits.length > 0) out.push(`  goal changed in the last ${GOAL_DAYS} days: ${o.goalCommits.map((g) => g.sha.slice(0, 9)).join(", ")} (canon overview --history)`);
   // reason: only a reminder, short because every session reads it (BR-2506, BR-2558, D-139)
   if (quality !== undefined) out.push(`  ${quality}`);
   return out;

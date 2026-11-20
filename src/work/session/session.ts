@@ -12,7 +12,8 @@ import { runHooksSync } from "../hooks/hooks.ts";
 import { inFlight, noticeOverlaps } from "./overlap.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { openFindings } from "../../knowledge/review/findings/findings.ts";
-import { findingItems, renderDue } from "../reminders/due.ts";
+import { findingsOn, startLines } from "../reminders/related.ts";
+import { recordSettles } from "../reminders/handled.ts";
 import { slugify, type Change, type Corpus } from "../../knowledge/documents/model.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
@@ -59,18 +60,14 @@ export interface Started {
  * lands, and a session that stopped without a handoff must still be able to resume it (BR-2107).
  */
 /**
- * BR-2530 (D-136, superseding D-126's hold): open review findings never hold a start back; a change starting for the first
- * time lists the ones owed (findings waiting on the owner's answer are the owner's, BR-2461), at most ten, with their age
- * and next command, so they are seen where new work begins.
+ * BR-2530 (D-136, D-151): open review findings never hold a start back; a change starting for the first time lists only
+ * the findings on what it touches (its rules, its own id), and the rest in one line.
  */
-export const OWED_SHOWN = 10;
-function remindOwed(ws: Workspace, say: Say): void {
-  const owed = findingItems(ws);
-  if (owed.length === 0) return;
-  const now = Date.now();
-  const lines = owed.slice(0, OWED_SHOWN).map((it) => `  ${renderDue(it, now)}`);
-  if (owed.length > OWED_SHOWN) lines.push(`  … and ${owed.length - OWED_SHOWN} more: canon work due`);
-  say(`note: review work is owed (BR-2530):\n${lines.join("\n")}`);
+function remindOwed(ws: Workspace, change: string, rules: readonly string[], say: Say): void {
+  const found = findingsOn(ws, new Set([change, ...rules]));
+  if (!found.ok) return say(`note: cannot list the open review findings: ${found.error.message}`);
+  const lines = startLines(found.value);
+  if (lines.length > 0) say(lines.join("\n"));
 }
 
 /** Whether a change was started before: it has a branch of its own (BR-2530 reminds only at a first start). */
@@ -98,6 +95,7 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
   let slug: string;
   let fresh = false;
   let remind = false;
+  let rules: readonly string[] = [];
   const onMain = mainCorpus(ws);
   if (!onMain.ok) return onMain;
   let existing: { branch: string; worktree: string | undefined } | undefined;
@@ -122,10 +120,12 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     }
     // reason: only a first start reminds of owed findings; resuming, --fix-main and chores do not (BR-2530)
     remind = !opts.fixMain && !existing && !startedBefore(ws, doc.id);
+    rules = doc.rules;
     changeId = doc.id;
     slug = slugify(doc.title);
   } else {
     remind = !opts.fixMain;
+    rules = target.rules ?? [];
     // reason: checked before an id is allocated, so a refused start leaves no number, worktree or claim behind (BR-2376, BR-2002)
     const bad = target.plan ? planProblem(onMain.value, ws.config.main, target.plan) : undefined;
     if (bad) {
@@ -142,7 +142,12 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
 
   const started = startWorkspace(ws, { subject: changeId, branch, path, existing: existing !== undefined, ...(fresh && "title" in target ? { document: target } : {}) }, say);
   // reason: the start goes ahead first; the owed findings are said after it, never instead of it (BR-2530)
-  if (started.ok && remind) remindOwed(ws, say);
+  // reason: a change that settles findings takes them over: each counts as handed to it, so the agenda leaves them out (BR-2530, BR-2583)
+  if (started.ok && opts.settles && opts.settles.length > 0) {
+    const open = new Map(openFindings(ws.db).map((f) => [f.id, f.openedAt]));
+    recordSettles(ws, changeId, opts.settles.map((id) => ({ id, openedAt: open.get(id)! })));
+  }
+  if (started.ok && remind) remindOwed(ws, changeId, rules, say);
   return started;
 }
 

@@ -6,7 +6,8 @@ import type { Release } from "../../knowledge/documents/model.ts";
 import { CRITERION_LABEL, criteriaCountLine } from "../../knowledge/releases/criteria.ts";
 import { effectiveAgentSession } from "../agent-session.ts";
 import type { CoordDb } from "../db.ts";
-import { allCriteria, headLine, landed, releasesInProgress, releaseViews, type CriterionView } from "../overview/overview.ts";
+import { landed } from "../overview/overview.ts";
+import { allCriteria, headLine, releasesInProgress, releaseViews, type CriterionView } from "../../knowledge/releases/current.ts";
 import { mainCorpus } from "../session/session.ts";
 import type { Workspace } from "../workspace.ts";
 
@@ -116,7 +117,7 @@ export function checkGoal(ws: Workspace, input: string, runtime: AgentRuntime, c
   }
   ws.db.db.query("UPDATE goals SET marker = ?, stalls = ? WHERE actor = ?").run(marker, stalls, actor);
   const goalRefs = new Set(all.map((x) => `${x.doc}/${x.c.id}`));
-  const recent = landed(ws, corpus.value).slice(0, DRIFT_WINDOW);
+  const recent = landed(ws, corpus.value, DRIFT_WINDOW);
   const drift = recent.filter((l) => l.advances?.kind !== "criteria" || !l.advances.refs.some((r) => goalRefs.has(r))).length;
   const line = (x: { doc: string; c: CriterionView }) => `- ${x.doc}/${x.c.id} [${CRITERION_LABEL[x.c.state]}] ${x.c.text}${x.c.advancedBy.length > 0 ? `  (advanced by ${x.c.advancedBy.join(", ")})` : ""}`;
   const reason = [

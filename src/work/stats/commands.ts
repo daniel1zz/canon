@@ -12,6 +12,8 @@ import { claimsWithState } from "../claims/claims.ts";
 import { batchStats, renderBatchStats } from "./batches.ts";
 import { designStats, renderDesignStats } from "./design.ts";
 import { followEvents } from "./follow.ts";
+import { reminderStats, renderReminderStats } from "./reminders.ts";
+import { agenda, dueList } from "../reminders/agenda.ts";
 import { readFileSync } from "node:fs";
 import { readRuntime } from "../../kernel/agent.ts";
 import { landingsByModel, modelFromHook, recordModel, renderLandingsByModel } from "./model.ts";
@@ -60,6 +62,10 @@ const stats = defineCommand({
     const mainSha = must(git(ws.primary, "rev-parse", "--verify", `refs/heads/${ws.config.main}^{commit}`)).trim();
     const design = renderDesignStats(designStats(ws.db, ws.primary, must(corpusAtRef(ws, mainSha)), mainSha, since ?? 0, until));
     if (design) say(`\n${design}`);
+    // reason: text-only like the review counts; how the main agent handled its reminders, read off the agenda now (BR-2585, D-151)
+    const a = must(agenda(ws));
+    const reminders = renderReminderStats(reminderStats(ws, since ?? 0, until, dueList(a).map((it) => it.key), a.states));
+    if (reminders) say(`\n${reminders}`);
     const searches = searchStats(ws.db, since ?? 0, until);
     if (searches.searches > 0) say(`\n${renderSearchStats(searches)}`);
     // reason: the shared code line is the last one (BR-2121, issue #70)

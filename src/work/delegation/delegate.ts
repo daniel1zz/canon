@@ -117,14 +117,20 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
   }
   if (unpublished.size) return err("refused", `publish these contract items to ${ws.config.main} first: ${[...unpublished].join(", ")}`);
   const taskHash = taskHashOf(task.value.change.body);
-  const before = delegation(ws.db, subject);
-  // reason: only a delegation that adds a worker is checked; redelegating replaces one (BR-2526, D-136)
-  const cap = !before || before.ended !== null ? measure(ws, main.value) : undefined;
-  if (cap && !cap.ok) return cap;
+  // reason: measured whether or not it adds a worker: whether it adds is decided inside the transaction, where a delegation
+  // ended meanwhile makes it one that adds (BR-2526, #261); the stalls measured here also decide a conflict there (D-151)
+  const cap = measure(ws, main.value);
+  if (!cap.ok) return cap;
+  let added = false;
   const result = ws.db.db.transaction((): Result<Delegation> => {
     const previous = delegation(ws.db, subject);
     const adds = !previous || previous.ended !== null;
-    if (adds && cap) {
+    // reason: another session's live delegation that is not stalled is that session's work; delegating it again would run two workers on one change (BR-2526, D-151, P4)
+    if (previous && previous.ended === null && previous.owner !== ws.actor && !cap.value.stalled.has(subject)) {
+      ws.db.event(ws.actor, "delegation.refuse", subject, { reason: "conflict", worker: previous.worker, owner: previous.owner });
+      return err("conflict", `${subject} is already delegated to ${previous.worker} by ${previous.owner}; it is not stalled. Delegate another change, or leave it to ${previous.owner}`);
+    }
+    if (adds) {
       const no = refusal(ws, cap.value);
       if (no) {
         ws.db.event(ws.actor, "delegation.refuse", subject, no.detail);
@@ -139,12 +145,13 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
     ws.db.db.query("INSERT INTO delegations(subject,worker,owner,revision,epoch,acceptor,manifest,task_hash) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET worker=excluded.worker,owner=excluded.owner,revision=excluded.revision,epoch=excluded.epoch,acceptor=excluded.acceptor,manifest=excluded.manifest,task_hash=excluded.task_hash,ended=NULL")
       .run(subject, worker, d.owner, d.revision, d.epoch, d.acceptor, JSON.stringify(manifest), taskHash);
     if (claim?.holder === ws.actor) ws.db.db.query("DELETE FROM claims WHERE subject = ? AND holder = ?").run(subject, ws.actor);
-    const missing = adds && cap ? unmeasured(cap.value) : [];
+    added = adds;
+    const missing = adds ? unmeasured(cap.value) : [];
     ws.db.event(ws.actor, previous ? "delegation.update" : "delegation.create", subject, { ...d, ...(previous ? { previous } : {}), ...(missing.length ? { unmeasured: missing } : {}) });
     return ok(d);
   }).immediate();
   if (!result.ok) return result;
-  if (cap) for (const line of unmeasuredLines(cap.value)) say(line);
+  if (added) for (const line of unmeasuredLines(cap.value)) say(line);
   for (const line of delegationNotice(ws.db, subject)) say(line);
   say(`contract: ${manifest.map((i) => `${i.id ?? i.path} ${i.hash}`).join(", ")}; task ${taskHash}`);
   const hooks = config.hooks as { after_land?: string | string[] } | undefined;

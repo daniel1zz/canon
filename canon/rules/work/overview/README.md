@@ -1,8 +1,8 @@
 # 整体进度总览（work/overview）
 
-整体进度总览：从当前版本的成功标准往下，把版本、计划、等负责人的事、待办顺序、当前这一批和最近合入排成一屏（D-129）。负责人问进度时，会话直接给出这一份，不用自己从几个命令里拼。
+整体进度总览只给当前状态（D-129，D-151 第四部分）：当前版本和它的成功标准、议程（work/reminders）、正在做和在等的变更，历史只给大纲，细节用 `canon overview --history`。负责人问进度时，会话直接给出这一份，不用自己从几个命令里拼。
 
-不管：每一部分的数字怎么算，由各自的领域负责：规则的执行状态和成功标准的状态（`knowledge/releases`）、计划的进度（`knowledge/plans`）、问题（`work/humans`）、评审意见的分级（`knowledge/review/findings`）、待办顺序（`knowledge/documents`）。这里只管选哪些、按什么顺序摆出来。
+不管：每一部分的数字怎么算，由各自的领域负责：规则的执行状态和成功标准的状态（`knowledge/releases`）、变更的状态（`knowledge/changes`）、议程（`work/reminders`）。这里只管选哪些、按什么顺序摆出来。
 
 ## 术语
 

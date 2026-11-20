@@ -10,6 +10,8 @@ import { land } from "./land.ts";
 import { backgroundRun, landArgs, landInBackground, recordExit, stopLanding } from "./detach.ts";
 import { STALL_LIMIT, unstall } from "./stall.ts";
 import { choreIn, isChore } from "../session/subject.ts";
+import { isWorker } from "../delegation/worker.ts";
+import { afterLandLines } from "../reminders/related.ts";
 
 /** `canon work land`. */
 
@@ -56,6 +58,8 @@ function landingCommand(chore: boolean) { return defineCommand({
     if (out.kind === "landed") {
       for (const line of redMainLandingLines(ws.db)) say(line);
       if (out.finished && !isChore(out.change)) say(LESSON_REMINDER);
+      // reason: the main session hears the agenda where its landing ends; a worker's main session hears it through watch (BR-2584, BR-2528)
+      if (!isWorker(ws.actor)) for (const line of afterLandLines(ws, out)) say(line);
       return;
     }
     if (out.kind === "timeout") {

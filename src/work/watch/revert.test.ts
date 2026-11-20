@@ -3,7 +3,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "nod
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { land } from "../land/land.ts";
-import { dueItems } from "../reminders/due.ts";
+import { dueItems } from "../reminders/agenda.ts";
 import { start } from "../session/session.ts";
 import { project, quiet, sh, startNew, ws } from "../testkit.ts";
 import { redMain } from "./redmain.ts";

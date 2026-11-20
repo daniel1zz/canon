@@ -254,7 +254,7 @@ describe("criterion ids and advances", () => {
 });
 
 describe("releases merged into another", () => {
-  test("BR-2521 BR-2509 BR-2505: rules, plans, features and criteria of releases merged into R-n count as R-n's, through chains; a dropped release with nowhere to go still strands its rules", () => {
+  test("BR-2521 BR-2509 BR-2505 BR-2527: rules, plans, features and criteria of releases merged into R-n count as R-n's, through chains; a dropped release with nowhere to go still strands its rules", () => {
     const root = project();
     write(root, {
       ...DOMAIN,
@@ -271,9 +271,10 @@ describe("releases merged into another", () => {
     expect(status.rules.map((r) => r.id)).toEqual([BR(6), BR(7), BR(8)]);
     expect(canon(root, "release", "ship", R(5)).code).toBe(1);
     const overview = canon(root, "overview").out;
-    expect(overview).toContain(`  并入 ${R(3)} 版本3`);
-    expect(overview).toContain(`  模块 ${F(2)} 模块2`);
-    expect(overview).toContain(`成功标准 ${R(3)}: 负责人试玩 R-3。`);
+    expect(overview).toContain(`并入 2 个版本：${R(2)}, ${R(3)}  成功标准 1 条：`);
+    // reason: a merged release's criterion counts as R-5's and its owner's one is on the agenda (BR-2505, BR-2527)
+    expect(overview).toMatch(/成功标准 1 条：已满足 0  未满足 0  待负责人 1/);
+    expect(overview).toContain(`owner: 1: criterion:${R(3)}/S1`);
     write(root, { [`canon/releases/${R(6)}.md`]: release(6, `status: planned\nfeatures: [${F(2)}]\n`) });
     expect(findings(root).some((f) => f.rule === "release-composition" && f.message.includes(F(2)))).toBe(true);
     write(root, { [`canon/releases/${R(6)}.md`]: release(6, "status: planned\n"), [`canon/releases/${R(3)}.md`]: release(3, "status: dropped\n") });

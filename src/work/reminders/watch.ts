@@ -5,23 +5,31 @@ import { readings } from "../delegation/capacity.ts";
 import { isWorker } from "../delegation/worker.ts";
 import { eventsSince, lastEventId, type EventRow } from "../stats/window.ts";
 import type { Workspace } from "../workspace.ts";
-import { dueItems, renderDue, workerSubjects, age, type DueItem, type Readings } from "./due.ts";
+import { agenda, DELEGATE_SHOWN, dueList, heavyLine, summary, type Agenda, type Readings } from "./agenda.ts";
+import { renderDue, workerSubjects } from "./due.ts";
+import { runningFullRuns, type Alive } from "./heavy.ts";
+import { roomOf } from "./room.ts";
 
 /**
- * `canon work watch` (BR-2528, D-136): meant to run under a host's Monitor tool, where every line it prints reaches the
- * session as a message. So it prints only what is worth handling: the due list once, then the events that concern the
- * caller, items that appear or go, and a `still` line for the items left open.
+ * `canon work watch` (BR-2528, D-151): meant to run under a host's Monitor tool, where every line it prints reaches the
+ * session as a message. So it prints only when something happens or changes: the agenda summary once, then the events
+ * that concern the caller, the agenda's changes, the machine crossing its capacity threshold, and what can start after a
+ * landing. Nothing is repeated on a timer (D-151 amends D-136).
  */
 
 export const TICK_MS = 1000;
-export const RECOMPUTE_MS = 30_000;
+/** How often the agenda is worked out again with no event, to see what changes without one: a stall, a deferral ending (BR-2528). */
+export const RECOMPUTE_MS = 60_000;
 export const MAX_EVENTS_PER_TICK = 20;
-export const MAX_STILL_KEYS = 10;
+/** The most new items said at once (BR-2528). */
+export const MAX_NEW_ITEMS = 10;
 
 /** The event kinds a main session hears about (BR-2528 point 2). */
 const MAIN_KINDS = new Set(["land.ok", "land.refuse", "review.block", "handoff.write", "design.request", "human.ask", "human.answer", "claim.holder-gone", "claim.expired", "delegation.refuse"]);
 /** The event kinds a worker hears about, on its own changes only (BR-2528 point 2, the worker items of BR-2527). */
 const WORKER_KINDS = new Set(["land.ok", "land.refuse", "design.answer", "delegation.update", "claim.handover"]);
+/** The events after which the agenda may differ, so it is worked out again at once (BR-2528 point 4). */
+const CHANGES_STATE = /^(land\.|delegation\.|claim\.(take|release|expired|holder-gone|handover)|drop\.|change\.|review\.|finding\.|reminder\.handled$|test\.full\.|floor\.(pass|fail|flaky)|human\.|design\.|handoff\.|start\.ok$|accept\.)/;
 
 export interface WatchIo {
   readonly out: (line: string) => void;
@@ -69,52 +77,67 @@ function concerns(ws: Workspace, e: EventRow, own: ReadonlySet<string>): boolean
   return true;
 }
 
-/** Runs until `io.stopped()`; an error other than a busy database is said in a `watch stopped` line and returned (BR-2528 point 7). */
-export async function watchDue(ws: Workspace, since: number | undefined, io: WatchIo, read: Readings = readings, remindEveryMs: number = ws.config.remindEveryMs): Promise<Result<void>> {
+/** Every item of an agenda by key, each with the line `+` prints for it (BR-2528 point 4). */
+function itemLines(a: Agenda, now: number): Map<string, string> {
+  const out = new Map<string, string>();
+  for (const c of a.delegate?.changes ?? []) out.set(`ready:${c.id}`, `+ delegate ready:${c.id} - ${c.title}`);
+  for (const it of dueList(a)) out.set(it.key, `+ ${it.group} ${renderDue(it, now)}`);
+  return out;
+}
+
+/** What the heavy line is about, without how long each has run: a change in it is said, a longer run is not (BR-2528). */
+const heavyKey = (a: Agenda): string => `${a.heavy.running.map((r) => `${r.subject ?? "main"}@${r.since}`).sort().join(",")};${a.heavy.waiting}`;
+
+export interface WatchDeps {
+  readonly read?: Readings;
+  readonly alive?: Alive;
+}
+
+/** Runs until `io.stopped()`; an error other than a busy database is said in a `watch stopped` line and returned (BR-2528 point 8). */
+export async function watchDue(ws: Workspace, since: number | undefined, io: WatchIo, deps: WatchDeps = {}): Promise<Result<void>> {
+  const read = deps.read ?? readings;
+  const worker = isWorker(ws.actor);
   let cursor = 0;
   const file = ws.db.db.filename;
   const stop = (why: string, code: "io" | "invalid" | "conflict" | "not_found" | "refused" = "io"): Result<void> => {
     io.out(`watch stopped: ${why}; run canon work watch --since ${cursor} again`);
     return err(code, why);
   };
-  // reason: SQLite keeps reading an unlinked database file, so a deleted coordination database is noticed only by looking (BR-2528 point 7)
+  // reason: SQLite keeps reading an unlinked database file, so a deleted coordination database is noticed only by looking (BR-2528 point 8)
   const gone = () => file !== "" && file !== ":memory:" && !existsSync(file);
-  // When each open item was first seen and last said, by key: `still` counts from the last saying, `capacity` ages from its first sighting.
-  const seen = new Map<string, number>();
-  const said = new Map<string, number>();
-  let items = new Map<string, DueItem>();
   let own = new Set<string>();
-  const recompute = (): Result<DueItem[]> => {
+  let busy = false;
+  const recompute = (now: number): Result<Agenda> => {
     // reason: a claim lapse is an event only once some command judged it, so watching judges the claims each round (BR-2360, BR-2357)
     claimsWithState(ws.db);
-    if (isWorker(ws.actor)) own = new Set(workerSubjects(ws));
-    return dueItems(ws, io.clock(), read);
+    if (worker) own = new Set(workerSubjects(ws));
+    return agenda(ws, { now, read, wasBusy: busy, ...(deps.alive ? { alive: deps.alive } : {}) });
   };
-  /** Prints the new events that concern the caller, at most MAX_EVENTS_PER_TICK of them (BR-2528 point 5). */
-  const pass = (): void => {
+  /** The new events: the lines of those that concern the caller (at most MAX_EVENTS_PER_TICK, BR-2528 point 6), and whether any may change the agenda. */
+  const pass = (): { lines: { line: string; landed?: string }[]; changed: boolean } => {
     // The upper bound is read first, so an event written between the two queries is picked up next round (as BR-2357).
     const until = lastEventId(ws.db);
-    if (until <= cursor) return;
-    const rows = eventsSince(ws.db, { since: cursor, until, kinds: [] }).filter((e) => concerns(ws, e, own));
+    if (until <= cursor) return { lines: [], changed: false };
+    const all = eventsSince(ws.db, { since: cursor, until, kinds: [] });
+    const rows = all.filter((e) => concerns(ws, e, own));
     const shown = rows.slice(0, MAX_EVENTS_PER_TICK);
-    for (const e of shown) io.out(eventLine(e));
-    if (rows.length > shown.length) io.out(`… ${rows.length - shown.length} more events: canon events --since ${shown.at(-1)!.id}`);
+    const lines: { line: string; landed?: string }[] = shown.map((e) => ({ line: eventLine(e), ...(e.kind === "land.ok" && e.subject ? { landed: e.subject } : {}) }));
+    if (rows.length > shown.length) lines.push({ line: `… ${rows.length - shown.length} more events: canon events --since ${shown.at(-1)!.id}` });
     cursor = until;
+    return { lines, changed: all.some((e) => CHANGES_STATE.test(e.kind)) };
   };
+  let prev: Agenda;
   try {
     cursor = since ?? lastEventId(ws.db);
     io.out(`watch from #${cursor}`);
-    if (isWorker(ws.actor)) own = new Set(workerSubjects(ws));
-    // reason: after a re-arm the missed events come first, then the due list as it is now (BR-2528 point 6)
-    if (since !== undefined) pass();
-    const first = recompute();
+    if (worker) own = new Set(workerSubjects(ws));
+    // reason: after a re-arm the missed events come first, then the agenda as it is now (BR-2528 point 7)
+    if (since !== undefined) for (const l of pass().lines) io.out(l.line);
+    const first = recompute(io.clock());
     if (!first.ok) return stop(first.error.message, first.error.code);
-    for (const it of first.value) {
-      seen.set(it.key, io.clock());
-      said.set(it.key, io.clock());
-      io.out(`due ${renderDue(it, io.clock(), io.clock())}`);
-    }
-    items = new Map(first.value.map((it) => [it.key, it]));
+    prev = first.value;
+    for (const line of summary(prev, io.clock())) io.out(line);
+    busy = prev.delegate !== null && !prev.delegate.room.room;
   } catch (e) {
     return stop(e instanceof Error ? e.message : String(e));
   }
@@ -122,33 +145,44 @@ export async function watchDue(ws: Workspace, since: number | undefined, io: Wat
   while (!io.stopped()) {
     try {
       if (gone()) return stop(`the coordination database ${file} is gone`);
-      pass();
       const now = io.clock();
-      if (now - recomputedAt >= RECOMPUTE_MS) {
+      const events = pass();
+      if (events.changed || now - recomputedAt >= RECOMPUTE_MS) {
         recomputedAt = now;
-        const next = recompute();
+        const next = recompute(now);
         if (!next.ok) return stop(next.error.message, next.error.code);
-        const fresh = new Map(next.value.map((it) => [it.key, it]));
-        for (const key of items.keys()) {
-          if (fresh.has(key)) continue;
-          io.out(`done ${key}`);
-          seen.delete(key);
-          said.delete(key);
+        const a = next.value;
+        // reason: what can start because of a landing is said right after its land.ok line, whoever landed (BR-2528 point 3)
+        const was = new Set(prev.startable);
+        const fresh = a.startable.filter((id) => !was.has(id));
+        const landed = events.lines.filter((l) => l.landed !== undefined);
+        for (const l of events.lines) {
+          io.out(l.line);
+          if (!worker && fresh.length > 0 && l === landed.at(-1)) io.out(`${landed.map((x) => x.landed).join(", ")} landed; ${fresh.join(", ")} can start now`);
         }
-        for (const [key, it] of fresh) {
-          if (items.has(key)) continue;
-          seen.set(key, now);
-          said.set(key, now);
-          io.out(`due ${renderDue(it, now, now)}`);
-        }
-        items = fresh;
+        const before = itemLines(prev, now);
+        const after = itemLines(a, now);
+        for (const key of before.keys()) if (!after.has(key)) io.out(`- ${key}`);
+        const added = [...after].filter(([key]) => !before.has(key));
+        for (const [, line] of added.slice(0, MAX_NEW_ITEMS)) io.out(line);
+        if (added.length > MAX_NEW_ITEMS) io.out(`… +${added.length - MAX_NEW_ITEMS} more: canon work due`);
+        if (heavyKey(a) !== heavyKey(prev)) io.out(heavyLine(a.heavy, now) ?? "heavy: none");
+        prev = a;
+      } else {
+        for (const l of events.lines) io.out(l.line);
       }
-      const owed = [...items.values()].filter((it) => now - (said.get(it.key) ?? now) >= remindEveryMs);
-      if (owed.length > 0) {
-        const listed = owed.slice(0, MAX_STILL_KEYS).map((it) => `${it.key} ${age(now - (it.since === "now" ? (seen.get(it.key) ?? now) : Date.parse(it.since)))}`);
-        const more = owed.length > MAX_STILL_KEYS ? ` … and ${owed.length - MAX_STILL_KEYS} more: canon work due` : "";
-        io.out(`still ${listed.join(", ")}${more}`);
-        for (const it of owed) said.set(it.key, now);
+      // reason: the machine is read every second and said only when it crosses the threshold, with hysteresis (BR-2528 point 5)
+      if (!worker && prev.delegate) {
+        const heavy = runningFullRuns(ws, deps.alive);
+        const room = roomOf(ws, read(), prev.delegate.room.held, heavy.running.length, busy);
+        if (busy && room.room) {
+          busy = false;
+          const ready = prev.delegate.changes.slice(0, DELEGATE_SHOWN).map((c) => c.id);
+          io.out(`capacity room: room for ${room.fits} more${ready.length > 0 ? `; delegatable: ${ready.join(", ")}` : ""}`);
+        } else if (!busy && !room.room) {
+          busy = true;
+          io.out(`capacity busy: ${room.reasons.join("; ")}; delegate no new worker`);
+        }
       }
     } catch (e) {
       // reason: a landing can hold the write lock past the busy timeout; watching skips the round instead of ending (BR-2357, BR-2528)

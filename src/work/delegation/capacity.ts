@@ -15,6 +15,8 @@ export interface Capacity {
   readonly machine: Machine | undefined;
   /** Delegations in force that hold no slot: their change is closed on main, or they are stalled (BR-2522). */
   readonly free: ReadonlySet<string>;
+  /** The changes whose delegation is stalled (BR-2522): delegating one of them again is no conflict (BR-2526). */
+  readonly stalled: ReadonlySet<string>;
 }
 
 /**
@@ -39,7 +41,7 @@ export function measure(ws: Workspace, main: Corpus, read: () => { memory: Memor
   // reason: closed and stalled are the change state's to say, a branch-only change dropped since included (BR-2526, BR-2571)
   const all = changeStates(ws, { corpus: main, backlog: [], delegatable: false });
   if (!all.ok) return all;
-  return ok({ ...read(), free: new Set(all.value.states.filter((s) => isClosed(s) || s.stalled !== undefined).map((s) => s.id)) });
+  return ok({ ...read(), free: new Set(all.value.states.filter((s) => isClosed(s) || s.stalled !== undefined).map((s) => s.id)), stalled: new Set(all.value.states.filter((s) => s.stalled !== undefined).map((s) => s.id)) });
 }
 
 /** The signals that could not be read, in the order the rule names them (BR-2526). */
