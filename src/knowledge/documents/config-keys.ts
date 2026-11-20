@@ -4,8 +4,56 @@ import { err, ok, type Result } from "../../kernel/result.ts";
 import { configKey, type JsonSchema, TUNABLE } from "../../invocation/key.ts";
 import { templateFor } from "./templates.ts";
 import { BUILTIN_TYPES, RESERVED_DIRS, RESERVED_FIELDS, type DocType } from "./types.ts";
+import { parseItemDeclarations } from "./items/declaration.ts";
 
-const TYPE_KEYS = new Set(["prefix", "dir", "statuses", "default", "fields", "sections"]);
+const TYPE_KEYS = new Set(["prefix", "dir", "statuses", "default", "fields", "sections", "items"]);
+
+/**
+ * A slot definition (BR-2546): the string `text`, `id` or `ids`, or a mapping with exactly one of the type keys and
+ * an optional `required`. The schema cannot say that `enum` needs values or that `pattern` must compile; readTypes does.
+ */
+const SLOT_SCHEMA: JsonSchema = {
+  anyOf: [
+    { type: "string", enum: ["text", "id", "ids"] },
+    {
+      type: "object",
+      additionalProperties: false,
+      properties: {
+        text: { const: true },
+        id: { const: true },
+        ids: { const: true },
+        enum: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+        pattern: { type: "string", minLength: 1 },
+        required: { type: "boolean" },
+      },
+      anyOf: [{ required: ["text"] }, { required: ["id"] }, { required: ["ids"] }, { required: ["enum"] }, { required: ["pattern"] }],
+    },
+  ],
+};
+
+/** `format` and `slots`, the core of an item declaration and the whole of a children declaration (BR-2546). */
+const TEMPLATE_SCHEMA: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["format", "slots"],
+  properties: {
+    format: { type: "string" },
+    slots: { type: "object", additionalProperties: SLOT_SCHEMA },
+  },
+};
+
+/** One section's declaration (BR-2546); `items: null` means none, like an absent key. */
+const ITEM_DECLARATION_SCHEMA: JsonSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["format", "slots"],
+  properties: {
+    format: { type: "string" },
+    slots: { type: "object", additionalProperties: SLOT_SCHEMA },
+    children: TEMPLATE_SCHEMA,
+    on_mismatch: { enum: ["note", "finding"] },
+  },
+};
 
 /**
  * What readTypes accepts, as far as JSON Schema can say it; prefix and dir uniqueness, which keys a built-in type may
@@ -24,6 +72,7 @@ const TYPES_SCHEMA: JsonSchema = {
       default: { type: "string" },
       fields: { type: ["array", "null"], items: { type: "string", pattern: "^[a-z_][a-z0-9_]*$", not: { enum: [...RESERVED_FIELDS] } } },
       sections: { type: "array", items: { type: "string", pattern: "^[^#\\n]*\\S[^#\\n]*$" } },
+      items: { type: ["object", "null"], additionalProperties: ITEM_DECLARATION_SCHEMA },
     },
   },
 };
@@ -89,12 +138,24 @@ function readTypes(v: unknown): Result<DocType[]> {
     if (sectionsRaw !== undefined && (!Array.isArray(sectionsRaw) || sectionsRaw.some((x) => typeof x !== "string" || x.trim() === "" || /[#\n]/.test(x)))) {
       return err("invalid", `\`${at}.sections\` must be a list of section titles (without \`##\`)`);
     }
+    const items = parseItemDeclarations(`types.${name}.items`, decl["items"]);
+    if (!items.ok) return items;
     const builtin = types.find((t) => t.builtin && t.name === name);
     if (builtin) {
       const reshaped = ["prefix", "dir", "statuses", "default"].find((k) => k in decl);
-      if (reshaped) return err("invalid", `\`${at}.${reshaped}\`: built-in type ${name} can only declare \`fields\` and \`sections\``);
+      if (reshaped) return err("invalid", `\`${at}.${reshaped}\`: built-in type ${name} can only declare \`fields\`, \`sections\` and \`items\``);
       if (name === "rule" && sectionsRaw !== undefined) return err("invalid", `\`${at}.sections\`: a rule's shape is fixed (\`## 规则\` and \`## 例子\`)`);
-      types[types.indexOf(builtin)] = { ...builtin, fields: fields as string[], ...(sectionsRaw !== undefined ? { sections: sectionsRaw as string[] } : {}) };
+      // reason: a built-in declaration cannot be changed or deleted, only added to for sections it leaves undeclared (BR-2546, D-144)
+      const redeclared = Object.keys(items.value).find((section) => builtin.items[section] !== undefined);
+      if (redeclared !== undefined) {
+        return err("invalid", `\`${at}.items.${redeclared}\`: the built-in ${name} type already declares its \`${redeclared}\` section (BR-2551), and a project may only declare sections it leaves undeclared (BR-2546)`);
+      }
+      types[types.indexOf(builtin)] = {
+        ...builtin,
+        fields: fields as string[],
+        ...(sectionsRaw !== undefined ? { sections: sectionsRaw as string[] } : {}),
+        items: { ...builtin.items, ...items.value },
+      };
       continue;
     }
     const prefix = decl["prefix"];
@@ -118,7 +179,7 @@ function readTypes(v: unknown): Result<DocType[]> {
     }
     const list = statuses as string[] | undefined;
     if (dflt !== undefined && (list === undefined || typeof dflt !== "string" || !list.includes(dflt))) return err("invalid", `\`${at}.default\` must be one of \`${at}.statuses\``);
-    types.push({ name, prefix, dir, statuses: list, defaultStatus: list ? ((dflt as string | undefined) ?? list[0]) : undefined, fields: fields as string[], sections: (sectionsRaw as string[] | undefined) ?? [], builtin: false });
+    types.push({ name, prefix, dir, statuses: list, defaultStatus: list ? ((dflt as string | undefined) ?? list[0]) : undefined, fields: fields as string[], sections: (sectionsRaw as string[] | undefined) ?? [], items: items.value, builtin: false });
   }
   return ok(types);
 }

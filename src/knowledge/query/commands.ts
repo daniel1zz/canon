@@ -7,18 +7,25 @@ import { relatedSections } from "./pick.ts";
 import { git } from "../../kernel/git.ts";
 import { linksOf } from "../links/start.ts";
 import { referenceSection } from "../links/links.ts";
-import { amendedBy, contextFor, findDoc, isIdQuery, plannedMark, rawText, releaseMark, renderContext, renderSearch, search } from "./query.ts";
+import { amendedBy, contextFor, findDoc, frontMatterText, isIdQuery, plannedMark, rawText, releaseMark, renderContext, renderSearch, search } from "./query.ts";
+import { typeNameOf } from "../documents/model.ts";
+import { itemsJson } from "../documents/items/report.ts";
 
 /** `canon show`, `search`, `context`: reading the corpus. */
 
 const show = defineCommand({
   meta: { description: "Print a document (rule, decision, change or note) by id" },
-  args: { id: { type: "positional", required: true } },
+  args: { id: { type: "positional", required: true }, json: { type: "boolean", description: "The document and the items its declarations read, as JSON (BR-2550)" } },
   run({ args }) {
     const ws = workspace();
     const { corpus } = corpusOf(ws);
     const doc = findDoc(corpus, args.id);
     if (!doc) fail({ code: "not_found", message: `${args.id} does not exist` });
+    if (args.json) {
+      // reason: `--json` is a machine shape: the raw front matter and body stay, so a reader sees the file as written (BR-2550)
+      json({ id: doc.id, type: typeNameOf(doc), path: doc.path, front: frontMatterText(ws.root, doc), body: doc.body, items: itemsJson(doc, corpus.types) });
+      return;
+    }
     // reason: a planned rule is marked so it is not read as implemented (BR-2238, BR-2213)
     process.stdout.write(`${doc.path}${plannedMark(doc) ? `  ${plannedMark(doc).trim()}` : ""}${releaseMark(doc) ? `  ${releaseMark(doc).trim()}` : ""}\n\n${rawText(ws.root, doc)}`);
     for (const d of amendedBy(corpus, doc.id)) say(`partly amended by ${d.id} ${d.title} (${d.path})`); // BR-2140

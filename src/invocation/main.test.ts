@@ -209,7 +209,10 @@ describe("undeclared arguments", () => {
     const extra = canon(root, "search", "a", "b");
     expect(extra.code).toBe(2);
     expect(extra.err).toContain('"b"');
-    expect(canon(root, "show", ["C", 1].join("-"), "--json").code).toBe(2);
+    const showTypo = canon(root, "show", ["C", 1].join("-"), "--jsno");
+    expect(showTypo.code).toBe(2);
+    expect(showTypo.err).toContain("--jsno");
+    expect(showTypo.err).toContain("--json");
     expect(canon(root, "stats", "--json=yes").code).toBe(2);
     expect(canon(root, "stats", "--json=true").code).toBe(0);
     expect(canon(root, "work", "land", "--dry-run").code).toBe(2);

@@ -261,3 +261,10 @@ export const willAmendMark = (d: Doc): string => (d.kind === "rule" && d.willAme
 export function rawText(root: string, doc: Doc): string {
   return readFileSync(join(root, doc.path), "utf8");
 }
+
+/** The front matter text as written between the fences, without them (BR-2550); a read document always has it. */
+export function frontMatterText(root: string, doc: Doc): string {
+  const text = rawText(root, doc);
+  const end = text.indexOf("\n---\n", 3);
+  return end < 0 ? "" : text.slice(4, end + 1);
+}

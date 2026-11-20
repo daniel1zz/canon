@@ -3,6 +3,9 @@
  * declare more in `canon/config.yaml` under `types:`. Every reader of the corpus (ids, check, search,
  * context, allocation) works from this list, so a declared type behaves like a built-in one.
  */
+import type { ItemDeclaration } from "./items/model.ts";
+import { BUILTIN_ITEM_DECLARATIONS } from "./items/builtin.ts";
+
 export interface DocType {
   /** Type name used in config, templates (`canon/templates/<name>.md`) and `canon doc --type`. */
   readonly name: string;
@@ -20,18 +23,20 @@ export interface DocType {
    * allowed. Rules keep their own fixed shape (BR-2033, BR-2034), so the rule type declares none here.
    */
   readonly sections: readonly string[];
+  /** Item declarations of sections (BR-2546): built-in ones from canon's code, project ones from `types.<type>.items`. */
+  readonly items: Readonly<Record<string, ItemDeclaration>>;
   readonly builtin: boolean;
 }
 
 export const BUILTIN_TYPES: readonly DocType[] = [
-  { name: "rule", prefix: "BR", dir: "rules", statuses: ["active", "retired", "planned"], defaultStatus: "active", fields: [], sections: [], builtin: true },
-  { name: "decision", prefix: "D", dir: "decisions", statuses: ["proposed", "accepted", "superseded"], defaultStatus: "proposed", fields: [], sections: ["背景", "方案", "决定", "后果"], builtin: true },
-  { name: "change", prefix: "C", dir: "changes", statuses: ["open", "done", "dropped"], defaultStatus: "open", fields: [], sections: ["为什么", "要改什么"], builtin: true },
-  { name: "note", prefix: "N", dir: "notes", statuses: undefined, defaultStatus: undefined, fields: [], sections: [], builtin: true },
+  { name: "rule", prefix: "BR", dir: "rules", statuses: ["active", "retired", "planned"], defaultStatus: "active", fields: [], sections: [], items: {}, builtin: true },
+  { name: "decision", prefix: "D", dir: "decisions", statuses: ["proposed", "accepted", "superseded"], defaultStatus: "proposed", fields: [], sections: ["背景", "方案", "决定", "后果"], items: {}, builtin: true },
+  { name: "change", prefix: "C", dir: "changes", statuses: ["open", "done", "dropped"], defaultStatus: "open", fields: [], sections: ["为什么", "要改什么"], items: BUILTIN_ITEM_DECLARATIONS["change"] ?? {}, builtin: true },
+  { name: "note", prefix: "N", dir: "notes", statuses: undefined, defaultStatus: undefined, fields: [], sections: [], items: {}, builtin: true },
   // reason: built in, not declared, because only canon's code can write `shipped_at`, run `canon release` and freeze a shipped release (D-61)
-  { name: "release", prefix: "R", dir: "releases", statuses: ["planned", "active", "shipped", "dropped"], defaultStatus: "planned", fields: [], sections: ["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"], builtin: true },
+  { name: "release", prefix: "R", dir: "releases", statuses: ["planned", "active", "shipped", "dropped"], defaultStatus: "planned", fields: [], sections: ["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"], items: {}, builtin: true },
   // reason: built in beside release, because a release lists its features and the release checks read both (D-130)
-  { name: "feature", prefix: "F", dir: "features", statuses: ["active", "dropped"], defaultStatus: "active", fields: [], sections: ["目标", "范围", "不做", "成功标准"], builtin: true },
+  { name: "feature", prefix: "F", dir: "features", statuses: ["active", "dropped"], defaultStatus: "active", fields: [], sections: ["目标", "范围", "不做", "成功标准"], items: {}, builtin: true },
 ];
 
 /** Front-matter keys canon itself owns; a declared field may not reuse one. */

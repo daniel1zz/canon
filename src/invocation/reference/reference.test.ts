@@ -183,6 +183,15 @@ describe("the config schema", () => {
     { config: { types: { spec: { dir: "specs" } } }, ok: false, wider: true },
     { config: { types: { rule: { prefix: "R" } } }, ok: false, wider: true },
     { config: { types: { spec: { prefix: "SP", dir: "specs", statuses: ["a"], default: "b" } } }, ok: false, wider: true },
+    // BR-2546: item declarations of a section, for a declared type and for a section of a built-in type it leaves undeclared
+    { config: { types: { spec: { prefix: "SP", dir: "specs", items: { 教训: { format: "{text}(?: → {dest})", slots: { text: "text", dest: { pattern: "\\S.*", required: true } } } } } } }, ok: true },
+    { config: { types: { spec: { prefix: "SP", dir: "specs", items: null } } }, ok: true },
+    { config: { types: { change: { items: { 陷阱和假设: { format: "{text}", slots: { text: "text" } } } } } }, ok: true },
+    { config: { types: { spec: { prefix: "SP", dir: "specs", items: { 选项: { format: "(?:[{verdict}] ){text}", slots: { verdict: { enum: ["采用", "否决"] }, text: "text" }, on_mismatch: "warn" } } } } }, ok: false },
+    { config: { types: { spec: { prefix: "SP", dir: "specs", items: { 选项: { format: "(?:[{verdict}] ){text}", slots: { verdict: { enum: [] }, text: "text" } } } } } }, ok: false },
+    { config: { types: { spec: { prefix: "SP", dir: "specs", items: { 选项: { format: "{text}", slots: { text: "colour" } } } } } }, ok: false },
+    { config: { types: { spec: { prefix: "SP", dir: "specs", items: { 选项: { format: "{text}(?: → {dest})", slots: { text: "text", dest: "text" } } } } } }, ok: false, wider: true },
+    { config: { types: { change: { items: { 教训: { format: "{text}", slots: { text: "text" } } } } } }, ok: false, wider: true },
   ];
 
   test("BR-2175: the schema and canon's own reading agree; where they differ the schema is the wider one", () => {

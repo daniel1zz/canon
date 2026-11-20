@@ -20,6 +20,7 @@ import { releaseFindings } from "../releases/check.ts";
 import { planFindings } from "../plans/check.ts";
 import { staleLinks } from "../links/links.ts";
 import { EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, RULE_SECTION, section } from "../documents/templates.ts";
+import { itemFindings } from "../documents/items/report.ts";
 
 /**
  * `canon check`: the corpus-integrity half of the landing boundary (design §3). It checks outcomes only:
@@ -63,6 +64,7 @@ export type CheckRule =
   | "doc-missing-section" // a document lacks a section its type requires, or the section is empty (BR-2091)
   | "path-missing" // a current document names, in backticks, a repository path that was moved or deleted
   | "list-mismatch" // a rule's `lists` front matter disagrees with its text or with the code (BR-2180)
+  | "item-mismatch" // an item of a declared section that the declaration cannot read, or that lacks a required slot (BR-2549)
   | "link-stale" // a rule's or decision's `links` names a document its prose does not name (BR-2426)
   | "release-frozen" // a shipped release's 目标, 范围, 不做 or its set of tagged rules differs from what it was at `shipped_at` (D-61)
   | "release-composition" // a release not shipped or dropped lists a dropped feature or one another such release lists (BR-2512, D-130)
@@ -256,6 +258,8 @@ export function check(input: CheckInput): Finding[] {
   findings.push(...releaseFindings(input.root, input.corpus));
   findings.push(...planFindings(input.corpus));
   for (const f of listFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "list-mismatch", message: f.message });
+  // reason: a declaration that says `finding` reports every document, not only this work's: it must hold for all (BR-2549)
+  for (const f of itemFindings(input.corpus)) findings.push({ path: f.path, rule: "item-mismatch", message: f.message });
   findings.push(...architectureFindings(input));
   // reason: `architecture.since` is this work's base commit, which is also what "added or changed by this work" means here (BR-2431, BR-2344)
   for (const f of businessFindings(input.root, input.corpus, input.architecture?.since)) findings.push({ path: f.path, rule: "rule-business-unmapped", message: f.message });

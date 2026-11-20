@@ -17,6 +17,7 @@ import { testFilesFor } from "./tests.ts";
 import { restatementLine } from "./restatement/restatement.ts";
 import { workBase, workRestatements } from "./restatement/work.ts";
 import { deferralNotes, unnamedCommitmentNotes } from "./commitments.ts";
+import { itemNotes } from "../documents/items/report.ts";
 
 /** `canon check`: corpus integrity. */
 
@@ -51,6 +52,11 @@ const checkCmd = defineCommand({
     if (work) for (const n of deferralNotes(ws.root, must(workBase(ws.root, ws.config.main)), work.changed)) console.error(n);
     // reason: an item naming no rule may commit to no behaviour at all, so it is said and never fails the check (BR-2471, D-112)
     if (work) for (const n of unnamedCommitmentNotes(ws.root, read.corpus, must(workBase(ws.root, ws.config.main)), work.changed)) console.error(n);
+    // reason: an item this work wrote that its declaration cannot read is said, never refused: a later change migrates the
+    // old documents, so listing every unmigrated one now would only be noise (BR-2549, D-144)
+    if (ws.root !== ws.primary) {
+      for (const n of must(itemNotes(ws.root, must(workBase(ws.root, ws.config.main)), read.corpus))) console.error(n);
+    }
     // reason: a missing design basis is said, never refused: canon cannot tell from paths whether the choice is new (BR-2491, D-124)
     const basis = designBasisNote(ws.root, read.corpus, input.architecture?.since, ws.config.designSignals);
     if (basis) console.error(basis);
