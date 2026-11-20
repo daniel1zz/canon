@@ -46,6 +46,7 @@ A PRD describes the happy path; the gaps are the work. For each requirement answ
 | What happens on the boundary value? | 30 days inclusive; the 31st day is refused |
 | What happens on repeat? | the second run prints `no change` and writes nothing |
 | What happens on concurrent use? | the second session gets exit 5 and the holder's change id |
+| What happens when it is stopped, cancelled or times out? | every process it started, children included, is stopped before it reports stopped; one that survives is named with how to kill it |
 | Who is refused, and what do they see? | a session without the claim: exit 5, `held by C-n` |
 | What triggers it, observably? | `canon work land` run by a session; for an interactive product, which input (key, click, gamepad button) |
 
