@@ -10,7 +10,6 @@ import { queryCommands } from "../knowledge/query/commands.ts";
 import { linksCommands } from "../knowledge/links/commands.ts";
 import { reviewCommands } from "../knowledge/review/commands.ts";
 import { findingCommands } from "../knowledge/review/findings/commands.ts";
-import { planCommands } from "../knowledge/plans/commands.ts";
 import { releaseCommands } from "../knowledge/releases/commands.ts";
 import { qualityCommands } from "../knowledge/quality/commands.ts";
 import { workCommands } from "../work/commands.ts";
@@ -52,7 +51,6 @@ export const main = defineCommand({
     linksCommands,
     releaseCommands,
     qualityCommands,
-    planCommands,
     reviewCommands,
     findingCommands,
     executionCommands,

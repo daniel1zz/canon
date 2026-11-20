@@ -106,7 +106,7 @@ export const dependencyEdges = (changes: readonly Change[]): Map<string, readonl
 
 /**
  * The links checks of `canon check` (BR-2561, BR-2565): a change names a release or a feature, not both; `done_by` is on
- * a dropped change and names another; a named feature exists (a release is checked with the plans, BR-2386); and no
+ * a dropped change and names another; a named feature exists (a release is checked with the releases, BR-2561); and no
  * change is on a cycle of `depends_on` in this tree.
  */
 export function linkFindings(corpus: Corpus): Finding[] {

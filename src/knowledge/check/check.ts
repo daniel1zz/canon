@@ -18,7 +18,6 @@ import { businessFindings } from "../domains/business.ts";
 import { domainDecisionFindings } from "../domains/decision.ts";
 import { releaseFindings } from "../releases/check.ts";
 import { qualityFindings } from "../quality/check.ts";
-import { planFindings } from "../plans/check.ts";
 import { linkFindings } from "../changes/deps.ts";
 import { staleLinks } from "../links/links.ts";
 import { EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, RULE_SECTION, section } from "../documents/templates.ts";
@@ -70,7 +69,7 @@ export type CheckRule =
   | "link-stale" // a rule's or decision's `links` names a document its prose does not name (BR-2426)
   | "release-frozen" // a shipped release's 目标, 范围, 不做 or its set of tagged rules differs from what it was at `shipped_at` (D-61)
   | "release-composition" // a release not shipped or dropped lists a dropped feature or one another such release lists (BR-2512, D-130)
-  | "release-dropped" // a rule or open plan still names a dropped release or feature (BR-2512, D-130)
+  | "release-dropped" // a rule still names a dropped release or feature (BR-2512, D-130)
   | "quality-aspect" // an aspect the owner set aside (不适用, 推迟) still has quality standards in force (BR-2555, D-146)
   | "depends-cycle" // changes whose `depends_on` lead back to themselves in this tree (BR-2565, D-149)
   | ArchitectureRule // the architecture overview and the domains and decisions it must follow (D-65)
@@ -261,7 +260,6 @@ export function check(input: CheckInput): Finding[] {
   for (const f of pathFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "path-missing", message: f.message });
   findings.push(...releaseFindings(input.root, input.corpus));
   findings.push(...qualityFindings(input.root, input.corpus));
-  findings.push(...planFindings(input.corpus));
   findings.push(...linkFindings(input.corpus));
   for (const f of listFindings(input.root, input.corpus)) findings.push({ path: f.path, rule: "list-mismatch", message: f.message });
   // reason: a declaration that says `finding` reports every document, not only this work's: it must hold for all (BR-2549)

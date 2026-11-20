@@ -46,7 +46,7 @@ const metaIn = (dir: string, id: string): Record<string, unknown> => {
 const newId = (out: string) => out.match(/canon\/changes\/(C-\d+)/)?.[1] ?? out.match(/(C-\d+) →/)![1]!;
 
 describe("a change's links in canon check", () => {
-  test("BR-2561 BR-2386: release or feature alone, issues and depends_on of the right shape, done_by on a dropped change: no finding, a release on a change without a plan included", () => {
+  test("BR-2561: release or feature alone, issues and depends_on of the right shape, done_by on a dropped change: no finding", () => {
     const root = repo({
       "releases/R-1.md": release(1, "[F-3]"),
       "features/F-3.md": feature(3),
@@ -84,12 +84,14 @@ describe("a change's links in canon check", () => {
     }
   });
 
-  test("BR-2561: a declared type may not use a link key as a field", () => {
-    const root = project();
-    writeFileSync(join(root, "canon/config.yaml"), "floor: test ! -e FAIL\ntests: []\nreview: none\ntypes:\n  spec:\n    prefix: SP\n    dir: specs\n    fields: [depends_on]\n");
-    const r = cli(root, "check");
-    expect(r.code).not.toBe(0);
-    expect(r.err).toContain("depends_on");
+  test("BR-2561 BR-2594: a declared type may not use a link key, nor the old plan keys, as a field", () => {
+    for (const key of ["depends_on", "steps"]) {
+      const root = project();
+      writeFileSync(join(root, "canon/config.yaml"), `floor: test ! -e FAIL\ntests: []\nreview: none\ntypes:\n  spec:\n    prefix: SP\n    dir: specs\n    fields: [${key}]\n`);
+      const r = cli(root, "check");
+      expect([key, r.code === 0]).toEqual([key, false]);
+      expect(r.err).toContain(key);
+    }
   });
 });
 

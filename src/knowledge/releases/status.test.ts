@@ -216,7 +216,7 @@ describe("progress: rules and criteria decide done, linked changes are workload"
     expect(canon(project(), "feature", "status").out.trim()).toBe("(no features)");
   });
 
-  test("BR-2386 BR-2561: release on a change names an existing release, with or without a plan; a bad id is file-invalid", () => {
+  test("BR-2561 BR-2594: release on a change names an existing release, an old plan table on it changes nothing; a bad id is file-invalid", () => {
     const root = fixture();
     write(root, {
       [`canon/changes/${C(5)}.md`]: changeText(5, "open", `release: ${R(2)}\n`, PLAN4),
@@ -227,19 +227,18 @@ describe("progress: rules and criteria decide done, linked changes are workload"
     const out = canon(root, "check").out;
     expect(out).not.toContain(`${C(5)}.md`);
     expect(out).toMatch(new RegExp(`ref-dangling\\s+canon/changes/${C(6)}\\.md: ${C(6)} \`release\` names ${R(9)}`));
-    // a change without a plan may name its own release (D-148)
     expect(out).not.toContain(`${C(10)}.md`);
     expect(out).toMatch(new RegExp(`file-invalid\\s+canon/changes/${C(11)}\\.md: .*must be one release id`));
   });
 
-  test("BR-2386: shipping freezes no plan: a plan retagged or newly tagged after shipping is no finding", () => {
+  test("BR-2561: shipping freezes no change's release: a change retagged or newly tagged after shipping is no finding", () => {
     const root = project();
     write(root, {
       [`canon/releases/${R(1)}.md`]: releaseFile(1, "active"),
       [`canon/releases/${R(2)}.md`]: releaseFile(2, "active"),
-      [`canon/changes/${C(1)}.md`]: changeText(1, "open", `release: ${R(1)}\n`, PLAN4),
-      [`canon/changes/${C(2)}.md`]: changeText(2, "open", `release: ${R(1)}\n`, PLAN4),
-      [`canon/changes/${C(3)}.md`]: changeText(3, "open", "", PLAN4),
+      [`canon/changes/${C(1)}.md`]: changeText(1, "open", `release: ${R(1)}\n`),
+      [`canon/changes/${C(2)}.md`]: changeText(2, "open", `release: ${R(1)}\n`),
+      [`canon/changes/${C(3)}.md`]: changeText(3, "open", ""),
     });
     commitAll(root, "before shipping");
     const at = sh(root, "rev-parse", "HEAD").trim();

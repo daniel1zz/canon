@@ -31,7 +31,6 @@ import { attemptIn, describeAttempt, goneLanders, openAttempts } from "../land/q
 import { openWorkspace, type Workspace } from "../workspace.ts";
 import { firstLine, handoffs, HANDOFF_REASONS, reasonText, setHandoffReason } from "./handoffs.ts";
 import { reasonArg, whyOn } from "./reason.ts";
-import { listedChanges } from "./inflight.ts";
 import { overlapsOf } from "./overlap.ts";
 import { clean, LESSON_REMINDER, mainCorpus, start, startChore, stop } from "./session.ts";
 import { CLEAN_DONE, cleanAfterLanding } from "./clean-after-land.ts";
@@ -41,7 +40,6 @@ import { ensureWatcher, untestedNotice } from "../watch/watch.ts";
 import { startTrailingReview, unreviewedNotice } from "../../knowledge/review/code-review-batch.ts";
 import { failedReviewNotice } from "../../knowledge/review/landed-queue.ts";
 import { unpushedNotice } from "../remote/remote.ts";
-import { briefLine, othersDoing, planStatuses } from "../../knowledge/plans/status.ts";
 import { briefSummary, overview } from "../overview/overview.ts";
 import { LINK_ARGS, newLinks } from "../../knowledge/changes/commands.ts";
 
@@ -53,8 +51,6 @@ const startCmd = defineCommand({
     change: { type: "positional", required: false },
     title: { type: "string" },
     rules: { type: "string", description: "Rule ids the new change touches" },
-    plan: { type: "string", description: "With --title and --step: the change holding the plan this change does steps of (BR-2376)" },
-    step: { type: "string", description: "With --plan: the plan's step names this change does, comma separated (BR-2376)" },
     "fix-main": { type: "boolean", description: "Open the one change that fixes main's failing background floor (floor_timing: after, BR-2221)" },
     settles: { type: "string", description: "Open review finding numbers this change settles, comma separated (BR-2530)" },
     ...LINK_ARGS,
@@ -65,23 +61,16 @@ const startCmd = defineCommand({
     const fixMain = Boolean(args["fix-main"]);
     if (fixMain && (args.change || args.title || args.rules)) fail({ code: "invalid", message: "--fix-main opens its own change; give no change id, --title or --rules with it" });
     if (!fixMain && !args.change && !args.title) fail({ code: "invalid", message: "give a change id, --title for a new change, or --fix-main" });
-    const planned = args.plan !== undefined || args.step !== undefined;
-    if (planned && (args.plan === undefined || args.step === undefined)) fail({ code: "invalid", message: "--plan and --step go together: the plan's change and the steps this change does" });
-    if (planned && (args.change || !args.title || fixMain)) fail({ code: "invalid", message: "--plan and --step go with --title for a new change, not with an existing change id or --fix-main" });
-    const steps = list(args.step);
-    if (planned && (String(args.plan).trim() === "" || steps.length === 0)) fail({ code: "invalid", message: "--plan needs a change id and --step at least one step name" });
     const linked = Object.keys(LINK_ARGS).some((k) => (args as Record<string, unknown>)[k] !== undefined);
     if (linked && (args.change || !args.title || fixMain)) fail({ code: "invalid", message: "--release, --feature, --issue and --depends go with --title for a new change; an existing change's links are edited with canon change link (BR-2562)" });
     // reason: checked on main, which the new branch starts from, before an id is allocated (BR-2562)
     const links = linked ? newLinks(ws, args as Record<string, unknown>, must(mainCorpus(ws))) : undefined;
-    const target = typeof args.change === "string" && args.change ? { change: args.change } : { title: String(args.title), rules: list(args.rules), ...(planned ? { plan: { id: String(args.plan).trim().toUpperCase(), steps } } : {}), ...(links ? { links } : {}) };
+    const target = typeof args.change === "string" && args.change ? { change: args.change } : { title: String(args.title), rules: list(args.rules), ...(links ? { links } : {}) };
     const settles = list(args.settles).map((v) => v.replace(/^#/, ""));
     if (settles.some((v) => !/^[1-9]\d*$/.test(v))) fail({ code: "invalid", message: `--settles takes review finding numbers, comma separated (got ${String(args.settles)})` });
     if (fixMain && settles.length > 0) fail({ code: "invalid", message: "--fix-main opens its own change; give no --settles with it" });
     const s = must(fixMain ? startFixMain(ws, say) : start(ws, target, say, { settles: settles.map(Number) }));
     for (const line of startHint(ws.db, machineNow(), { fixMain, created: s.created })) say(line);
-    // A step another unfinished change is doing is said, never refused: a step may take several changes (BR-2385, D-77).
-    if ("plan" in target && target.plan) for (const line of stepsTaken(ws, target.plan, s.change)) say(line);
     noticeUpdates(ws, say);
     say(`cd ${s.worktree}`);
   },
@@ -178,17 +167,6 @@ const status = defineCommand({
     say(`Questions waiting for a human: ${data.questions.length}`);
   },
 });
-
-/** The lines saying which of a new change's steps other unfinished changes already do (BR-2385). */
-function stepsTaken(ws: Workspace, plan: { id: string; steps: readonly string[] }, self: string): string[] {
-  // reason: the change is already started; a failure to read the others is said, not raised: it is only a hint (BR-2385)
-  const onMain = mainCorpus(ws);
-  if (!onMain.ok) return [`could not check which changes already do ${plan.steps.join(", ")}: ${onMain.error.message}`];
-  const all = listedChanges(ws, onMain.value, [], () => true);
-  if (!all.ok) return [`could not check which changes already do ${plan.steps.join(", ")}: ${all.error.message}`];
-  const doers = all.value.listed.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 }));
-  return othersDoing(doers, plan.id, plan.steps, self).map((o) => `step ${o.step} is already being done by ${o.changes.join(", ")}`);
-}
 
 /** How `canon work status` marks a claim that no longer binds (BR-2192). */
 const STALE: Record<ClaimState, string> = { live: "", expired: "  (expired: lease ended)", "holder-gone": "  (expired: session process exited)" };
@@ -345,19 +323,13 @@ function briefState(ws: Workspace, env: Readonly<Record<string, string | undefin
     const backlog = backlogAt(ws.primary, ws.config.main, ws.config.types);
     if (!backlog.ok) return backlog;
     // reason: (claimed) only where `canon work start` would refuse; an expired or abandoned claim it takes over (BR-2149, BR-2100)
-    // reason: every change is read once, with its state from the one place that computes it; the plans need the done and
-    // dropped ones too, the order only the open ones and those done only on their branch (BR-2383, BR-2294, BR-2571)
+    // reason: every change is read once, with its state from the one place that computes it; the order lists only the
+    // open ones and those done only on their branch (BR-2294, BR-2571)
     const every = changeStates(ws, { corpus: onMain.value, backlog: backlog.value, delegatable: false });
     if (!every.ok) return every;
     // reason: another session's half-done branch is said, never fatal: brief must still list everything else (BR-2292)
     for (const u of every.value.unreadable) say(`Unreadable change file, not listed: ${u}`);
     const filed = every.value.states.filter(hasFile);
-    // Plans with steps ready to start, one line each, so a coordinator sees what to dispatch (BR-2383).
-    const stalled = new Set(every.value.states.filter((s) => s.stalled).map((s) => s.id));
-    for (const p of planStatuses(onMain.value, filed.map((s) => ({ change: s.change, onMain: s.onBranch.length === 0 })), stalled)) {
-      const line = briefLine(p);
-      if (line) say(line);
-    }
     const open = filed.filter((s) => s.change.status === "open" || (s.onBranch.length > 0 && s.change.status === "done"));
     const shown = (s: ChangeState) => {
       const marks = marksOf(s, false);

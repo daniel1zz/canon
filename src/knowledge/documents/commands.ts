@@ -5,7 +5,7 @@ import { defineCommand } from "citty";
 import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import type { Doc, Kind } from "./model.ts";
 import { readBacklog } from "./backlog.ts";
-import { changeStates, hasFile, marksOf, stateJson } from "../changes/state.ts";
+import { changeStates, marksOf, stateJson } from "../changes/state.ts";
 import type { readCorpus } from "./read.ts";
 import { technicalLayerWord, technicalNameAdvice } from "./domain-names.ts";
 import { contractLines } from "../domains/business.ts";
@@ -13,7 +13,6 @@ import { domainLines } from "../domains/list.ts";
 import { createDoc, createDomain, setMeta } from "./write.ts";
 import { refuseOnGuardedMain } from "./guarded.ts";
 import { findDoc } from "../query/query.ts";
-import { planStatuses, progressMark, stepsMark } from "../plans/status.ts";
 import { waitingJson } from "../changes/deps.ts";
 import { closeCmd, graphCmd, LINK_ARGS, linkCmd, newLinks } from "../changes/commands.ts";
 import { mainCorpus } from "../../work/session/session.ts";
@@ -77,22 +76,18 @@ function listCommand(kind: Kind, describe: string) {
       if (kind === "change") {
         // Changes come in the owner's order (canon/backlog.md), started ones next, and include those that so far exist
         // only on their change branch, so the list the guide points to holds released work too (BR-2148, BR-2291, D-50).
-        // reason: read once with every change: progress counts the done ones too, which the list itself leaves out;
-        // the list keeps what listedChanges would keep with `live`, a change done only on its branch included (BR-2384, BR-2294)
+        // reason: the list keeps what listedChanges would keep with `live`, a change done only on its branch included (BR-2294)
         // reason: dependencies are satisfied by what landed on main, not by this checkout's older copy of it (BR-2564, D-149)
         // reason: every change's state comes from the one place that computes it (BR-2571, BR-2572, D-151)
         const { states: every, unreadable } = must(changeStates(ws, { corpus, backlog: readBacklog(ws.root, ws.config.types) }));
-        const filed = every.filter(hasFile);
         // reason: --all adds the changes only the coordination data has, a branch-only change dropped since among them (BR-2572)
         const listed = every.filter((s) => (s.change ? live(s.change) || (s.onBranch.length > 0 && s.change.status === "done") : Boolean(args.all)));
-        const progress = new Map(planStatuses(corpus, filed.map((s) => ({ change: s.change, onMain: s.onBranch.length === 0 }))).map((p) => [p.change.id, p]));
         if (args.json) {
           json(listed.map((s) => {
             const { body: _b, ...r } = s.change ?? { id: s.id, title: null, status: null, body: "" };
             const handoff = s.handoff;
             return {
               ...r,
-              ...(progress.has(s.id) ? { plan_progress: { total: progress.get(s.id)!.steps.length, done: progress.get(s.id)!.counts.done, percent: progress.get(s.id)!.percent } } : {}),
               on_branch: s.onBranch,
               handoff: handoff ? { next: handoff.next, reason: handoff.reason ?? "unrecorded", on: handoff.on, actor: handoff.actor, updated_at: handoff.updated_at } : null,
               claimed: s.flags.claimed,
@@ -102,8 +97,7 @@ function listCommand(kind: Kind, describe: string) {
           }));
         } else {
           for (const s of listed) {
-            const plan = progress.get(s.id);
-            const marks = [...marksOf(s, true), ...(s.change ? [stepsMark(s.change), plan && progressMark(plan)] : []).filter((m): m is string => Boolean(m))];
+            const marks = marksOf(s, true);
             say(`${s.id.padEnd(8)} ${(s.change?.status ?? "").padEnd(10)} ${s.change?.title ?? "(no file)"}  (${marks.join("; ")})`);
           }
           if (listed.length === 0 && unreadable.length === 0) say("(no changes)");

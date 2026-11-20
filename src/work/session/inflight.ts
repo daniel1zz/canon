@@ -2,7 +2,6 @@ import { git } from "../../kernel/git.ts";
 import { ok, type Result } from "../../kernel/result.ts";
 import { backlogAt, inBacklogOrder, type BacklogEntry } from "../../knowledge/documents/backlog.ts";
 import { parseDocFile } from "../../knowledge/documents/docfile.ts";
-import { planLink } from "../../knowledge/documents/planlink.ts";
 import { changeLinks } from "../../knowledge/changes/links.ts";
 import { waitingFor, type Waiting } from "../../knowledge/changes/deps.ts";
 import { criteriaByDoc } from "../../knowledge/releases/features.ts";
@@ -214,14 +213,11 @@ export function changeOnBranch(ws: Workspace, id: string, ref: BranchRef): Resul
     return ok({ unreadable: `${where}: front matter needs id ${id}, a title and a status of ${type.statuses?.join(", ")}` });
   }
   const rules = Array.isArray(meta["rules"]) ? meta["rules"].filter((r): r is string => typeof r === "string") : [];
-  // reason: a bad plan link is said as an unreadable file, never read as "no link": the step would look idle (BR-2292, D-77)
-  const link = planLink(meta, type.prefix);
-  if (typeof link === "string") return ok({ unreadable: `${where}: ${link}` });
-  // reason: a bad link is said like a bad plan link: read as "no link", the change would show as the current batch or ready (BR-2292, BR-2561)
+  // reason: a bad link is said as an unreadable file, never read as "no link": the change would show as the current batch or ready (BR-2292, BR-2561); `plan` and `steps` are not read (BR-2594)
   const prefixOf = (name: string, fallback: string) => ws.config.types.find((t) => t.name === name)?.prefix ?? fallback;
   const links = changeLinks(meta, { change: type.prefix, release: prefixOf("release", "R"), feature: prefixOf("feature", "F") });
   if (typeof links === "string") return ok({ unreadable: `${where}: ${links}` });
-  return ok({ change: { kind: "change", id, title: meta["title"], path: path.value, body, status: status as ChangeStatus, rules, passes: {}, ...link, ...links } });
+  return ok({ change: { kind: "change", id, title: meta["title"], path: path.value, body, status: status as ChangeStatus, rules, passes: {}, ...links } });
 }
 
 function changeType(ws: Workspace) {

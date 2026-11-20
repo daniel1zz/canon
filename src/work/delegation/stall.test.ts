@@ -1,5 +1,5 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
-import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { processOf } from "../claims/liveness.ts";
@@ -19,23 +19,19 @@ function cli(cwd: string, actor: string, ...args: string[]) {
 const GONE = { pid: process.pid, start: "Thu Jan  1 00:00:00 1970" };
 const HOUR = 3_600_000;
 
-/** A plan C-1 with step A on main, and a change doing step A, delegated by agent:s1 to w1 and claimed by agent:s7:w1. */
+/** A change on main before, and a new change delegated by agent:s1 to w1 and claimed by agent:s7:w1. */
 function fixture() {
   const root = project(); roots.push(root);
   writeFileSync(join(root, "canon/product.md"), "# Product\n\nFirst design.\n");
   writeFileSync(join(root, "canon/changes.keep"), "");
   sh(root, "add", "-A"); sh(root, "commit", "-qm", "product");
-  const plan = startNew(root, "Plan", "agent:s1");
-  const dir = join(plan.worktree, "canon/changes");
-  const file = join(dir, readdirSync(dir).find((n) => n.startsWith(`${plan.change}`) && n.endsWith(".md"))!);
-  writeFileSync(file, readFileSync(file, "utf8").replace("## 为什么", "## 计划\n\n| 步骤 | 内容 | 依赖 |\n|---|---|---|\n| A | do a | - |\n\n## 为什么"));
-  sh(plan.worktree, "commit", "-qam", "plan");
-  expect(cli(plan.worktree, "agent:s1", "work", "land", "--finish").code).toBe(0);
-  expect(cli(root, "agent:s1", "work", "start", "--title", "Step A", "--plan", plan.change, "--step", "A").code).toBe(0);
+  const first = startNew(root, "First", "agent:s1");
+  expect(cli(first.worktree, "agent:s1", "work", "land", "--finish").code).toBe(0);
+  expect(cli(root, "agent:s1", "work", "start", "--title", "Step A").code).toBe(0);
   const step = ws(root).db.db.query<{ subject: string }, []>("SELECT subject FROM claims WHERE holder = 'agent:s1' ORDER BY subject DESC LIMIT 1").get()!.subject;
   expect(cli(root, "agent:s1", "work", "delegate", step, "--to", "w1").code).toBe(0);
   expect(cli(root, "agent:s7:w1", "work", "start", step).code).toBe(0);
-  return { root, plan: plan.change, step };
+  return { root, step };
 }
 function setClaimProcess(root: string, change: string, proc: { pid: number; start: string }) {
   const w = ws(root);
@@ -56,7 +52,7 @@ test("BR-2522: a delegated change whose worker process is gone and whose branch 
   expect(later.ok && later.value[0]!.lastCommit).toBeDefined();
 });
 
-test("BR-2522 BR-2505 BR-2529 BR-2372 BR-2373 BR-2374: canon work status, canon overview and canon plan status show the stalled delegation and its plan step as stalled", () => {
+test("BR-2522 BR-2505 BR-2529: canon work status, canon overview and canon brief show the stalled delegation", () => {
   const f = fixture();
   setClaimProcess(f.root, f.step, GONE);
   // a stall threshold far below the time the fixture took, so the CLI sees it stalled now
@@ -71,13 +67,6 @@ test("BR-2522 BR-2505 BR-2529 BR-2372 BR-2373 BR-2374: canon work status, canon 
   // the brief of a session with no claimed change carries it in the agenda summary (BR-2529)
   const brief = cli(f.root, "agent:s9", "brief");
   expect(brief.text).toContain(`  judge: 1: stalled:${f.step}`);
-  const plan = cli(f.root, "agent:s1", "plan", "status", f.plan);
-  expect(plan.text).toContain("停滞 1");
-  expect(plan.text).toContain(`停滞: A (${f.step})`);
-  const json = JSON.parse(cli(f.root, "agent:s1", "plan", "status", f.plan, "--json").text) as { stalled: number; working: number };
-  expect([json.stalled, json.working]).toEqual([1, 0]);
-  const detail = JSON.parse(cli(f.root, "agent:s1", "plan", "status", f.plan, "--json").text) as { steps: { step: string; state: string }[] };
-  expect(detail.steps.map((x) => [x.step, x.state])).toEqual([["A", "stalled"]]);
 });
 
 test("BR-2522: a delegated change already closed on main is not stalled, whatever its delegation record says (#264)", () => {

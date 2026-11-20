@@ -18,6 +18,7 @@ import { restatementLine } from "./restatement/restatement.ts";
 import { workBase, workRestatements } from "./restatement/work.ts";
 import { deferralNotes, unnamedCommitmentNotes } from "./commitments.ts";
 import { itemNotes } from "../documents/items/report.ts";
+import { oldPlanNotes } from "../changes/old-plans.ts";
 
 /** `canon check`: corpus integrity. */
 
@@ -76,6 +77,8 @@ const checkCmd = defineCommand({
     for (const line of plannedHints(read.corpus)) console.error(line);
     // reason: links to a dropped release or feature and unnumbered criteria are said, never refused (BR-2512, BR-2566, D-139)
     for (const line of changeLinkHints(read.corpus)) console.error(line);
+    // reason: old plan steps not moved to changes yet are said, never refused: only two projects had plans and both moved them by hand (BR-2595, D-139)
+    for (const line of oldPlanNotes(ws.root, read.corpus)) console.error(line);
     const unnumbered = unnumberedHint(read.corpus);
     if (unnumbered) console.error(unnumbered);
     // reason: a domain close to review_max_prompt_kb is said before a change to it is refused, and never fails the check (BR-2375, D-76, #145)

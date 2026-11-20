@@ -2,7 +2,6 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join, relative } from "node:path";
 import { parseDocFile, parseReadme } from "./docfile.ts";
 import { parseLinks, parsePasses } from "./behaviour.ts";
-import { planLink } from "./planlink.ts";
 import { changeLinks } from "../changes/links.ts";
 import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type Advances, type DecisionStatus, type Doc, type FeatureStatus, type Domain, type Layout, type QualityJudge, type QualityStatus, type ReleaseStatus, type RuleStatus } from "./model.ts";
 import { BUILTIN_TYPES, type DocType } from "./types.ts";
@@ -211,11 +210,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: passes });
           continue;
         }
-        const link = planLink(p.meta, type.prefix);
-        if (typeof link === "string") {
-          problems.push({ path, message: link });
-          continue;
-        }
+        // reason: `plan` and `steps` are left from the plans D-148 removed: never read, whatever they hold (BR-2594)
         // reason: whether the release or feature exists, and whether the links contradict, is canon check's to say (BR-2561)
         const links = changeLinks(p.meta, { change: type.prefix, release: releasePrefix, feature: featurePrefix });
         if (typeof links === "string") {
@@ -237,7 +232,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: advances });
           continue;
         }
-        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...link, ...links, ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}), ...(chore !== undefined ? { chore: (chore as string).toLowerCase() } : {}), ...(advances !== undefined ? { advances } : {}) });
+        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...links, ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}), ...(chore !== undefined ? { chore: (chore as string).toLowerCase() } : {}), ...(advances !== undefined ? { advances } : {}) });
       } else if (type.name === "release") {
         const shippedAt = p.meta["shipped_at"];
         const shipped = p.status === "shipped";

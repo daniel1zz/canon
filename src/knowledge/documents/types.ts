@@ -41,7 +41,10 @@ export const BUILTIN_TYPES: readonly DocType[] = [
   { name: "quality", prefix: "Q", dir: "quality", statuses: ["draft", "active", "retired"], defaultStatus: "draft", fields: [], sections: ["门槛", "来源"], items: {}, builtin: true },
 ];
 
-/** Front-matter keys canon itself owns; a declared field may not reuse one. */
+/**
+ * Front-matter keys canon itself owns; a declared field may not reuse one.
+ * reason: `plan` and `steps` stay reserved after D-148 removed plans: closed changes and in-flight branches still carry them (BR-2594)
+ */
 export const RESERVED_FIELDS = new Set(["id", "title", "status", "untested", "lists", "supersedes", "rules", "code", "passes", "release", "changed_in", "shipped_at", "plan", "steps", "links", "feature", "features", "merged_into", "owner_answers", "advances", "issues", "depends_on", "done_by", "chore", "landed_in"]);
 
 /** Directories under canon/ that are not document types. */

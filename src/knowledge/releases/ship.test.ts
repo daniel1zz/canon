@@ -188,7 +188,7 @@ describe("canon release ship: what must be passed", () => {
     expect(agent(shippedRoot, "release", "ship", R(1)).code).toBe(5);
   });
 
-  test("BR-2333: neither a plan not done nor an open linked change blocks shipping: past the rules, the owner's yes is what is missing", () => {
+  test("BR-2333 BR-2594: neither an open linked change nor old plan data blocks shipping: past the rules, the owner's yes is what is missing", () => {
     const plan = "| 步骤 | 内容 | 依赖 |\n|---|---|---|\n| 1 | 建表 | - |\n| 2 | 接口 | 1 |\n| 3 | 界面 | 1 |\n| 4 | 联调 | 2, 3 |\n";
     const change = (n: number, status: string, front: string, body = "") => `---\nid: ${C(n)}\ntitle: 变更${n}\nstatus: ${status}\nrules: []\n${front}---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n${body}## 任务\n\n- [x] x\n`;
     const files = {
