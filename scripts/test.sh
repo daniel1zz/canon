@@ -5,7 +5,8 @@
 set -eu
 
 # Tests supply their own host identity; the developer's Codex/Claude session must not leak into fixtures.
-unset CANON_ACTOR CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_PID CODEX_SESSION_ID CODEX_THREAD_ID
+# reason: a delegate worker inherits CANON_SUBAGENT (BR-2495); left set, tests of the check-as hook read it as the worker's name
+unset CANON_ACTOR CANON_SUBAGENT CLAUDECODE CLAUDE_CODE_SESSION_ID CLAUDE_PID CODEX_SESSION_ID CODEX_THREAD_ID
 # reason: canon work delegate refuses on a busy machine (BR-2526); tests pin a calm one unless they set their own
 export CANON_MACHINE="${CANON_MACHINE:-normal,0.5,8}"
 
