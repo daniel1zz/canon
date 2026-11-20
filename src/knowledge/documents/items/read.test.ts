@@ -56,6 +56,18 @@ describe("reading an item's slots", () => {
     expect(items.map((i) => i.slots)).toEqual([{ example: "e3", text: "输入 → 结果" }, { text: "输入 → 结果" }]);
   });
 
+  test("BR-2546: an ids slot takes ids separated by , ， or 、, with any space after the separator, a full-width one included", () => {
+    const declaration: ItemDeclaration = {
+      format: "{text}(?: → {refs})",
+      slots: { text: { kind: "text" }, refs: { kind: "ids" } },
+      onMismatch: "note",
+    };
+    const [wide, plain, none] = reading(declaration, "- a → BR-1，\u3000BR-2\n- b → BR-3, BR-4、BR-5\n- c → BR-6 x");
+    expect(wide?.slots).toEqual({ text: "a", refs: "BR-1，\u3000BR-2" });
+    expect(plain?.slots).toEqual({ text: "b", refs: "BR-3, BR-4、BR-5" });
+    expect(none?.slots).toEqual({ text: "c → BR-6 x" });
+  });
+
   test("BR-2547: an item that misses a literal of the template is unknown, and the reason names the missing literal", () => {
     const declaration: ItemDeclaration = {
       format: "{topic}：{text}",
@@ -139,5 +151,35 @@ describe("the built-in change type's lessons", () => {
   test("BR-2551: 无, or 无 with an explanation, means the change has no lessons at all", () => {
     expect(lessons("无")).toEqual([]);
     expect(lessons(`无：这是 ${["C", "136"].join("-")} 自己的缺陷`)).toEqual([]);
+  });
+});
+
+describe("declared patterns cannot hang reading", () => {
+  const tagged = (pattern: string, none?: string): ItemDeclaration => ({
+    format: "(?:[{tag}] ){text}",
+    slots: { tag: { kind: "pattern", pattern }, text: { kind: "text" } },
+    ...(none !== undefined ? { none } : {}),
+    onMismatch: "note",
+  });
+  const A40 = "a".repeat(40);
+
+  test("BR-2547: fifty items against (a+)+ are read within 5 seconds, each tag absent and text the whole item", () => {
+    const section = Array.from({ length: 50 }, () => `- [${A40}!] x`).join("\n");
+    const started = performance.now();
+    const items = reading(tagged("(a+)+"), section);
+    expect(performance.now() - started).toBeLessThan(5_000);
+    expect(items).toHaveLength(50);
+    expect(items.every((i) => i.slots["tag"] === undefined && i.slots["text"] === `[${A40}!] x`)).toBe(true);
+  });
+
+  test("BR-2547: a match reached only after the first alternative fails is still read, not given up as a mismatch", () => {
+    const [item] = reading(tagged("(a+)+|a+!"), `- [${A40}!] x`);
+    expect(item?.slots).toEqual({ tag: `${A40}!`, text: "x" });
+  });
+
+  test("BR-2547: a none pattern that backtracks badly still decides: it empties the section its one item fits, and reads one it does not", () => {
+    const none = "^(?:(a+)+|a+!)$";
+    expect(reading(tagged("b", none), `${A40}!`)).toEqual([]);
+    expect(reading(tagged("b", none), `${A40}?`)).toEqual([{ raw: `${A40}?`, slots: { text: `${A40}?` }, children: [] }]);
   });
 });

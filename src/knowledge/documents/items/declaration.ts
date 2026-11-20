@@ -1,5 +1,6 @@
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import type { ItemDeclaration, SlotType } from "./model.ts";
+import { linearRegex } from "./read.ts";
 import { parseTemplate, type TemplatePart } from "./template.ts";
 
 /**
@@ -148,18 +149,23 @@ function slotOf(at: string, kind: (typeof SLOT_KINDS)[number], def: Record<strin
   return ok({ kind: "ids", ...(isRequired ? { required: true } : {}) });
 }
 
-/** Why a pattern cannot be used: it does not compile alone, or not as one group inside a template (BR-2546). */
+/**
+ * Why a pattern cannot be used, with the pattern itself so the message names it (BR-2546): RE2JS cannot run it (D-153:
+ * items are matched in linear time, so lookaround and backreferences are refused here rather than hanging a reader),
+ * or it does not compile as one group inside a template.
+ */
 function regexProblem(pattern: string, embed = true): string | undefined {
+  const shown = JSON.stringify(pattern);
   try {
-    new RegExp(pattern);
+    linearRegex(pattern);
   } catch (e) {
-    return `not a valid regular expression (${(e as Error).message})`;
+    return `${shown} is not a valid regular expression in RE2 syntax, which canon matches in linear time (${(e as Error).message})`;
   }
   if (!embed) return undefined;
   try {
-    new RegExp(`(?<canonSlot>${pattern})`);
+    linearRegex(`(?<canonSlot>${pattern})`);
   } catch (e) {
-    return `not usable as a slot inside a template (${(e as Error).message})`;
+    return `${shown} is not usable as a slot inside a template (${(e as Error).message})`;
   }
   return undefined;
 }

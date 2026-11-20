@@ -1,3 +1,4 @@
+import { RE2JS } from "re2js";
 import { isPlaceholderLine, LIST_MARKER } from "../templates.ts";
 import type { ItemDeclaration, ReadItem, SlotType } from "./model.ts";
 import { parseTemplate, type TemplatePart } from "./template.ts";
@@ -6,7 +7,23 @@ import { parseTemplate, type TemplatePart } from "./template.ts";
  * Reads a section's items by its declaration (BR-2547): split the section into items, then match each item's text
  * against the template from start to end. An item the template does not fit is unknown, with the reason; canon
  * never guesses another spelling.
+ *
+ * reason: every regular expression here runs on RE2JS, which matches in time linear in the item's length, so no declared
+ * `pattern` or `none` can hang a command that reads documents, and no match is given up after too many steps (BR-2547, D-153)
  */
+
+/** Compiled expressions by source: the same declaration is matched against every item of every document. */
+const compiled = new Map<string, RE2JS>();
+
+/** Compiles an expression for the linear-time engine (D-153); throws RE2JS's syntax error for one it cannot run. */
+export function linearRegex(source: string): RE2JS {
+  let re = compiled.get(source);
+  if (re === undefined) {
+    re = RE2JS.compile(source);
+    compiled.set(source, re);
+  }
+  return re;
+}
 
 interface Template {
   readonly format: string;
@@ -31,9 +48,9 @@ const INDENTED = /^\s/;
 export function readSectionItems(text: string, declaration: ItemDeclaration): ReadItem[] {
   const drafts = splitItems(text, declaration.children !== undefined);
   if (drafts.length === 1 && declaration.none !== undefined) {
-    let none: RegExp;
+    let none: RE2JS;
     try {
-      none = new RegExp(declaration.none);
+      none = linearRegex(declaration.none);
     } catch (e) {
       // reason: the config is checked when it is read (BR-2546), so only a declaration built in code reaches this
       throw new Error(`the declaration's none is not a valid regular expression: ${(e as Error).message}`);
@@ -128,9 +145,10 @@ function matchItem(raw: string, template: Template): Match {
   const optionals = parts.filter((part) => part.kind === "optional").length;
   for (const mask of masksByPreference(optionals)) {
     const built = buildRegex(parts, mask, template.slots);
-    let matched: RegExpExecArray | null = null;
+    let matched: { readonly groups?: Readonly<Record<string, string | undefined>> } | null = null;
     try {
-      matched = new RegExp(`^${built.source}$`).exec(raw);
+      // reason: RE2JS's exec is typed any[]; it returns a RegExp-like array whose groups hold the named captures (BR-2547)
+      matched = linearRegex(`^${built.source}$`).exec(raw) as { readonly groups?: Readonly<Record<string, string | undefined>> } | null;
     } catch {
       // a pattern that cannot be embedded was refused when the declaration was read; a code-built one is canon's bug
       continue;
@@ -215,7 +233,7 @@ function slotSource(type: SlotType): string {
     case "id":
       return `[A-Z][A-Z0-9]*-[0-9]+`;
     case "ids":
-      return `[A-Z][A-Z0-9]*-[0-9]+(?:[,，、]\\s*[A-Z][A-Z0-9]*-[0-9]+)*`;
+      return `[A-Z][A-Z0-9]*-[0-9]+(?:[,，、]${JS_SPACE}*[A-Z][A-Z0-9]*-[0-9]+)*`;
     case "enum":
       // reason: longest first, so a value that is a prefix of another does not win the alternation (BR-2546)
       return type.values.slice().sort((a, b) => b.length - a.length).map(escapeRegex).join("|");
@@ -223,6 +241,12 @@ function slotSource(type: SlotType): string {
       return type.pattern;
   }
 }
+
+/**
+ * JavaScript's `\s` in RE2 syntax: RE2's own `\s` is ASCII only, and an ids slot has always allowed any space after its
+ * separator, a full-width one included (BR-2546).
+ */
+const JS_SPACE = `[\\s\\x{0B}\\p{Z}\\x{FEFF}]`;
 
 const escapeRegex = (text: string): string => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 

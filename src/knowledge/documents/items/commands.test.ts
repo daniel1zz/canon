@@ -95,6 +95,23 @@ describe("canon show --json", () => {
     });
   });
 
+  test("BR-2547 BR-2550: a project pattern that backtracks badly does not hang canon show, and every item is read", () => {
+    const root = project();
+    writeFileSync(
+      join(root, "canon/config.yaml"),
+      'floor: test ! -e FAIL\ntests: []\nreview: none\ntypes:\n  adr:\n    prefix: ADR\n    dir: adrs\n    items:\n      选项:\n        format: "(?:[{tag}] ){text}"\n        slots:\n          tag: {pattern: "(a+)+"}\n          text: text\n',
+    );
+    const item = `[${"a".repeat(40)}!] x`;
+    writeDoc(root, `canon/adrs/${id("ADR", 3)}.md`, `---\nid: ${id("ADR", 3)}\ntitle: Old\n---\n\n## 选项\n\n${Array.from({ length: 50 }, () => `- ${item}`).join("\n")}\n`);
+    const started = performance.now();
+    const r = Bun.spawnSync(["bun", MAIN, "show", id("ADR", 3), "--json"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", timeout: 20_000 });
+    expect(performance.now() - started).toBeLessThan(20_000);
+    expect(r.exitCode).toBe(0);
+    const out = JSON.parse(r.stdout.toString()) as { items: Record<string, { slots: Record<string, string> }[]> };
+    expect(out.items["选项"]).toHaveLength(50);
+    expect(out.items["选项"]?.every((i) => i.slots["text"] === item && i.slots["tag"] === undefined)).toBe(true);
+  });
+
   test("BR-2550: a document whose type declares no items has an empty items object", () => {
     const root = project();
     writeDoc(root, `canon/decisions/${id("D", 3)}.md`, `---\nid: ${id("D", 3)}\ntitle: Chosen\nstatus: accepted\n---\n\n## 背景\n\nWhy.\n\n## 方案\n\n1. Do it：采用\n\n## 决定\n\nDone.\n\n## 后果\n\nNone.\n`);

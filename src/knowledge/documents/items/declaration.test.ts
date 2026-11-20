@@ -65,6 +65,29 @@ describe("declaration checks", () => {
     expect(r.error.message).toContain("not a valid regular expression");
   });
 
+  test("BR-2546: a pattern the linear-time engine cannot run is a config error naming the file, the key, the pattern and why", () => {
+    const root = repo(`types:\n  adr:\n    prefix: ADR\n    dir: adrs\n    items:\n      教训:\n        format: '{text}(?: [{id}])'\n        slots:\n          text: text\n          id: {pattern: '(?=S)S\\d+'}\n`);
+    const r = canon(root, "show", ["AD", "1"].join("R"));
+    expect(r.code).toBe(2);
+    expect(r.err).toContain("canon/config.yaml");
+    expect(r.err).toContain("types.adr.items.教训.slots.id.pattern");
+    expect(r.err).toContain(JSON.stringify("(?=S)S\\d+"));
+    expect(r.err).toContain("(?=");
+  });
+
+  test("BR-2546: a none with a backreference is a config error naming the key and the pattern", () => {
+    const r = items({ format: "{text}", slots: { text: "text" }, none: "^(无)\\1$" });
+    expect(r.ok).toBe(false);
+    if (r.ok) throw new Error("unreachable");
+    expect(r.error.message).toContain("types.adr.items.教训.none");
+    expect(r.error.message).toContain(JSON.stringify("^(无)\\1$"));
+  });
+
+  test("BR-2546: a pattern that only a backtracking engine would hang on, (a+)+, is a valid declaration", () => {
+    const r = items({ format: "{text}(?: [{tag}])", slots: { text: "text", tag: { pattern: "(a+)+" } } });
+    expect(r.ok).toBe(true);
+  });
+
   test("BR-2546: on_mismatch must be note or finding", () => {
     const r = items({ format: "(?:[{verdict}] ){text}", slots: { verdict: { enum: ["采用"] }, text: "text" }, on_mismatch: "warn" });
     expect(r.ok).toBe(false);
