@@ -65,7 +65,7 @@ describe("declaration checks", () => {
     expect(r.error.message).toContain("not a valid regular expression");
   });
 
-  test("BR-2546: a pattern the linear-time engine cannot run is a config error naming the file, the key, the pattern and why", () => {
+  test("BR-2546: a pattern with lookahead, which the linear-time engine cannot run, is a config error naming the file, the key, the pattern and why", () => {
     const root = repo(`types:\n  adr:\n    prefix: ADR\n    dir: adrs\n    items:\n      教训:\n        format: '{text}(?: [{id}])'\n        slots:\n          text: text\n          id: {pattern: '(?=S)S\\d+'}\n`);
     const r = canon(root, "show", ["AD", "1"].join("R"));
     expect(r.code).toBe(2);
@@ -73,6 +73,16 @@ describe("declaration checks", () => {
     expect(r.err).toContain("types.adr.items.教训.slots.id.pattern");
     expect(r.err).toContain(JSON.stringify("(?=S)S\\d+"));
     expect(r.err).toContain("(?=");
+  });
+
+  test("BR-2546: a pattern with lookbehind, positive or negative, is a config error naming the key and the pattern", () => {
+    for (const pattern of ["(?<=S)\\d+", "(?<!S)\\d+"]) {
+      const r = items({ format: "{text}(?: [{id}])", slots: { text: "text", id: { pattern } } });
+      expect([pattern, r.ok]).toEqual([pattern, false]);
+      if (r.ok) throw new Error("unreachable");
+      expect(r.error.message).toContain("types.adr.items.教训.slots.id.pattern");
+      expect(r.error.message).toContain(JSON.stringify(pattern));
+    }
   });
 
   test("BR-2546: a none with a backreference is a config error naming the key and the pattern", () => {
