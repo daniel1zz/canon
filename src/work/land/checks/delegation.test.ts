@@ -182,8 +182,11 @@ test("BR-2501 BR-2458: a worker's chore started before BR-2498 gets item 1 only:
     if (edit) put(c.worktree, "canon/rules/task/BR-30.md", read(c.worktree, "canon/rules/task/BR-30.md").replace("No further reference.", "Changed in a chore."));
     put(c.worktree, "app.txt", "chore\n"); commit(c.worktree);
     const out = refusal(await land(ws(c.worktree, W1), FAST, quiet));
-    if (landed) expect(out).toBe("landed");
-    else { expect(out).toStartWith("delegation: "); expect(out).toContain("canon/rules/task/BR-30.md (BR-30)"); expect(out).not.toContain("epoch"); expect(out).not.toContain("2. "); }
+    if (landed) {
+      expect(out).toBe("landed");
+      // the light change file the landing wrote for the chore is no design edit of the worker's (BR-2501, BR-2458)
+      expect(sh(root, "ls-tree", "--name-only", "main", "canon/changes/")).toBe("canon/changes/C-1-tidy.md");
+    } else { expect(out).toStartWith("delegation: "); expect(out).toContain("canon/rules/task/BR-30.md (BR-30)"); expect(out).not.toContain("epoch"); expect(out).not.toContain("2. "); }
   }
 }, 120_000);
 
