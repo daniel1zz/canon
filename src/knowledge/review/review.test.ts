@@ -118,6 +118,7 @@ describe("rule review prompt", () => {
     const prompt = reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 4)));
     expect(prompt).toContain("makes a command refuse or stop work for a reason other than keeping main correct");
     expect(prompt).toContain("or that also stops unrelated work: give a `note` suggesting a standard plus a reminder");
+    expect(prompt).toContain("or the missing, wrong or stale context the main agent needed to judge it");
   });
 
   test("BR-2484: after asking for every defect, the prompt treats text that names its replacement as history and asks for each defect once", () => {
