@@ -116,8 +116,8 @@ describe("rule review prompt", () => {
   test("BR-2009: the instructions make a new refusal outside the four allowed kinds, or one that stops unrelated work, a note suggesting a reminder", () => {
     const { root, corpus } = corpusOf(files);
     const prompt = reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 4)));
-    expect(prompt).toContain("refuse, wait or stop work");
-    expect(prompt).toContain("give a `note` naming the refusal and suggesting a stated standard plus a reminder instead");
+    expect(prompt).toContain("makes a command refuse or stop work for a reason other than keeping main correct");
+    expect(prompt).toContain("or that also stops unrelated work: give a `note` suggesting a standard plus a reminder");
   });
 
   test("BR-2484: after asking for every defect, the prompt treats text that names its replacement as history and asks for each defect once", () => {

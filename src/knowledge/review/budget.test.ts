@@ -136,7 +136,8 @@ describe("rule review prompt budget", () => {
     const changed = corpus.docs.filter((d) => d.id === id("BR", 99));
     // a budget that holds two pieces per call: measure the real size of such a call, then try every budget within 200 bytes of it,
     // so the packing ends within a few bytes of the budget for some of them
-    const probe = prompts(reviewPrompts(root, corpus, changed, {}, 30 * KB));
+    // reason: the probe budget must hold two pieces; the fixed instructions grew with the refusal note (D-139)
+    const probe = prompts(reviewPrompts(root, corpus, changed, {}, 33 * KB));
     const target = Math.max(...probe.map(size));
     let long = 0;
     for (let budget = target - 200; budget <= target + 200; budget++) {
