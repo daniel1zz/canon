@@ -4,6 +4,7 @@ import { dirname, join } from "node:path";
 import { readConfig, type Config } from "../../invocation/config.ts";
 import { addWorktree, git, pruneWorktrees, removeWorktree } from "../../kernel/git.ts";
 import { touchedClasses } from "../../knowledge/check/design-basis/design-basis.ts";
+import { floorWithReport } from "../land/checks/floor.ts";
 import { REPORT_PLACEHOLDER } from "../verify/report.ts";
 import { commandFor } from "../verify/verify.ts";
 import { moveMain } from "../land/finish/finish.ts";
@@ -28,12 +29,14 @@ export interface Landing {
   readonly base: string;
 }
 
-/** What one failure needs: the commit, its log and the failing test files (empty when it failed before the tests). */
+/** What one failure needs: the commit, its log and the failing test files (empty when it failed before the tests, or when the floor writes no report). */
 export interface Failure {
   readonly sha: string;
   readonly log: string;
   readonly fd: number;
   readonly files: readonly string[];
+  /** Whether the floor holds `{report}`: only then does an empty `files` mean it failed outside the test files (BR-2535). */
+  readonly reported: boolean;
 }
 
 type Outcome = { kind: "reverted"; subject: string; revert: string; branch: string | null } | { kind: "skipped"; reason: string };
@@ -82,26 +85,37 @@ export async function runFiles(config: Config, dir: string, files: readonly stri
   return true;
 }
 
-/** Setup, then the probe: the failing files, else typecheck_command, else the whole floor (BR-2535). */
-async function probeIn(dir: string, files: readonly string[], fd: number): Promise<boolean> {
-  const config = readConfig(dir);
-  if (!config.ok) return false;
-  const c = config.value;
-  if (c.setup && (await runLogged(c.setup, dir, fd)) !== 0) return false;
-  if (files.length > 0 && c.testCommand) return runFiles(c, dir, files, fd);
-  if (c.typecheckCommand) return (await runLogged(c.typecheckCommand, dir, fd)) === 0;
+/** The whole floor on the tree in `dir`, in a machine slot like every full run (BR-2535, BR-2576); its report goes to a temporary file. */
+async function wholeFloor(ws: Workspace, c: Config, dir: string, fd: number): Promise<boolean> {
   if (!c.floor) return false;
   const reports = mkdtempSync(join(tmpdir(), "canon-probe-"));
   try {
-    return (await runLogged(c.floor.replaceAll(REPORT_PLACEHOLDER, shellQuote(join(reports, "report.xml"))), dir, fd)) === 0;
+    const command = c.floor.replaceAll(REPORT_PLACEHOLDER, shellQuote(join(reports, "report.xml")));
+    const say = (line: string) => void writeSync(fd, `${line}\n`);
+    return (await floorWithReport(ws.db, c, dir, command, (cmd) => runLogged(cmd, dir, fd), say, undefined, { actor: ws.actor, worktree: dir, say })) === 0;
   } finally {
     rmSync(reports, { recursive: true, force: true });
   }
 }
 
+/**
+ * Setup, then the probe: the failing files; else typecheck_command when the floor's report showed the failure was not in
+ * a test file; else the whole floor (BR-2535).
+ */
+async function probeIn(ws: Workspace, dir: string, f: Failure): Promise<boolean> {
+  const config = readConfig(dir);
+  if (!config.ok) return false;
+  const c = config.value;
+  if (c.setup && (await runLogged(c.setup, dir, f.fd)) !== 0) return false;
+  if (f.files.length > 0 && c.testCommand) return runFiles(c, dir, f.files, f.fd);
+  // reason: without a report canon does not know which test failed; typecheck_command passes on such a commit too and would clear every landing (BR-2535)
+  if (f.reported && c.typecheckCommand) return (await runLogged(c.typecheckCommand, dir, f.fd)) === 0;
+  return wholeFloor(ws, c, dir, f.fd);
+}
+
 async function probe(ws: Workspace, f: Failure, sha: string, what: string): Promise<boolean> {
   writeSync(f.fd, `\ncanon: probing ${what} ${sha.slice(0, 9)}\n`);
-  const passed = await atCommit(ws, sha, (dir) => probeIn(dir, f.files, f.fd));
+  const passed = await atCommit(ws, sha, (dir) => probeIn(ws, dir, f));
   writeSync(f.fd, `canon: ${what} ${sha.slice(0, 9)} ${passed ? "passes" : "fails"}\n`);
   return passed;
 }
@@ -118,7 +132,7 @@ export async function locate(ws: Workspace, f: Failure): Promise<Landing | strin
   if (!(await probe(ws, f, green, "the last green commit"))) return `the probe fails on the last green commit ${green.slice(0, 9)} too, so it cannot tell landings apart`;
   let lo = -1;
   let hi = cands.length - 1;
-  if (await probe(ws, f, cands[hi]!.sha, cands[hi]!.subject ?? "landing")) return `the probe passes on the last landing ${cands[hi]!.sha.slice(0, 9)}, so no landing is to blame`;
+  if (await probe(ws, f, cands[hi]!.sha, cands[hi]!.subject ?? "landing")) return `the probe passes on the last landing ${cands[hi]!.sha.slice(0, 9)} too, so it does not reproduce the failure and cannot tell landings apart`;
   while (hi - lo > 1) {
     const mid = Math.floor((lo + hi) / 2);
     if (await probe(ws, f, cands[mid]!.sha, cands[mid]!.subject ?? "landing")) lo = mid;
@@ -150,14 +164,16 @@ function reopen(dir: string, sha: string, subject: string): boolean {
   return git(dir, "add", "--", path).ok;
 }
 
-/** Runs typecheck_command, the failing files and canon check on the tree in `dir` (BR-2536 step 3); undefined when all pass. */
-async function checkTree(dir: string, files: readonly string[], fd: number): Promise<string | undefined> {
+/** Runs typecheck_command, the failing files (the whole floor when it writes no report) and canon check on the tree in `dir` (BR-2536 step 3); undefined when all pass. */
+async function checkTree(ws: Workspace, dir: string, f: Failure): Promise<string | undefined> {
+  const { files, fd } = f;
   const config = readConfig(dir);
   if (!config.ok) return `its canon/config.yaml cannot be read: ${config.error.message}`;
   const c = config.value;
   if (c.setup && (await runLogged(c.setup, dir, fd)) !== 0) return "setup fails on the reverted tree";
   if (c.typecheckCommand && (await runLogged(c.typecheckCommand, dir, fd)) !== 0) return "typecheck_command fails on the reverted tree";
   if (files.length > 0 && !(await runFiles(c, dir, files, fd))) return "the failing test files still fail on the reverted tree";
+  if (!f.reported && !(await wholeFloor(ws, c, dir, fd))) return "the floor still fails on the reverted tree";
   if ((await runLogged(`${canonCommand().map(shellQuote).join(" ")} check`, dir, fd)) !== 0) return "canon check fails on the reverted tree";
   return undefined;
 }
@@ -177,7 +193,7 @@ async function revertOnce(ws: Workspace, say: Say, f: Failure, l: Landing & { su
     const msg = `canon: revert ${l.subject} (the background floor failed on ${f.sha.slice(0, 9)})\n\nFailing: ${f.files.length > 0 ? f.files.join(", ") : "before the tests (setup or typecheck)"}\nLog: ${f.log}\n\n${TRAILER} ${l.subject} ${l.sha}`;
     const committed = git(dir, "-c", "user.name=canon", "-c", "user.email=canon@localhost", "commit", "-q", "--no-verify", "-m", msg);
     if (!committed.ok) return { reason: `cannot commit the revert: ${committed.error.message}` };
-    const failed = await checkTree(dir, f.files, f.fd);
+    const failed = await checkTree(ws, dir, f);
     if (failed) return { reason: failed };
     const r = git(dir, "rev-parse", "HEAD");
     if (!r.ok) return { reason: r.error.message };

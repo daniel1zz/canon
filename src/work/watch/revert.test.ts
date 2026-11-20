@@ -29,14 +29,19 @@ for f in t/*.test.sh; do if sh "$f" >/dev/null 2>&1; then x=""; else x='<failure
 printf '%s</testsuite></testsuites>' "$out" > "$r"; exit $rc
 `;
 
+/** floor without `{report}`: every test file, only an exit code, so canon cannot tell which file failed. */
+const PLAIN_FLOOR = `rc=0; for f in t/*.test.sh; do sh "$f" >/dev/null 2>&1 || rc=1; done; exit $rc
+`;
+const CONFIG = 'floor: sh floor.sh {report}\ntest_command: sh run.sh {file} {report}\ntests: ["t/*.test.sh"]\nfloor_timing: after\nfloor_quiet_minutes: 600\nfloor_max_untested: 100\nfloor_max_age_minutes: 600\nreview: none\n';
+
 // reason: each landing starts a background watcher; with these thresholds it only waits, so the test drives every run itself with --now (BR-2311)
 /** A project in after mode with one test file that passes while value.txt says good; main's first commit is green. */
-async function repo(test = "grep -q good value.txt\n") {
+async function repo(test = "grep -q good value.txt\n", config = CONFIG, floor = FLOOR) {
   const root = project();
   roots.push(root);
-  writeFileSync(join(root, "canon/config.yaml"), 'floor: sh floor.sh {report}\ntest_command: sh run.sh {file} {report}\ntests: ["t/*.test.sh"]\nfloor_timing: after\nfloor_quiet_minutes: 600\nfloor_max_untested: 100\nfloor_max_age_minutes: 600\nreview: none\n');
+  writeFileSync(join(root, "canon/config.yaml"), config);
   writeFileSync(join(root, "run.sh"), RUN);
-  writeFileSync(join(root, "floor.sh"), FLOOR);
+  writeFileSync(join(root, "floor.sh"), floor);
   writeFileSync(join(root, "value.txt"), "good\n");
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "setup");
@@ -122,6 +127,27 @@ describe("the background floor after a failure", () => {
     await watch(ws(root), quiet, { now: true });
     expect(events(root, "land.revert")).toEqual([{ subject: bad, detail: expect.objectContaining({ revert, branch: `change/${bad}`, files: ["t/a.test.sh"] }) }]);
     expect(sh(root, "show", `change/${bad}:value.txt`)).toBe("bad");
+  });
+
+  test("BR-2535 BR-2536: a floor without {report} is probed with the whole floor, not typecheck_command, so the landing that broke it is found and reverted", async () => {
+    // typecheck_command passes on every commit: probing with it would clear every landing
+    const config = CONFIG.replace("floor: sh floor.sh {report}", "floor: sh floor.sh").concat("typecheck_command: \"true\"\n");
+    const root = await repo(undefined, config, PLAIN_FLOOR);
+    await landing(root, "Add notes", { "notes.txt": "n\n" });
+    const bad = await landing(root, "Break the value", { "value.txt": "bad\n" });
+    await watch(ws(root), quiet, { now: true });
+    expect([events(root, "revert.skip").map((e) => e.detail.reason), sh(root, "log", "-1", "--format=%s", "main")]).toEqual([[], `canon: revert ${bad} (the background floor failed on ${events(root, "floor.fail")[0]!.detail.sha.slice(0, 9)})`]);
+    expect(sh(root, "show", "main:value.txt")).toBe("good");
+    expect(sh(root, "show", "main:notes.txt")).toBe("n");
+  });
+
+  test("BR-2535: when the probe passes on the last landing too it says it cannot tell landings apart, not that no landing is to blame", async () => {
+    const config = CONFIG.concat("typecheck_command: \"true\"\n");
+    // the floor fails without naming a test file: its report is never written
+    const root = await repo(undefined, config, FLOOR.replace('printf', 'grep -q good value.txt || exit 1; printf'));
+    await landing(root, "Break the value", { "value.txt": "bad\n" });
+    await watch(ws(root), quiet, { now: true });
+    expect(events(root, "revert.skip").map((e) => e.detail.reason)).toEqual([expect.stringMatching(/does not reproduce the failure and cannot tell landings apart$/)]);
   });
 
   test("BR-2535: when the probe fails on the last green commit too it locates nothing, reverts nothing and leaves main for a fix change", async () => {
