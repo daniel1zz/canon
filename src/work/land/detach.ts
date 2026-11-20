@@ -7,6 +7,8 @@ import { canonCommand } from "../watch/watch.ts";
 import { isGone, processOf, type Proc } from "../claims/liveness.ts";
 import { attemptIn } from "./queue/interrupted.ts";
 import { EXIT } from "../../invocation/command.ts";
+import { git } from "../../kernel/git.ts";
+import { groupAlive } from "../verify/stop-groups.ts";
 
 /**
  * A landing runs in its own background process; `canon work land` only follows it (D-80, BR-2390..BR-2393). The
@@ -268,6 +270,28 @@ export async function stopLanding(ws: Workspace): Promise<{ ok: true; code: numb
   const recorded = { pid: a.pid, start: a.pidStart };
   if (run && run.id === a.id) await follow(ws, run.dir, { recorded }, a.pid);
   else while (isGone(recorded) !== true) await Bun.sleep(POLL_MS);
+  // reason: a command the landing stopped mid-way may leave a file half changed; `git commit -a` would record it (BR-2393, #262)
+  const changed = git(ws.root, "-c", "core.quotePath=false", "diff", "--name-only", "HEAD");
+  if (changed.ok && changed.value !== "") {
+    const files = changed.value.split("\n");
+    const more = files.length > 10 ? ` and ${files.length - 10} more` : "";
+    writeSync(2, `canon: tracked files differ from HEAD after the landing stopped: ${files.slice(0, 10).join(", ")}${more}; a command it stopped may have left them half changed: look at git diff before committing\n`);
+  }
+  const left = leftRunning(ws, a.id);
+  if (left.length > 0) {
+    return { ok: false, code: "io", message: `the landing started ${a.ts} (process ${a.pid}) ended, but process group(s) it started still run after SIGKILL: ${left.join(", ")}; stop them with ${left.map((g) => `kill -KILL -${g}`).join("; ")}` };
+  }
   writeSync(1, `stopped the landing started ${a.ts} (process ${a.pid})\n`);
   return { ok: true, code: EXIT.ok };
+}
+
+/**
+ * The process groups the landing whose `land.start` is event `start` recorded as still running after SIGKILL when it was
+ * stopped (`left_running` of its `land.killed`, BR-2099), that still have a process now (BR-2393).
+ */
+export function leftRunning(ws: Workspace, start: number): number[] {
+  const r = ws.db.db.query<{ detail: string }, [number, string]>("SELECT detail FROM events WHERE id > ? AND kind = 'land.killed' AND worktree = ? ORDER BY id LIMIT 1").get(start, ws.root);
+  if (!r) return [];
+  const groups = (JSON.parse(r.detail) as { left_running?: unknown }).left_running;
+  return Array.isArray(groups) ? groups.filter((g): g is number => typeof g === "number" && g > 1 && groupAlive(g)) : [];
 }

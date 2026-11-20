@@ -1,9 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { boundedLoop, project, sh, startNew, waitFor, ws } from "../testkit.ts";
+import { boundedLoop, project, runsUntilKilled, sh, startNew, waitFor, ws } from "../testkit.ts";
 import { isGone, processOf } from "../claims/liveness.ts";
-import { backgroundRun } from "./detach.ts";
+import { backgroundRun, leftRunning } from "./detach.ts";
 
 // reason: these tests start the real CLI, whose landing runs in a background process they wait for and signal (D-80).
 const TIMED = 60_000;
@@ -259,4 +259,86 @@ describe("canon work land --stop (D-80)", () => {
     expect(r.code).toBe(4);
     expect(r.err).toContain("cannot signal the landing process 1");
   }, TIMED);
+});
+
+/**
+ * A project whose before_land hook starts a child, as a mutation tool does: the child writes its pid, appends a line to
+ * the tracked app.txt and runs until it is killed. With `restores`, SIGTERM makes it put app.txt back and exit; without,
+ * it ignores SIGTERM. The hook script lives outside the repository so the worktree stays clean (BR-2013).
+ */
+function hookProject(restores: boolean) {
+  const root = project();
+  const f = { childpid: `${root}.child.pid`, script: `${root}.hook.sh` };
+  const onTerm = restores ? `trap "git checkout -q -- app.txt; exit 0" TERM` : `trap "" TERM`;
+  writeFileSync(f.script, `sh -c '${onTerm}; echo mutant >> app.txt; echo $$ > ${f.childpid}; ${boundedLoop("true")}'\n`);
+  writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nreview: none\nhooks:\n  before_land: "sh ${f.script}"\n`);
+  sh(root, "commit", "-qam", "hook that starts a child");
+  const s = startNew(root, "Hook child");
+  return { root, s, ...f };
+}
+
+const alive = (pid: number) => {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+describe("canon work land --stop stops what the landing started (#262)", () => {
+  test("BR-2099 BR-2393: --stop stops the before_land hook's child with SIGTERM first, so it can put the worktree back, before it reports stopped", async () => {
+    const h = hookProject(true);
+    const first = follower(h.s.worktree);
+    await waitFor("the hook's child to start", () => existsSync(h.childpid) && readFileSync(h.childpid, "utf8").endsWith("\n"));
+    const child = Number(readFileSync(h.childpid, "utf8").trim());
+    try {
+      const stop = await result(follower(h.s.worktree, ["--stop"], false));
+      expect(stop.code).toBe(0);
+      expect(stop.out).toContain("stopped the landing");
+      expect(alive(child)).toBe(false);
+      expect(sh(h.s.worktree, "status", "--porcelain", "--untracked-files=no")).toBe("");
+      expect(stop.err).not.toContain("tracked files differ");
+      expect(`${stop.out}${stop.err}`).not.toContain("SIGKILL");
+      expect((await result(first)).code).toBe(143);
+    } finally {
+      if (alive(child)) process.kill(child, "SIGKILL");
+    }
+  }, TIMED);
+
+  test("BR-2099 BR-2393: a hook's child that ignores SIGTERM is killed; --stop names the files it left changed", async () => {
+    const h = hookProject(false);
+    const first = follower(h.s.worktree);
+    await waitFor("the hook's child to start", () => existsSync(h.childpid) && readFileSync(h.childpid, "utf8").endsWith("\n"));
+    const child = Number(readFileSync(h.childpid, "utf8").trim());
+    try {
+      const stop = await result(follower(h.s.worktree, ["--stop"], false));
+      expect(stop.code).toBe(0);
+      expect(alive(child)).toBe(false);
+      expect(`${stop.out}${stop.err}`).toContain("sent SIGKILL");
+      expect(stop.err).toContain("tracked files differ from HEAD after the landing stopped: app.txt");
+      expect((await result(first)).code).toBe(143);
+    } finally {
+      if (alive(child)) process.kill(child, "SIGKILL");
+    }
+  }, TIMED);
+
+  test("BR-2393: --stop counts as still running only the groups recorded as left after SIGKILL that still have a process", async () => {
+    const root = project();
+    const w = ws(root);
+    const live = Bun.spawn(["sh", "-c", runsUntilKilled], { stdout: "ignore", stderr: "ignore", stdin: "ignore", detached: true });
+    const ended = Bun.spawnSync(["true"]).pid;
+    try {
+      w.db.event("agent:a", "land.start", null, { pid: process.pid, pid_start: "x" });
+      const start = w.db.db.query<{ id: number }, []>("SELECT MAX(id) AS id FROM events WHERE kind = 'land.start'").get()!.id;
+      expect(leftRunning(w, start)).toEqual([]);
+      w.db.event("agent:a", "land.killed", null, { signal: "SIGTERM", left_running: [live.pid, ended] });
+      expect(leftRunning(w, start)).toEqual([live.pid]);
+      process.kill(-live.pid, "SIGKILL");
+      await live.exited;
+      expect(leftRunning(w, start)).toEqual([]);
+    } finally {
+      live.kill("SIGKILL");
+    }
+  });
 });

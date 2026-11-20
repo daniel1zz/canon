@@ -9,6 +9,7 @@ import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../..
 import { testFilesFor } from "../../../knowledge/check/tests.ts";
 import { runLandingTests, tail } from "./merged-tests.ts";
 import { runHooks } from "../../hooks/hooks.ts";
+import { forgetEnded } from "../../verify/stop-groups.ts";
 import { changePort } from "../../hooks/ports.ts";
 import { type Doc } from "../../../knowledge/documents/model.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
@@ -23,7 +24,7 @@ import { landingExecution } from "../../execution/landing.ts";
 import { landingAllocations } from "./allocated.ts";
 import { noticeProposedDecisions } from "./proposed.ts";
 import { reviewScope, reviewSettingsOn, standingTouched } from "./review-scope.ts";
-import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
+import { landingGroups, type LandOptions, type LandOutcome, type Running } from "../outcome.ts";
 import { checksAddedAndReviewed, checksAddedAndReviewedMessage, keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
 
 /** Per-kind counts and the files involved, so `canon stats` can tell which checks are precise (BR-2094, P6). */
@@ -82,7 +83,7 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   if (!reports.ok) return refuse("environment", reports.error.message);
   const unreported = [...reports.value.relevant].sort();
   if (unreported.length > 0 && landing.value.testCommand) {
-    const runs = await runLandingTests(ws, wt, landing.value.testCommand, unreported);
+    const runs = await runLandingTests(ws, wt, landing.value.testCommand, unreported, landingGroups(v.running));
     for (const r of runs) say(`tested ${r.file} after the rebase, as its content there had no report: ${r.exitCode === 0 ? "pass" : "fail"}`);
     const broken = runs.find((r) => r.exitCode !== 0);
     if (broken) return refuse("check", `canon check: ${broken.file} fails on the tree being landed, after the rebase (BR-2381); rebase onto main, fix it, run canon work test and land again:\n${tail(broken.output)}`);
@@ -141,7 +142,8 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   const review: ReviewNeeds = { docs: scope.reviewed, standing, wording: execution.wording, reviewer: below.value.review };
   // before_land: after canon check and the built-in steps, on the exact tree that becomes main (BR-2057).
   const hookEnv = { CANON_BASE: base.value, CANON_HEAD: head.value, CANON_BRANCH: v.branch };
-  const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env: hookEnv, port: changePort(ws, subject) }, ws.config.hooks.before_land, say, true);
+  const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env: hookEnv, port: changePort(ws, subject) }, ws.config.hooks.before_land, say, true, landingGroups(v.running));
+  forgetEnded(landingGroups(v.running));
   if (failed) return refuse("hook", `before_land \`${failed.command}\` exited ${failed.exit}\n${failed.output}`);
   // reason: a notice, never a refusal: subagents land decisions proposed by design (BR-2355)
   const proposed = noticeProposedDecisions(ws, say, { wt, base: base.value, head: head.value, subject, corpus: read.corpus });

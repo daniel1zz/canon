@@ -15,7 +15,8 @@ import { hasLessons, LESSONS_SECTION } from "../../knowledge/documents/templates
 import { git, isClean, removeWorktree } from "../../kernel/git.ts";
 import { ensureWatcher, pathCanonReads, timingOf } from "../watch/watch.ts";
 import { missingMessage, passesMeta, planClose } from "../execution/landing.ts";
-import type { LandOptions, LandOutcome, Running } from "./outcome.ts";
+import { landingGroups, type LandOptions, type LandOutcome, type Running } from "./outcome.ts";
+import { stopGroupsSync, TERM_WAIT_MS } from "../verify/stop-groups.ts";
 import { changesIn, ownDiffId, rebaseInProgress } from "./worktree-state.ts";
 import { checkNow, CONTENT_REASONS, contentTree, repeatedRefusal } from "./repeat.ts";
 import { counted, isSubagent, refusalsInARow, STALL_LIMIT, stallAdvice, stalled } from "./stall.ts";
@@ -138,19 +139,16 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
   let close: CloseCommit | undefined;
   let entry: number | undefined;
   let bound: ReturnType<typeof bindToLander> | undefined;
-  const running: Running = {};
+  const running: Running = { groups: new Set() };
   // A lander killed by a signal (a tool timeout, Ctrl-C) gives its turn up at once and leaves no rebase half done (BR-2099).
   // reason: registered before the close commit, so a signal while it is made or before the landing queues still takes it back (BR-2018).
   const onSignal = (signal: NodeJS.Signals) => {
-    running.floor?.kill();
-    // reason: a related test the landing runs before queueing is stopped with it, as canon work test stops its files (BR-2542, BR-2304)
-    for (const g of running.tests ?? []) {
-      try {
-        process.kill(-g, "SIGKILL");
-      } catch {
-        // reason: the group may have ended between the check and the kill; there is nothing left to stop
-      }
-    }
+    // reason: first, before any git step: a before_land command's child left running kept editing the worktree after
+    // the landing ended (#262). SIGTERM before SIGKILL lets a tool put back what it changed (BR-2099, BR-2304).
+    const stopped = stopGroupsSync([...(running.groups ?? [])]);
+    if (stopped.killed) say(`sent SIGKILL to what the landing started, still running ${TERM_WAIT_MS / 1000} s after SIGTERM`);
+    if (stopped.left.length > 0) say(`process group(s) the landing started still run after SIGKILL: ${stopped.left.join(", ")}; stop them with kill -KILL -<group>`);
+    const left = stopped.left.length > 0 ? { left_running: stopped.left } : {};
     running.review?.kill(); // a reviewer left running would keep spending after the landing ended (BR-2296)
     // reason: process.exit skips the batch's finally, so its temporary worktree is removed here (BR-2099, BR-2172).
     if (running.reviewTree !== undefined) removeReviewTree(ws, running.reviewTree); // after the review's process group is stopped (BR-2216)
@@ -161,13 +159,13 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
     // reason: only while this lander still owns the entry; a later landing may have taken it back as its kept place (BR-2177, issue #45).
     if (entry === undefined) {
       // reason: BR-2307 ends a landing with land.killed; the lander never reaches this before queueing today, but an await added before enqueue would (D-58).
-      ws.db.event(ws.actor, "land.killed", subject, { signal, rebaseAborted: aborted });
+      ws.db.event(ws.actor, "land.killed", subject, { signal, rebaseAborted: aborted, ...left });
       if (close) reopen(wt, close, say);
     } else if (waitWhileLocked(ws, entry, say) && failIfActive(ws.db, entry, "killed", lander ?? null, ws.config.landKeepPlaceMs)) {
       // reason: the entry keeps its place for this change's next landing from this worktree, like a timeout (BR-2368, D-75).
       const until = keptUntil(ws.db, entry);
       if (until) say(`landing stopped by ${signal}; this landing keeps its place in the queue until ${until}: landing again from this worktree before then puts it back ahead of the landings queued after it`);
-      ws.db.event(ws.actor, "land.killed", subject, { signal, rebaseAborted: aborted, ...(until ? { keeps_place_until: until } : {}) });
+      ws.db.event(ws.actor, "land.killed", subject, { signal, rebaseAborted: aborted, ...(until ? { keeps_place_until: until } : {}), ...left });
       if (close) reopen(wt, close, say);
     } else {
       // reason: a leader may have refused this entry in its batch before this lander read it; the change did not land,
@@ -191,9 +189,7 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
     const related = unreportedRelated(ws, wt);
     if (!related.ok) return early("environment", `the related test files could not be listed: ${related.error.message}`);
     if (related.value.files.length > 0 && related.value.testCommand) {
-      running.tests = new Set();
-      const runs = await runLandingTests(ws, wt, related.value.testCommand, related.value.files, running.tests);
-      running.tests = undefined;
+      const runs = await runLandingTests(ws, wt, related.value.testCommand, related.value.files, landingGroups(running));
       for (const r of runs) say(`tested ${r.file} before landing, as it had no report of its content: ${r.exitCode === 0 ? "pass" : "fail"}`);
       const broken = runs.find((r) => r.exitCode !== 0);
       if (broken) return early("tests", `${broken.file} fails (BR-2542): the landing ran it as this change makes it relevant and canon work test had not run its content; fix it, then land again:\n${tail(broken.output)}`);

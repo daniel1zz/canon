@@ -24,11 +24,13 @@ export type LandOutcome =
   | { readonly kind: "refused"; readonly reason: "claimed" | "dirty" | "conflict" | "floor" | "config" | "config-key" | "check" | "source" | "review" | "hook" | "moved-during-land" | "main-moved" | "main-dirty" | "lost-turn" | "no-floor" | "no-claim" | "lessons" | "on-main" | "environment" | "evidence" | "activate" | "rule-changed" | "passes" | "release" | "quality" | "stalled" | "tests" | "delegation"; readonly message: string; readonly findings?: readonly Finding[] }
   | { readonly kind: "timeout"; readonly ahead: number; /** Until when the entry keeps its place (BR-2368); absent when `land_keep_place_minutes` is 0. */ readonly keepsPlaceUntil?: string };
 
-/** What a signal handler must stop: the floor, or the batch worktree's setup, and the review command, while they run. */
+/** What a signal handler must stop: the commands the landing started and the review command, while they run. */
 export interface Running {
-  floor?: { kill(): void } | undefined;
-  /** The process groups of the related test files the landing runs before it queues (BR-2542). */
-  tests?: Set<number> | undefined;
+  /**
+   * The process groups of the commands the landing started that may still have a process: the floor, the batch's setup,
+   * each before_land command and the test files it runs itself. A signal stops them all, children included (BR-2099, #262).
+   */
+  groups?: Set<number> | undefined;
   /** The rule or duplicate review command's process group (BR-2296). */
   review?: { kill(): void } | undefined;
   /** The temporary worktree the review commands run in, while it exists (BR-2216). */
@@ -36,3 +38,6 @@ export interface Running {
   /** The temporary worktree at the landed commit the review after landing reads the documents from, while it exists (BR-2441). */
   readTree?: string | undefined;
 }
+
+/** The set of process groups a signal to the landing stops (BR-2099); a command started with `detached: true` adds its own. */
+export const landingGroups = (running: Running): Set<number> => (running.groups ??= new Set());

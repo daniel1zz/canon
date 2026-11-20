@@ -72,14 +72,18 @@ const merged = (command: string): string[] => ["sh", "-c", `exec 2>&1\n${command
 /**
  * Runs the commands in order and waits for each. Returns the first failure, or undefined when all exit 0.
  * `stopOnFailure` is for `before_land`; the `after_*` events run every command whatever the exit codes.
+ * With `groups`, each command runs in a process group of its own, which is added to `groups` and left there for the
+ * caller to drop once no process of it is left, so the caller stopped by a signal can stop the command and every child
+ * it started, including one a finished command left running (BR-2099, #262).
  */
-export async function runHooks(ctx: HookContext, commands: readonly string[], say: (line: string) => void, stopOnFailure: boolean): Promise<HookFailure | undefined> {
+export async function runHooks(ctx: HookContext, commands: readonly string[], say: (line: string) => void, stopOnFailure: boolean, groups?: Set<number>): Promise<HookFailure | undefined> {
   if (commands.length === 0) return undefined;
   const prep = prepare(ctx, say);
   let first: HookFailure | undefined;
   for (const command of commands) {
     say(`hook ${ctx.event}: ${command}`);
-    const proc = Bun.spawn(merged(command), { cwd: ctx.cwd, env: prep.env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const proc = Bun.spawn(merged(command), { cwd: ctx.cwd, env: prep.env, stdout: "pipe", stderr: "pipe", stdin: "ignore", detached: groups !== undefined });
+    groups?.add(proc.pid);
     const [out, errText, exit] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
     const output = `${out}${errText}`;
     if (output.trim() !== "") for (const line of tail(output).split("\n")) say(`  ${line}`);

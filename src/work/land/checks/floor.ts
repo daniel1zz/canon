@@ -9,7 +9,8 @@ import type { Say, Workspace } from "../../workspace.ts";
 import { readConfig, type Config } from "../../../invocation/config.ts";
 import { testFilesFor } from "../../../knowledge/check/tests.ts";
 import { git } from "../../../kernel/git.ts";
-import type { Running } from "../outcome.ts";
+import { landingGroups, type Running } from "../outcome.ts";
+import { forgetEnded } from "../../verify/stop-groups.ts";
 
 /** Runs the floor in `cwd`, its whole output in the log `name`; `running` lets a signal stop it (BR-2014, BR-2099). */
 export async function runFloor(ws: Workspace, say: Say, cwd: string, name: string, running: Running, command: string = ws.config.floor!): Promise<{ code: number; log: string; tail: string }> {
@@ -19,10 +20,12 @@ export async function runFloor(ws: Workspace, say: Say, cwd: string, name: strin
   const fd = openSync(log, "w");
   const notes: string[] = [];
   const code = await floorWithReport(ws.db, ws.config, cwd, command, async (command) => {
-    const proc = Bun.spawn(["sh", "-c", command], { cwd, stdout: fd, stderr: fd });
-    running.floor = proc;
+    // reason: in a process group of its own, so a signal to the landing stops the floor's children too (BR-2099, #262)
+    const proc = Bun.spawn(["sh", "-c", command], { cwd, stdout: fd, stderr: fd, detached: true });
+    const groups = landingGroups(running);
+    groups.add(proc.pid);
     const exit = await proc.exited;
-    running.floor = undefined;
+    forgetEnded(groups);
     return exit;
   }, (line) => notes.push(line));
   closeSync(fd);

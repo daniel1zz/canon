@@ -7,7 +7,8 @@ import { runFloor, floorSkip } from "../checks/floor.ts";
 import { verifyChange, type StepFailure, type Steps } from "../checks/steps.ts";
 import { afterLand, closeSubject, finishLanding, idOfChangeFile, reopen } from "../finish/finish.ts";
 import { moveMainGuarded, snapshotDetail, staleEpoch, workerLandingRefusal, type WorkerLanding } from "../checks/delegation.ts";
-import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
+import { landingGroups, type LandOptions, type LandOutcome, type Running } from "../outcome.ts";
+import { forgetEnded } from "../../verify/stop-groups.ts";
 import { batchCandidates, finishEntry, holdsTurn, inBatch, joinBatch, landBatched, landerOf, leaveBatch, lockBatch, refuseInBatch, unlockBatch } from "../queue/queue.ts";
 import { lostTurn, priorityNow } from "../queue/wait.ts";
 import { ownDiffId, rebaseInProgress } from "../worktree-state.ts";
@@ -124,10 +125,12 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
     if (ws.config.setup) {
       // reason: run without blocking, so the heartbeat timer and the signal handler keep running through a slow setup (BR-2049, BR-2099, issue #60).
       // reason: the batch worktree belongs to no single change, so its setup gets no port, not the one canon was run with (BR-2267, D-48).
-      const setup = Bun.spawn(["sh", "-c", ws.config.setup], { cwd: dir, env: { ...(process.env as Record<string, string>), CANON_PORT: "" }, stdout: "ignore", stderr: "ignore" });
-      t.running.floor = setup;
+      // reason: in a process group of its own, so a signal to the landing stops setup's children too (BR-2099, #262)
+      const setup = Bun.spawn(["sh", "-c", ws.config.setup], { cwd: dir, env: { ...(process.env as Record<string, string>), CANON_PORT: "" }, stdout: "ignore", stderr: "ignore", detached: true });
+      const groups = landingGroups(t.running);
+      groups.add(setup.pid);
       const code = await setup.exited;
-      t.running.floor = undefined;
+      forgetEnded(groups);
       if (code !== 0) return giveUp(`setup exited ${code} in the batch worktree`, "setup");
     }
 
