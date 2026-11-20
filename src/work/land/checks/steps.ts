@@ -15,6 +15,7 @@ import { readCorpus } from "../../../knowledge/documents/read.ts";
 import type { ReviewNeeds } from "../../../knowledge/review/landed-queue.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
 import { landingGoal } from "../../../knowledge/releases/goal-landing.ts";
+import { landingConfirmations } from "../../../knowledge/quality/landing.ts";
 import { advancesNotice } from "../../../knowledge/releases/features.ts";
 import { isChore } from "../../session/subject.ts";
 import type { Change } from "../../../knowledge/documents/model.ts";
@@ -108,6 +109,9 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   // Goal changes land and are listed; a chore cannot make one, and only the owner accepts a criterion waiting for them (BR-2510, D-130).
   const goal = landingGoal({ db: ws.db, wt, base: base.value, head: head.value, corpus: read.corpus, subject });
   if (!goal.ok) return refuse("release", goal.message);
+  // A quality standard becomes active, which says the owner confirmed it, only with the owner's answer (BR-2560, D-145).
+  const confirmed = landingConfirmations({ db: ws.db, wt, base: base.value, head: head.value, corpus: read.corpus, subject });
+  if (!confirmed.ok) return refuse("quality", confirmed.message);
   for (const line of goal.notices) say(line);
   // A change says which success criteria it advances, or why none; a missing or none answer is said, never refused (BR-2517, D-131).
   const advances = subject === null || isChore(subject) ? undefined : advancesNotice(read.corpus.docs.find((d): d is Change => d.kind === "change" && d.id === subject));

@@ -70,17 +70,21 @@ export function landingGoal(i: { readonly db: CoordDb; readonly wt: string; read
   if (i.subject === null || isChore(i.subject)) return { ok: false, message: `this landing changes the goal, and a chore cannot: land it in a change, whose ## 为什么 says why (BR-2510):\n${list}` };
   const owner = changes.filter(leftOwner);
   if (owner.length > 0) {
-    const change = i.corpus.docs.find((d): d is Change => d.kind === "change" && d.id === i.subject);
-    // reason: the answer must be one asked for this change, or any old answered question would do (BR-2510)
-    const answered = (change?.ownerAnswers ?? []).filter((n) => {
-      const q = i.db.db.query<{ answer: string | null; subject: string | null }, [number]>("SELECT answer, subject FROM questions WHERE id = ?").get(n);
-      return q?.answer != null && q.subject === i.subject;
-    });
-    if (answered.length === 0) {
+    if (ownerAnswered(i.db, i.corpus, i.subject).length === 0) {
       return { ok: false, message: `${i.subject} marks success criteria the owner was to accept, without the owner's answer:\n${owner.map((c) => `  ${c}`).join("\n")}\nAsk the owner (canon human ask --change ${i.subject}), then write the answered question's number in owner_answers (BR-2510)` };
     }
   }
   return { ok: true, notices: [`goal: ${i.subject} changes the goal:`, ...changes.map((c) => `  ${c}`)] };
+}
+
+/** The questions in the change's `owner_answers` that were asked for this change and answered (BR-2510, BR-2560). */
+export function ownerAnswered(db: CoordDb, corpus: Corpus, subject: string): number[] {
+  const change = corpus.docs.find((d): d is Change => d.kind === "change" && d.id === subject);
+  // reason: the answer must be one asked for this change, or any old answered question would do (BR-2510)
+  return (change?.ownerAnswers ?? []).filter((n) => {
+    const q = db.db.query<{ answer: string | null; subject: string | null }, [number]>("SELECT answer, subject FROM questions WHERE id = ?").get(n);
+    return q?.answer != null && q.subject === subject;
+  });
 }
 
 /** The goal changes of the release and feature files `paths` between two commits, one line each (BR-2510, BR-2505). */
