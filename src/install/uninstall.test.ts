@@ -59,7 +59,9 @@ describe("canon uninstall", () => {
     expect(onMain(root, "canon/notes-kept.md")).toBe(true);
     expect(JSON.parse(git(root, "show", "main:.claude/settings.json"))).toEqual({ worktree: { baseRef: "head" } });
     expect(git(root, "log", "--format=%s", "main")).toMatch(/Uninstall canon \(chore-[0-9a-f-]+\)/);
-    expect(git(root, "ls-tree", "--name-only", "main", "canon/changes/")).toBe("");
+    // the uninstall is a light change: its landing writes its change file, which stays with the rest of canon/ (BR-2278, BR-2458)
+    expect(git(root, "ls-tree", "--name-only", "main", "canon/changes/")).toBe("canon/changes/C-1.md");
+    expect(git(root, "show", "main:canon/changes/C-1.md")).toMatch(/chore: chore-[0-9a-f-]+/);
     expect(r.out).toContain('kept worktree.baseRef "head"');
     // the landing's own push cannot read the remote any more; uninstall pushes it
     expect(git(remote, "rev-parse", "main")).toBe(git(root, "rev-parse", "main"));

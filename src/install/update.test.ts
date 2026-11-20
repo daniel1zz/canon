@@ -216,8 +216,8 @@ describe("finding and applying updates", () => {
     expect(r.code).toBe(0);
     const change = r.out.match(/in (chore-[0-9a-f-]+), landed/)![1]!;
     expect(git(root, "log", "--format=%s", "main")).toContain(`Update canon project files to ${version} (${change})`);
-    expect(git(root, "ls-tree", "--name-only", "main", "canon/changes/")).toBe("");
-    const text = git(root, "log", "-1", "--format=%B", "main");
+    expect(git(root, "ls-tree", "--name-only", "main", "canon/changes/")).toBe("canon/changes/C-1.md"); // the light change file its landing wrote (BR-2458)
+    const text = git(root, "log", "-1", "--format=%B", "main~1");
     expect(text).toContain(`Update canon project files to ${version} (${change})`);
     expect(text).toContain("- skill canon-a/SKILL.md\n- hook: canon brief at session start (.claude/settings.json)");
     expect(text).toContain('- setting: worktree.baseRef "head"');
@@ -232,8 +232,12 @@ describe("finding and applying updates", () => {
     expect(r.out).toContain("canon now reads JUnit test reports (D-64)"); // what a project must have in canon/config.yaml (BR-2086)
     expect(r.out).toContain("bun test {file} --reporter=junit --reporter-outfile={report}");
     expect(git(root, "show", "main:.claude/skills/canon-a/SKILL.md")).toBe("a v2");
-    expect(git(root, "log", "-1", "--format=%s", "main")).toMatch(/^Update canon project files to \w+ \(chore-[0-9a-f-]+\)$/);
-    expect(git(root, "ls-tree", "--name-only", "main", "canon/changes/")).toBe("");
+    expect(git(root, "log", "-1", "--format=%s", "main~1")).toMatch(/^Update canon project files to \w+ \(chore-[0-9a-f-]+\)$/);
+    // the chore is a light change: its file is written in its close commit, and main has no open commit (BR-2086, BR-2458)
+    const chore = r.out.match(/in (chore-[0-9a-f-]+), landed/)![1]!;
+    expect(git(root, "log", "-1", "--format=%s", "main")).toBe(`canon: close ${chore}`);
+    expect(git(root, "show", "main:canon/changes/C-1.md")).toContain(`chore: ${chore}`);
+    expect(git(root, "log", "--format=%s", "main")).not.toContain("canon: open");
     expect(canon(root, env, "update", "--check").code).toBe(0);
     expect(canon(root, env, "update").out).toContain("up to date");
   });

@@ -21,6 +21,12 @@ export function branchSubject(branch: string | undefined): string | undefined {
   return /^change\/(C-\d+)(?:-|$)/i.exec(branch)?.[1]?.toUpperCase();
 }
 
+/** The slug a chore branch carries after its identity, empty when it has none; undefined for a branch that is not a chore's (BR-2457). */
+export function branchSlug(branch: string): string | undefined {
+  const chore = CHORE_BRANCH.exec(branch);
+  return chore ? chore[2] ?? "" : undefined;
+}
+
 export function subjectBranch(branch: string | undefined, subject: string): boolean {
   return branchSubject(branch) === normalizeSubject(subject);
 }

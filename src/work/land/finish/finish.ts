@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import type { Say, Workspace } from "../../workspace.ts";
 import { isChore } from "../../session/subject.ts";
 import { logFile, runHooksInBackground } from "../../hooks/hooks.ts";
@@ -18,12 +19,27 @@ import { clean } from "../../session/session.ts";
 /** The `canon: close C-n` commit `--finish` made before queuing, so a landing that fails can take it back. */
 export interface CloseCommit {
   readonly subject: string;
+  /** The change file's id: the change itself, or a chore's light change (BR-2458); what the messages name. */
+  readonly doc: string;
   readonly path: string;
   /** Referring documents the landing added records to in this commit after the rebase (BR-2440); taken back with it. */
   readonly stamped: string[];
 }
 
 export const closeSubject = (change: string) => `canon: close ${change}`;
+
+/** The id of the light change file a close commit added (`C-n` from `canon/changes/C-n-<slug>.md`), for a commit read back (BR-2309). */
+export function idOfChangeFile(path: string): string | undefined {
+  return /^([A-Za-z]+-\d+)(?:-|\.md$)/.exec(basename(path))?.[1];
+}
+
+/** The C number the chore landed as on `ref`: its light change file there, found by its `chore` key (BR-2458). */
+export function landedAs(ws: Workspace, subject: string, ref: string): string | undefined {
+  const files = git(ws.primary, "grep", "-l", "-i", `^chore: ${subject}$`, ref, "--", "canon/");
+  if (!files.ok || files.value === "") return undefined;
+  const path = files.value.split("\n")[0]!.replace(/^[^:]+:/, "");
+  return idOfChangeFile(path);
+}
 
 /** What a failed close commit leaves behind and what to do next (BR-2229). */
 export const closeLeftNote = (path: string) =>
@@ -90,7 +106,7 @@ export function stampAddedReferences(ws: Workspace, wt: string, close: CloseComm
   if (!amend.ok) return undo(amend.error.message);
   close.stamped.push(...paths);
   const count = stamps.value.reduce((n, s) => n + s.added.length, 0);
-  say(`confirmed ${count} reference(s) this change added, in ${close.subject}'s close commit: ${stamps.value.map((s) => `${s.doc.id} -> ${s.added.join(", ")}`).join("; ")}`);
+  say(`confirmed ${count} reference(s) this change added, in ${close.doc}'s close commit: ${stamps.value.map((s) => `${s.doc.id} -> ${s.added.join(", ")}`).join("; ")}`);
   return ok(undefined);
 }
 
@@ -141,7 +157,7 @@ export function acceptAddedDecisions(ws: Workspace, wt: string, close: CloseComm
   if (!amend.ok) return undo(amend.error.message);
   close.stamped.push(...files.filter((f) => !close.stamped.includes(f)));
   const gone = writes.filter((w) => w.status === "superseded").map((w) => w.doc.id);
-  say(`accepted ${accepted.join(", ")} on landing, in ${close.subject}'s close commit${gone.length > 0 ? `; superseded ${gone.join(", ")}` : ""} (a decision on main is in force, D-109)`);
+  say(`accepted ${accepted.join(", ")} on landing, in ${close.doc}'s close commit${gone.length > 0 ? `; superseded ${gone.join(", ")}` : ""} (a decision on main is in force, D-109)`);
   return ok(accepted);
 }
 
@@ -166,7 +182,9 @@ export function finishLanding(ws: Workspace, opts: LandOptions, say: Say, l: { e
     if (releaseOwnClaim(ws.db, l.subject, ws.root, ws.actor)) dropHandoff(ws.db, l.subject);
     else if (claimOfWorktree(ws.db, ws.root)) say(`${l.subject} is claimed by another session now; its claim and handoff were left as they are`);
     finished = true;
-    say(`${l.subject} ${isChore(l.subject) ? "completed" : "closed"}`);
+    // reason: a chore lands as a light change whose file its close commit wrote; the output names its number (BR-2458, D-150)
+    const as = isChore(l.subject) ? landedAs(ws, l.subject, l.sha) : undefined;
+    say(`${l.subject} ${isChore(l.subject) ? `completed${as ? ` as ${as}` : ""}` : "closed"}`);
     // reason: landed worktrees piled up because only a manual clean removed them (BR-2486, #228)
     if (opts.removeWorktree === "now") {
       // reason: run from the primary checkout, nothing of this landing is inside the worktree; a background removal would only make the next command wait for it (BR-2283)

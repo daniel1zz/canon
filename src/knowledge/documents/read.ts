@@ -7,6 +7,9 @@ import { changeLinks } from "../changes/links.ts";
 import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type Advances, type DecisionStatus, type Doc, type FeatureStatus, type Domain, type Layout, type QualityJudge, type QualityStatus, type ReleaseStatus, type RuleStatus } from "./model.ts";
 import { BUILTIN_TYPES, type DocType } from "./types.ts";
 
+/** A chore identity (D-100), the value of a light change's `chore` (BR-2458). */
+const CHORE_IDENTITY = /^chore-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
 /** A file under canon/ that does not fit the model. `canon check` reports these; reading never stops on one. */
 export interface FileProblem {
   readonly path: string;
@@ -224,12 +227,17 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: "`owner_answers` must be a non-empty list of canon human question numbers, such as [51] (BR-2510)" });
           continue;
         }
+        const chore = p.meta["chore"];
+        if (chore !== undefined && (typeof chore !== "string" || !CHORE_IDENTITY.test(chore))) {
+          problems.push({ path, message: "`chore` must be the chore identity of the light change's work, such as chore-<UUID>; canon writes it when the chore lands (BR-2458)" });
+          continue;
+        }
         const advances = advancesOf(p.meta["advances"], releasePrefix, featurePrefix);
         if (typeof advances === "string") {
           problems.push({ path, message: advances });
           continue;
         }
-        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...link, ...links, ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}), ...(advances !== undefined ? { advances } : {}) });
+        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...link, ...links, ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}), ...(chore !== undefined ? { chore: (chore as string).toLowerCase() } : {}), ...(advances !== undefined ? { advances } : {}) });
       } else if (type.name === "release") {
         const shippedAt = p.meta["shipped_at"];
         const shipped = p.status === "shipped";

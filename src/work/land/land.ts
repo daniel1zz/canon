@@ -26,6 +26,7 @@ import { runLandingTests, tail, unreportedRelated } from "./checks/merged-tests.
 import { floorScope, floorSkip, runFloor } from "./checks/floor.ts";
 import { afterLand, closeLeftNote, closeSubject, finishLanding, reopen, acceptAddedDecisions, stampAddedReferences, type CloseCommit } from "./finish/finish.ts";
 import { batchDir, landBatch, landedInBatch } from "./batch/batch.ts";
+import { closeLight } from "./finish/light.ts";
 import { pushMain } from "../remote/remote.ts";
 import { settleInterrupted } from "./queue/interrupted.ts";
 import { loadDetail } from "../session/load.ts";
@@ -230,7 +231,13 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
           // an edit saved after its check; the file keeps status: done uncommitted and the message says what to do (BR-2229, issue #82).
           return early("environment", `the close commit could not be made: ${c.error.message}\n${closeLeftNote(doc.path)}`);
         }
-        close = { subject, path: doc.path, stamped: [] };
+        close = { subject, doc: subject, path: doc.path, stamped: [] };
+      } else if (isChore(subject)) {
+        // reason: a chore is a light change; its change file and C number are written here, in its close commit with
+        // the work, so main gets no open commit and a chore that never lands leaves nothing on main (BR-2458, D-148, D-150)
+        const made = closeLight(ws, wt, subject, corpus, say);
+        if (!made.ok) return early("environment", made.error.message);
+        close = made.value;
       }
     }
 

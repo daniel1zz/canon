@@ -23,6 +23,7 @@ test("BR-2457: chore CLI creates independent work without consuming a change num
   expect(existsSync(join(wt!, "canon/changes"))).toBe(false);
   expect(sh(wt!, "rev-parse", "HEAD")).toBe(before);
   expect(branch).toStartWith("chore/");
+  expect(a.stdout.toString()).toContain(`${subject} is a light change: its change file and C number are written when it lands (canon chore land)`);
   const b = cli(root, "chore", "start", "update tools");
   expect(b.exitCode).toBe(0);
   expect(b.stdout.toString()).not.toContain(subject!);
@@ -36,7 +37,7 @@ test("BR-2457: empty titles fail before creating work", () => {
   expect(sh(root, "for-each-ref", "--format=%(refname)", "refs/heads/chore/")).toBe("");
 });
 
-test("BR-2458: chore CLI lands through the shared floor without a closing document", () => {
+test("BR-2458 BR-2457: chore CLI lands through the shared floor with its light change file in its close commit, and no open commit", () => {
   const root = project();
   const out = cli(root, "chore", "start", "edit app");
   expect(out.exitCode).toBe(0);
@@ -46,8 +47,17 @@ test("BR-2458: chore CLI lands through the shared floor without a closing docume
   const landed = cli(wt!, "chore", "land");
   expect(landed.exitCode).toBe(0);
   expect(sh(root, "show", "main:app.txt")).toBe("updated");
-  expect(sh(root, "log", "-1", "--format=%s", "main")).toBe("update app");
+  expect(sh(root, "log", "-1", "--format=%s", "main")).toBe(`canon: close ${subject}`);
+  expect(sh(root, "log", "-1", "--format=%b", "main")).toBe("C-1 edit app");
+  expect(sh(root, "log", "-1", "--format=%s", "main~1")).toBe("update app");
+  expect(sh(root, "log", "--format=%s", "main")).not.toContain("canon: open");
+  expect(sh(root, "diff", "--name-status", "main~1", "main")).toBe("A\tcanon/changes/C-1-edit-app.md");
+  const file = sh(root, "show", "main:canon/changes/C-1-edit-app.md");
+  for (const line of ["id: C-1", "title: edit app", "status: done", "rules: []", `chore: ${subject}`]) expect(file).toContain(line);
+  expect(landed.stdout.toString() + landed.stderr.toString()).toContain(`${subject} completed as C-1`);
   expect(ws(root).db.db.query("SELECT * FROM claims WHERE subject = ?").all(subject!)).toEqual([]);
+  const check = cli(root, "check");
+  expect([check.exitCode, check.stdout.toString() + check.stderr.toString()]).toEqual([0, expect.not.stringContaining("C-1")]);
 });
 
 function started(root: string, title = "maintenance") {
@@ -109,6 +119,51 @@ test("BR-2457: setup failure and unknown options leave no work behind", () => {
   expect(ws(root).db.db.query("SELECT * FROM claims").all()).toEqual([]);
 });
 
+test("BR-2458 BR-2457: a chore dropped after a refused landing leaves nothing on main and no change in the list", () => {
+  const root = project();
+  const a = started(root, "abandoned work");
+  writeFileSync(join(a.worktree, "FAIL"), "x\n");
+  sh(a.worktree, "add", "FAIL");
+  sh(a.worktree, "commit", "-qm", "floor fails");
+  expect(cli(a.worktree, "chore", "land").exitCode).toBe(1);
+  expect(cli(a.worktree, "work", "stop", "--next", "abandoned", "--release").exitCode).toBe(0);
+  expect(cli(root, "work", "drop", a.subject).exitCode).toBe(0);
+  expect(sh(root, "ls-tree", "-r", "--name-only", "main")).not.toContain("canon/changes");
+  const list = cli(root, "change", "list");
+  expect([list.exitCode, list.stdout.toString()]).toEqual([0, expect.not.stringContaining("abandoned")]);
+});
+
+test("BR-2458 BR-2457: a chore whose recorded title is gone lands with the branch slug as its title and says so", () => {
+  const root = project();
+  const a = started(root, "tidy readme");
+  writeFileSync(join(a.worktree, "app.txt"), "tidy\n");
+  sh(a.worktree, "commit", "-qam", "tidy");
+  ws(root).db.db.query("DELETE FROM events WHERE kind = 'chore.start' AND subject = ?").run(a.subject);
+  const landed = cli(a.worktree, "chore", "land");
+  expect(landed.exitCode).toBe(0);
+  expect(landed.stdout.toString() + landed.stderr.toString()).toContain(`${a.subject}: full title unavailable; the change file takes the branch slug as its title`);
+  expect(sh(root, "show", "main:canon/changes/C-1-tidy-readme.md")).toContain("title: tidy-readme");
+});
+
+test("BR-2458 BR-2091: a light change file needs no sections, a change without chore: still does, and a chore: that is no chore identity is file-invalid", () => {
+  const root = project();
+  mkdirSync(join(root, "canon/changes"), { recursive: true });
+  const file = (n: number, extra: string) => writeFileSync(join(root, `canon/changes/C-${n}.md`), `---\nid: C-${n}\ntitle: t${n}\nstatus: done\nrules: []\n${extra}---\n`);
+  file(1, "chore: chore-0b0e3f4a-1111-4222-8333-944445555666\n");
+  sh(root, "add", "-A");
+  sh(root, "commit", "-qm", "light change");
+  const ok = cli(root, "check");
+  expect([ok.exitCode, ok.stdout.toString() + ok.stderr.toString()]).toEqual([0, expect.not.stringContaining("C-1")]);
+  file(2, "");
+  file(3, "chore: abc\n");
+  const bad = cli(root, "check");
+  const out = bad.stdout.toString() + bad.stderr.toString();
+  expect(bad.exitCode).toBe(1);
+  expect(out).toMatch(/doc-missing-section\s+canon\/changes\/C-2\.md/);
+  expect(out).toMatch(/file-invalid\s+canon\/changes\/C-3\.md: .*`chore`/);
+  expect(out).not.toMatch(/canon\/changes\/C-1\.md/);
+});
+
 test("BR-2458: clean keeps an unfinished empty chore and drop archives unpublished work", () => {
   const root = project();
   const a = started(root);
@@ -133,9 +188,13 @@ test("BR-2458: floor and document violations keep main unchanged and allow a ret
   sh(a.worktree, "commit", "-qm", "floor fails");
   expect(cli(a.worktree, "chore", "land").exitCode).toBe(1);
   expect(sh(root, "rev-parse", "main")).toBe(before);
+  expect(existsSync(join(a.worktree, "canon/changes"))).toBe(false); // the close commit was taken back with its file
+  expect(sh(a.worktree, "log", "-1", "--format=%s")).toBe("floor fails");
+  startNew(root, "business change takes the next number"); // C-2: the chore keeps C-1 for its next landing
   sh(a.worktree, "rm", "FAIL");
   sh(a.worktree, "commit", "-qm", "fix floor");
   expect(cli(a.worktree, "chore", "land").exitCode).toBe(0);
+  expect(sh(root, "ls-tree", "--name-only", "main", "canon/changes/")).toBe("canon/changes/C-1-maintenance.md");
   expect(cli(a.worktree, "chore", "land").exitCode).toBe(0);
   expect(ws(root).db.db.query("SELECT * FROM events WHERE kind = 'land.ok' AND subject = ?").all(a.subject)).toHaveLength(1);
 });
@@ -156,7 +215,7 @@ test("BR-2458: a chore deleting config retries with the current custom main floo
   sh(a.worktree, "rm", "FAIL");
   sh(a.worktree, "commit", "-qm", "repair");
   expect(cli(a.worktree, "chore", "land").exitCode).toBe(0);
-  expect(sh(root, "log", "-1", "--format=%s", "trunk")).toBe("repair");
+  expect(sh(root, "log", "-1", "--format=%s", "trunk~1")).toBe("repair");
 });
 
 test("BR-2458 BR-2199: released work cannot land anonymously and hook identity survives after landing", () => {

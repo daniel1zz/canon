@@ -5,6 +5,7 @@ import { parseDocFile } from "../documents/docfile.ts";
 import type { Change, Corpus } from "../documents/model.ts";
 import type { DocType } from "../documents/types.ts";
 import { criteriaOf } from "./criteria.ts";
+import { lightChangeOf } from "../query/query.ts";
 
 /**
  * The goal is the owner's (BR-2510, D-130): a landing that changes a success criterion, what a release is made of, or
@@ -58,8 +59,9 @@ export function goalChanges(before: GoalDoc | undefined, now: GoalDoc | undefine
 const leftOwner = (line: string) => line.includes("no longer waits for the owner");
 
 /**
- * The landing's goal check (BR-2510): changes to the goal land and are listed in `notices`; a chore may not change it,
- * and a criterion leaves 待负责人 only with an answered question asked for this change.
+ * The landing's goal check (BR-2510): changes to the goal land and are listed in `notices`, a chore's too; what is refused
+ * is judged by what changed, not by the channel (D-139, D-148): a criterion leaves 待负责人 only with an answered question
+ * asked for this change, which a chore's light change file, written by its landing, cannot name.
  */
 export function landingGoal(i: { readonly db: CoordDb; readonly wt: string; readonly base: string; readonly head: string; readonly corpus: Corpus; readonly subject: string | null }): { ok: true; notices: string[] } | { ok: false; message: string } {
   const dirs = ["release", "feature"].map((n) => i.corpus.types.find((t) => t.name === n)).filter((t) => t !== undefined).map((t) => `canon/${t.dir}`);
@@ -67,14 +69,21 @@ export function landingGoal(i: { readonly db: CoordDb; readonly wt: string; read
   const changes = goalChangesBetween(i.wt, i.base, i.head, diff.ok && diff.value !== "" ? diff.value.split("\n") : [], i.corpus.types);
   if (changes.length === 0) return { ok: true, notices: [] };
   const list = changes.map((c) => `  ${c}`).join("\n");
-  if (i.subject === null || isChore(i.subject)) return { ok: false, message: `this landing changes the goal, and a chore cannot: land it in a change, whose ## 为什么 says why (BR-2510):\n${list}` };
+  const light = i.subject !== null && isChore(i.subject);
+  // reason: a chore is named by the C number its close commit wrote (BR-2458); without that file, by its identity
+  const id = light ? (lightChangeOf(i.corpus, i.subject!)?.id ?? i.subject!) : (i.subject ?? "this landing");
   const owner = changes.filter(leftOwner);
   if (owner.length > 0) {
+    const lines = owner.map((c) => `  ${c}`).join("\n");
+    if (i.subject === null || light) {
+      return { ok: false, message: `${id} marks success criteria the owner was to accept, without the owner's answer:\n${lines}\nA chore's change file is written by its landing and names no owner_answers: do this in a change (canon work start --title "<what>"), ask the owner (canon human ask --change <C-n>), then write the answered question's number in its owner_answers (BR-2510)` };
+    }
     if (ownerAnswered(i.db, i.corpus, i.subject).length === 0) {
-      return { ok: false, message: `${i.subject} marks success criteria the owner was to accept, without the owner's answer:\n${owner.map((c) => `  ${c}`).join("\n")}\nAsk the owner (canon human ask --change ${i.subject}), then write the answered question's number in owner_answers (BR-2510)` };
+      return { ok: false, message: `${i.subject} marks success criteria the owner was to accept, without the owner's answer:\n${lines}\nAsk the owner (canon human ask --change ${i.subject}), then write the answered question's number in owner_answers (BR-2510)` };
     }
   }
-  return { ok: true, notices: [`goal: ${i.subject} changes the goal:`, ...changes.map((c) => `  ${c}`)] };
+  const note = light ? [`note: ${id} is a light change (canon chore): no ## 为什么 says why it changes the goal; the owner sees the change in canon overview (BR-2510)`] : [];
+  return { ok: true, notices: [`goal: ${id} changes the goal:`, ...changes.map((c) => `  ${c}`), ...note] };
 }
 
 /** The questions in the change's `owner_answers` that were asked for this change and answered (BR-2510, BR-2560). */

@@ -6,6 +6,7 @@ import { ensureGuard } from "../../install/githook.ts";
 import { readCorpus } from "../documents/read.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../work/testkit.ts";
 import { land } from "../../work/land/land.ts";
+import { startChore } from "../../work/session/session.ts";
 import { linksOf } from "./start.ts";
 import { fingerprint } from "./links.ts";
 
@@ -408,6 +409,24 @@ describe("references a landing adds", () => {
     expect(linksOfFile(root, ruleFile(1))?.links).toBeUndefined();
     expect(suspects(root, first)).toEqual([`${B1} -> ${B2}`, `${B3} -> ${B2}`]);
     expect(lines).toContain(`confirmed 2 reference(s) this change added, in ${s.change}'s close commit: ${B3} -> ${B2}, ${B9}`);
+  });
+
+  test("BR-2440 BR-2458: a chore's landing records the references it added in its close commit, beside its light change file", async () => {
+    const { root, first } = repo({ [ruleFile(1)]: rule(1, A_NAMES_B), [ruleFile(2)]: rule(2, "二"), [ruleFile(9)]: rule(9, "九") });
+    startAt(root, first);
+    const c = startChore(ws(root), { title: "Name two" }, quiet);
+    if (!c.ok) throw new Error(c.error.message);
+    put(c.value.worktree, { [ruleFile(3)]: rule(3, `${A_NAMES_B}见 ${B9}。`) });
+    sh(c.value.worktree, "add", "-A");
+    sh(c.value.worktree, "commit", "-qm", "name two");
+    const lines: string[] = [];
+    const out = await land(ws(c.value.worktree), { ...FAST, finish: true }, (l) => lines.push(l));
+    expect(out.kind).toBe("landed");
+    expect(sh(root, "log", "-1", "--format=%s", "main")).toBe(`canon: close ${c.value.subject}`);
+    expect(sh(root, "show", "--name-only", "--format=", "main").split("\n").sort()).toEqual(["canon/changes/C-1-name-two.md", ruleFile(3)].sort());
+    sh(root, "checkout", "-q", "main");
+    expect(linksOfFile(root, ruleFile(3))?.links).toEqual({ [B2]: ruleFp(rule(2, "二")), [B9]: ruleFp(rule(9, "九")) });
+    expect(lines).toContain(`confirmed 2 reference(s) this change added, in C-1's close commit: ${B3} -> ${B2}, ${B9}`);
   });
 
   test("BR-2440: a landing that does not reach main takes the records back with its close commit", async () => {

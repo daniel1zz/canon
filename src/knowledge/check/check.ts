@@ -404,7 +404,9 @@ function structureFindings(root: string, corpus: Corpus): Finding[] {
     return text !== undefined && text.split("\n").some((l) => l.trim() !== "" && !isPlaceholderLine(l));
   };
   for (const d of corpus.docs) {
-    const required = corpus.types.find((t) => t.name === (d.kind === "extra" ? d.type : d.kind))?.sections ?? [];
+    // reason: a chore's light change needs only its title; its file is written by its landing with an empty body (BR-2091, BR-2458, D-148)
+    const light = d.kind === "change" && d.chore !== undefined;
+    const required = light ? [] : corpus.types.find((t) => t.name === (d.kind === "extra" ? d.type : d.kind))?.sections ?? [];
     const missing = required.filter((s) => !filled(d.body, s));
     if (missing.length) {
       out.push({ path: d.path, rule: "doc-missing-section", message: `${d.id} lacks or leaves empty: ${missing.map((s) => `## ${s}`).join(", ")}` });

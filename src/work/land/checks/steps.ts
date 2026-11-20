@@ -106,7 +106,7 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   // A release becomes shipped only through `canon release ship`, and stays shipped (BR-2332, D-61).
   const releases = landingReleases({ primary: ws.primary, timing: ws.config.floorTiming, db: ws.db, wt, base: base.value, head: head.value, corpus: read.corpus, subject });
   if (!releases.ok) return refuse("release", releases.message);
-  // Goal changes land and are listed; a chore cannot make one, and only the owner accepts a criterion waiting for them (BR-2510, D-130).
+  // Goal changes land and are listed, a chore's too; only the owner accepts a criterion waiting for them, judged by what changed (BR-2510, D-130, D-148).
   const goal = landingGoal({ db: ws.db, wt, base: base.value, head: head.value, corpus: read.corpus, subject });
   if (!goal.ok) return refuse("release", goal.message);
   // A quality standard becomes active, which says the owner confirmed it, only with the owner's answer (BR-2560, D-145).

@@ -86,11 +86,12 @@ const startCmd = defineCommand({
 });
 
 const choreStartCmd = defineCommand({
-  meta: { description: "Start a chore by title, or resume its chore identity; no Change document or C number" },
+  meta: { description: "Start a chore (a light change) by title, or resume its chore identity; its change file and C number are written when it lands" },
   args: { target: { type: "positional", required: true }, ...AS_ARG },
   run({ args }) {
     const target = String(args.target);
     const started = must(startChore(workspace(args.as), isChore(target) ? { subject: target } : { title: target }, say));
+    say(`${started.subject} is a light change: its change file and C number are written when it lands (canon chore land)`);
     say(`cd ${started.worktree}`);
   },
 });

@@ -47,10 +47,10 @@ const idOf = (path: string): string | undefined => /^((?:BR|D)-\d+)\.md$/.exec(b
 const named = (path: string): string => (idOf(path) ? `${path} (${idOf(path)})` : path);
 
 /** The 为什么 and 要改什么 sections of a change file's text, hashed as a delegation's task is (BR-2497); undefined when it is not one. */
-function taskOf(text: string | undefined, path: string): { id: unknown; task: string } | undefined {
+function taskOf(text: string | undefined, path: string): { id: unknown; chore: unknown; task: string } | undefined {
   if (text === undefined) return undefined;
   const doc = parseDocFile(text, path);
-  return doc.ok ? { id: doc.value.meta.id, task: taskHashOf(doc.value.body) } : undefined;
+  return doc.ok ? { id: doc.value.meta.id, chore: doc.value.meta["chore"], task: taskHashOf(doc.value.body) } : undefined;
 }
 
 /**
@@ -71,6 +71,8 @@ function changedDesign(ws: Workspace, subject: string | null, d: Delegation | un
       const a = taskOf(before, path), b = taskOf(after, path);
       // reason: the worker's own change file is compared with the task the delegation fixed, below (BR-2501)
       if (d && subject !== null && (b?.id === subject || (b === undefined && a?.id === subject))) continue;
+      // reason: a chore's light change file is written by its own landing, not by the worker (BR-2501, BR-2458)
+      if (subject !== null && isChore(subject) && a === undefined && typeof b?.chore === "string" && b.chore.toLowerCase() === subject.toLowerCase()) continue;
       if (a?.task !== b?.task) found.push(path);
       continue;
     }

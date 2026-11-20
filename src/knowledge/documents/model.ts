@@ -112,6 +112,8 @@ export interface Change extends Base {
   readonly advances?: Advances;
   /** Questions the owner answered that confirm the goal changes this change lands (`owner_answers`, BR-2510). */
   readonly ownerAnswers?: readonly number[];
+  /** On a light change, the chore identity of the work it records (`chore: chore-<UUID>`); its file is written when that work lands (BR-2458, D-150). */
+  readonly chore?: string;
 }
 
 /** A change's `advances` (BR-2517): references `<R-n|F-n>/S<k>`, or none with the reason. */

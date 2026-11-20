@@ -6,6 +6,7 @@ import { check } from "../../knowledge/check/check.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { enqueue, finishEntry, tryTurn } from "./queue/queue.ts";
 import { land } from "./land.ts";
+import { startChore } from "../session/session.ts";
 import { FAST, project, quiet, sh, startNew, waitFor, ws, landingProcess } from "../testkit.ts";
 
 // reason: these tests drive a spawned `canon work land` and wait out queue polls on purpose (C-111).
@@ -216,6 +217,22 @@ describe("a landing that adds a decision still proposed says so", () => {
     expect(text).toContain(`superseded ${d(2)}`);
     expect(text).not.toContain("proposed decision:");
     expect(events(root, "land.proposed")).toEqual([]);
+  }, TIMED);
+
+  test("BR-2355 BR-2458: a chore's close commit accepts the decisions it added and names its light change", async () => {
+    const root = project();
+    const c = startChore(ws(root), { title: "Decides" }, quiet);
+    if (!c.ok) throw new Error(c.error.message);
+    add(c.value.worktree, [5, "proposed"], [6, "proposed"]);
+    const said: string[] = [];
+    const out = await land(ws(c.value.worktree), { ...FAST, finish: true }, (l: string) => void said.push(l));
+    expect([out.kind, out.kind === "refused" ? out.message : ""]).toEqual(["landed", ""]);
+    const onMain = (n: number) => sh(root, "show", `main:canon/decisions/${d(n)}.md`).match(/^status: (\w+)/m)![1];
+    expect([onMain(5), onMain(6)]).toEqual(["accepted", "accepted"]);
+    expect(sh(root, "log", "-1", "--format=%s", "main")).toBe(`canon: close ${c.value.subject}`);
+    const text = said.join("\n");
+    expect(text).toContain(`accepted ${d(5)}, ${d(6)} on landing, in C-1's close commit`);
+    expect(text).not.toContain("proposed decision:");
   }, TIMED);
 
   test("BR-2355: an accepted new decision, an edit of an accepted decision already on main, or no decision at all prints nothing and records no event", async () => {

@@ -129,6 +129,12 @@ export function findDoc(corpus: Corpus, id: string): Doc | undefined {
   return corpus.docs.find((d) => d.id === want);
 }
 
+/** A chore's light change: the change file whose `chore` is this chore identity (BR-2458, D-150). */
+export function lightChangeOf(corpus: Corpus, chore: string): Change | undefined {
+  const want = chore.toLowerCase();
+  return corpus.docs.find((d): d is Change => d.kind === "change" && d.chore === want);
+}
+
 /**
  * Whole, current context for a piece of work (design §5): the full domain README and every active rule of
  * each domain involved, plus the accepted decisions and open changes that mention those rules.

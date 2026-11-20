@@ -3,7 +3,8 @@ import type { Say, Workspace } from "../../workspace.ts";
 import type { CoordDb } from "../../db.ts";
 import { git } from "../../../kernel/git.ts";
 import { isGone } from "../../claims/liveness.ts";
-import { closeSubject, reopen, type CloseCommit } from "../finish/finish.ts";
+import { closeSubject, idOfChangeFile, reopen, type CloseCommit } from "../finish/finish.ts";
+import { isChore } from "../../session/subject.ts";
 import { abandonGone, finishEntry } from "./queue.ts";
 import { rebaseInProgress } from "../worktree-state.ts";
 
@@ -104,10 +105,13 @@ function closeCommitOf(wt: string, subject: string | null): CloseCommit | undefi
   if (!top.ok || top.value !== closeSubject(subject) || !files.ok || files.value === "") return undefined;
   // reason: besides the change file the close commit may hold the reference records the landing added after the rebase (BR-2440)
   const paths = files.value.split("\n");
-  const own = paths.filter((p) => { const name = p.slice(p.lastIndexOf("/") + 1); return name === `${subject}.md` || name.startsWith(`${subject}-`); });
+  // reason: a chore's close commit adds its light change file, named by its C number, not by the chore identity (BR-2458, D-150)
+  const added = isChore(subject) ? git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "--diff-filter=A", "HEAD~1", "HEAD", "--", "canon/") : undefined;
+  if (added && !added.ok) return undefined;
+  const own = added ? added.value.split("\n").filter((p) => p !== "") : paths.filter((p) => { const name = p.slice(p.lastIndexOf("/") + 1); return name === `${subject}.md` || name.startsWith(`${subject}-`); });
   const stamped = paths.filter((p) => p !== own[0]);
   if (own.length !== 1 || stamped.some((p) => !p.startsWith("canon/") || !p.endsWith(".md"))) return undefined;
-  return { subject, path: own[0]!, stamped };
+  return { subject, doc: added ? idOfChangeFile(own[0]!) ?? subject : subject, path: own[0]!, stamped };
 }
 
 // reason: a member its leader locked in is about to be on main; it is not this attempt's to give up (BR-2172).

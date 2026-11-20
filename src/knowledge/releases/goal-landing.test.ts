@@ -94,15 +94,28 @@ describe("the goal: the AI may change it, the owner sees it", () => {
     expect(reasonOf(yes.outcome)).toBe("landed");
   });
 
-  test("BR-2510: a chore that changes a criterion is refused and told to use a change", async () => {
+  test("BR-2510: a chore is judged by what it changes: an added criterion lands under its C number with a light-change note; a criterion leaving 待负责人 is refused and told to use a change", async () => {
     const root = fixture();
-    const c = startChore(ws(root), { title: "顺手改字" }, quiet);
-    if (!c.ok) throw new Error(c.error.message);
-    write(c.value.worktree, { [`canon/releases/${R(5)}.md`]: R5(undefined, "- S1 负责人玩通全部主线。（待负责人）\n- S2 没人解释也能玩。") });
-    sh(c.value.worktree, "add", "-A");
-    sh(c.value.worktree, "commit", "-qm", "chore");
-    const o = await land(ws(c.value.worktree), FAST, quiet);
-    expect([reasonOf(o), messageOf(o).includes("a chore cannot")]).toEqual(["release", true]);
+    const chore = async (title: string, criteria: string) => {
+      const c = startChore(ws(root), { title }, quiet);
+      if (!c.ok) throw new Error(c.error.message);
+      write(c.value.worktree, { [`canon/releases/${R(5)}.md`]: R5(undefined, criteria) });
+      sh(c.value.worktree, "add", "-A");
+      sh(c.value.worktree, "commit", "-qm", "chore");
+      const said: string[] = [];
+      const o = await land(ws(c.value.worktree), FAST, (l: string) => said.push(l));
+      return { o, said: said.join("\n") };
+    };
+    const added = await chore("加标准", `${CRITERIA}\n- S3 支持手柄。`);
+    expect(reasonOf(added.o)).toBe("landed");
+    const as = /completed as (C-\d+)/.exec(added.said)?.[1];
+    expect(as).toBeDefined();
+    expect(added.said).toContain(`goal: ${as} changes the goal:`);
+    expect(added.said).toMatch(new RegExp(`${R(5)}: success criterion added or reworded: 支持手柄`));
+    expect(added.said).toContain(`note: ${as} is a light change (canon chore)`);
+    const accepted = await chore("顺手验收", `${ACCEPTED}\n- S3 支持手柄。`);
+    expect([reasonOf(accepted.o), messageOf(accepted.o).includes("负责人玩通主线"), messageOf(accepted.o).includes("canon work start --title")]).toEqual(["release", true, true]);
+    expect(sh(root, "show", `main:canon/releases/${R(5)}.md`)).toContain("（待负责人）");
   });
 
   test("BR-2510: owner_answers that is not a list of question numbers makes the change file invalid", async () => {

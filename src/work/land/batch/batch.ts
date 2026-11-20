@@ -5,7 +5,7 @@ import { addWorktree, type BranchMoveFailure, git, isClean, moveBranch, pruneWor
 import { isGone } from "../../claims/liveness.ts";
 import { runFloor, floorSkip } from "../checks/floor.ts";
 import { verifyChange, type StepFailure, type Steps } from "../checks/steps.ts";
-import { afterLand, closeSubject, finishLanding, reopen } from "../finish/finish.ts";
+import { afterLand, closeSubject, finishLanding, idOfChangeFile, reopen } from "../finish/finish.ts";
 import { moveMainGuarded, snapshotDetail, staleEpoch, workerLandingRefusal, type WorkerLanding } from "../checks/delegation.ts";
 import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
 import { batchCandidates, finishEntry, holdsTurn, inBatch, joinBatch, landBatched, landerOf, leaveBatch, lockBatch, refuseInBatch, unlockBatch } from "../queue/queue.ts";
@@ -333,7 +333,7 @@ export function reopenForGoneLander(ws: Workspace, l: { entry: number; subject: 
   const top = git(l.worktree, "log", "-1", "--format=%s");
   const files = git(l.worktree, "-c", "core.quotePath=false", "diff", "--name-only", "HEAD~1", "HEAD");
   if (!top.ok || top.value !== closeSubject(l.subject) || !files.ok || files.value.includes("\n")) return false;
-  return reopen(l.worktree, { subject: l.subject, path: files.value, stamped: [] }, say);
+  return reopen(l.worktree, { subject: l.subject, doc: idOfChangeFile(files.value) ?? l.subject, path: files.value, stamped: [] }, say);
 }
 
 /** What a landed member says when its branch could not follow its commit on main (BR-2191). */

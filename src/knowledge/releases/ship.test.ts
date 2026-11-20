@@ -251,8 +251,15 @@ describe("canon release ship: shipping and the landing gate", () => {
     ask(root, question(1), "yes");
     const r = agent(root, "release", "ship", R(1), "--timeout", "5");
     expect([r.code, r.out.includes(`shipped ${R(1)} at ${sha.slice(0, 9)}`)]).toEqual([0, true]);
-    expect(r.out).toMatch(/in chore-[0-9a-f-]+, landed/); // the ship is a chore: no Change document, no C number (BR-2334)
-    expect(sh(root, "ls-tree", "--name-only", "main", "canon/changes/")).not.toMatch(/发布/);
+    const chore = r.out.match(/in (chore-[0-9a-f-]+), landed/)?.[1]; // the ship is a chore, a light change (BR-2334)
+    expect(chore).toBeDefined();
+    // main gets the chore's close commit with its light change file, and no open commit (BR-2334, BR-2458)
+    expect(sh(root, "log", "-1", "--format=%s", "main").trim()).toBe(`canon: close ${chore}`);
+    const files = sh(root, "show", "--name-status", "--format=", "main").trim().split("\n");
+    expect(files).toHaveLength(1);
+    expect(files[0]).toMatch(/^A\tcanon\/changes\/C-\d+\.md$/);
+    expect(sh(root, "show", `main:${files[0]!.slice(2)}`)).toContain(`chore: ${chore}`);
+    expect(sh(root, "log", "--format=%s", "main")).not.toContain("canon: open");
     const doc = readFileSync(join(root, `canon/releases/${R(1)}.md`), "utf8");
     expect(doc).toContain("status: shipped");
     expect(doc).toContain(`shipped_at: ${sha}`);
