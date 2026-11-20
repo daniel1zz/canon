@@ -229,6 +229,27 @@ describe("canon config --flow page", () => {
     for (const src of scripts) expect(() => new Function(src)).not.toThrow();
   });
 
+  test("BR-2541: the page is a snapshot: a config change shows only after canon config --flow runs again", () => {
+    const root = withConfig(BASE);
+    const page = join(root, ".canon/flow.html");
+    expect(canon(root, "config", "--flow").code).toBe(0);
+    const before = readFileSync(page, "utf8");
+    expect(before).not.toContain('"remote: \\"origin\\""');
+    writeFileSync(join(root, "canon/config.yaml"), `${BASE}remote: origin\n`);
+    sh(root, "commit", "-qam", "push to origin");
+    expect(canon(root, "config").code).toBe(0);
+    expect(readFileSync(page, "utf8")).toBe(before);
+    expect(canon(root, "config", "--flow").code).toBe(0);
+    expect(readFileSync(page, "utf8")).toContain('"remote: \\"origin\\""');
+  });
+
+  test("BR-2541: canon brief writes no page", () => {
+    const root = withConfig(BASE);
+    canon(root, "brief");
+    expect(existsSync(join(root, ".canon/config.schema.json"))).toBe(true);
+    expect(existsSync(join(root, ".canon/flow.html"))).toBe(false);
+  });
+
   test("BR-2541: canon config without --flow writes no page", () => {
     const root = withConfig(BASE);
     expect(canon(root, "config").code).toBe(0);
