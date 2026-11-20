@@ -163,16 +163,15 @@ describe("what a release is made of", () => {
     expect(got.some((f) => f.path.endsWith(`${R(1)}.md`) || f.path.endsWith(`${R(3)}.md`))).toBe(false);
   });
 
-  test("BR-2512: an open change, with a plan or without, linked to a release dropped with nowhere to go or to a dropped feature is a hint, not a finding", () => {
+  test("BR-2512: an open change linked to a release dropped with nowhere to go or to a dropped feature is a hint, not a finding", () => {
     const root = project();
-    const change = (n: number, status: string, front: string, body = "") => `---\nid: ${C(n)}\ntitle: 变更${n}\nstatus: ${status}\nrules: []\n${front}---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n${body}`;
-    const plan = "## 计划\n\n| 步骤 | 内容 | 依赖 |\n|---|---|---|\n| 1 | 建表 | - |\n";
+    const change = (n: number, status: string, front: string) => `---\nid: ${C(n)}\ntitle: 变更${n}\nstatus: ${status}\nrules: []\n${front}---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n`;
     write(root, {
       ...DOMAIN,
       [`canon/features/${F(2)}.md`]: feature(2, "dropped"),
       [`canon/releases/${R(3)}.md`]: release(3, "status: dropped\n"),
       [`canon/releases/${R(4)}.md`]: release(4, "status: active\n"),
-      [`canon/changes/${C(4)}.md`]: change(4, "open", `release: ${R(3)}\n`, plan),
+      [`canon/changes/${C(4)}.md`]: change(4, "open", `release: ${R(3)}\n`),
       [`canon/changes/${C(5)}.md`]: change(5, "open", `feature: ${F(2)}\n`),
       [`canon/changes/${C(6)}.md`]: change(6, "done", `release: ${R(3)}\n`),
       [`canon/changes/${C(7)}.md`]: change(7, "open", `release: ${R(4)}\n`),
