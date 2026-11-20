@@ -464,6 +464,10 @@ describe("session continuity", () => {
   test("BR-2024 BR-2090: with nothing in flight brief prints only the workflow guide, and the guide comes first otherwise", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
+    // reason: without canon/quality the summary reminds of quality standards (BR-2558), so idle means they are accounted for
+    expect(canon(root, "brief").out.slice(guideFor(root).length)).toContain("quality: no quality standards yet");
+    mkdirSync(join(root, "canon/quality"), { recursive: true });
+    writeFileSync(join(root, "canon/quality/README.md"), "# 质量标准\n\n## 方面\n\n- **联机**：不适用：canon human #3\n");
     const idle = canon(root, "brief").out;
     expect(idle.trim()).toBe(guideFor(root)); // init wrote canon/architecture.md, so the guide starts with the overview line (BR-2090)
     for (const cmd of ["canon context", "canon work start", "canon work land --finish", "canon work stop --next", "--relayed", "canon work drop", "canon work after-land --wait", "canon-product"]) expect(idle).toContain(cmd);

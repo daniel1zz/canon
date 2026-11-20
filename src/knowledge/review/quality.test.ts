@@ -34,15 +34,17 @@ function fixture() {
 }
 
 describe("the rule review and quality standards", () => {
-  test("BR-2559: a changed quality standard brings the aspect list with each aspect's decision and standards; untestable covers its 门槛; a changed rule alone does not", () => {
+  test("BR-2559: a changed quality standard brings the aspect list and the untestable note on its 门槛; a changed rule alone brings neither", () => {
     const { root, corpus, doc } = fixture();
     const prompt = reviewPrompt(root, corpus, [doc(Q(1))]);
     const part = prompt.split(`# Quality aspects (${README})`)[1]!.split("\n# ")[0]!;
     expect(part).toContain(`- 战斗手感 (${Q(1)})`);
     expect(part).toContain("- 音效: 推迟：「demo 之后」");
     expect(prompt).toContain("打击后停顿 3 到 5 帧");
-    expect(prompt).toContain("A quality standard (Q-n, canon/quality) is judged by its `judge` against its `## 门槛`");
-    expect(reviewPrompt(root, corpus, [doc(BR(1))])).not.toContain("# Quality aspects");
+    expect(part).toContain("use the key `untestable` also for a changed quality standard whose 门槛");
+    const ruleOnly = reviewPrompt(root, corpus, [doc(BR(1))]);
+    expect(ruleOnly).not.toContain("# Quality aspects");
+    expect(ruleOnly).not.toContain("门槛");
   });
 
   test("BR-2559: a landing that adds a quality standard is reviewed; one that only edits the aspect list is not", () => {
