@@ -161,7 +161,7 @@ describe("plans tagged with a release", () => {
     expect(canon(root, "release", "status").out).toContain(`计划 ${C(5)} 已完成 1/3 (33%)`); // rounded down
   });
 
-  test("BR-2386: release on a change names an existing release and needs a plan; a bad id is file-invalid", () => {
+  test("BR-2386 BR-2561: release on a change names an existing release, with or without a plan; a bad id is file-invalid", () => {
     const root = fixture();
     write(root, {
       [`canon/changes/${C(5)}.md`]: changeText(5, "open", `release: ${R(2)}\n`, PLAN4),
@@ -172,7 +172,8 @@ describe("plans tagged with a release", () => {
     const out = canon(root, "check").out;
     expect(out).not.toContain(`${C(5)}.md`);
     expect(out).toMatch(new RegExp(`ref-dangling\\s+canon/changes/${C(6)}\\.md: ${C(6)} \`release\` names ${R(9)}`));
-    expect(out).toMatch(new RegExp(`file-invalid\\s+canon/changes/${C(10)}\\.md: .*no valid ## 计划`));
+    // a change without a plan may name its own release (D-148)
+    expect(out).not.toContain(`${C(10)}.md`);
     expect(out).toMatch(new RegExp(`file-invalid\\s+canon/changes/${C(11)}\\.md: .*must be one release id`));
   });
 
