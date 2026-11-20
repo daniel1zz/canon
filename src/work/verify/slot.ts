@@ -180,6 +180,35 @@ export async function fullRuns(d: SlotDeps = machineSlots): Promise<Result<reado
 }
 
 /**
+ * The live full runs on the machine in queue order, read without the mutex and without deleting anything, for readers
+ * that only look (the agenda, BR-2582): queue files are written whole by a rename, and one removed while it is read is a
+ * run that just ended. Entries whose process is gone are left out, not deleted.
+ */
+export function fullRunsNow(d: Pick<SlotDeps, "dir" | "gone"> = machineSlots): Result<readonly Entry[]> {
+  let names: string[];
+  try {
+    names = readdirSync(d.dir);
+  } catch (e) {
+    if ((e as NodeJS.ErrnoException).code === "ENOENT") return ok([]);
+    return err("io", `full-run queue ${d.dir}: ${(e as Error).message}`);
+  }
+  const out: Entry[] = [];
+  for (const name of names) {
+    if (!name.endsWith(".json")) continue;
+    let e: Entry;
+    try {
+      e = JSON.parse(readFileSync(join(d.dir, name), "utf8")) as Entry;
+    } catch (x) {
+      // reason: a run that ended between the listing and the read is simply not running (BR-2582)
+      if ((x as NodeJS.ErrnoException).code === "ENOENT") continue;
+      return err("io", `the full-run queue file ${join(d.dir, name)} cannot be read: ${(x as Error).message}`);
+    }
+    if (d.gone({ pid: e.pid, start: e.pidStart }) !== true) out.push(e);
+  }
+  return ok(out.sort((a, b) => a.seq - b.seq));
+}
+
+/**
  * Takes a slot: queues behind the full runs already there, says how many are ahead and which when it has to wait, and
  * returns once its place is within `max` (BR-2576, BR-2577). "aborted" when `aborted()` turned true while waiting, after
  * leaving the queue.

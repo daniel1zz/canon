@@ -1,11 +1,12 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
-import { rmSync, writeFileSync, mkdirSync, readFileSync, readdirSync } from "node:fs";
+import { rmSync, writeFileSync, mkdirSync, mkdtempSync, readFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { project, sh, startNew, ws } from "../testkit.ts";
 import type { Workspace } from "../workspace.ts";
 import { age, renderDue } from "./due.ts";
 import { agenda, agendaLines, dueItems, summary, type Readings } from "./agenda.ts";
-import { runningFullRuns } from "./heavy.ts";
+import { runningFullRuns, type Slots } from "./heavy.ts";
 import { roomOf } from "./room.ts";
 import { holds } from "./handled.ts";
 import { watchDue, RECOMPUTE_MS } from "./watch.ts";
@@ -19,7 +20,7 @@ const MAIN = join(import.meta.dir, "../../invocation/main.ts");
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) { rmSync(root, { recursive: true, force: true }); rmSync(`${root}.worktrees`, { recursive: true, force: true }); } });
 function cli(cwd: string, actor: string, args: readonly string[], extra: Record<string, string> = {}) {
-  const p = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: actor, CANON_MACHINE: "normal,1,8", ...extra } });
+  const p = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: actor, CANON_MACHINE: "normal,1,8", CANON_MACHINE_DIR: emptyQueue(), ...extra } });
   return { code: p.exitCode, out: p.stdout.toString(), err: p.stderr.toString() };
 }
 const machine = (load5: number, tight = false): Readings => () => ({ memory: { tight, text: tight ? "memory pressure warn" : "memory pressure normal" }, machine: { load5, cpus: 8 } });
@@ -50,9 +51,22 @@ function delegated(root: string) {
   return s;
 }
 const must = <T>(r: { ok: true; value: T } | { ok: false; error: { message: string } }): T => { if (!r.ok) throw new Error(r.error.message); return r.value; };
-const ALIVE = () => true;
-const fullRun = (w: Workspace, kind: string, subject: string | null, pid: number, at = new Date().toISOString()) =>
-  w.db.db.query("INSERT INTO events(ts, actor, kind, subject, detail) VALUES (?, 'agent:t', ?, ?, ?)").run(at, kind, subject, JSON.stringify({ subject, pid, pid_start: `start-${pid}` }));
+/** A machine-wide queue of full runs of its own (BR-2576), so no real or other test's run shows up. */
+const emptyQueue = () => mkdtempSync(join(tmpdir(), "canon-machine-"));
+function queue(gone: (pid: number) => boolean = () => false) {
+  const dir = emptyQueue();
+  let seq = 0;
+  const slots: Slots = { dir, gone: (p) => gone(p.pid) };
+  /** A run of `subject` (null: main's floor) by process `pid`: started `startedMin` minutes ago, or waiting. */
+  const add = (subject: string | null, pid: number, startedMin?: number) => {
+    seq++;
+    const entry = { seq, pid, pidStart: `start-${pid}`, subject, worktree: `/w/${pid}`, kind: subject === null ? "floor" : "work-test", queuedAt: Date.now(), ...(startedMin === undefined ? {} : { startedAt: Date.now() - startedMin * 60_000 }) };
+    writeFileSync(join(dir, `${String(seq).padStart(12, "0")}-${pid}.json`), JSON.stringify(entry));
+  };
+  const end = (pid: number) => { for (let n = 1; n <= seq; n++) rmSync(join(dir, `${String(n).padStart(12, "0")}-${pid}.json`), { force: true }); };
+  return { slots, add, end };
+}
+const NONE = (): Slots => queue().slots;
 
 test("BR-2527: ages read 12m, 3h05m and 2d4h", () => {
   expect(age(12 * 60_000)).toBe("12m");
@@ -72,7 +86,7 @@ test("BR-2527: a main session's findings carry their age and the next command of
   const q = Number(w.db.db.query<{ id: number }, []>("SELECT MAX(id) AS id FROM questions").get()!.id);
   w.db.db.query("UPDATE review_findings SET question = ? WHERE id = ?").run(q, asked);
   const before = lastEventId(w.db);
-  const a = must(agenda(w, { read: CALM }));
+  const a = must(agenda(w, { read: CALM, slots: NONE() }));
   const judge = a.judge.map((it) => renderDue(it));
   expect(judge[0]).toMatch(new RegExp(`^finding:${b} 40m tier B \\[wording\\] BR-1: x contradicts y → needs another session: canon finding advise ${b} `));
   expect(judge[1]).toMatch(new RegExp(`^finding:${untriaged} 5m untriaged .* → canon finding tier ${untriaged} A\\|B\\|C`));
@@ -90,7 +104,7 @@ test("BR-2527: what affects main comes first, then what blocks others, then the 
   for (let i = 0; i < 12; i++) finding(w, 3 * 24 * 60 + i, "A", "wording");
   const contradiction = finding(w, 30, null);
   w.db.db.query("INSERT INTO red_main(id, sha, first_sha, log, tail, since, green, change, updated_at) VALUES (1, 'abcdef1234567', 'abcdef1234567', 'floor.log', '', ?, NULL, NULL, ?)").run(minutesAgo(20), minutesAgo(20));
-  const lines = agendaLines(must(agenda(w, { read: CALM })));
+  const lines = agendaLines(must(agenda(w, { read: CALM, slots: NONE() })));
   expect(lines[0]).toBe("judge: 14");
   expect(lines[1]).toMatch(new RegExp(`^  finding:${contradiction} 30m untriaged \\[contradiction\\]`));
   expect(lines[2]).toMatch(/^ {2}red-main 20m the background floor failed on abcdef123 .* → canon work start --fix-main$/);
@@ -104,7 +118,7 @@ test("BR-2527: a refused landing is to judge only once no live claim holds the c
   const s = startNew(root, "Refused");
   const w = ws(root);
   w.db.event("agent:a", "land.refuse", s.change, { reason: "tests" });
-  const keys = () => must(agenda(ws(root), { read: CALM })).judge.map((it) => it.key);
+  const keys = () => must(agenda(ws(root), { read: CALM, slots: NONE() })).judge.map((it) => it.key);
   expect(keys()).toEqual(["dropped-dep:C-4"]);
   w.db.db.query("DELETE FROM claims WHERE subject = ?").run(s.change);
   expect(keys()).toEqual([`land-refused:${s.change}`, "dropped-dep:C-4"]);
@@ -132,14 +146,14 @@ test("BR-2527: a worker sees the answer to its design request and its refused la
   expect(cli(root, "agent:s1", ["work", "design-answer", "1", "the events table"]).code).toBe(0);
   const w = ws(root, "agent:s7:w1");
   w.db.event("agent:s7:w1", "land.refuse", s.change, { reason: "test" });
-  const r = must(dueItems(w, Date.now(), CALM));
+  const r = must(dueItems(w, Date.now(), CALM, NONE()));
   expect(r.map((i) => i.key)).toEqual([`design-answer:${s.change}`, `land-refused:${s.change}`]);
   expect(r[0]!.next).toBe(`canon work accept-design ${s.change}`);
-  expect(agendaLines(must(agenda(w, { read: CALM })))[0]).toBe("yours: 2");
-  const main = must(dueItems(ws(root, "agent:s1"), Date.now(), CALM));
+  expect(agendaLines(must(agenda(w, { read: CALM, slots: NONE() })))[0]).toBe("yours: 2");
+  const main = must(dueItems(ws(root, "agent:s1"), Date.now(), CALM, NONE()));
   expect(main.map((i) => i.key)).toEqual(["finding:1"]);
   w.db.event("agent:s7:w1", "land.ok", s.change, {});
-  expect(must(dueItems(w, Date.now(), CALM)).map((i) => i.key)).toEqual([`design-answer:${s.change}`]);
+  expect(must(dueItems(w, Date.now(), CALM, NONE())).map((i) => i.key)).toEqual([`design-answer:${s.change}`]);
 });
 
 test("BR-2527 BR-2241: a change done on main whose landing left a rule without evidence is to judge as unverified: until a done change records the rule's current text; one not landed is not", () => {
@@ -157,63 +171,65 @@ test("BR-2527 BR-2241: a change done on main whose landing left a rule without e
   const w = ws(root);
   w.db.event("agent:a", "execution.unverified", "C-7", { rules: [id] });
   w.db.event("agent:a", "execution.unverified", "C-8", { rules: [id] });
-  const keys = must(dueItems(w, Date.now(), CALM)).map((i) => i.key);
+  const keys = must(dueItems(w, Date.now(), CALM, NONE())).map((i) => i.key);
   expect(keys).toContain("unverified:C-7");
   expect(keys).not.toContain("unverified:C-8");
-  const item = must(dueItems(w, Date.now(), CALM)).find((i) => i.key === "unverified:C-7")!;
+  const item = must(dueItems(w, Date.now(), CALM, NONE())).find((i) => i.key === "unverified:C-7")!;
   expect(item.summary).toContain(`landed with ${id} 待重新执行`);
   expect(item.next).toContain("land --finish");
   const hash = behaviourHash(rule);
   writeFileSync(join(root, "canon/changes/C-9.md"), change(9, "done", `passes:\n  ${id}: "${hash} test"\n`));
   sh(root, "add", "-A"); sh(root, "commit", "-qm", "C-9 executed it");
-  expect(must(dueItems(ws(root), Date.now(), CALM)).map((i) => i.key)).not.toContain("unverified:C-7");
+  expect(must(dueItems(ws(root), Date.now(), CALM, NONE())).map((i) => i.key)).not.toContain("unverified:C-7");
 });
 
 test("BR-2581: with room, the delegatable changes in the owner's order, at most five, and how many more fit; a running full test run takes a slot", () => {
   const root = fresh();
   onMain(root, { ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((n) => [n, changeDoc(n)])), 8: changeDoc(8).replace("\n## 要改什么\n\nx\n", "\n## 要改什么\n\n") });
   const w = ws(root);
-  const lines = agendaLines(must(agenda(w, { read: CALM, alive: ALIVE })));
+  const q = queue();
+  const lines = agendaLines(must(agenda(w, { read: CALM, slots: q.slots })));
   expect(lines.slice(0, 2)).toEqual(["delegate: room for 10 more (load 1.0 of 16 on 8 CPUs, 0/10 slots)", "  ready:C-1 - Work 1 → canon work delegate C-1 --to <name>"]);
   expect(lines.filter((l) => l.startsWith("  ready:"))).toHaveLength(5);
   expect(lines).toContain("  … 2 more ready-delegatable (canon change list)");
   expect(lines.some((l) => l.includes("C-8"))).toBe(false);
-  fullRun(w, "test.full.start", "C-637", 4242);
-  expect(agendaLines(must(agenda(w, { read: CALM, alive: ALIVE })))[0]).toBe("delegate: room for 9 more (load 1.0 of 14.4 on 8 CPUs, 0/10 slots, 1 full test run(s) running)");
-  expect(summary(must(agenda(w, { read: CALM, alive: ALIVE })))[1]).toBe("  delegate: room for 9 more (load 1.0 of 14.4 on 8 CPUs, 0/10 slots, 1 full test run(s) running): C-1, C-2, C-3, C-4, C-5");
+  q.add("C-637", 4242, 0);
+  expect(agendaLines(must(agenda(w, { read: CALM, slots: q.slots })))[0]).toBe("delegate: room for 9 more (load 1.0 of 14.4 on 8 CPUs, 0/10 slots, 1 full test run(s) running)");
+  expect(summary(must(agenda(w, { read: CALM, slots: q.slots })))[1]).toBe("  delegate: room for 9 more (load 1.0 of 14.4 on 8 CPUs, 0/10 slots, 1 full test run(s) running): C-1, C-2, C-3, C-4, C-5");
 });
 
 test("BR-2581: busy says why and what can be delegated once it falls; a full test run lowers the load limit to 0.9 of it and takes the last slot", () => {
   const root = fresh();
   onMain(root, { 9: changeDoc(9), 10: changeDoc(10) });
   const w = ws(root);
-  expect(agendaLines(must(agenda(w, { read: machine(15), alive: ALIVE })))[0]).toStartWith("delegate: room for 10 more");
-  expect(agendaLines(must(agenda(w, { read: machine(16), alive: ALIVE })))[0]).toBe("delegate: busy (5-minute load 16.0 on 8 CPUs (limit 16)); delegatable once it falls: C-9, C-10");
-  fullRun(w, "test.full.start", null, 4242);
-  const busy = agendaLines(must(agenda(w, { read: machine(15), alive: ALIVE })));
+  const q = queue();
+  expect(agendaLines(must(agenda(w, { read: machine(15), slots: q.slots })))[0]).toStartWith("delegate: room for 10 more");
+  expect(agendaLines(must(agenda(w, { read: machine(16), slots: q.slots })))[0]).toBe("delegate: busy (5-minute load 16.0 on 8 CPUs (limit 16)); delegatable once it falls: C-9, C-10");
+  q.add(null, 4242, 0);
+  const busy = agendaLines(must(agenda(w, { read: machine(15), slots: q.slots })));
   expect(busy).toEqual(["delegate: busy (5-minute load 15.0 on 8 CPUs (limit 14.4 while a full test run is running)); delegatable once it falls: C-9, C-10", "heavy: main full test run 0m"]);
   const slots = roomOf({ ...w, config: { ...w.config, delegateMaxWorkers: 10 } } as Workspace, CALM(), 9, 1);
   expect([slots.room, slots.reasons]).toEqual([false, ["9 of delegate_max_workers (10) in use; 1 full test run(s) take the last slot(s)"]]);
   expect(roomOf(w, machine(1, true)(), 0, 0).reasons).toEqual(["memory pressure warn"]);
 });
 
-test("BR-2582: a full test run is running from its start until its end or its process is gone; a wait counts until it starts", () => {
+test("BR-2582: the full test runs running and waiting come from the machine-wide queue; a run whose process is gone is neither", () => {
   const root = fresh();
   const w = ws(root);
-  const alive = (pid: number) => pid !== 3;
-  fullRun(w, "test.full.start", "C-637", 1, minutesAgo(12));
-  fullRun(w, "test.full.wait", "C-5", 2);
-  fullRun(w, "test.full.wait", "C-6", 4);
-  fullRun(w, "test.full.start", "C-7", 3);
-  fullRun(w, "test.full.wait", "C-8", 5);
-  fullRun(w, "test.full.start", "C-8", 5);
-  fullRun(w, "test.full.start", "C-9", 6);
-  fullRun(w, "test.full.end", "C-9", 6);
-  const h = runningFullRuns(w, alive);
-  expect(h.running.map((r) => r.subject)).toEqual(["C-637", "C-8"]);
+  const q = queue((pid) => pid === 3);
+  q.add("C-637", 1, 12);
+  q.add(null, 7, 2);
+  q.add("C-5", 2);
+  q.add("C-6", 4);
+  q.add("C-7", 3, 1);
+  const h = must(runningFullRuns(q.slots));
+  expect(h.running.map((r) => r.subject)).toEqual(["C-637", "main"]);
   expect(h.waiting).toBe(2);
-  expect(agendaLines(must(agenda(w, { read: CALM, alive })))).toEqual([expect.stringMatching(/^heavy: C-637 full test run 12m, C-8 full test run 0m; 2 waiting$/)]);
-  expect(runningFullRuns(fresh() ? ws(fresh()) : w, ALIVE)).toEqual({ running: [], waiting: 0 });
+  expect(agendaLines(must(agenda(w, { read: CALM, slots: q.slots })))).toEqual(["heavy: C-637 full test run 12m, main full test run 2m; 2 waiting"]);
+  q.end(1); q.end(7);
+  expect(agendaLines(must(agenda(w, { read: CALM, slots: q.slots })))).toEqual(["heavy: none running; 2 waiting"]);
+  expect(must(runningFullRuns(NONE()))).toEqual({ running: [], waiting: 0 });
+  expect(must(runningFullRuns({ dir: join(emptyQueue(), "missing"), gone: () => false }))).toEqual({ running: [], waiting: 0 });
 });
 
 test("BR-2583: canon work handled records each key's outcome as a reminder.handled event and the agenda leaves them out while it holds", () => {
@@ -229,13 +245,13 @@ test("BR-2583: canon work handled records each key's outcome as a reminder.handl
   const ev = w.db.db.query<{ subject: string; detail: string }, []>("SELECT subject, detail FROM events WHERE kind = 'reminder.handled' ORDER BY id").all();
   expect(ev.map((e) => [e.subject, JSON.parse(e.detail).outcome, JSON.parse(e.detail).to, JSON.parse(e.detail).via])).toEqual([[`finding:${a}`, "handed", "C-20", "handled"], [`finding:${b}`, "handed", "C-20", "handled"]]);
   expect(cli(root, "agent:s1", ["work", "handled", `finding:${c}`, "--defer", "after the release", "--for", "4h"]).out).toMatch(new RegExp(`^handled finding:${c}: deferred until \\S+: after the release`));
-  expect(must(agenda(ws(root), { read: CALM })).judge.map((it) => it.key)).toEqual([]);
+  expect(must(agenda(ws(root), { read: CALM, slots: NONE() })).judge.map((it) => it.key)).toEqual([]);
   // a deferral ends; a hand-over ends when the change it went to closes and the item is still there
-  expect(must(agenda(ws(root), { read: CALM, now: Date.now() + 5 * 3_600_000 })).judge.map((it) => it.key)).toEqual([`finding:${c}`]);
+  expect(must(agenda(ws(root), { read: CALM, now: Date.now() + 5 * 3_600_000, slots: NONE() })).judge.map((it) => it.key)).toEqual([`finding:${c}`]);
   onMain(root, { 20: changeDoc(20, "done") });
-  expect(must(agenda(ws(root), { read: CALM })).judge.map((it) => it.key)).toEqual([`finding:${a}`, `finding:${b}`]);
+  expect(must(agenda(ws(root), { read: CALM, slots: NONE() })).judge.map((it) => it.key)).toEqual([`finding:${a}`, `finding:${b}`]);
   expect(cli(root, "agent:s1", ["work", "handled", `finding:${a}`, "--not-doing", "covered by the guide"]).code).toBe(0);
-  expect(must(agenda(ws(root), { read: CALM })).judge.map((it) => it.key)).toEqual([`finding:${b}`]);
+  expect(must(agenda(ws(root), { read: CALM, slots: NONE() })).judge.map((it) => it.key)).toEqual([`finding:${b}`]);
   expect(cli(root, "agent:s1", ["work", "handled", "ready:C-21", "--not-doing", "x"]).code).toBe(3);
 });
 
@@ -309,7 +325,7 @@ test("BR-2585: canon stats reports how reminders were handled: the rate, each ou
 });
 
 /** A scripted run of watchDue: `at[n]` runs before tick n; it stops after `ticks` ticks; each tick moves the clock by `stepMs`. */
-async function scripted(w: Workspace, opts: { since?: number; ticks: number; stepMs?: number; at?: Record<number, () => void>; read?: Readings }) {
+async function scripted(w: Workspace, opts: { since?: number; ticks: number; stepMs?: number; at?: Record<number, () => void>; read?: Readings; slots?: Slots }) {
   const out: string[] = [];
   let clock = Date.now();
   let tick = 0;
@@ -318,7 +334,7 @@ async function scripted(w: Workspace, opts: { since?: number; ticks: number; ste
     stopped: () => tick >= opts.ticks,
     sleep: async (ms) => { clock += opts.stepMs ?? ms; tick++; opts.at?.[tick]?.(); },
     clock: () => clock,
-  }, { read: opts.read ?? CALM, alive: ALIVE });
+  }, { read: opts.read ?? CALM, slots: opts.slots ?? NONE() });
   return { r, out };
 }
 
@@ -383,10 +399,12 @@ test("BR-2528: the machine is read every second and said once when it crosses th
 test("BR-2528: a full test run starting or ending is said in one heavy line; its growing age is not", async () => {
   const root = fresh();
   const w = ws(root, "agent:s1");
+  const q = queue();
   const { out } = await scripted(w, {
     ticks: 4,
     stepMs: 30_000,
-    at: { 1: () => fullRun(w, "test.full.start", "C-637", 77), 3: () => fullRun(w, "test.full.end", "C-637", 77) },
+    slots: q.slots,
+    at: { 1: () => { q.add("C-637", 77, 0); w.db.event("agent:t", "test.full.start", "C-637", {}); }, 3: () => { q.end(77); w.db.event("agent:t", "test.full.end", "C-637", {}); } },
   });
   expect(out.filter((l) => l.startsWith("heavy:"))).toEqual(["heavy: C-637 full test run 0m", "heavy: none"]);
 });
@@ -465,5 +483,4 @@ test("BR-2529 BR-2024: a Claude Code main session's brief has the agenda summary
   const worker = cli(root, "agent:s7:w1", ["brief"], { CLAUDECODE: "1" });
   expect(worker.out).not.toContain("Agenda (canon work due)");
   expect(worker.out).not.toContain("Monitor");
-  void readdirSync;
 });

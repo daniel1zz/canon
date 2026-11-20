@@ -1,5 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ask } from "../humans/questions.ts";
 import { project, sh, startNew, ws } from "../testkit.ts";
@@ -17,7 +18,7 @@ const C = (n: number) => id("C", n);
 const BR = (n: number) => id("BR", n);
 
 function canon(cwd: string, ...args: string[]) {
-  const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a", CANON_MACHINE: "normal,1,8" } });
+  const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a", CANON_MACHINE: "normal,1,8", CANON_MACHINE_DIR: mkdtempSync(join(tmpdir(), "canon-machine-")) } });
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
 }
 
@@ -121,7 +122,7 @@ describe("canon overview", () => {
     expect(r.out.trim().split("\n")).toEqual(["## 当前版本", "(no release in progress)", NO_QUALITY, "", "## 议程", "(nothing)", "", "## 正在做和在等", "(none)", "", "## 历史", HISTORY]);
   });
 
-  test("BR-2505: changes in progress or waiting are listed with their state or what they wait for; ready ones are not", () => {
+  test("BR-2505: changes in progress or waiting are listed in canon change list's order with their state or what they wait for; ready ones are not", () => {
     const root = project();
     write(root, {
       [`canon/changes/${C(6)}.md`]: change(6, "open"),
@@ -130,9 +131,9 @@ describe("canon overview", () => {
     const started = startNew(root, "做点事");
     const out = canon(root, "overview").out.split("\n");
     const at = out.indexOf("## 正在做和在等");
-    expect(out.slice(at + 1, out.indexOf("## 历史") - 1)).toEqual([`${C(7)} 变更7  waiting-deps: ${C(6)}`, `${started.change} 做点事  in-progress`]);
+    expect(out.slice(at + 1, out.indexOf("## 历史") - 1)).toEqual([`${started.change} 做点事  in-progress`, `${C(7)} 变更7  waiting-deps: ${C(6)}`]);
     const json = JSON.parse(canon(root, "overview", "--json").out);
-    expect(json.changes.map((c: { id: string; state: string }) => [c.id, c.state])).toEqual([[C(7), "waiting-deps"], [started.change, "in-progress"]]);
+    expect(json.changes.map((c: { id: string; state: string }) => [c.id, c.state])).toEqual([[started.change, "in-progress"], [C(7), "waiting-deps"]]);
   });
 
   test("BR-2505: --json holds the same content", () => {

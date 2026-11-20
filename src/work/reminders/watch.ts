@@ -7,7 +7,7 @@ import { eventsSince, lastEventId, type EventRow } from "../stats/window.ts";
 import type { Workspace } from "../workspace.ts";
 import { agenda, DELEGATE_SHOWN, dueList, heavyLine, summary, type Agenda, type Readings } from "./agenda.ts";
 import { renderDue, workerSubjects } from "./due.ts";
-import { runningFullRuns, type Alive } from "./heavy.ts";
+import { runningFullRuns, type Slots } from "./heavy.ts";
 import { roomOf } from "./room.ts";
 
 /**
@@ -90,7 +90,7 @@ const heavyKey = (a: Agenda): string => `${a.heavy.running.map((r) => `${r.subje
 
 export interface WatchDeps {
   readonly read?: Readings;
-  readonly alive?: Alive;
+  readonly slots?: Slots;
 }
 
 /** Runs until `io.stopped()`; an error other than a busy database is said in a `watch stopped` line and returned (BR-2528 point 8). */
@@ -111,7 +111,7 @@ export async function watchDue(ws: Workspace, since: number | undefined, io: Wat
     // reason: a claim lapse is an event only once some command judged it, so watching judges the claims each round (BR-2360, BR-2357)
     claimsWithState(ws.db);
     if (worker) own = new Set(workerSubjects(ws));
-    return agenda(ws, { now, read, wasBusy: busy, ...(deps.alive ? { alive: deps.alive } : {}) });
+    return agenda(ws, { now, read, wasBusy: busy, ...(deps.slots ? { slots: deps.slots } : {}) });
   };
   /** The new events: the lines of those that concern the caller (at most MAX_EVENTS_PER_TICK, BR-2528 point 6), and whether any may change the agenda. */
   const pass = (): { lines: { line: string; landed?: string }[]; changed: boolean } => {
@@ -173,8 +173,9 @@ export async function watchDue(ws: Workspace, since: number | undefined, io: Wat
       }
       // reason: the machine is read every second and said only when it crosses the threshold, with hysteresis (BR-2528 point 5)
       if (!worker && prev.delegate) {
-        const heavy = runningFullRuns(ws, deps.alive);
-        const room = roomOf(ws, read(), prev.delegate.room.held, heavy.running.length, busy);
+        const heavy = runningFullRuns(deps.slots);
+        if (!heavy.ok) return stop(heavy.error.message, heavy.error.code);
+        const room = roomOf(ws, read(), prev.delegate.room.held, heavy.value.running.length, busy);
         if (busy && room.room) {
           busy = false;
           const ready = prev.delegate.changes.slice(0, DELEGATE_SHOWN).map((c) => c.id);

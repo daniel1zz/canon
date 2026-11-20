@@ -1,5 +1,6 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
-import { appendFileSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { processOf } from "../claims/liveness.ts";
 import { project, sh, startNew, ws } from "../testkit.ts";
@@ -11,7 +12,7 @@ setDefaultTimeout(60_000);
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) { rmSync(root, { recursive: true, force: true }); rmSync(`${root}.worktrees`, { recursive: true, force: true }); } });
 function cli(cwd: string, actor: string, ...args: string[]) {
-  const p = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), ...args], { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: actor } });
+  const p = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), ...args], { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...process.env, CANON_ACTOR: actor, CANON_MACHINE_DIR: mkdtempSync(join(tmpdir(), "canon-machine-")) } });
   return { code: p.exitCode, text: p.stdout.toString() + p.stderr.toString() };
 }
 /** A process that certainly is not running: this pid with a start time it never had. */

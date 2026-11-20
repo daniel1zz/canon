@@ -26,7 +26,7 @@ export const FLOW = [
     id: "session", title: "会话开始", command: "canon brief",
     steps: [
       { id: "session.instructions", title: "常驻说明", about: "每个会话开始时都要读的文件；改动其中一个会触发重复说明评审。" },
-      { id: "session.reminders", title: "工作提醒", about: "canon work watch 在会话里反复提醒还没处理的到期事项。" },
+      { id: "session.reminders", title: "工作提醒", about: "议程按事件送到会话：可派的活、要判断的事、等负责人的事；canon work watch 只报变化，不定时重复。" },
     ],
   },
   {

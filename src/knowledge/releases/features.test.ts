@@ -1,5 +1,6 @@
 import { describe, expect, setDefaultTimeout, test } from "bun:test";
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { project, sh, startNew } from "../../work/testkit.ts";
 
@@ -14,7 +15,7 @@ const BR = (n: number) => id("BR", n);
 const C = (n: number) => id("C", n);
 
 function canon(cwd: string, ...args: string[]) {
-  const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+  const r = Bun.spawnSync(["bun", MAIN, ...args], { cwd, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a", CANON_MACHINE_DIR: mkdtempSync(join(tmpdir(), "canon-machine-")) } });
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
 }
 

@@ -123,3 +123,58 @@ test("BR-2526 BR-2571: a delegation whose change is closed on main, or that is s
     w.db.close();
   }
 });
+
+function as(cwd: string, actor: string, machine: string, ...args: string[]) {
+  const p = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), ...args], { cwd, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: env(machine, actor) });
+  return { code: p.exitCode, text: p.stdout.toString() + p.stderr.toString() };
+}
+
+test("BR-2526: another session's live delegation that is not stalled is refused as a conflict (exit 5) with a delegation.refuse event; its own session may delegate it again", () => {
+  const f = fixture(1);
+  const c = f.changes[0]!;
+  expect(as(f.root, "agent:s1", CALM, "work", "delegate", c, "--to", "w1").code).toBe(0);
+  const other = as(f.root, "agent:s2", CALM, "work", "delegate", c, "--to", "w2");
+  expect(other.code).toBe(5);
+  expect(other.text).toContain(`${c} is already delegated to w1 by agent:s1; it is not stalled`);
+  expect(events(f.root, "delegation.refuse").at(-1)).toMatchObject({ subject: c, detail: { reason: "conflict", worker: "w1", owner: "agent:s1" } });
+  const w = ws(f.root);
+  try {
+    expect(w.db.db.query<{ worker: string; owner: string }, [string]>("SELECT worker, owner FROM delegations WHERE subject = ?").get(c)).toEqual({ worker: "w1", owner: "agent:s1" });
+  } finally {
+    w.db.close();
+  }
+  expect(as(f.root, "agent:s1", CALM, "work", "delegate", c, "--to", "w3").code).toBe(0);
+});
+
+test("BR-2526: a stalled delegation may be delegated again by another session", () => {
+  const f = fixture(1);
+  const c = f.changes[0]!;
+  expect(as(f.root, "agent:s1", CALM, "work", "delegate", c, "--to", "w1").code).toBe(0);
+  appendFileSync(join(f.root, "canon/config.yaml"), "delegation_stall_minutes: 0.0001\n");
+  sh(f.root, "commit", "-qam", "stall threshold");
+  Bun.sleepSync(50);
+  expect(as(f.root, "agent:s2", CALM, "work", "delegate", c, "--to", "w2").code).toBe(0);
+});
+
+test("BR-2526: two sessions delegating the same change for the first time at once: one succeeds, the other is a conflict", async () => {
+  const f = fixture(1);
+  const c = f.changes[0]!;
+  const run = (actor: string, name: string) => Bun.spawn(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "delegate", c, "--to", name], { cwd: f.root, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: env(CALM, actor) });
+  const codes = (await Promise.all([run("agent:s1", "w1"), run("agent:s2", "w2")].map((p) => p.exited))).sort();
+  expect(codes).toEqual([0, 5]);
+});
+
+test("BR-2526: whether a delegation adds a worker is decided in its transaction: one ended by take is checked for capacity again (#261)", () => {
+  const f = fixture(1);
+  const c = f.changes[0]!;
+  expect(as(f.root, "agent:s1", CALM, "work", "delegate", c, "--to", "w1").code).toBe(0);
+  const w = ws(f.root);
+  try {
+    w.db.db.query("UPDATE delegations SET ended = ? WHERE subject = ?").run(new Date().toISOString(), c);
+  } finally {
+    w.db.close();
+  }
+  const again = as(f.root, "agent:s1", "critical,1,8", "work", "delegate", c, "--to", "w2");
+  expect(again.code).toBe(1);
+  expect(again.text).toContain("memory pressure critical");
+});

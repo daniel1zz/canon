@@ -6,7 +6,7 @@ import { mainCorpus } from "../session/session.ts";
 import type { Workspace } from "../workspace.ts";
 import { age, ageOf, mainItems, renderDue, workerItems, type DueItem } from "./due.ts";
 import { holds, outcomes } from "./handled.ts";
-import { runningFullRuns, type Alive, type HeavyRuns } from "./heavy.ts";
+import { runningFullRuns, type HeavyRuns, type Slots } from "./heavy.ts";
 import { roomDetail, roomOf, type Room } from "./room.ts";
 
 /**
@@ -42,7 +42,8 @@ export interface AgendaOptions {
   readonly read?: Readings;
   /** watch's hysteresis: the machine was said busy last (BR-2528). */
   readonly wasBusy?: boolean;
-  readonly alive?: Alive;
+  /** The machine-wide queue of full test runs; tests pass a directory of their own. */
+  readonly slots?: Slots;
 }
 
 /** How many delegatable changes are named (BR-2581) and how many items a summary group shows (BR-2529). */
@@ -56,7 +57,9 @@ const byOrder = (a: DueItem, b: DueItem): number => a.tier - b.tier || (a.since 
 /** The calling session's agenda (BR-2527). */
 export function agenda(ws: Workspace, opts: AgendaOptions = {}): Result<Agenda> {
   const now = opts.now ?? Date.now();
-  const heavy = runningFullRuns(ws, opts.alive);
+  const runs = runningFullRuns(opts.slots);
+  if (!runs.ok) return runs;
+  const heavy = runs.value;
   if (isWorker(ws.actor)) return ok({ delegate: null, judge: [], owner: [], yours: workerItems(ws), heavy, startable: [], states: [] });
   const corpus = mainCorpus(ws);
   if (!corpus.ok) return corpus;
@@ -125,8 +128,7 @@ const entryLine = (g: readonly DueItem[], now: number): string => (g.length === 
 export function heavyLine(h: HeavyRuns, now: number): string | undefined {
   if (h.running.length === 0 && h.waiting === 0) return undefined;
   const running = h.running.map((r) => `${r.subject ?? "main"} full test run ${age(now - Date.parse(r.since))}`).join(", ");
-  const waiting = h.waiting > 0 ? `${running ? "; " : ""}${h.waiting} waiting` : "";
-  return `heavy: ${running || "none running"}${waiting}`;
+  return `heavy: ${running || "none running"}${h.waiting > 0 ? `; ${h.waiting} waiting` : ""}`;
 }
 
 /** The delegate group's head (BR-2581). */
@@ -196,7 +198,7 @@ export function agendaJson(a: Agenda): Record<string, unknown> {
 }
 
 /** The calling session's items to handle, flat (BR-2527): the agenda's judge and owner groups, or a worker's own. */
-export function dueItems(ws: Workspace, now: number = Date.now(), read?: Readings): Result<DueItem[]> {
-  const a = agenda(ws, { now, ...(read ? { read } : {}) });
+export function dueItems(ws: Workspace, now: number = Date.now(), read?: Readings, slots?: Slots): Result<DueItem[]> {
+  const a = agenda(ws, { now, ...(read ? { read } : {}), ...(slots ? { slots } : {}) });
   return a.ok ? ok(dueList(a.value)) : a;
 }
