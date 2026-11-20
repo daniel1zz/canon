@@ -49,6 +49,16 @@ describe("canon stats: how the findings of the reviews after landing ended, per 
     return event;
   }
 
+  test("BR-2451: the share appears from 10 fixed or spurious findings on: 9 gives none, 10 gives it", () => {
+    const { root, db } = withDb();
+    let n = 0;
+    for (let i = 0; i < 5; i++) finding(db, "untestable", "fixed", n++);
+    for (let i = 0; i < 4; i++) finding(db, "untestable", "spurious", n++);
+    expect(canon(root, "stats").out).toContain("  untestable: 0 open, 5 fixed, 4 spurious, 0 retired; fewer than 10 fixed or spurious, no share");
+    finding(db, "untestable", "spurious", n++);
+    expect(canon(root, "stats").out).toContain("  untestable: 0 open, 5 fixed, 5 spurious, 0 retired, spurious share 50.0%");
+  });
+
   test("BR-2451: a retired criterion's findings are still counted, after the prompts' criteria and before other names", () => {
     const { root, db } = withDb();
     finding(db, "zz-unknown", null, 1);
