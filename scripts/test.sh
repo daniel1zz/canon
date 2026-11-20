@@ -38,6 +38,8 @@ trap 'sh "$reap" --run "$tmp" 2>/dev/null || true; rm -rf "$tmp"' EXIT
 trap 'exit 130' INT
 trap 'exit 143' TERM
 export TMPDIR="$tmp"
+# reason: full runs queue machine-wide in the user's state directory (BR-2577); tests must not queue behind, or leave entries in, the real one
+export CANON_MACHINE_DIR="$tmp/machine"
 dir="$tmp/git"
 mkdir "$dir"
 : > "$dir/empty"

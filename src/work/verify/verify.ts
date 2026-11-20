@@ -26,6 +26,7 @@ import { claimOfWorktree } from "../claims/claims.ts";
 import { groupAlive, stopGroups } from "./stop-groups.ts";
 import { availableParallelism } from "node:os";
 import { jobCap, readCpu, startPool, type CpuSample, type CpuState, type FileResult, type Outcome } from "./pool.ts";
+import { acquireSlot, machineSlots, type Slot, type SlotDeps } from "./slot.ts";
 import type { Workspace } from "../workspace.ts";
 
 /**
@@ -230,6 +231,8 @@ export interface WorkTestDeps {
   /** Stops the process groups of the commands still running (BR-2304); `hurried` turns true on a second signal. */
   readonly stop: (groups: readonly number[], hurried: () => boolean) => Promise<string | undefined>;
   readonly exit: (code: number) => void;
+  /** The machine-wide queue of full runs (BR-2576). */
+  readonly slots: SlotDeps;
 }
 
 export const machineDeps: WorkTestDeps = {
@@ -240,6 +243,7 @@ export const machineDeps: WorkTestDeps = {
   signals: process,
   stop: (groups, hurried) => stopGroups(groups, hurried),
   exit: (code) => process.exit(code),
+  slots: machineSlots,
 };
 
 const STOP_SIGNALS: readonly NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
@@ -250,6 +254,42 @@ const STOP_SIGNALS: readonly NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
  * so one run reports every problem the floor or the landing check would refuse.
  */
 export async function workTest(ws: Workspace, all: boolean, say: (line: string) => void, deps: WorkTestDeps = machineDeps, only: readonly string[] = []): Promise<Result<WorkTestResult>> {
+  // reason: named files are not a full run and take no slot; a missing test_command fails before anything waits (BR-2576)
+  if (only.length > 0 || !ws.config.testCommand) return runWorkTest(ws, all, say, deps, only);
+  const subject = claimOfWorktree(ws.db, ws.root)?.subject ?? null;
+  let stoppedWhileWaiting: NodeJS.Signals | undefined;
+  const onWaitSignal = (sig: NodeJS.Signals) => {
+    stoppedWhileWaiting = sig;
+  };
+  for (const s of STOP_SIGNALS) deps.signals.on(s, onWaitSignal);
+  let taken: Awaited<ReturnType<typeof acquireSlot>>;
+  try {
+    taken = await acquireSlot(deps.slots, {
+      subject, worktree: ws.root, kind: "work-test", max: ws.config.fullTestSlots, say,
+      aborted: () => stoppedWhileWaiting !== undefined,
+      record: (kind, detail) => void ws.db.event(ws.actor, kind, subject, detail),
+    });
+  } finally {
+    for (const s of STOP_SIGNALS) deps.signals.off(s, onWaitSignal);
+  }
+  if (!taken.ok) return taken;
+  if (taken.value === "aborted") {
+    const sig = stoppedWhileWaiting!;
+    say(`stopped by ${sig} while waiting for a full test run slot: no test ran`);
+    deps.exit(EXIT_OF_SIGNAL[sig]!);
+    return ok({ files: 0, failed: 0, typecheck: null, check: 0, unmatched: 0, evidence: 0, signal: sig });
+  }
+  const slot = taken.value;
+  let result: Result<WorkTestResult> | undefined;
+  try {
+    result = await runWorkTest(ws, all, say, deps, only, slot);
+    return result;
+  } finally {
+    slot.release(result?.ok && !workTestFailed(result.value) ? "passed" : result?.ok && result.value.signal !== undefined ? "stopped" : "failed");
+  }
+}
+
+async function runWorkTest(ws: Workspace, all: boolean, say: (line: string) => void, deps: WorkTestDeps, only: readonly string[], slot?: Slot): Promise<Result<WorkTestResult>> {
   if (!ws.config.testCommand) {
     // reason: the hint must pass the {report} check a copied value meets next (BR-2160, review finding #4)
     return err("invalid", `canon/config.yaml has no \`test_command\`: set the command that runs one test file, with ${FILE_PLACEHOLDER} where its path goes and ${REPORT_PLACEHOLDER} where it writes its JUnit XML report (e.g. test_command: "bun test ${FILE_PLACEHOLDER} --reporter=junit --reporter-outfile=${REPORT_PLACEHOLDER}")`);
@@ -324,6 +364,8 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
       } catch (e) {
         console.error(`canon work test: stopping after ${sig} failed: ${e instanceof Error ? e.message : String(e)}`);
       } finally {
+        // reason: the exit below ends the process before workTest's own release runs, so the slot goes back here (BR-2578)
+        slot?.release("stopped");
         deps.exit(timedOut ? 1 : EXIT_OF_SIGNAL[sig]!);
         stoppedWith(result);
       }

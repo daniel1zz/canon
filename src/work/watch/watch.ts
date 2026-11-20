@@ -337,7 +337,7 @@ async function testCommit(ws: Workspace, say: Say, sha: string): Promise<Result<
           code = setup;
           why = `setup exited ${setup}`;
         } else {
-          code = await floorWithReport(ws.db, config.value, dir, config.value.floor, (command) => runLogged(command, dir, fd), (line) => writeSync(fd, `${line}\n`), (f) => { failing = f; });
+          code = await floorWithReport(ws.db, config.value, dir, config.value.floor, (command) => runLogged(command, dir, fd), (line) => writeSync(fd, `${line}\n`), (f) => { failing = f; }, { actor: ws.actor, worktree: dir, say: (line) => writeSync(fd, `${line}\n`) });
           why = `floor exited ${code}`;
           // reason: a failure whose failing files all pass when run again unchanged is a flaky test, not a broken main (BR-2534)
           if (code !== 0 && failing.length > 0 && config.value.testCommand) {

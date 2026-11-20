@@ -5,6 +5,7 @@ import type { CoordDb } from "../../db.ts";
 import { readReport, REPORT_PLACEHOLDER, type TestCase } from "../../verify/report.ts";
 import { recordReport } from "../../verify/ledger.ts";
 import { runSelectCommand } from "../../verify/select-command.ts";
+import { acquireSlot, machineSlots, type SlotDeps } from "../../verify/slot.ts";
 import type { Say, Workspace } from "../../workspace.ts";
 import { readConfig, type Config } from "../../../invocation/config.ts";
 import { testFilesFor } from "../../../knowledge/check/tests.ts";
@@ -27,7 +28,7 @@ export async function runFloor(ws: Workspace, say: Say, cwd: string, name: strin
     const exit = await proc.exited;
     forgetEnded(groups);
     return exit;
-  }, (line) => notes.push(line));
+  }, (line) => notes.push(line), undefined, command === ws.config.floor ? { actor: ws.actor, worktree: cwd, say } : undefined);
   closeSync(fd);
   if (notes.length) appendFileSync(log, notes.map((n) => `${n}\n`).join(""));
   return { code, log, tail: code === 0 ? "" : readFileSync(log, "utf8").split("\n").slice(-40).join("\n") };
@@ -122,6 +123,47 @@ function isTestPath(config: Config, path: string): boolean {
  * (BR-2339, D-64). A report problem fails a floor that passed; a floor that failed keeps its own exit code.
  */
 export async function floorWithReport(
+  db: CoordDb,
+  config: Config,
+  cwd: string,
+  command: string,
+  run: (command: string) => Promise<number>,
+  note: (line: string) => void,
+  failed?: (files: string[]) => void,
+  fullRun?: FullRun,
+): Promise<number> {
+  // reason: the whole floor is a full run, so it takes the machine's slot like `canon work test` does; a scoped floor is not and passes no `fullRun` (BR-2576)
+  if (!fullRun) return reportedFloor(db, config, cwd, command, run, note, failed);
+  const subject = null;
+  const taken = await acquireSlot(fullRun.slots ?? machineSlots, {
+    subject, worktree: fullRun.worktree, kind: "floor", max: config.fullTestSlots, say: fullRun.say,
+    aborted: () => false,
+    record: (kind, detail) => void db.event(fullRun.actor, kind, subject, detail),
+  });
+  if (!taken.ok) {
+    note(`canon: ${taken.error.message}`);
+    return 4;
+  }
+  if (taken.value === "aborted") return 1; // unreachable: aborted() is never true here
+  const release = taken.value.release;
+  let code = 1;
+  try {
+    code = await reportedFloor(db, config, cwd, command, run, note, failed);
+    return code;
+  } finally {
+    release(code === 0 ? "passed" : "failed");
+  }
+}
+
+/** Where a full floor run takes its slot (BR-2576): who records the events, the worktree it runs in, where the waiting line goes. */
+export interface FullRun {
+  readonly actor: string;
+  readonly worktree: string;
+  readonly say: (line: string) => void;
+  readonly slots?: SlotDeps;
+}
+
+async function reportedFloor(
   db: CoordDb,
   config: Config,
   cwd: string,

@@ -7,6 +7,7 @@ import { EventEmitter } from "node:events";
 import { recordReport } from "./ledger.ts";
 import { commandFor, machineDeps, selectTests, timeoutReport, waitingReport, workTest, type WorkTestDeps, type WorkTestResult } from "./verify.ts";
 import type { CpuSample } from "./pool.ts";
+import { acquireSlot, machineSlots } from "./slot.ts";
 
 const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 const rule = ["BR", 7].join("-");
@@ -691,6 +692,9 @@ function fakeDeps(over: Partial<WorkTestDeps> = {}) {
     parallelism: () => 8,
     signals: { on: (s, f) => signals.on(s, f), off: (s, f) => signals.off(s, f) },
     exit: (c) => void exits.push(c),
+    // reason: a test never queues in the real machine-wide directory (BR-2577)
+    // reason: the fake holders' pids are not in the real process table, so no process counts as gone here (BR-2577)
+    slots: { ...machineSlots, dir: mkdtempSync(join(tmpdir(), "canon-slots-")), pollMs: 30, gone: () => false },
     ...over,
   };
   return { d, signals, exits };
@@ -1296,5 +1300,123 @@ describe("test files that mostly wait", () => {
     expect(detail.signal).toBe("SIGTERM");
     expect(Object.keys(detail.fileTimes)).toEqual(["src/t1.test.ts"]);
     expect(detail.fileTimes["src/t1.test.ts"]!.length).toBe(2);
+  });
+});
+
+describe("canon work test takes a machine-wide slot when it is a full run", () => {
+  /** Takes the only slot as another process (a fake pid the fake process table calls alive) and gives it back through the result. */
+  async function holder(d: WorkTestDeps) {
+    const r = await acquireSlot({ ...d.slots, self: () => ({ pid: 4242, start: "other" }) }, { subject: "C-77", worktree: "/other/wt", kind: "work-test", max: 1, say: () => {}, aborted: () => false, record: () => {} });
+    if (!r.ok || r.value === "aborted") throw new Error("no slot");
+    return r.value;
+  }
+  const fullEvents = (wt: string) =>
+    ws(wt).db.db.query<{ kind: string; detail: string }, []>("SELECT kind, detail FROM events WHERE kind LIKE 'test.full.%' ORDER BY id").all().map((e) => ({ kind: e.kind, ...(JSON.parse(e.detail) as Record<string, unknown>) }));
+
+  test("BR-2576 BR-2578: a full run behind another says who is ahead, starts when it ends, and records wait, start and end", async () => {
+    const wt = jobsFixture(1, "true\n", "1");
+    const { d } = fakeDeps();
+    const other = await holder(d);
+    const lines: string[] = [];
+    const run = workTest(ws(wt), false, (l) => lines.push(l), d);
+    await Bun.sleep(300);
+    expect(lines.filter((l) => l.startsWith("canon: waiting for a full test run slot"))).toEqual([expect.stringContaining("1 full run(s) ahead on this machine: C-77 (/other/wt, running 0 min)")]);
+    expect(lines.some((l) => l.startsWith("pass"))).toBe(false);
+    other.release("passed");
+    const r = await run;
+    expect(r.ok && r.value.failed).toBe(0);
+    expect(lines.some((l) => l.includes("src/t1.test.ts"))).toBe(true);
+    expect(fullEvents(wt).map((e) => e.kind)).toEqual(["test.full.wait", "test.full.start", "test.full.end"]);
+    expect(fullEvents(wt)[2]).toMatchObject({ outcome: "passed" });
+    expect(fullEvents(wt)[0]).toMatchObject({ ahead: 1, pid: process.pid });
+  });
+
+  test("BR-2576: named test files take no slot, print no waiting line and record no full-run event", async () => {
+    const wt = jobsFixture(1, "true\n", "1");
+    const { d } = fakeDeps();
+    const other = await holder(d);
+    const lines: string[] = [];
+    const r = await workTest(ws(wt), false, (l) => lines.push(l), d, ["src/t1.test.ts"]);
+    expect(r.ok && r.value.files).toBe(1);
+    expect(lines.some((l) => l.includes("waiting for a full test run slot"))).toBe(false);
+    expect(fullEvents(wt)).toEqual([]);
+    other.release("passed");
+  });
+
+  test("BR-2576: --all is a full run and waits too", async () => {
+    const wt = jobsFixture(1, "true\n", "1");
+    const { d } = fakeDeps();
+    const other = await holder(d);
+    const lines: string[] = [];
+    const run = workTest(ws(wt), true, (l) => lines.push(l), d);
+    await Bun.sleep(200);
+    expect(lines.some((l) => l.includes("1 full run(s) ahead"))).toBe(true);
+    other.release("passed");
+    await run;
+  });
+
+  test("BR-2580: the wait does not count toward test_timeout_minutes", async () => {
+    const wt = jobsFixture(1, "true\n", "1");
+    write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\ntest_jobs: 1\ntest_timeout_minutes: 0.1\n` });
+    const { d } = fakeDeps();
+    const other = await holder(d);
+    const run = workTest(ws(wt), false, () => {}, d);
+    await Bun.sleep(7000); // longer than the 6 s limit
+    other.release("passed");
+    const r = await run;
+    expect(r.ok && r.value.timedOut).toBeUndefined();
+    expect(r.ok && r.value.failed).toBe(0);
+  }, 20000);
+
+  test("BR-2576: SIGTERM while waiting runs no test, leaves the queue and exits 143", async () => {
+    const wt = jobsFixture(1, "touch ran\n", "1");
+    const { d, signals, exits } = fakeDeps();
+    const other = await holder(d);
+    const lines: string[] = [];
+    const run = workTest(ws(wt), false, (l) => lines.push(l), d);
+    await Bun.sleep(200);
+    signals.emit("SIGTERM", "SIGTERM");
+    const r = await run;
+    expect(exits).toEqual([143]);
+    expect(r.ok && r.value.signal).toBe("SIGTERM");
+    expect(lines).toContain("stopped by SIGTERM while waiting for a full test run slot: no test ran");
+    expect(existsSync(join(wt, "ran"))).toBe(false);
+    other.release("passed");
+    const again = await workTest(ws(wt), false, () => {}, d);
+    expect(again.ok).toBe(true); // the stopped run is not in the queue, so this one starts at once
+  });
+
+  test("BR-2578: a failing full run ends with outcome failed", async () => {
+    const wt = jobsFixture(1, "exit 1\n", "1");
+    const { d } = fakeDeps();
+    const r = await workTest(ws(wt), false, () => {}, d);
+    expect(r.ok && r.value.failed).toBe(1);
+    expect(fullEvents(wt).map((e) => e.kind)).toEqual(["test.full.start", "test.full.end"]);
+    expect(fullEvents(wt)[1]).toMatchObject({ outcome: "failed" });
+  });
+
+  test("BR-2578: a full run stopped by a signal ends with outcome stopped", async () => {
+    const wt = jobsFixture(2, `sleep ${HANG_SECONDS} &\ntouch "started.$$"\nwait\n`, "2");
+    const { d, signals } = fakeDeps();
+    const run = workTest(ws(wt), false, () => {}, d);
+    await waitFor("a file to start", () => readdirSync(wt).some((f) => f.startsWith("started.")));
+    signals.emit("SIGTERM", "SIGTERM");
+    await run;
+    expect(fullEvents(wt).map((e) => e.kind)).toEqual(["test.full.start", "test.full.end"]);
+    expect(fullEvents(wt)[1]).toMatchObject({ outcome: "stopped" });
+  });
+});
+
+describe("full_test_slots", () => {
+  test("BR-2579: a value that is not a whole number of at least 1 is a configuration error, exit 2", () => {
+    const { wt } = fixture();
+    for (const bad of ["0", "1.5", '"many"', "-2"]) {
+      write(wt, { "canon/config.yaml": `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\nfull_test_slots: ${bad}\n` });
+      const r = canon(wt, "check");
+      expect(r.code).toBe(2);
+      expect(r.err).toContain("full_test_slots");
+    }
+    write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\nfull_test_slots: 2\n' });
+    expect(canon(wt, "check").code).not.toBe(2);
   });
 });

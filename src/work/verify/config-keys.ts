@@ -100,4 +100,17 @@ export const verifyKeys = {
     listed: 220,
     checked: 220,
   }),
+  fullTestSlots: configKey<number>({
+    key: "full_test_slots",
+    doc: "The most full test runs (`canon work test` with no test file named, and the background floor of main) that go on at once on this machine, counting every worktree and every project using canon here; the others wait in line and say how many are ahead. Default 1 (BR-2579).",
+    default: 1,
+    schema: { type: ["integer", "null"], minimum: 1, default: 1 },
+    read: (v) => (v === null ? ok(1) : typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`full_test_slots` must be a whole number of at least 1")),
+    flow: {
+      steps: ["test.run"],
+      role: TUNABLE,
+    },
+    listed: 219,
+    checked: 219,
+  }),
 };
