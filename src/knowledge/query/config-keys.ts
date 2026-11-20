@@ -1,5 +1,5 @@
 import { err, ok } from "../../kernel/result.ts";
-import { configKey, optionalString, positiveNumber, positiveValue } from "../../invocation/key.ts";
+import { configKey, optionalString, positiveNumber, positiveValue, TUNABLE, optional } from "../../invocation/key.ts";
 
 /** canon/config.yaml keys of the command that picks related documents from the fused ranking (BR-2443, D-90). */
 export const queryKeys = {
@@ -11,6 +11,11 @@ export const queryKeys = {
     // reason: whitespace only is no command; null, empty and blank all mean unset, as for `review` (BR-2443)
     read: (v) => (v === null || (typeof v === "string" && v.trim() === "") ? ok(undefined) : typeof v === "string" ? ok(v) : err("invalid", "`related_pick_command` must be a string")),
     commands: (v) => (v === undefined ? [] : [v]),
+    flow: {
+      steps: ["preview.related"],
+      role: optional("不写：只用融合排序"),
+      idle: (v) => (v === undefined ? "related_pick_command 没写" : undefined),
+    },
     listed: 218,
     checked: 218,
   }),
@@ -20,6 +25,10 @@ export const queryKeys = {
     default: 120_000,
     schema: positiveNumber(120),
     read: positiveValue("related_pick_timeout_seconds", 1000),
+    flow: {
+      steps: ["preview.related"],
+      role: TUNABLE,
+    },
     listed: 219,
     checked: 219,
   }),

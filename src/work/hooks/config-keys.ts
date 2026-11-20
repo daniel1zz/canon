@@ -1,9 +1,27 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { configKey, type JsonSchema } from "../../invocation/key.ts";
+import type { StepId } from "../../invocation/flow.ts";
+import { configKey, type JsonSchema, optional } from "../../invocation/key.ts";
 import { readPorts, type PortRange } from "./ports.ts";
 
 export type HookEvent = "after_start" | "before_land" | "after_land" | "after_stop" | "after_green";
 export const HOOK_EVENTS: readonly HookEvent[] = ["after_start", "before_land", "after_land", "after_stop", "after_green"];
+
+/** The hook event each hook step of canon's flow runs (BR-2540). */
+const HOOK_STEPS: Partial<Record<StepId, HookEvent>> = {
+  "start.after_start": "after_start",
+  "land.before_land": "before_land",
+  "after.after_land": "after_land",
+  // reason: canon starts no code review itself; a project runs one from after_land, so that hook is what makes the step run (BR-2540)
+  "after.code_review": "after_land",
+  "after.after_green": "after_green",
+  "stop.after_stop": "after_stop",
+};
+
+function hookOf(step: StepId): HookEvent {
+  const event = HOOK_STEPS[step];
+  if (!event) throw new Error(`the hooks key names step ${step}, which runs no hook event`);
+  return event;
+}
 
 /** A command: a string with something other than white space (readHooks rejects a blank one). */
 const NON_BLANK: JsonSchema = { type: "string", pattern: "\\S" };
@@ -18,6 +36,12 @@ export const hookKeys = {
     read: readHooks,
     commands: (v) => Object.values(v).flat(),
     replaces: { after_land: "hooks.after_land" },
+    flow: {
+      steps: ["start.after_start", "land.before_land", "after.after_land", "after.code_review", "after.after_green", "stop.after_stop"],
+      role: optional("这个事件不配命令"),
+      idle: (v, step) => (v[hookOf(step)].length === 0 ? `hooks.${hookOf(step)} 没配命令` : undefined),
+      part: hookOf,
+    },
     listed: 70,
     checked: 170,
   }),
@@ -27,6 +51,10 @@ export const hookKeys = {
     default: undefined,
     schema: { type: ["string", "null"], pattern: "^\\s*\\d+\\s*-\\s*\\d+\\s*$|^$" },
     read: readPorts,
+    flow: {
+      steps: ["start.worktree"],
+      role: optional("不写：不分端口"),
+    },
     listed: 75,
     checked: 175,
   }),

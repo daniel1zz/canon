@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { configKey } from "../../invocation/key.ts";
+import { configKey, optional } from "../../invocation/key.ts";
 import { CHECKS } from "./checks.ts";
 
 /** canon/config.yaml keys of `canon stats` (C-135). */
@@ -10,6 +10,10 @@ export const statsKeys = {
     default: {},
     schema: { type: ["object", "null"], propertyNames: { enum: CHECKS }, additionalProperties: { type: "string", pattern: "^\\d{4}-\\d{2}-\\d{2}$" }, default: {} },
     read: readCheckReviews,
+    flow: {
+      steps: ["accept.checks"],
+      role: optional("{}（默认）：不安排检查复核"),
+    },
     listed: 130,
     checked: 190,
   }),

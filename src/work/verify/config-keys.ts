@@ -1,5 +1,5 @@
 import { err, ok } from "../../kernel/result.ts";
-import { configKey, optionalString, stringValue } from "../../invocation/key.ts";
+import { configKey, optionalString, stringValue, TUNABLE, optional, required } from "../../invocation/key.ts";
 import { REPORT_PLACEHOLDER, REPORT_RECIPES } from "./report.ts";
 
 /** Where `test_command` takes the test file's path (BR-2160). */
@@ -21,6 +21,10 @@ export const verifyKeys = {
       return s;
     },
     commands: (v) => (v === undefined ? [] : [v]),
+    flow: {
+      steps: ["test.run"],
+      role: required("没有它就不记录测试报告，canon check 找不到任何规则的测试"),
+    },
     listed: 40,
     checked: 60,
   }),
@@ -31,6 +35,10 @@ export const verifyKeys = {
     schema: optionalString,
     read: stringValue("test_select_command"),
     commands: (v) => (v === undefined ? [] : [v]),
+    flow: {
+      steps: ["test.select"],
+      role: optional("不写：只挑改过的测试和点名了改过规则的测试"),
+    },
     listed: 42,
     checked: 62,
   }),
@@ -41,6 +49,11 @@ export const verifyKeys = {
     schema: optionalString,
     read: stringValue("typecheck_command"),
     commands: (v) => (v === undefined ? [] : [v]),
+    flow: {
+      steps: ["test.typecheck"],
+      role: optional("不写：不做类型检查"),
+      idle: (v) => (v === undefined ? "typecheck_command 没写" : undefined),
+    },
     listed: 45,
     checked: 65,
   }),
@@ -50,6 +63,10 @@ export const verifyKeys = {
     default: "auto",
     schema: { oneOf: [{ type: "integer", minimum: 1 }, { const: "auto" }, { type: "null" }], default: "auto" },
     read: (v) => (v === null || v === "auto" ? ok("auto") : typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`test_jobs` must be a whole number of at least 1, or `auto`")),
+    flow: {
+      steps: ["test.run"],
+      role: TUNABLE,
+    },
     listed: 46,
     checked: 66,
   }),
@@ -63,6 +80,10 @@ export const verifyKeys = {
       if (!Array.isArray(v) || v.some((g) => typeof g !== "string" || g === "")) return err("invalid", "`always_tests` must be a list of test file globs, each a non-empty string");
       return ok(v as string[]);
     },
+    flow: {
+      steps: ["test.select"],
+      role: optional("[]（默认）：没有每次都跑的测试"),
+    },
     listed: 47,
     checked: 67,
   }),
@@ -72,6 +93,10 @@ export const verifyKeys = {
     default: 30,
     schema: { type: ["number", "null"], exclusiveMinimum: 0, default: 30 },
     read: (v) => (v === null ? ok(30) : typeof v === "number" && v > 0 && Number.isFinite(v) ? ok(v) : err("invalid", "`test_timeout_minutes` must be a number of minutes greater than 0")),
+    flow: {
+      steps: ["test.run"],
+      role: TUNABLE,
+    },
     listed: 220,
     checked: 220,
   }),

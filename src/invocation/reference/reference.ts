@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { parse } from "yaml";
 import { ensureExcluded } from "../../kernel/exclude.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
@@ -82,25 +82,28 @@ export function modelineHint(root: string): string | undefined {
 }
 
 /**
- * Writes `<root>/.canon/config.schema.json` when its content differs, through a temporary file and a rename so a
- * concurrent reader never sees half a file, after making sure the repository's shared info/exclude ignores `/.canon/`
- * (BR-2176). Returns what went wrong, for the caller to say; it never throws.
+ * Writes `<root>/.canon/config.schema.json` (BR-2176). Returns what went wrong, for the caller to say; it never throws.
  */
-export function writeSchemaFile(root: string): Result<void> {
+export const writeSchemaFile = (root: string): Result<void> => writeGenerated(root, SCHEMA_FILE, schemaText());
+
+/**
+ * Writes `text` to `<root>/<file>` under `.canon/` when its content differs, through a temporary file and a rename so a
+ * concurrent reader never sees half a file, after making sure the repository's shared info/exclude ignores `/.canon/`
+ * (BR-2176, BR-2541). Returns what went wrong, for the caller to say; it never throws.
+ */
+export function writeGenerated(root: string, file: string, text: string): Result<void> {
   try {
     const excluded = excludeGenerated(root);
     if (!excluded.ok) return excluded;
-    const dir = join(root, GENERATED_DIR);
-    const file = join(root, SCHEMA_FILE);
-    const text = schemaText();
-    if (existsSync(file) && readFileSync(file, "utf8") === text) return ok(undefined);
-    mkdirSync(dir, { recursive: true });
-    const tmp = `${file}.${process.pid}.tmp`;
+    const path = join(root, file);
+    if (existsSync(path) && readFileSync(path, "utf8") === text) return ok(undefined);
+    mkdirSync(dirname(path), { recursive: true });
+    const tmp = `${path}.${process.pid}.tmp`;
     writeFileSync(tmp, text);
-    renameSync(tmp, file);
+    renameSync(tmp, path);
     return ok(undefined);
   } catch (e) {
-    return err("io", `cannot write ${SCHEMA_FILE}: ${(e as Error).message}`);
+    return err("io", `cannot write ${file}: ${(e as Error).message}`);
   }
 }
 

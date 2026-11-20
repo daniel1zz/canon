@@ -1,6 +1,6 @@
 import { resolve } from "node:path";
 import { err, ok } from "../../kernel/result.ts";
-import { configKey, HOUR, optionalString, positiveNumber, positiveValue, stringValue } from "../../invocation/key.ts";
+import { configKey, HOUR, optionalString, positiveNumber, positiveValue, stringValue, TUNABLE, optional } from "../../invocation/key.ts";
 
 /** Build output, dependency and cache directories of common toolchains: rebuilt by `setup` or a build, never hand-made. */
 export const DEFAULT_REGENERABLE: readonly string[] = [
@@ -17,6 +17,10 @@ export const sessionKeys = {
     schema: optionalString,
     read: stringValue("setup"),
     commands: (v) => (v === undefined ? [] : [v]),
+    flow: {
+      steps: ["start.worktree"],
+      role: optional("不写：新 worktree 不跑安装"),
+    },
     listed: 50,
     checked: 30,
   }),
@@ -26,6 +30,10 @@ export const sessionKeys = {
     default: undefined,
     schema: optionalString,
     read: stringValue("worktrees"),
+    flow: {
+      steps: ["start.worktree"],
+      role: TUNABLE,
+    },
     listed: 120,
     checked: 50,
   }),
@@ -38,6 +46,10 @@ export const sessionKeys = {
       !Array.isArray(v) || v.some((t) => typeof t !== "string" || t.trim() === "" || t.includes("/"))
         ? err("invalid", "`regenerable` must be a list of file or directory names (globs allowed, no `/`)")
         : ok(v as string[]),
+    flow: {
+      steps: ["stop.clean"],
+      role: TUNABLE,
+    },
     listed: 140,
     checked: 80,
   }),

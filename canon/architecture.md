@@ -23,7 +23,7 @@ title: 架构总览
 **CLI 二进制 `canon`**
 - 职责：全部命令；没有常驻进程（后台部件见下）；唯一一直运行的命令是前台的 `canon events --follow`，它是被调用方停止的长命令，不是后台部件（BR-2357）；跟随后台合入的 `canon work land` 也可能运行很久，它跟随的后台合入进程只活到这次合入结束（BR-2390）；`canon work test` 同样只跟随一个后台测试进程，它在自己的进程组里跑到测试结束，跟随的命令被终止时测试继续，再运行就接上，`--stop` 停下，事件记 `test.spawn`（BR-2467）。多数命令读运行它的 checkout 里的 `canon/config.yaml`；合入时及合入后评审的命令、时限、单份提示预算 `review_max_prompt_kb`、同时运行的调用数 `review_parallel` 和常驻说明清单例外，取自合入前 main 上已合入的配置（BR-2074；用 `--again` 重新排的评审取重排时 main 的配置，BR-2449、D-117；挑选命令 `related_pick_command` 和它的时限也取自 main，BR-2443；`canon check` 的评审大小提示在 worktree 里也读 main 上的预算，D-76），所以在一次合入里改它们只对之后的合入生效；预览的设置按 BR-2358 取预览时的 main；总调用数和总提示预算的闸门仅适用于预览及合入后评审，配置来源和批准边界见 BR-2490。canon 仓库的发布评审（`scripts/release.ts`）读被发布提交自己的配置。
 - 数据：无。
-- 代码：`src/invocation`（命令声明、退出码、配置读取；`tree.ts` 汇总各领域的 `commands.ts`）、`src/invocation/reference`（配置项参考和 schema）；共享的 git、进程、结果类型在 `src/kernel`，不属于任何领域。
+- 代码：`src/invocation`（命令声明、退出码、配置读取；`tree.ts` 汇总各领域的 `commands.ts`）、`src/invocation/reference`（配置项参考和 schema，以及 `canon config --flow` 按流程的配置视图和只读流程图，D-140）；流程的阶段和步骤在 `src/invocation/flow.ts`，每个配置项在自己的声明里写它配置哪几步；共享的 git、进程、结果类型在 `src/kernel`，不属于任何领域。
 - 决策：D-2、D-3、D-4、D-15、D-28、D-63。
 
 **协调数据库 `state.db`**
@@ -34,7 +34,7 @@ title: 架构总览
 
 **主 checkout 与工作 worktree**
 - 职责：主 checkout 签出 main，main 只通过共享合入流水线前移；业务变更有 worktree `<仓库名>.worktrees/C-n`、分支 `change/C-n`、Change 文档和认领；杂务由 `canon chore start` 开工，工作树以 `chore-<UUID>` 命名，分支为 `chore/<UUID>-<slug>`，没有 Change 文档或 C 编号。分支是杂务身份和类型的恢复源，事件保存标题，认领只负责所有权；双方共用租约、交接、队列、端口和快照（D-100）。认领的持有者是会话，子 agent 的名字写在后面（`agent:<会话>:<名字>`）：子 agent 的认领类命令（`work start`、`land`、`stop`、`drop`，以及 `chore start`、`chore land`）带 `--as <自己的 agent_id>`，别的会话启动的 worker 会话由派发方设 `CANON_SUBAGENT` 给出名字（BR-2495），没设时自己带 `--as`（BR-2468），主会话不带；主会话用 `canon work take <工作身份> --from <agent_id>` 接手子 agent 的工作，`take` 和 `unstall` 不给子 agent（BR-2340）；派发出去的变更由设计负责人 `take`，不论 worker 在哪个进程（BR-2500），没有派发记录的子 agent 认领才按 BR-2336 只在 Claude Code 或 Codex 的主会话里 `take`，`unstall` 主会话和人都能运行（BR-2455）。快照（每次 Bash 前给 hook 的 `cwd` 所在 worktree 和调用者自己认领的其他 worktree 各做一个，D-71）和归档是 git ref：`refs/canon/snapshots/*`、`refs/canon/archive/*`。
-- 数据：worktree 里的代码和 `canon/changes/C-n.md`；每个 worktree 的 `.canon/`（生成的 schema，被 git 忽略）。
+- 数据：worktree 里的代码和 `canon/changes/C-n.md`；每个 worktree 的 `.canon/`（生成的 schema 和 `canon config --flow` 写的 `flow.html`，被 git 忽略）。
 - 代码：`src/work/session`（开始、停下、交接、`canon brief`；没认领变更时 brief 列出 proposed 超过 24 小时的决策，BR-2476）、`src/work/claims`（认领、`--as` 的解析、`check-as` hook 的检查）、`src/work/delegation`（派发给 worker、接受设计版本、设计请求 `need-design` / `design-answer`、设计负责人用 `take` 收回派发，BR-2497 到 BR-2500、D-128；设计请求在协调数据库的 `design_requests` 表；新增 worker 时按内存压力、5 分钟负载和派发名额拒绝，内存压力从系统信号读（`src/kernel/machine.ts`），BR-2526、D-136）、`src/work/reminders`（`canon work due` 的待办清单和长期运行的 `canon work watch`，宿主用 Monitor 挂着，把该处理的事推给会话；每次现算，不存东西，不登记自己；主会话的 brief 列出待办，Claude Code 下还提示挂上 watch，BR-2527 到 BR-2529、D-136）、`src/work/drop`、`src/work/snapshots`、`src/work/goal`（`canon goal`：会话主动开启目标模式，按会话身份记在协调数据库的 `goals` 表；会话要停下时 Stop hook 运行 `canon goal check --hook`，目标还有未满足或未证明的成功标准就让它接着做；全部满足、只剩待负责人的条目、或连续三次停下都没有进展时放行，BR-2518、BR-2519、D-132）、`src/work/overview`（`canon overview`：从当前版本的成功标准往下汇总整体进度，没认领变更时 brief 打印它的摘要，BR-2505、BR-2506、D-129）。
 - 决策：D-11、D-13、D-18、D-30、D-62、D-71、D-100。
 

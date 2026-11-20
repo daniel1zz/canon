@@ -1,5 +1,5 @@
 import { err, ok } from "../../kernel/result.ts";
-import { configKey } from "../../invocation/key.ts";
+import { configKey, required } from "../../invocation/key.ts";
 
 /** A full git commit id: SHA-1 (40) or SHA-256 (64) hex characters. */
 const FULL_COMMIT = /^(?:[0-9a-f]{40}|[0-9a-f]{64})$/;
@@ -14,6 +14,10 @@ export const linksKeys = {
     read: (v) => {
       if (v === null) return ok(undefined);
       return typeof v === "string" && FULL_COMMIT.test(v) ? ok(v) : err("invalid", "`links_since` must be a full commit id (40 hex characters), such as the output of git rev-parse main");
+    },
+    flow: {
+      steps: ["accept.links"],
+      role: required("没有它，canon links 以退出码 4 失败"),
     },
     listed: 217,
     checked: 217,

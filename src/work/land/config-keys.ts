@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { configKey, type KeyContext, MINUTE, optionalString, positiveNumber, positiveValue, REL_DIR, relPath, stringValue } from "../../invocation/key.ts";
+import { configKey, type KeyContext, MINUTE, optionalString, positiveNumber, positiveValue, REL_DIR, relPath, stringValue, TUNABLE, optional, required } from "../../invocation/key.ts";
 
 /** canon/config.yaml keys of landing (C-135). */
 export const landKeys = {
@@ -12,6 +12,10 @@ export const landKeys = {
       const s = stringValue("main")(v);
       return s.ok ? ok(s.value ?? "main") : s;
     },
+    flow: {
+      steps: ["land.main"],
+      role: TUNABLE,
+    },
     listed: 10,
     checked: 10,
   }),
@@ -22,6 +26,10 @@ export const landKeys = {
     schema: optionalString,
     read: stringValue("floor"),
     commands: (v) => (v === undefined ? [] : [v]),
+    flow: {
+      steps: ["land.floor", "after.floor"],
+      role: required("没有它，canon work land 拒绝合入"),
+    },
     listed: 20,
     checked: 20,
   }),
@@ -31,6 +39,10 @@ export const landKeys = {
     default: 10 * MINUTE,
     schema: positiveNumber(10),
     read: positiveValue("lander_stale_minutes", MINUTE),
+    flow: {
+      steps: ["land.queue"],
+      role: TUNABLE,
+    },
     listed: 100,
     checked: 140,
   }),
@@ -40,6 +52,10 @@ export const landKeys = {
     default: 60 * MINUTE,
     schema: positiveNumber(60),
     read: positiveValue("land_timeout_minutes", MINUTE),
+    flow: {
+      steps: ["land.queue"],
+      role: TUNABLE,
+    },
     listed: 110,
     checked: 150,
   }),
@@ -51,6 +67,10 @@ export const landKeys = {
     read: readFloorSkipPaths,
     // reason: a landing may skip the floor only because test_select_command says no test reads its paths, so the one without the other is a config error (BR-2164, D-64)
     needs: ["test_select_command"],
+    flow: {
+      steps: ["land.floor"],
+      role: optional("[]（默认）：从不跳过 floor"),
+    },
     listed: 180,
     checked: 100,
   }),
@@ -63,6 +83,10 @@ export const landKeys = {
     commands: (v) => v.map((s) => s.command),
     // reason: a landing runs only a scope's command because test_select_command says no test outside the scope reads its changes (BR-2398, D-82)
     needs: ["test_select_command"],
+    flow: {
+      steps: ["land.floor"],
+      role: optional("[]（默认）：所有合入用同一个 floor"),
+    },
     listed: 185,
     checked: 105,
   }),
@@ -73,6 +97,10 @@ export const landKeys = {
     schema: { oneOf: [{ type: "integer", minimum: 1 }, { const: "all" }], default: 1 },
     // reason: `all` has no upper bound, so it is kept as Infinity and every comparison with a count still holds (BR-2172, D-42).
     read: (v) => (v === "all" ? ok(Number.POSITIVE_INFINITY) : typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`land_batch_max` must be a whole number of at least 1, or `all`")),
+    flow: {
+      steps: ["land.queue"],
+      role: TUNABLE,
+    },
     listed: 190,
     checked: 160,
   }),
@@ -82,6 +110,10 @@ export const landKeys = {
     default: 15 * MINUTE,
     schema: { type: "number", minimum: 0, default: 15 },
     read: (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? ok(v * MINUTE) : err("invalid", "`land_keep_place_minutes` must be a number of minutes, 0 or more")),
+    flow: {
+      steps: ["land.queue"],
+      role: TUNABLE,
+    },
     listed: 195,
     checked: 165,
   }),

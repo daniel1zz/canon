@@ -1,5 +1,5 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { configKey, MINUTE, optionalString, positiveNumber, positiveValue, REL_DIR, relPath } from "../../invocation/key.ts";
+import { configKey, MINUTE, optionalString, positiveNumber, positiveValue, REL_DIR, relPath, TUNABLE, optional } from "../../invocation/key.ts";
 
 /** The `review` value that turns the rule and duplicate reviews off on purpose; unset lands unreviewed and says so (BR-2074, D-89). */
 export const REVIEW_NONE = "none";
@@ -37,6 +37,11 @@ export const reviewKeys = {
     read: readReview,
     // reason: `none` is the opt-out, not a program to look up (BR-2074)
     commands: (v) => (v === undefined || v === REVIEW_NONE ? [] : [v]),
+    flow: {
+      steps: ["preview.review", "after.review"],
+      role: optional("写 `none`；不写时规则改动也不评审就合入，并会提示"),
+      idle: (v) => (v === REVIEW_NONE ? "review 写的是 none" : v === undefined ? "review 没写" : undefined),
+    },
     listed: 60,
     checked: 40,
   }),
@@ -46,6 +51,10 @@ export const reviewKeys = {
     default: 20 * MINUTE,
     schema: positiveNumber(20),
     read: positiveValue("review_timeout_minutes", MINUTE),
+    flow: {
+      steps: ["preview.review", "after.review"],
+      role: TUNABLE,
+    },
     listed: 65,
     checked: 45,
   }),
@@ -55,6 +64,10 @@ export const reviewKeys = {
     default: 250 * 1024,
     schema: positiveNumber(250),
     read: positiveValue("review_max_prompt_kb", 1024),
+    flow: {
+      steps: ["preview.review", "after.review"],
+      role: TUNABLE,
+    },
     listed: 66,
     checked: 46,
   }),
@@ -64,6 +77,10 @@ export const reviewKeys = {
     default: 4,
     schema: { type: "integer", minimum: 1, default: 4 },
     read: (v) => (typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`review_parallel` must be a whole number of at least 1")),
+    flow: {
+      steps: ["preview.review", "after.review"],
+      role: TUNABLE,
+    },
     listed: 67,
     checked: 47,
   }),
@@ -73,6 +90,10 @@ export const reviewKeys = {
     default: 1,
     schema: { type: "integer", minimum: 1, default: 1 },
     read: (v) => (typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`landed_review_parallel` must be a whole number of at least 1")),
+    flow: {
+      steps: ["after.review"],
+      role: TUNABLE,
+    },
     listed: 68,
     checked: 48,
   }),
@@ -83,6 +104,10 @@ export const reviewKeys = {
     default: 6,
     schema: { type: "integer", minimum: 1, default: 6 },
     read: (v) => typeof v === "number" && Number.isSafeInteger(v) && v >= 1 ? ok(v) : err("invalid", "`review_max_calls` must be a whole number of at least 1"),
+    flow: {
+      steps: ["preview.review", "after.review"],
+      role: TUNABLE,
+    },
     listed: 69,
     checked: 49,
   }),
@@ -92,6 +117,10 @@ export const reviewKeys = {
     default: 4096 * 1024,
     schema: positiveNumber(4096),
     read: (v) => typeof v === "number" && v > 0 && Number.isFinite(v * 1024) ? ok(v * 1024) : err("invalid", "`review_max_total_prompt_kb` must be a positive finite number of KB whose byte budget is finite"),
+    flow: {
+      steps: ["preview.review", "after.review"],
+      role: TUNABLE,
+    },
     listed: 71,
     checked: 51,
   }),
@@ -104,6 +133,10 @@ export const reviewKeys = {
       !Array.isArray(v) || v.some((t) => typeof t !== "string" || !REL_DIR.test(t))
         ? err("invalid", "`instructions` must be a list of file paths relative to the repository root, such as CLAUDE.md")
         : ok(v as string[]),
+    flow: {
+      steps: ["session.instructions"],
+      role: TUNABLE,
+    },
     listed: 170,
     checked: 90,
   }),
@@ -113,6 +146,10 @@ export const reviewKeys = {
     default: 10,
     schema: { type: "integer", minimum: 1, default: 10 },
     read: (v) => (typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`review_max_unreviewed` must be a whole number of at least 1")),
+    flow: {
+      steps: ["after.code_review"],
+      role: TUNABLE,
+    },
     listed: 171,
     checked: 91,
   }),
@@ -122,6 +159,10 @@ export const reviewKeys = {
     default: 60 * MINUTE,
     schema: { type: "number", minimum: 0, default: 60 },
     read: (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? ok(v * MINUTE) : err("invalid", "`review_max_age_minutes` must be a number of minutes, 0 or more")),
+    flow: {
+      steps: ["after.code_review"],
+      role: TUNABLE,
+    },
     listed: 172,
     checked: 92,
   }),

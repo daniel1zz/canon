@@ -1,5 +1,5 @@
 import { err, ok } from "../../kernel/result.ts";
-import { configKey, positiveNumber, positiveValue } from "../../invocation/key.ts";
+import { configKey, positiveNumber, positiveValue, TUNABLE, optional } from "../../invocation/key.ts";
 
 /** A git remote name: it is passed to git as an argument, so it never starts with `-` and has no white space. */
 export const REMOTE_NAME = /^[A-Za-z0-9][A-Za-z0-9._\/-]*$/;
@@ -16,6 +16,11 @@ export const remoteKeys = {
       // reason: the name becomes an argument of git push and git fetch; one starting with `-` would be read as an option (D-38)
       return typeof v === "string" && REMOTE_NAME.test(v) ? ok(v) : err("invalid", "`remote` must be the name of a git remote (letters, digits, `.`, `_`, `/`, `-`; not starting with `-`)");
     },
+    flow: {
+      steps: ["after.push"],
+      role: optional("不写：合入后不推送"),
+      idle: (v) => (v === undefined ? "remote 没写" : undefined),
+    },
     listed: 210,
     checked: 210,
   }),
@@ -25,6 +30,10 @@ export const remoteKeys = {
     default: 60_000,
     schema: positiveNumber(60),
     read: positiveValue("remote_timeout_seconds", 1000),
+    flow: {
+      steps: ["after.push"],
+      role: TUNABLE,
+    },
     listed: 211,
     checked: 211,
   }),

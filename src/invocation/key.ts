@@ -1,4 +1,5 @@
 import { err, ok, type Result } from "../kernel/result.ts";
+import type { StepId } from "./flow.ts";
 
 /**
  * One key of `canon/config.yaml`, declared by the domain that uses it in `config-keys.ts` in its own directory;
@@ -32,7 +33,36 @@ export interface ConfigKey<T> {
   readonly commands?: (value: T) => readonly string[];
   /** Old top-level names this key replaced, each with where it went, e.g. after_land → hooks.after_land. */
   readonly replaces?: Readonly<Record<string, string>>;
+  /** Where the key acts in canon's flow and whether a project can turn it off (BR-2540, D-140). */
+  readonly flow: KeyFlow<T>;
 }
+
+/**
+ * A key's place in canon's flow (src/invocation/flow.ts): `canon config --flow` lists it under each step it names
+ * (BR-2540). Declared next to the key so a new key cannot be left out (D-140).
+ */
+export interface KeyFlow<T> {
+  /** The steps this key configures, at least one. */
+  readonly steps: readonly [StepId, ...StepId[]];
+  readonly role: KeyRole;
+  /** Why `step` does not run with this value (it names the key and the value); undefined when it runs. */
+  readonly idle?: (value: T, step: StepId) => string | undefined;
+  /** For a mapping key whose steps each use one entry, such as hooks: the entry `step` uses. */
+  readonly part?: (step: StepId) => string;
+}
+
+/**
+ * required: a command fails without it (`why` says which); optional: the project can turn what it does off (`off`
+ * says how); tunable: a parameter with a working default.
+ */
+export type KeyRole =
+  | { readonly kind: "required"; readonly why: string }
+  | { readonly kind: "optional"; readonly off: string }
+  | { readonly kind: "tunable" };
+
+export const TUNABLE: KeyRole = { kind: "tunable" };
+export const optional = (off: string): KeyRole => ({ kind: "optional", off });
+export const required = (why: string): KeyRole => ({ kind: "required", why });
 
 export interface KeyContext {
   /** The repository root. */

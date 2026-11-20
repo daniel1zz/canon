@@ -1,5 +1,5 @@
 import { err, ok } from "../../kernel/result.ts";
-import { configKey, REL_DIR, relPath } from "../../invocation/key.ts";
+import { configKey, REL_DIR, relPath, optional, required } from "../../invocation/key.ts";
 import { DEFAULT_DESIGN_SIGNALS, DESIGN_CLASSES, type DesignClass } from "./design-basis/design-basis.ts";
 
 /** canon/config.yaml keys of `canon check`: which files are tests and where each domain's code lives (C-135, D-63). */
@@ -10,6 +10,10 @@ export const checkKeys = {
     default: undefined,
     schema: { type: "array", items: { type: "string" } },
     read: (v) => (!Array.isArray(v) || v.some((t) => typeof t !== "string") ? err("invalid", "`tests` must be a list of globs") : ok(v as string[])),
+    flow: {
+      steps: ["test.select", "test.check"],
+      role: required("没有它，canon check、canon work test 和合入都以退出码 2 失败"),
+    },
     listed: 30,
     checked: 70,
   }),
@@ -22,6 +26,10 @@ export const checkKeys = {
       if (v === null) return ok(undefined);
       return typeof v === "number" && Number.isInteger(v) && v > 0 ? ok(v) : err("invalid", "`session_text_budget` must be a whole number of bytes greater than 0, such as 12000");
     },
+    flow: {
+      steps: ["session.instructions"],
+      role: optional("不写：不提示"),
+    },
     listed: 215,
     checked: 215,
   }),
@@ -33,6 +41,10 @@ export const checkKeys = {
     read: (v) => {
       if (v !== null && (typeof v !== "string" || !REL_DIR.test(v))) return err("invalid", "`code_root` must be a directory relative to the repository root, such as src");
       return ok(typeof v === "string" ? v : undefined);
+    },
+    flow: {
+      steps: ["test.check"],
+      role: optional("不写：由顶层领域 README 自己列代码目录"),
     },
     listed: 150,
     checked: 110,
@@ -54,6 +66,10 @@ export const checkKeys = {
       }
       return ok(v as string[]);
     },
+    flow: {
+      steps: ["test.check"],
+      role: optional("[]：没有共享目录"),
+    },
     listed: 160,
     checked: 120,
   }),
@@ -71,6 +87,10 @@ export const checkKeys = {
         out[k as DesignClass] = globs as string[];
       }
       return ok(out);
+    },
+    flow: {
+      steps: ["land.design"],
+      role: optional("某一类写 []：这一类不再要求设计依据"),
     },
     listed: 165,
     checked: 125,

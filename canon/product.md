@@ -27,7 +27,7 @@ Canon 里的每样东西，都是为了让下面某一条承诺成立。一个�
 ## 不做的事
 
 - 多台电脑同时开发同一个项目（协调状态只存在本机这个 checkout 里）。
-- 网页 dashboard 或 HTTP API：人直接看仓库里或 GitHub 上的文件。
+- 网页 dashboard 或 HTTP API：人直接看仓库里或 GitHub 上的文件。例外是 `canon config --flow` 生成的流程图：本地文件、只读、不连网，不能改配置（D-140）。
 - 检查 agent 怎么干活。Canon 只在两个边界检查结果：协调状态写入时，和合入 main 时。
 
 ## 语言

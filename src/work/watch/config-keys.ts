@@ -1,5 +1,5 @@
 import { err, ok } from "../../kernel/result.ts";
-import { configKey, MINUTE } from "../../invocation/key.ts";
+import { configKey, MINUTE, TUNABLE } from "../../invocation/key.ts";
 
 /** When the floor runs relative to main moving (D-31): before, the default, or after in the background. */
 export type FloorTiming = "before" | "after";
@@ -12,6 +12,11 @@ export const watchKeys = {
     default: "before",
     schema: { enum: ["before", "after"], default: "before" },
     read: (v) => (v === "before" || v === "after" ? ok(v) : err("invalid", "`floor_timing` must be `before` (test, then land; the default) or `after` (land, then test main in the background)")),
+    flow: {
+      steps: ["land.floor", "after.floor", "after.after_green"],
+      role: TUNABLE,
+      idle: (v, step) => (step === "land.floor" ? (v === "after" ? "floor_timing 是 after：floor 改到合入后在后台跑" : undefined) : v === "before" ? "floor_timing 是 before：floor 在移动 main 之前跑" : undefined),
+    },
     listed: 200,
     checked: 200,
   }),
@@ -21,6 +26,10 @@ export const watchKeys = {
     default: 20 * MINUTE,
     schema: { type: "number", minimum: 0, default: 20 },
     read: (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? ok(v * MINUTE) : err("invalid", "`floor_quiet_minutes` must be a number of minutes, 0 or more")),
+    flow: {
+      steps: ["after.floor"],
+      role: TUNABLE,
+    },
     listed: 201,
     checked: 201,
   }),
@@ -30,6 +39,10 @@ export const watchKeys = {
     default: 10,
     schema: { type: "integer", minimum: 1, default: 10 },
     read: (v) => (typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", "`floor_max_untested` must be a whole number of at least 1")),
+    flow: {
+      steps: ["after.floor"],
+      role: TUNABLE,
+    },
     listed: 202,
     checked: 202,
   }),
@@ -39,6 +52,10 @@ export const watchKeys = {
     default: 60 * MINUTE,
     schema: { type: "number", minimum: 0, default: 60 },
     read: (v) => (typeof v === "number" && Number.isFinite(v) && v >= 0 ? ok(v * MINUTE) : err("invalid", "`floor_max_age_minutes` must be a number of minutes, 0 or more")),
+    flow: {
+      steps: ["after.floor"],
+      role: TUNABLE,
+    },
     listed: 203,
     checked: 203,
   }),
