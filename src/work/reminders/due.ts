@@ -8,6 +8,9 @@ import { isWorker } from "../delegation/worker.ts";
 import { redMain } from "../watch/redmain.ts";
 import { flakyFiles, revertedChanges } from "../watch/revert.ts";
 import type { Workspace } from "../workspace.ts";
+import type { Change } from "../../knowledge/documents/model.ts";
+import { executionStates } from "../execution/state.ts";
+import { mainCorpus } from "../session/session.ts";
 
 /**
  * The due list (BR-2527, D-136): what the calling session should handle now, one item each, with how long it has been
@@ -72,6 +75,35 @@ export function findingItems(ws: Workspace): DueItem[] {
     }));
 }
 
+/**
+ * The changes that landed with rules they execute left without evidence (BR-2241, D-141): the newest `execution.unverified`
+ * of each change that is done on main, with the rules of it that are still active and 待重新执行 there. Main is read only
+ * when some change has such an event.
+ */
+export function unverifiedItems(ws: Workspace): Result<DueItem[]> {
+  const rows = ws.db.db
+    .query<{ subject: string; ts: string; detail: string }, []>("SELECT subject, ts, detail FROM events WHERE id IN (SELECT MAX(id) FROM events WHERE kind = 'execution.unverified' AND subject IS NOT NULL GROUP BY subject) ORDER BY id")
+    .all();
+  if (rows.length === 0) return ok([]);
+  const corpus = mainCorpus(ws);
+  if (!corpus.ok) return corpus;
+  const states = executionStates(ws.primary, corpus.value, ws.config.floorTiming);
+  const items: DueItem[] = [];
+  for (const r of rows) {
+    const change = corpus.value.docs.find((d): d is Change => d.kind === "change" && d.id === r.subject);
+    if (change?.status !== "done") continue;
+    const rules = ((JSON.parse(r.detail) as { rules?: unknown }).rules as unknown[] | undefined ?? []).map(String).filter((id) => states.get(id)?.kind === "rerun");
+    if (rules.length === 0) continue;
+    items.push({
+      key: `unverified:${r.subject}`,
+      since: r.ts,
+      summary: `landed with ${rules.join(", ")} 待重新执行: no test or ## 验收 line gave evidence of their current text`,
+      next: `in a change that lists them in rules:, change a line in a running test whose title names each (or a ## 验收 line for one with untested:) and land --finish (BR-2241)`,
+    });
+  }
+  return ok(items);
+}
+
 /** A main session's items (BR-2527): findings, questions, stalled delegations, design requests it owns, a red main, a busy machine. */
 function mainItems(ws: Workspace, now: number, read: Readings): Result<DueItem[]> {
   const items: DueItem[] = [...findingItems(ws)];
@@ -92,6 +124,10 @@ function mainItems(ws: Workspace, now: number, read: Readings): Result<DueItem[]
   }
   // reason: a reverted change waits on its branch until someone fixes and lands it again (BR-2536)
   for (const r of revertedChanges(ws)) items.push({ key: `reverted:${r.subject}`, since: r.since, summary: `reverted from main after the background floor failed${r.files.length > 0 ? ` (${r.files.join(", ")})` : " before the tests"}; its work is replayed on change/${r.subject}`, next: `canon work start ${r.subject}, fix the failure, land again` });
+  // reason: a rule that landed without evidence is a reminder until it is executed, never a hold (BR-2241, D-141)
+  const unverified = unverifiedItems(ws);
+  if (!unverified.ok) return unverified;
+  items.push(...unverified.value);
   // reason: a flaky test is a reminder for a week, not a hold (BR-2534)
   for (const f of flakyFiles(ws, now)) items.push({ key: `flaky:${f.file}`, since: f.since, summary: `failed in the background floor and passed when run again unchanged`, next: "open an issue for this flaky test (one per file), then fix or quarantine it" });
   const busy = pressure(ws, read());

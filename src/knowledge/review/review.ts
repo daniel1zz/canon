@@ -426,7 +426,7 @@ function wordingSection(questions: readonly WordingQuestion[]): string[] {
 }
 
 /**
- * The landing's wording call (BR-2239): only the wording judgements, no rule review, which runs after the landing (D-89).
+ * The wording call after a landing (BR-2239, D-141): only the wording judgements, asked apart from the rule review.
  * The answer is a review answer with no findings and a `wording` entry per rule.
  */
 export function wordingPrompt(questions: readonly WordingQuestion[]): string {

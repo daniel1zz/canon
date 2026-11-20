@@ -32,6 +32,8 @@ export interface ReviewNeeds {
   readonly docs: readonly string[];
   /** The standing instructions it changed, by main's `instructions` (BR-2143). */
   readonly standing: readonly string[];
+  /** The rules its close commit records as wording-only edits, for the wording judgement after it (BR-2239, D-141). */
+  readonly wording: readonly string[];
   /** `review` on main: undefined when unset. */
   readonly reviewer: string | undefined;
 }
@@ -61,13 +63,16 @@ const COLS = "id, entry, change, base, head, landed, log, state, reviewer";
  * on main, records that the documents landed unreviewed (`review.skip`) and says so; nothing when it changed nothing reviewed.
  */
 export function queueLandedReview(ws: Workspace, say: Say, l: { entry: number; subject: string | null; base: string; head: string; landed: number }, needs: ReviewNeeds): Job | undefined {
-  const docs = [...needs.docs, ...needs.standing];
+  // reason: a wording-only record is judged after the landing even when no document changed in it (BR-2010, BR-2239)
+  const docs = [...new Set([...needs.docs, ...needs.standing, ...needs.wording])];
   if (docs.length === 0) return undefined;
   if (needs.reviewer === undefined || needs.reviewer === REVIEW_NONE) {
     // reason: no reviewer no longer refuses the landing; it lands unreviewed and says so, and acceptance fails on it instead (D-89, D-51)
     ws.db.event(ws.actor, "review.skip", l.subject, { docs, landed: l.landed, reason: needs.reviewer === undefined ? "unconfigured" : "none" });
-    if (needs.reviewer === REVIEW_NONE) say(`review: ${REVIEW_NONE} — ${docs.join(", ")} landed without a review`);
-    else say([`review: not configured — ${docs.join(", ")} landed without a review: canon/config.yaml on main sets no \`review\`; acceptance fails until they are reviewed`, ...REVIEW_WAYS_OUT].join("\n"));
+    // reason: with no reviewer the wording-only records land unjudged; said, never refused (BR-2239, D-141)
+    const unjudged = needs.wording.length > 0 ? `; the wording-only records of ${needs.wording.join(", ")} were not judged` : "";
+    if (needs.reviewer === REVIEW_NONE) say(`review: ${REVIEW_NONE} — ${docs.join(", ")} landed without a review${unjudged}`);
+    else say([`review: not configured — ${docs.join(", ")} landed without a review${unjudged}: canon/config.yaml on main sets no \`review\`; acceptance fails until they are reviewed`, ...REVIEW_WAYS_OUT].join("\n"));
     return undefined;
   }
   const log = logFile(ws.db, `landed-review-${l.entry}-${l.landed}.log`);

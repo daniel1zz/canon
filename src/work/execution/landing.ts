@@ -4,7 +4,7 @@ import { behaviourHash, formatPass, parsePasses } from "../../knowledge/document
 import { parseDocFile } from "../../knowledge/documents/docfile.ts";
 import type { Change, Corpus, PassRecord, Rule } from "../../knowledge/documents/model.ts";
 import { EXAMPLE_SECTION, RULE_SECTION, section } from "../../knowledge/documents/templates.ts";
-import type { WordingQuestion, WordingWhy } from "../../knowledge/review/review.ts";
+import type { WordingQuestion } from "../../knowledge/review/review.ts";
 import type { CoordDb } from "../db.ts";
 import { earlierLandings, hasPassesAt, passedVersion, plan, recordsOf, rulesAt, type Missing, type Plan } from "./evidence.ts";
 
@@ -25,16 +25,17 @@ export function passesMeta(records: Readonly<Record<string, PassRecord>>): Recor
   return entries.length === 0 ? undefined : Object.fromEntries(entries.map(([id, r]) => [id, formatPass(r)]));
 }
 
-/** The refusal text for rules without evidence (BR-2241). */
+/** The lines said for rules without evidence: they land with no pass record, as 待重新执行 (BR-2241, D-141). */
 export function missingMessage(change: string, missing: readonly Missing[]): string {
   const lines = missing.map((m) =>
-    `  - ${m.id}: change a line in a running test whose title names ${m.id}${m.untested ? `, or, as it has untested:, add a line "- ${m.id}：<怎么验的> → <看到了什么>" under ## 验收 in ${change}` : ""}`,
+    `evidence: ${m.id}: no evidence of this execution; it lands as 待重新执行: change a line in a running test whose title names ${m.id}${m.untested ? `, or, as it has untested:, add a line "- ${m.id}：<怎么验的> → <看到了什么>" under ## 验收 in ${change}` : ""}`,
   );
-  return `${change} executes ${missing.length} rule(s) with no evidence of this execution (BR-2241, D-32): each rule it executes, the ones in its rules: and every one its landings changed the ## 规则 or ## 例子 of, that is active and has no pass record of its current text needs one:\n${lines.join("\n")}\nA rule that only changed wording since it last passed needs no evidence when its ## 例子 is unchanged (BR-2243). A changed test file only gives evidence once canon work test has recorded a report for its current content (BR-2241, BR-2344). Commit, then land --finish again.`;
+  return `${lines.join("\n")}\nevidence: ${change} lands without a pass record for ${missing.length} rule(s) it executes (BR-2241); canon work due lists them until a change executes them. To record them now instead, stop this landing (canon work land --stop), commit the evidence and land --finish again.`;
 }
 
 export type LandingExecution =
-  | { readonly ok: true; readonly wording: readonly WordingQuestion[] }
+  /** `wording`: the rules the close commit records as wording-only edits, judged after the landing (BR-2239). */
+  | { readonly ok: true; readonly wording: readonly string[] }
   | { readonly ok: false; readonly reason: "activate" | "rule-changed" | "passes"; readonly message: string };
 
 interface Input {
@@ -130,16 +131,17 @@ export function landingExecution(i: Input): LandingExecution {
     return { ok: false, reason: "rule-changed", message: `rules ${change.id} executes changed on ${i.main} while it was landing: ${moved.join(", ")}. Run git rebase ${i.main}, verify against the new text (change the test or the ## 验收 line), then land --finish again (BR-2244)` };
   }
   const expected = plan({ db: i.db, root: wt, head, corpus, config: i.config, change, ranges: [...earlierLandings(i.db, change.id), { base, head }], mainHasPasses: hasPassesAt(wt, base), recorded: new Set(Object.keys(change.passes)) });
-  if (expected.missing.length > 0 || !same(expected.records, change.passes)) {
+  // reason: a rule without evidence has no record on either side, so it is no mismatch; it lands as 待重新执行 (BR-2241, D-141)
+  if (!same(expected.records, change.passes)) {
     const want = Object.entries(expected.records).map(([id, r]) => `${id}: ${formatPass(r)}`);
-    return { ok: false, reason: "passes", message: `the pass records of ${change.id} are not the ones canon computes on the landing tree (BR-2242, BR-2245)${expected.missing.length ? `; without evidence: ${expected.missing.map((m) => m.id).join(", ")}` : ""}\n  computed: ${want.length ? want.join(", ") : "(none)"}\n  in ${change.path}: ${Object.entries(change.passes).map(([id, r]) => `${id}: ${formatPass(r)}`).join(", ") || "(none)"}\nLand --finish again from the change's worktree; canon writes them itself` };
+    return { ok: false, reason: "passes", message: `the pass records of ${change.id} are not the ones canon computes on the landing tree (BR-2242, BR-2245)\n  computed: ${want.length ? want.join(", ") : "(none)"}\n  in ${change.path}: ${Object.entries(change.passes).map(([id, r]) => `${id}: ${formatPass(r)}`).join(", ") || "(none)"}\nLand --finish again from the change's worktree; canon writes them itself` };
   }
-  return { ok: true, wording: wordingQuestions(wt, head, corpus, change.id, change.passes) };
+  return { ok: true, wording: Object.entries(change.passes).filter(([, r]) => r.wording).map(([id]) => id) };
 }
 
 /**
  * The review's wording questions (BR-2239) for the records marked wording-only: each rule's 规则 at the version that last
- * passed and now, and its unchanged 例子. The landing asks them of the close commit's records; `canon work review` of the
+ * passed and now, and its unchanged 例子. The review after the landing asks them of the close commit's records; `canon work review` of the
  * records the close commit would write (BR-2358).
  */
 export function wordingQuestions(wt: string, head: string, corpus: Corpus, changeId: string, records: Readonly<Record<string, PassRecord>>): WordingQuestion[] {
@@ -158,16 +160,4 @@ export function wordingQuestions(wt: string, head: string, corpus: Corpus, chang
 /** BR-2239: the rules the review did not judge as wording-only edits; empty when every one is "wording". */
 export function unconfirmedWording(questions: readonly WordingQuestion[], answers: Readonly<Record<string, string>> | undefined): string[] {
   return questions.filter((q) => answers?.[q.id] !== "wording").map((q) => q.id);
-}
-
-/** The refusal text when the review does not confirm a wording-only edit (BR-2239). */
-export function wordingMessage(ids: readonly string[], answers: Readonly<Record<string, string>> | undefined, configured: boolean, reasons?: Readonly<Record<string, WordingWhy>>): string {
-  // reason: a behaviour answer names the sentence and what it requires, so the session knows what to test (BR-2239, #256)
-  const one = (id: string): string => {
-    const r = reasons?.[id];
-    if (answers?.[id] === "behaviour" && r) return `${id}: the review answered behaviour: “${r.quote}” requires ${r.requires || "(not said)"}`;
-    return `${id}: the review answered ${answers?.[id] === undefined ? "nothing" : JSON.stringify(answers[id])}`;
-  };
-  const why = configured ? ids.map(one).join("; ") : "no review command is configured to judge them";
-  return `the close commit records ${ids.join(", ")} as wording-only edits, but the rule review did not judge them so (${why}) (BR-2239). Execute them as behaviour changes: change a line in a running test whose title names each, or for a rule with untested:, a line under ## 验收; then land --finish again`;
 }

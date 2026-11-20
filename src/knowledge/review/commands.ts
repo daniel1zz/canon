@@ -34,8 +34,8 @@ const review = defineCommand({
         return;
       case "off":
         say("review: none: canon/config.yaml on main is set not to review; nothing was run");
-        // reason: with nobody to judge them, the landing refuses the wording-only records (BR-2239); said now, not after the queue turn (BR-2358)
-        for (const id of out.wording) say(`wording judgement: ${id}: no review command to judge it; the landing would refuse it as a wording-only edit: change a line in a running test whose title names ${id}, or for a rule with untested:, a line under ## 验收`);
+        // reason: with nobody to judge them, the wording-only records land unjudged (BR-2239, D-141); said now, before landing (BR-2358)
+        for (const id of out.wording) say(`wording judgement: ${id}: no review command to judge it; it would land as a wording-only edit nobody judged: to record new evidence instead, change a line in a running test whose title names ${id}, or for a rule with untested:, a line under ## 验收`);
         for (const line of out.related) say(line);
         behind(out.behind, out.main);
         return;
@@ -45,12 +45,12 @@ const review = defineCommand({
         if (out.reusedFrom !== undefined) say(`review: reused the passing preview of the same prompts (event ${out.reusedFrom}); the review command was not run for the rule review`);
         for (const f of out.findings) say(`${out.kind === "block" ? "review finding" : "review note"} (${f.review}): ${f.text}`);
         say(out.kind === "block" ? "review: block; the review after landing would record these findings as open findings for the main agent to settle (canon finding close); the landing is not refused" : "review: ok");
-        // reason: the landing asks the same question after its queue turn; asked here, a "behaviour" answer is known before landing (BR-2358, BR-2239, #166)
+        // reason: the review after the landing asks the same question; asked here, a "behaviour" answer is known before landing (BR-2358, BR-2239, #166)
         for (const w of out.wording) {
           if (w.unquoted) say(`wording judgement: ${w.id}: behaviour without a quote from the rule: treated as wording`);
           if (w.answer === "wording") say(`wording judgement: ${w.id}: wording; the landing records it as a wording-only edit and needs no new evidence for it`);
-          else if (w.answer === "behaviour" && w.why) say(`wording judgement: ${w.id}: behaviour: “${w.why.quote}” requires ${w.why.requires || "(not said)"}; the landing would refuse it as a wording-only edit: change a line in a running test whose title names ${w.id} that tests this, or for a rule with untested:, a line under ## 验收`);
-          else say(`wording judgement: ${w.id}: ${w.answer === undefined ? "no answer" : w.answer}; the landing would refuse it as a wording-only edit: change a line in a running test whose title names ${w.id}, or for a rule with untested:, a line under ## 验收`);
+          else if (w.answer === "behaviour" && w.why) say(`wording judgement: ${w.id}: behaviour: “${w.why.quote}” requires ${w.why.requires || "(not said)"}; the review after landing would record it as an open finding on ${w.id}: change a line in a running test whose title names ${w.id} that tests this, or for a rule with untested:, a line under ## 验收`);
+          else say(`wording judgement: ${w.id}: ${w.answer === undefined ? "no answer" : w.answer}; the review after landing would record it as an open finding on ${w.id}: change a line in a running test whose title names ${w.id}, or for a rule with untested:, a line under ## 验收`);
         }
         say("this was a preview: the review after landing runs again and its result is the one that counts");
         for (const line of out.related) say(line);

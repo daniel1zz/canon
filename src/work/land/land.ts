@@ -22,6 +22,7 @@ import { counted, isSubagent, refusalsInARow, STALL_LIMIT, stallAdvice, stalled 
 import { keptNote, lostTurn, predictedConflicts, priorityNow, waitPollMs } from "./queue/wait.ts";
 import { removeReviewTree } from "./checks/review-tree.ts";
 import { findingDetail, verifyChange } from "./checks/steps.ts";
+import { runLandingTests, tail, unreportedRelated } from "./checks/merged-tests.ts";
 import { floorScope, floorSkip, runFloor } from "./checks/floor.ts";
 import { afterLand, closeLeftNote, closeSubject, finishLanding, reopen, acceptAddedDecisions, stampAddedReferences, type CloseCommit } from "./finish/finish.ts";
 import { batchDir, landBatch, landedInBatch } from "./batch/batch.ts";
@@ -138,6 +139,14 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
   // reason: registered before the close commit, so a signal while it is made or before the landing queues still takes it back (BR-2018).
   const onSignal = (signal: NodeJS.Signals) => {
     running.floor?.kill();
+    // reason: a related test the landing runs before queueing is stopped with it, as canon work test stops its files (BR-2542, BR-2304)
+    for (const g of running.tests ?? []) {
+      try {
+        process.kill(-g, "SIGKILL");
+      } catch {
+        // reason: the group may have ended between the check and the kill; there is nothing left to stop
+      }
+    }
     running.review?.kill(); // a reviewer left running would keep spending after the landing ended (BR-2296)
     // reason: process.exit skips the batch's finally, so its temporary worktree is removed here (BR-2099, BR-2172).
     if (running.reviewTree !== undefined) removeReviewTree(ws, running.reviewTree); // after the review's process group is stopped (BR-2216)
@@ -172,6 +181,19 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
   process.on("SIGINT", onSignal);
   let out: LandOutcome | undefined;
   try {
+    // reason: the landing runs the test files the change makes relevant that have no report of their content yet, so a test
+    // the session did not run is run here rather than refused as unreported; before the close commit, so the pass records
+    // read these reports (BR-2542, D-141). A file canon work test already ran has its report and is not run again.
+    const related = unreportedRelated(ws, wt);
+    if (!related.ok) return early("environment", `the related test files could not be listed: ${related.error.message}`);
+    if (related.value.files.length > 0 && related.value.testCommand) {
+      running.tests = new Set();
+      const runs = await runLandingTests(ws, wt, related.value.testCommand, related.value.files, running.tests);
+      running.tests = undefined;
+      for (const r of runs) say(`tested ${r.file} before landing, as it had no report of its content: ${r.exitCode === 0 ? "pass" : "fail"}`);
+      const broken = runs.find((r) => r.exitCode !== 0);
+      if (broken) return early("tests", `${broken.file} fails (BR-2542): the landing ran it as this change makes it relevant and canon work test had not run its content; fix it, then land again:\n${tail(broken.output)}`);
+    }
     // The close commit lands with the work, so the tree that is tested is the tree that becomes main (BR-2106);
     // a landing that does not reach main takes it back out, so the change never says done without landing (BR-2018).
     if (opts.finish) {
@@ -182,10 +204,14 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
       if (doc?.kind === "change" && doc.status === "open") {
         // reason: lessons are known when the work ends, so closing is where they are required; old closed changes stay valid (BR-2161, D-24)
         if (!hasLessons(doc.body)) return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
-        // reason: the evidence is known before the close commit, so a missing one refuses with no commit to take back (BR-2241, D-32)
+        // reason: a rule without evidence lands with no pass record, so it shows as 待重新执行; said here and listed by
+        // canon work due until it is executed, never refused (BR-2241, D-141, D-139)
         const planned = planClose(ws.db, ws.config, wt, ws.config.main, corpus, doc);
         if ("error" in planned) return early("environment", `the pass records could not be computed: ${planned.error}`);
-        if (planned.missing.length > 0) return early("evidence", missingMessage(subject, planned.missing));
+        if (planned.missing.length > 0) {
+          say(missingMessage(subject, planned.missing));
+          ws.db.event(ws.actor, "execution.unverified", subject, { rules: planned.missing.map((m) => m.id) });
+        }
         // reason: evidence that is only comments passes, but the session and the reviewer are told what it is (BR-2241, #250)
         for (const [id, r] of Object.entries(planned.records)) if (r.method === "test-comment") say(`evidence: ${id}: its named tests changed only in comment or blank lines; recorded as test-comment, not as new behaviour evidence`);
         // reason: a file write or git commit that fails is an environment error, not a check's verdict (BR-2193).

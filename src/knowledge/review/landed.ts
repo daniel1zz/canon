@@ -15,6 +15,7 @@ import { architectureOf, couldNotRun, duplicateReviewPrompt, reviewScope, review
 import { docsKey, passedDocs, passedReview, reviewKey } from "../../work/land/checks/review-reuse.ts";
 import { landedSince } from "../../work/land/checks/landed-since.ts";
 import { findingOf, recordFindings, sameDocsOpen } from "./findings/findings.ts";
+import { judgeLandedWording, landedWordingQuestions } from "./landed-wording.ts";
 
 /**
  * The rule review and the duplicate review of one landed commit, run after the landing in the background (D-89, BR-2441):
@@ -66,15 +67,18 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
   const scope = reviewScope(wt, base, head, read.corpus);
   const standing = standingTouched(wt, base, head, s.instructions);
   const { changedDocs, deleted, readmes, deletedReadmes, reviewed } = scope;
-  if (reviewed.length === 0 && standing.length === 0) {
+  // reason: the close commit's wording-only records are judged here, after the landing, never in it (BR-2239, D-141)
+  const wording = landedWordingQuestions(wt, base, head, read.corpus, change);
+  if (reviewed.length === 0 && standing.length === 0 && wording.length === 0) {
     say("review: no rules, decisions, releases or standing instructions changed; nothing to review");
     return ok(undefined);
   }
   // reason: the landing only queues a review when main had a reviewer; one removed since is said, never skipped silently (BR-2441, D-51)
   if (s.review === undefined || s.review === REVIEW_NONE) {
     const why = s.review === undefined ? "not configured" : REVIEW_NONE;
-    say(`review: ${why} at ${base.slice(0, 9)} — ${[...reviewed, ...standing].join(", ")} landed without a review`);
-    ws.db.event(ws.actor, "review.skip", change, { docs: [...reviewed, ...standing], landed: job.landed, reason: s.review === undefined ? "unconfigured" : "none" });
+    const docs = [...new Set([...reviewed, ...standing, ...wording.map((q) => q.id)])];
+    say(`review: ${why} at ${base.slice(0, 9)} — ${docs.join(", ")} landed without a review${wording.length > 0 ? `; the wording-only records of ${wording.map((q) => q.id).join(", ")} were not judged` : ""}`);
+    ws.db.event(ws.actor, "review.skip", change, { docs, landed: job.landed, reason: s.review === undefined ? "unconfigured" : "none" });
     return ok(undefined);
   }
   const reviewer = s.review;
@@ -165,6 +169,10 @@ async function reviewIn(ws: Workspace, job: LandedJob, say: Say, guide: string |
   const budget = reviewBudget(ws.db, ws.actor, { kind: "land", subject: change ?? head, reviewer: job.reviewer ?? base, command: reviewer, maxCalls: s.reviewMaxCalls, maxBytes: s.reviewMaxTotalPromptBytes, prompts: [...rulePrompts, ...(duplicate !== undefined ? [duplicate] : [])] });
   if (!budget.ok) return budget;
   if (!budget.value.allowed) return err("refused", budget.value.message);
+  if (wording.length > 0) {
+    const judged = await judgeLandedWording(ws, { change, head, reviewerAt: job.reviewer ?? base, at: job.reviewer ? "main" : "before" }, say, reviewer, limits, tree, wording);
+    if (!judged.ok) return judged;
+  }
   if (runRule) {
     const done = await runRule();
     if (!done.ok) return done;

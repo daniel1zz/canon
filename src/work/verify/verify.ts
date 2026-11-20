@@ -209,7 +209,7 @@ export interface WorkTestResult {
   readonly check: number;
   /** Number of `always_tests` globs that match no test file (BR-2297). */
   readonly unmatched: number;
-  /** Rules the landing would refuse for missing execution evidence (BR-2456); 0 outside an open change. */
+  /** Rules the landing would leave 待重新执行 for missing execution evidence (BR-2456); 0 outside an open change. A note, never a failure. */
   readonly evidence: number;
   /** The signal that stopped the run, when one did (BR-2304). */
   readonly signal?: string;
@@ -218,7 +218,7 @@ export interface WorkTestResult {
 }
 
 /** True when `canon work test` must exit 1: a test file, the type check or canon check failed. */
-export const workTestFailed = (r: WorkTestResult) => r.signal !== undefined || r.failed > 0 || (r.typecheck !== null && r.typecheck !== 0) || r.check > 0 || r.unmatched > 0 || r.evidence > 0;
+export const workTestFailed = (r: WorkTestResult) => r.signal !== undefined || r.failed > 0 || (r.typecheck !== null && r.typecheck !== 0) || r.check > 0 || r.unmatched > 0;
 
 /** What `workTest` needs from the machine, so tests can give a machine that is idle, busy or stopped (BR-2302, BR-2304). */
 export interface WorkTestDeps {
@@ -422,11 +422,11 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
   for (const n of staleReportNotes(input)) say(noteLine(n)); // never a failure (BR-2345)
   for (const n of backlogNotes(input)) say(noteLine(n)); // never a failure (BR-2150, #112)
   say(findings.length === 0 ? "canon check: ok" : `canon check: ${findings.length} finding(s)`);
-  // reason: the landing refuses missing evidence only in its turn; this run already has the reports it needs, so say it here (BR-2456)
+  // reason: this run already has the reports the landing reads, so the rules it would leave 待重新执行 are said here; a note, never a failure (BR-2456, D-141)
   const missing = missingEvidence(ws, read.corpus, subject);
   if (!missing.ok) return missing;
   for (const m of missing.value) say(`evidence: ${m.id}: change a line in a running test whose title names ${m.id}${m.untested ? ", or add a line under ## 验收" : ""}`);
-  if (missing.value.length > 0) say(`evidence: ${missing.value.length} rule(s) the landing would refuse for missing evidence (BR-2241)`);
+  if (missing.value.length > 0) say(`evidence: ${missing.value.length} rule(s) would land as 待重新执行, with no pass record (BR-2241); a note, not a failure`);
   // A hint on standard error, never a failure (BR-2257, D-37).
   const hint = budgetHint(sessionText(ws.root, guideFor(ws.root)), ws.config.sessionTextBudget);
   if (hint) console.error(hint);

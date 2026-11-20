@@ -27,6 +27,8 @@ export type LandOutcome =
 /** What a signal handler must stop: the floor, or the batch worktree's setup, and the review command, while they run. */
 export interface Running {
   floor?: { kill(): void } | undefined;
+  /** The process groups of the related test files the landing runs before it queues (BR-2542). */
+  tests?: Set<number> | undefined;
   /** The rule or duplicate review command's process group (BR-2296). */
   review?: { kill(): void } | undefined;
   /** The temporary worktree the review commands run in, while it exists (BR-2216). */

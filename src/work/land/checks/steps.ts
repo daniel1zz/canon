@@ -7,25 +7,21 @@ import { reportsFor } from "../../verify/changes.ts";
 import { backlogAt } from "../../../knowledge/documents/backlog.ts";
 import { httpFetch, OPTIONS_SECTION, sources, verify, type Fetcher } from "../../../knowledge/check/sources.ts";
 import { testFilesFor } from "../../../knowledge/check/tests.ts";
-import { testMergedFiles } from "./merged-tests.ts";
+import { runLandingTests, tail } from "./merged-tests.ts";
 import { runHooks } from "../../hooks/hooks.ts";
 import { changePort } from "../../hooks/ports.ts";
 import { type Doc } from "../../../knowledge/documents/model.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
-import { judgeWording, retryPrompt, runReview, unparsedTexts, wordingPrompt, type WordingWhy } from "../../../knowledge/review/review.ts";
-import { REVIEW_NONE } from "../../../knowledge/review/config-keys.ts";
 import type { ReviewNeeds } from "../../../knowledge/review/landed-queue.ts";
 import { landingReleases } from "../../../knowledge/releases/landing.ts";
 import { landingGoal } from "../../../knowledge/releases/goal-landing.ts";
 import { advancesNotice } from "../../../knowledge/releases/features.ts";
 import { isChore } from "../../session/subject.ts";
 import type { Change } from "../../../knowledge/documents/model.ts";
-import { landingExecution, unconfirmedWording, wordingMessage } from "../../execution/landing.ts";
+import { landingExecution } from "../../execution/landing.ts";
 import { landingAllocations } from "./allocated.ts";
 import { noticeProposedDecisions } from "./proposed.ts";
-import { reviewTree } from "./review-tree.ts";
-import { passedWording, reviewKey } from "./review-reuse.ts";
-import { couldNotRun, reviewScope, reviewSettingsOn, standingTouched } from "./review-scope.ts";
+import { reviewScope, reviewSettingsOn, standingTouched } from "./review-scope.ts";
 import type { LandOptions, LandOutcome, Running } from "../outcome.ts";
 import { checksAddedAndReviewed, checksAddedAndReviewedMessage, keysAddedAndUsed, keysAddedAndUsedMessage } from "./config-first.ts";
 
@@ -49,28 +45,12 @@ export type Steps = { readonly ok: true; readonly review: ReviewNeeds; readonly 
 
 /**
  * One change's own landing steps before the floor (BR-2014), on the checkout `wt` at `head` (main or the batch chain at
- * `base` below it): canon check, decision sources, the wording judgement, before_land (BR-2016, BR-2111,
- * BR-2239, BR-2057); the rule and duplicate reviews run after the landing (BR-2441, D-89). A solo landing runs them in
- * its worktree; a batch, per change (BR-2172).
+ * `base` below it): canon check, decision sources, before_land (BR-2016, BR-2111, BR-2057); the rule and duplicate reviews
+ * and the wording judgement run after the landing (BR-2441, BR-2239, D-89, D-141), so no step calls a model. A solo landing
+ * runs them in its worktree; a batch, per change (BR-2172).
  */
 type ChangeInput = { wt: string; base: string; main: string; head: string; before: string; subject: string | null; branch: string; running: Running; worktree: string };
 export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v: ChangeInput): Promise<Steps> {
-  // reason: the wording call runs in a temporary worktree at main's commit, so the change cannot edit its own reviewer (BR-2216, #115);
-  // it is removed after every outcome, and a removal that fails is an environment problem, never a verdict turned ok
-  const tree = reviewTree(ws, v.running, v.main);
-  let steps: Steps;
-  try {
-    steps = await verifySteps(ws, opts, say, v, tree);
-  } catch (e) {
-    tree.release();
-    throw e;
-  }
-  const gone = tree.release();
-  if (gone.ok) return steps;
-  return steps.ok ? { ok: false, reason: "environment", message: gone.error.message } : { ...steps, message: `${steps.message}\n${gone.error.message}` };
-}
-
-async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: ChangeInput, tree: ReturnType<typeof reviewTree>): Promise<Steps> {
   const { wt, subject } = v;
   const base = { value: v.base };
   const head = { value: v.head };
@@ -95,14 +75,19 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   // reason: only the landing that adds a dangling backlog id is refused for it; one main already lists is a note (BR-2150, #112)
   const listed = backlogAt(wt, v.main, ws.config.types);
   if (!listed.ok) return refuse("environment", listed.error.message);
-  // reason: the rebase merged main's edits into a test file the change had tested; the landing tests the merged file itself instead of refusing it as unreported (BR-2381, #152)
-  const merged = await testMergedFiles(ws, wt, landing.value.testCommand, tests, v.base, v.head, v.before);
-  if (!merged.ok) return refuse("environment", merged.error.message);
-  for (const m of merged.value) say(`tested ${m.file} after the rebase merged main's edits into it: ${m.exitCode === 0 ? "pass" : "fail"}`);
-  const broken = merged.value.find((m) => m.exitCode !== 0);
-  if (broken) return refuse("check", `canon check: ${broken.file} fails after the rebase merged main's edits into it (BR-2381); rebase onto main, fix it, run canon work test and land again:\n${broken.output.trimEnd().split("\n").slice(-20).join("\n")}`);
-  const reports = reportsFor(ws.db, wt, landing.value, read.corpus, tests);
+  // reason: a relevant test file whose content on the landing tree has no report (the rebase merged main's edits into it, or
+  // main changed one naming a rule this change touches) is run here, not refused as unreported (BR-2381, BR-2344, D-141)
+  let reports = reportsFor(ws.db, wt, landing.value, read.corpus, tests);
   if (!reports.ok) return refuse("environment", reports.error.message);
+  const unreported = [...reports.value.relevant].sort();
+  if (unreported.length > 0 && landing.value.testCommand) {
+    const runs = await runLandingTests(ws, wt, landing.value.testCommand, unreported);
+    for (const r of runs) say(`tested ${r.file} after the rebase, as its content there had no report: ${r.exitCode === 0 ? "pass" : "fail"}`);
+    const broken = runs.find((r) => r.exitCode !== 0);
+    if (broken) return refuse("check", `canon check: ${broken.file} fails on the tree being landed, after the rebase (BR-2381); rebase onto main, fix it, run canon work test and land again:\n${tail(broken.output)}`);
+    reports = reportsFor(ws.db, wt, landing.value, read.corpus, tests);
+    if (!reports.ok) return refuse("environment", reports.error.message);
+  }
   const input = { root: wt, ...read, testFiles: tests, reports: reports.value, branchChanges: onBranches.value, backlogBase: new Set(listed.value.map((e) => e.id)), architecture: { refs: [v.base], since: v.base } };
   const findings = check(input);
   for (const n of backlogNotes(input)) say(noteLine(n));
@@ -140,66 +125,14 @@ async function verifySteps(ws: Workspace, opts: LandOptions, say: Say, v: Change
   // config, never from the change's own tree: a change that swaps the reviewer would otherwise review itself (BR-2074, #115)
   const trusted = reviewSettingsOn(wt, v.main);
   if (!trusted.ok) return refuse("environment", `canon/config.yaml on main cannot be read for the review settings: ${trusted.error.message}`);
-  const onMain = trusted.value;
-  const reviewer = onMain.review === REVIEW_NONE ? undefined : onMain.review;
   // The rule and duplicate reviews run after the landing, in the background, on the commit it puts on main (BR-2441, D-89);
   // the landing only names what they will read. Standing instructions are found by main's list (BR-2143).
   // reason: the reviews after the landing read their settings at this change's own base, a batch member's at the commit below it (BR-2074)
   const below = v.base === v.main ? trusted : reviewSettingsOn(wt, v.base);
   if (!below.ok) return refuse("environment", `canon/config.yaml at ${v.base.slice(0, 9)} cannot be read for the review settings: ${below.error.message}`);
   const standing = standingTouched(wt, base.value, head.value, below.value.instructions);
-  const review: ReviewNeeds = { docs: scope.reviewed, standing, reviewer: below.value.review };
-  // reason: a wording-only record needs a judgement before the close commit lands, so this one model call stays in the landing (BR-2239, D-89)
-  if (execution.wording.length > 0) {
-    if (!reviewer) return refuse("review", wordingMessage(execution.wording.map((q) => q.id), undefined, false));
-    say(`wording judgement: ${execution.wording.map((q) => q.id).join(", ")}`);
-    const prompt = wordingPrompt(execution.wording);
-    const hash = reviewKey("land", reviewer, 0, [prompt]);
-    const earlier = passedWording(ws.db, hash);
-    let answers: Readonly<Record<string, string>> | undefined;
-    let why: Readonly<Record<string, WordingWhy>> | undefined;
-    if (earlier && unconfirmedWording(execution.wording, earlier.wording).length === 0) {
-      say(`wording judgement: reused event ${earlier.event} for the same question; the review command was not run`);
-      answers = earlier.wording;
-    } else {
-      const at = tree.get();
-      if (!at.ok) return refuse("environment", at.error.message);
-      let lastOut = "";
-      const limits = { timeoutMs: onMain.reviewTimeoutMs, kind: "land" as const, track: (r: { kill(): void } | undefined) => (v.running.review = r), capture: (out: string) => (lastOut = out) };
-      let run = await runReview(reviewer, at.value, prompt, limits);
-      // reason: an answer canon cannot read is the reviewer's failure, not a verdict on the change; it is asked once more with the
-      // format error, and only a second unreadable answer refuses (BR-2239, #227). A command that fails or times out is not asked again.
-      const retried = !run.ok && run.error.code === "invalid";
-      if (!run.ok && retried) {
-        say(`wording judgement: the answer could not be read (${run.error.message.slice(0, 200)}); asking the review command once more`);
-        run = await runReview(reviewer, at.value, retryPrompt(prompt, run.error.message), limits);
-        // reason: the reviewer ran and wrote something; its words are shown whole and kept in an event, but they refuse
-        // only this landing: an open finding would block every session's new work once its author left (BR-2239, BR-2464, #252)
-        const unread = !run.ok && run.error.code === "invalid" ? run.error.message : undefined;
-        const texts = unread !== undefined ? unparsedTexts(lastOut) : [];
-        if (texts.length > 0) {
-          const docs = execution.wording.map((q) => q.id);
-          ws.db.event(ws.actor, "review.unparsed", subject, { docs, texts, commit: head.value });
-          return refuse(
-            "review",
-            [`the wording judgement of ${docs.join(", ")} answered twice in a form canon cannot read (${(unread ?? "").slice(0, 200)}); what the reviewer wrote:`, ...texts.map((t) => `  - ${t}`), "Address it, then land again: the judgement is asked anew."].join("\n"),
-          );
-        }
-      }
-      if (!run.ok) return refuse("review", couldNotRun("wording", retried ? `${run.error.message} (asked twice; neither answer could be read)` : run.error.message, at.value, v.main));
-      // reason: a behaviour answer must quote the sentence that makes the difference; without one it counts as wording (BR-2239, #256)
-      const judged = judgeWording(execution.wording, run.value.wording, run.value.wordingWhy);
-      for (const id of judged.unquoted) say(`wording judgement: ${id}: behaviour without a quote from the rule: treated as wording`);
-      answers = judged.answers;
-      why = run.value.wordingWhy;
-      ws.db.event(ws.actor, "review.wording", subject, { docs: execution.wording.map((q) => q.id), wording: answers, ...(why ? { why } : {}), ...(judged.unquoted.length > 0 ? { unquoted: judged.unquoted } : {}), hash, commit: head.value });
-    }
-    const unconfirmed = unconfirmedWording(execution.wording, answers);
-    if (unconfirmed.length > 0) return refuse("review", wordingMessage(unconfirmed, answers, true, why));
-  }
-  // reason: the wording call is over, so the temporary worktree goes before before_land runs, not after it (BR-2216)
-  const gone = tree.release();
-  if (!gone.ok) return refuse("environment", gone.error.message);
+  // reason: the wording-only records are judged after the landing, with the rule review, never in it (BR-2239, D-141)
+  const review: ReviewNeeds = { docs: scope.reviewed, standing, wording: execution.wording, reviewer: below.value.review };
   // before_land: after canon check and the built-in steps, on the exact tree that becomes main (BR-2057).
   const hookEnv = { CANON_BASE: base.value, CANON_HEAD: head.value, CANON_BRANCH: v.branch };
   const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env: hookEnv, port: changePort(ws, subject) }, ws.config.hooks.before_land, say, true);
