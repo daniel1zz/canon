@@ -217,6 +217,14 @@ describe("review verdict derived from the criteria findings name (BR-2367)", () 
     expect(!r.ok && r.error.message).toContain("contradiction|untestable");
   });
 
+  test("BR-2367: a finding naming the retired no-rejected-options is an invalid answer whose names leave it out", async () => {
+    const r = await answer(`{"findings":[${f("no-rejected-options", "D-9 lists no rejected option")}]}`);
+    expect(r.ok).toBe(false);
+    expect(!r.ok && r.error.code).toBe("invalid");
+    expect(!r.ok && r.error.message).not.toContain("no-rejected-options|");
+    expect(!r.ok && r.error.message).toContain("contradiction|untestable|release");
+  });
+
   test("BR-2367: an answer without findings that name a criterion is the old format: its verdict is taken as stated, and without one it is invalid", async () => {
     expect(await answer('{"verdict":"block","findings":["BR-1 is vague"]}')).toEqual({ ok: true, value: { verdict: "block", findings: ["BR-1 is vague"] } });
     expect(await answer('{"verdict":"ok","findings":["BR-1 is vague"]}')).toEqual({ ok: true, value: { verdict: "ok", findings: ["BR-1 is vague"] } });
@@ -257,7 +265,9 @@ describe("review verdict derived from the criteria findings name (BR-2367)", () 
   test("BR-2367: the rule review prompt lists every criterion key and the answer format; the duplicate review prompt lists duplication", () => {
     const { root, corpus } = corpusOf(files);
     const prompt = reviewPrompt(root, corpus, corpus.docs.filter((d) => d.id === id("BR", 4)));
-    expect(RULE_CRITERIA).toEqual(["contradiction", "untestable", "no-rejected-options", "release", "amends", "overview", "restatement", "business-overlap"]);
+    expect(RULE_CRITERIA).toEqual(["contradiction", "untestable", "release", "amends", "overview", "restatement", "business-overlap"]);
+    // retired by D-142: canon check's decision-options decides it
+    expect(prompt).not.toContain("no-rejected-options");
     for (const key of RULE_CRITERIA) expect(prompt).toContain(`\`${key}\`:`);
     expect(prompt).toContain('{"findings":[{"criterion":"contradiction"|"untestable"');
     expect(prompt).toContain("canon derives it from the keys");

@@ -1,5 +1,5 @@
 import type { CoordDb } from "../db.ts";
-import { DUPLICATE_CRITERIA, RULE_CRITERIA } from "../../knowledge/review/review.ts";
+import { DUPLICATE_CRITERIA, RETIRED_CRITERIA, RULE_CRITERIA } from "../../knowledge/review/review.ts";
 
 /** How the landings' rule reviews were done (BR-2397, D-81): in full, as a small review, or not run at all. */
 export interface ReviewCounts {
@@ -57,7 +57,8 @@ export function findingsByCriterion(db: CoordDb, since: number, until: number): 
     else c.otherwise++;
     counts.set(r.criterion, c);
   }
-  const known: readonly string[] = [...RULE_CRITERIA, ...DUPLICATE_CRITERIA];
+  // reason: a retired criterion still has findings in the window; it comes after the ones the prompt lists (BR-2451, D-142)
+  const known: readonly string[] = [...RULE_CRITERIA, ...DUPLICATE_CRITERIA, ...RETIRED_CRITERIA];
   const rank = (c: string) => (known.includes(c) ? known.indexOf(c) : known.length);
   return [...counts].sort(([a], [b]) => rank(a) - rank(b) || a.localeCompare(b)).map(([criterion, c]) => ({ criterion, ...c }));
 }

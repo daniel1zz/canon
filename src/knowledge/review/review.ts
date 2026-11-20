@@ -120,7 +120,12 @@ export interface ReviewExtras {
 /** At most this many test titles per changed rule go into the review; the count says how many there are (#265). */
 export const NAMED_TESTS_SHOWN = 10;
 
-export const RULE_CRITERIA = ["contradiction", "untestable", "no-rejected-options", "release", "amends", "overview", "restatement", "business-overlap"] as const;
+export const RULE_CRITERIA = ["contradiction", "untestable", "release", "amends", "overview", "restatement", "business-overlap"] as const;
+/**
+ * Criteria no longer in the prompt, which an answer may not use, but whose findings stored before are still read back
+ * and counted under their name (D-142: `no-rejected-options` only repeated canon check's decision-options, BR-2109).
+ */
+export const RETIRED_CRITERIA = ["no-rejected-options"] as const;
 export const DUPLICATE_CRITERIA = ["duplication"] as const;
 const CRITERIA: readonly string[] = [...RULE_CRITERIA, ...DUPLICATE_CRITERIA];
 
@@ -148,7 +153,6 @@ export const CRITERION_TEXT: Readonly<Record<string, string>> = {
   contradiction: "`contradiction`: a rule whose requirements cannot all hold together with those of another active rule (in any domain: see the rule index) or an accepted decision under the same applicable conditions. Quote both passages and name the conditions (an input, a sequence of inputs or a state history) and the two incompatible results. Two requirements that differ but can both be met are not a contradiction, and one text saying nothing is not a contrary result; a tension you cannot show that way is a `note`.",
   // reason: an experience goal accepted by a person is not untestable; asking to drop it made agents cut the owner's goals (D-115)
   untestable: "`untestable`: a claim in a rule that neither a test nor a stated way of accepting it can decide (vague, no boundary, examples that do not pin the boundary). A subjective goal (feel, look, being worth sharing) is decided when the text says, anywhere (an `untested:` reason, a `## 验收` section, or a decision's own words), what is accepted, what evidence is handed over, and who accepts or rejects it against the goal and records it; it needs no measurable threshold. A claim a test can decide (a name not shown early, a reward not given twice) still needs a test, even beside such a goal. When the way of accepting is missing, ask for it; never ask to delete, narrow or widen a goal or commitment, nor to choose levels or tiers the text does not set. A rule that the section # Tests that name the changed rules lists with tests is decided by them: never call it untestable for want of a test; judge only claims those test titles plainly do not cover, and quote the claim.",
-  "no-rejected-options": "`no-rejected-options`: a decision without the options it rejected.",
   release: "`release`: a release is a version's PRD; the rules whose front matter says `release: R-n` are its behaviour. A rule tagged with a release that does something that release's 不做 excludes or lies outside its 范围; a release whose 不做 contradicts its own 范围 or a rule tagged with it. A feature (F-n) is a part of a release with its own 范围 and 不做, and the rules whose front matter says `feature: F-n` are its behaviour; under this key also give a rule tagged with a feature that does something that feature's 不做 excludes or lies outside its 范围, a feature whose 不做 contradicts its own 范围 or a rule tagged with it, and a feature whose 范围 does something the 不做 of a release listing it excludes or lies outside that release's 范围. Only a rule, release or feature changed in this landing can be blocked for it.",
   amends: "`amends`: a changed decision that replaces only part of an accepted decision must list it in `amends:` (one that replaces a whole decision uses `supersedes:`); a decision that says it changes part of another decision without listing it in `amends:`.",
   overview: "`overview`: when an architecture overview is shown below, it is where readers start, not the judge: where it disagrees with the active rules and accepted decisions, they win. Use this key only when the part of the overview this landing changed (its diff is shown) contradicts an active rule or an accepted decision. When a rule or decision changed in this landing makes a statement in the overview wrong, add a `note` naming the overview section.",

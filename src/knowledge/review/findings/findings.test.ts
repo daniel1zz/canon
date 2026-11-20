@@ -90,6 +90,8 @@ describe("finding identity", () => {
   test("BR-2433: a stored finding's criterion is the bracketed criterion name, otherwise note", () => {
     expect(findingOf(`[contradiction] ${BR(1)} x`)).toEqual({ criterion: "contradiction", text: `${BR(1)} x` });
     expect(findingOf("[duplication] twice")).toEqual({ criterion: "duplication", text: "twice" });
+    // a criterion retired from the prompt (D-142) is still read back from events stored before
+    expect(findingOf("[no-rejected-options] D-9 x")).toEqual({ criterion: "no-rejected-options", text: "D-9 x" });
     expect(findingOf("措辞可以更短")).toEqual({ criterion: "note", text: "措辞可以更短" });
     expect(findingOf("[nonsense] x")).toEqual({ criterion: "note", text: "[nonsense] x" });
   });

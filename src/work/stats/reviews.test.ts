@@ -49,6 +49,19 @@ describe("canon stats: how the findings of the reviews after landing ended, per 
     return event;
   }
 
+  test("BR-2451: a retired criterion's findings are still counted, after the prompts' criteria and before other names", () => {
+    const { root, db } = withDb();
+    finding(db, "zz-unknown", null, 1);
+    finding(db, "no-rejected-options", "spurious", 2);
+    finding(db, "duplication", null, 3);
+    const r = canon(root, "stats");
+    expect(r.code).toBe(0);
+    expect(r.out).toContain("  no-rejected-options: 0 open, 0 fixed, 1 spurious, 0 retired; fewer than 10 fixed or spurious, no share");
+    const at = (s: string) => r.out.indexOf(s);
+    expect(at("  duplication:")).toBeLessThan(at("  no-rejected-options:"));
+    expect(at("  no-rejected-options:")).toBeLessThan(at("  zz-unknown:"));
+  });
+
   test("BR-2451: open, fixed, spurious and retired findings are counted per criterion, in the prompts' order, with no share below 10; other closes are named", () => {
     const { root, db } = withDb();
     finding(db, "restatement", null, 1);

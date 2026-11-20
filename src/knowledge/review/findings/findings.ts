@@ -1,7 +1,7 @@
 import { createHash } from "node:crypto";
 import type { CoordDb } from "../../../work/db.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
-import { DUPLICATE_CRITERIA, RULE_CRITERIA } from "../review.ts";
+import { DUPLICATE_CRITERIA, RETIRED_CRITERIA, RULE_CRITERIA } from "../review.ts";
 import { tierCounts } from "./tier.ts";
 import { namedIds, quotedSpans } from "./quotes.ts";
 
@@ -20,7 +20,8 @@ export interface Finding {
   readonly text: string;
 }
 
-const CRITERIA: readonly string[] = [...RULE_CRITERIA, ...DUPLICATE_CRITERIA];
+// reason: findings stored under a retired criterion keep their criterion when read back (D-142)
+const CRITERIA: readonly string[] = [...RULE_CRITERIA, ...DUPLICATE_CRITERIA, ...RETIRED_CRITERIA];
 
 /** A finding as the review events store it: `[criterion] text` for a blocking one, the bare text for a note (BR-2367). */
 export function findingOf(stored: string): Finding {
