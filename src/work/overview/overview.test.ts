@@ -94,6 +94,7 @@ describe("canon overview", () => {
       "",
       "## 正在做和在等",
       "(none)",
+      "当前这一批（没挂版本或模块）：7 个：C-5, C-6, C-7, C-8, C-9, C-10, C-11",
       "",
       "## 历史",
       `${C(9)} 变更9  2026-11-16 07:42 UTC`,
@@ -119,7 +120,7 @@ describe("canon overview", () => {
   test("BR-2505: with nothing on the agenda, nothing in flight and no landing each section says so", () => {
     const r = canon(project(), "overview");
     expect(r.code).toBe(0);
-    expect(r.out.trim().split("\n")).toEqual(["## 当前版本", "(no release in progress)", NO_QUALITY, "", "## 议程", "(nothing)", "", "## 正在做和在等", "(none)", "", "## 历史", HISTORY]);
+    expect(r.out.trim().split("\n")).toEqual(["## 当前版本", "(no release in progress)", NO_QUALITY, "", "## 议程", "(nothing)", "", "## 正在做和在等", "(none)", "当前这一批（没挂版本或模块）：没有", "", "## 历史", HISTORY]);
   });
 
   test("BR-2505: changes in progress or waiting are listed in canon change list's order with their state or what they wait for; ready ones are not", () => {
@@ -131,9 +132,28 @@ describe("canon overview", () => {
     const started = startNew(root, "做点事");
     const out = canon(root, "overview").out.split("\n");
     const at = out.indexOf("## 正在做和在等");
-    expect(out.slice(at + 1, out.indexOf("## 历史") - 1)).toEqual([`${started.change} 做点事  in-progress`, `${C(7)} 变更7  waiting-deps: ${C(6)}`]);
+    expect(out.slice(at + 1, out.indexOf("## 历史") - 2)).toEqual([`${started.change} 做点事  in-progress`, `${C(7)} 变更7  waiting-deps: ${C(6)}`]);
     const json = JSON.parse(canon(root, "overview", "--json").out);
     expect(json.changes.map((c: { id: string; state: string }) => [c.id, c.state])).toEqual([[started.change, "in-progress"], [C(7), "waiting-deps"]]);
+  });
+
+  test("BR-2505: the current batch is one line naming the open changes without a release or feature, main's and branch-only ones, at most 12 ids then … +k", () => {
+    const root = project();
+    write(root, {
+      [`canon/releases/${R(1)}.md`]: release(1, "active", "- S1 x。", `features: [${id("F", 1)}]\n`),
+      [`canon/features/${id("F", 1)}.md`]: `---\nid: ${id("F", 1)}\ntitle: 模块1\nstatus: active\n---\n\n## 目标\n\nx\n\n## 成功标准\n\n- S1 y。\n`,
+      ...Object.fromEntries([1, 2].map((n) => [`canon/changes/${C(n)}.md`, change(n, n === 1 ? "open" : "done")])),
+      [`canon/changes/${C(3)}.md`]: change(3, "open", "", `release: ${R(1)}\n`),
+      [`canon/changes/${C(4)}.md`]: change(4, "open", "", `feature: ${id("F", 1)}\n`),
+    });
+    const started = startNew(root, "分支上的变更");
+    const line = (out: string) => out.split("\n").find((l) => l.startsWith("当前这一批"));
+    expect(line(canon(root, "overview").out)).toBe(`当前这一批（没挂版本或模块）：2 个：${started.change}, ${C(1)}`);
+    expect(JSON.parse(canon(root, "overview", "--json").out).current_batch).toEqual([{ id: started.change, title: "分支上的变更" }, { id: C(1), title: "变更1" }]);
+    const many = project();
+    write(many, Object.fromEntries(Array.from({ length: 14 }, (_, i) => [`canon/changes/${C(i + 1)}.md`, change(i + 1, "open")])));
+    expect(line(canon(many, "overview").out)).toBe(`当前这一批（没挂版本或模块）：14 个：${Array.from({ length: 12 }, (_, i) => C(i + 1)).join(", ")}, … +2`);
+    expect(JSON.parse(canon(many, "overview", "--json").out).current_batch).toHaveLength(14);
   });
 
   test("BR-2505: --json holds the same content", () => {
@@ -149,6 +169,7 @@ describe("canon overview", () => {
     expect(o.agenda.owner.map((i: { key: string }) => i.key)).toEqual(["finding:1", "question:1", `criterion:${R(3)}/S2`]);
     expect(o.agenda.judge.map((i: { key: string }) => i.key)).toEqual(["finding:2"]);
     expect(o.changes).toEqual([]);
+    expect(o.current_batch).toEqual([5, 6, 7, 8, 9, 10, 11].map((n) => ({ id: C(n), title: `变更${n}` })));
     expect(o.landed).toEqual([{ id: C(9), title: "变更9", at: "2026-11-16T07:42:40.496Z" }, { id: C(12), title: "轻变更12", at: "2026-11-16T06:00:00.000Z" }, { id: C(4), title: "变更4", at: "2026-11-16T05:32:56.142Z" }]);
     expect(JSON.parse(canon(project(), "overview", "--json").out).releases).toEqual([]);
   });

@@ -1,5 +1,5 @@
 import { git } from "../../kernel/git.ts";
-import { changeStates, hasFile, stateMark, type Filed } from "../../knowledge/changes/state.ts";
+import { changeStates, hasFile, isClosed, stateMark, type Filed } from "../../knowledge/changes/state.ts";
 import { waitingMark } from "../../knowledge/changes/deps.ts";
 import { ok, type Result } from "../../kernel/result.ts";
 import { goalChangesBetween } from "../../knowledge/releases/goal-landing.ts";
@@ -25,6 +25,8 @@ import type { Workspace } from "../workspace.ts";
 const LANDED_OUTLINE = 3;
 export const LANDED_DETAIL = 10;
 const CHANGES_SHOWN = 15;
+/** The most ids the current batch line names (BR-2505). */
+const BATCH_SHOWN = 12;
 /** How far back the goal changes go (BR-2505, BR-2506). */
 const GOAL_DAYS = 7;
 /** The primary states listed under `## 正在做和在等` (BR-2505); stalled, refused, awaiting close and ready ones are on the agenda. */
@@ -53,6 +55,8 @@ export interface Overview {
   readonly agenda: Agenda | string | undefined;
   readonly changes: readonly Filed[];
   readonly changesMore: number;
+  /** The current batch (BR-2505, D-148): every open change, on main or only on its branch, naming neither a release nor a feature. */
+  readonly batch: readonly Filed[];
   readonly goalCommits: readonly GoalCommit[];
   readonly landed: readonly Landed[];
 }
@@ -93,6 +97,7 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean; re
   const statuses = current.length > 0 && opts.ruleCounts ? releaseStatuses(corpus.value, executionStates(ws.root, corpus.value, ws.config.floorTiming)) : [];
   const releases = releaseViews(corpus.value, current, statuses);
   let changes: Filed[] = [];
+  let batch: Filed[] = [];
   let a: Agenda | string | undefined;
   if (opts.agenda !== false) {
     // reason: every change's state from the one place that computes it, read once with the agenda (BR-2571, D-151)
@@ -105,6 +110,8 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean; re
       states = every.value.states;
     }
     changes = states.filter(hasFile).filter((s) => IN_FLIGHT.has(s.state));
+    // reason: the same states, so the batch is never a second computation of which changes are open (BR-2505, D-149)
+    batch = states.filter(hasFile).filter((s) => !isClosed(s) && s.change.release === undefined && s.change.feature === undefined);
   }
   return ok({
     releases,
@@ -112,6 +119,7 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean; re
     agenda: a,
     changes: changes.slice(0, CHANGES_SHOWN),
     changesMore: Math.max(0, changes.length - CHANGES_SHOWN),
+    batch,
     goalCommits: goalCommits(ws),
     landed: landed(ws, corpus.value, opts.landed ?? LANDED_OUTLINE),
   });
@@ -156,6 +164,15 @@ function rulesLine(r: CurrentRelease): string | undefined {
 /** What a landed change says it advanced (BR-2505, BR-2517). */
 const advancesMark = (a: Advances | undefined) => (a === undefined ? "  （没写 advances）" : a.kind === "none" ? `  （不推进：${a.reason}）` : `  → ${a.refs.join(", ")}`);
 
+/** The current batch in one line (BR-2505): the count and up to BATCH_SHOWN ids, or none. */
+function batchLine(batch: readonly Filed[]): string {
+  const head = "当前这一批（没挂版本或模块）：";
+  if (batch.length === 0) return `${head}没有`;
+  const ids = batch.slice(0, BATCH_SHOWN).map((s) => s.id);
+  if (batch.length > BATCH_SHOWN) ids.push(`… +${batch.length - BATCH_SHOWN}`);
+  return `${head}${batch.length} 个：${ids.join(", ")}`;
+}
+
 /** The four sections of `canon overview` (BR-2505). */
 export function overviewLines(o: Overview): string[] {
   const out: string[] = ["## 当前版本"];
@@ -182,6 +199,7 @@ export function overviewLines(o: Overview): string[] {
   if (o.changes.length === 0) out.push("(none)");
   for (const s of o.changes) out.push(`${s.id} ${s.change.title}  ${s.state === "waiting-deps" ? `waiting-deps: ${waitingMark(s.waiting)?.replace(/^waiting for /, "") ?? ""}` : stateMark(s)}`);
   if (o.changesMore > 0) out.push(`… 还有 ${o.changesMore} 个（canon change list）`);
+  out.push(batchLine(o.batch));
   out.push("", "## 历史");
   const counts = goalCounts(o.goalCommits);
   if (counts.length > 0) out.push(`最近 ${GOAL_DAYS} 天的目标改动：${counts.map((c) => `${c.doc} ${c.count} 处`).join("，")}`);
@@ -217,6 +235,7 @@ export function overviewJson(o: Overview): Record<string, unknown> {
     agenda: typeof o.agenda === "object" ? agendaJson(o.agenda) : { error: o.agenda ?? null },
     changes: o.changes.map((s) => ({ id: s.id, title: s.change.title, state: s.state, mark: stateMark(s) })),
     changes_more: o.changesMore,
+    current_batch: o.batch.map((s) => ({ id: s.id, title: s.change.title })),
     goal_changes: goalCounts(o.goalCommits),
     landed: o.landed.map((l) => ({ id: l.id, title: l.title ?? null, at: l.at })),
   };
