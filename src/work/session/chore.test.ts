@@ -126,7 +126,7 @@ test("BR-2458 BR-2457: a chore dropped after a refused landing leaves nothing on
   sh(a.worktree, "add", "FAIL");
   sh(a.worktree, "commit", "-qm", "floor fails");
   expect(cli(a.worktree, "chore", "land").exitCode).toBe(1);
-  expect(cli(a.worktree, "work", "stop", "--next", "abandoned", "--release").exitCode).toBe(0);
+  expect(cli(a.worktree, "work", "stop", "--reason", "partial", "--next", "abandoned", "--release").exitCode).toBe(0);
   expect(cli(root, "work", "drop", a.subject).exitCode).toBe(0);
   expect(sh(root, "ls-tree", "-r", "--name-only", "main")).not.toContain("canon/changes");
   const list = cli(root, "change", "list");
