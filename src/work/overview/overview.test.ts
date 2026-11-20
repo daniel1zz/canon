@@ -71,7 +71,7 @@ function fixture(): string {
 const squash = (s: string) => s.replace(/ {2,}/g, " ");
 
 describe("canon overview", () => {
-  test("BR-2505: five sections in order, from the current release and its criteria down to recent landings; BR-2504: each criterion by its marker", () => {
+  test("BR-2505: six sections in order, from the current release and its criteria down to recent landings; BR-2504: each criterion by its marker", () => {
     const r = canon(fixture(), "overview");
     expect(r.code).toBe(0);
     expect(squash(r.out).trim().split("\n")).toEqual([
@@ -94,6 +94,9 @@ describe("canon overview", () => {
       "## 待办顺序",
       ...[5, 6, 7, 8, 9].map((n) => `${C(n)} 变更${n}`),
       "… 还有 2 个（canon change list）",
+      "",
+      "## 当前这一批（没挂版本或模块，AI 会话自己定的）",
+      ...[5, 6, 7, 8, 9, 10, 11].map((n) => `${C(n)} 变更${n}`),
       "",
       "## 最近合入",
       `${C(9)} 变更9 2026-11-16 07:42 UTC （没写 advances）`,
@@ -119,7 +122,7 @@ describe("canon overview", () => {
     const root = project();
     const r = canon(root, "overview");
     expect(r.code).toBe(0);
-    expect(r.out.trim().split("\n")).toEqual(["## 当前版本", "(no release in progress)", NO_QUALITY, "", "## 计划", "(no plans)", "", "## 等负责人", "(nothing)", "", "## 待办顺序", "(none)", "", "## 最近合入", "(none)"]);
+    expect(r.out.trim().split("\n")).toEqual(["## 当前版本", "(no release in progress)", NO_QUALITY, "", "## 计划", "(no plans)", "", "## 等负责人", "(nothing)", "", "## 待办顺序", "(none)", "", "## 当前这一批（没挂版本或模块，AI 会话自己定的）", "(none)", "", "## 最近合入", "(none)"]);
   });
 
   test("BR-2505: a claimed change carries its mark in the order", () => {
@@ -127,6 +130,29 @@ describe("canon overview", () => {
     const started = startNew(root, "做点事");
     const line = canon(root, "overview").out.split("\n").find((l) => l.startsWith(started.change));
     expect(line).toContain("claimed");
+  });
+
+  test("BR-2505: the current batch lists every open change naming neither a release nor a feature, those only on a branch too; --json has them as current_batch", () => {
+    const root = project();
+    write(root, {
+      [`canon/releases/${R(2)}.md`]: release(2, "planned", "内容", "features: [F-1]\n"),
+      "canon/features/F-1.md": "---\nid: F-1\ntitle: 模块1\nstatus: active\n---\n\n## 目标\n\nx\n",
+      [`canon/changes/${C(4)}.md`]: change(4, "open", "", "feature: F-1\n"),
+      [`canon/changes/${C(5)}.md`]: change(5, "open", "", `release: ${R(2)}\n`),
+      [`canon/changes/${C(6)}.md`]: change(6, "open"),
+      [`canon/changes/${C(3)}.md`]: change(3, "done"),
+    });
+    const branchOnly = startNew(root, "只在分支上");
+    const out = canon(root, "overview").out.split("\n");
+    const at = out.indexOf("## 当前这一批（没挂版本或模块，AI 会话自己定的）");
+    expect(at).toBeGreaterThan(out.indexOf("## 待办顺序"));
+    expect(out.slice(at + 1, out.indexOf("## 最近合入") - 1)).toEqual([`${branchOnly.change} 只在分支上`, `${C(6)} 变更6`]);
+    const o = JSON.parse(canon(root, "overview", "--json").out);
+    expect(o.current_batch).toEqual([{ id: branchOnly.change, title: "只在分支上" }, { id: C(6), title: "变更6" }]);
+    write(root, { [`canon/changes/${C(6)}.md`]: change(6, "done") });
+    sh(branchOnly.worktree, "checkout", "-q", "--detach");
+    sh(root, "branch", "-D", `change/${branchOnly.change}`);
+    expect(canon(root, "overview").out).toContain("## 当前这一批（没挂版本或模块，AI 会话自己定的）\n(none)");
   });
 
   test("BR-2505: --json holds the same content", () => {

@@ -62,6 +62,8 @@ export interface Overview {
   readonly waiting: { readonly questions: readonly Question[]; readonly findings: readonly OpenFinding[]; readonly criteria: readonly { readonly doc: string; readonly text: string }[]; readonly stalled: readonly StalledDelegation[] };
   readonly backlog: readonly ListedChange[];
   readonly backlogMore: number;
+  /** Open changes naming neither a release nor a feature: the scope AI sessions chose themselves, all of them (BR-2505, D-148). */
+  readonly currentBatch: readonly ListedChange[];
   readonly landed: readonly Landed[];
   /** Commits on main of the last GOAL_DAYS days that changed the goal, newest first (BR-2505, BR-2510). */
   readonly goalChanges: readonly GoalCommit[];
@@ -167,6 +169,8 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean }):
     },
     backlog: open.slice(0, BACKLOG_SHOWN),
     backlogMore: Math.max(0, open.length - BACKLOG_SHOWN),
+    // reason: no progress is computed for it; it is listed so the owner sees what AI sessions chose to deliver (BR-2505, P7)
+    currentBatch: open.filter((l) => l.change.status === "open" && l.change.release === undefined && l.change.feature === undefined),
     landed: landed(ws, corpus.value),
     goalChanges: goalCommits(ws),
     quality: qualitySummary(corpus.value),
@@ -208,7 +212,10 @@ const advancesMark = (a: Advances | undefined) => (a === undefined ? "  （没�
 const questionLine = (q: Question) => `问题 #${q.id} ${firstLine(q.question)}`;
 const findingLine = (f: OpenFinding) => `意见 #${f.id} ${f.ids.length > 0 ? f.ids.join(", ") : "-"}: ${firstLine(f.text)}`;
 
-/** The five sections of `canon overview` (BR-2505). */
+/** The heading of the open changes in no release or feature (BR-2505). */
+export const CURRENT_BATCH = "## 当前这一批（没挂版本或模块，AI 会话自己定的）";
+
+/** The six sections of `canon overview` (BR-2505). */
 export function overviewLines(o: Overview): string[] {
   const out: string[] = ["## 当前版本"];
   if (o.releases.length === 0) out.push("(no release in progress)");
@@ -235,6 +242,7 @@ export function overviewLines(o: Overview): string[] {
     out.push(`${l.change.id} ${l.change.title}${marks.length > 0 ? `  (${marks.join(", ")})` : ""}`);
   }
   if (o.backlogMore > 0) out.push(`… 还有 ${o.backlogMore} 个（canon change list）`);
+  out.push("", CURRENT_BATCH, ...(o.currentBatch.length > 0 ? o.currentBatch.map((l) => `${l.change.id} ${l.change.title}`) : ["(none)"]));
   out.push("", "## 最近合入", ...(o.landed.length > 0 ? o.landed.map((l) => `${l.id}${l.title ? ` ${l.title}` : ""} ${minute(l.at)}${advancesMark(l.advances)}`) : ["(none)"]));
   return out;
 }
@@ -263,6 +271,7 @@ export function overviewJson(o: Overview): Record<string, unknown> {
     },
     backlog: o.backlog.map((l) => ({ id: l.change.id, title: l.change.title, marks: marksOf(l, false) })),
     backlog_more: o.backlogMore,
+    current_batch: o.currentBatch.map((l) => ({ id: l.change.id, title: l.change.title })),
     landed: o.landed.map((l) => ({ id: l.id, title: l.title ?? null, at: l.at, advances: l.advances === undefined ? null : l.advances.kind === "none" ? { none: l.advances.reason } : l.advances.refs })),
     goal_changes: o.goalChanges.map((g) => ({ sha: g.sha, subject: g.subject, changes: g.changes })),
     quality: { standards: o.quality.standards, drafts: o.quality.drafts, uncovered: o.quality.uncovered, none: o.quality.none },

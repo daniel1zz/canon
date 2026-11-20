@@ -98,8 +98,16 @@ export interface Change extends Base {
   readonly plan?: string;
   /** The steps of `plan` this change does (`steps`), as written in the plan table (D-77). */
   readonly steps?: readonly string[];
-  /** The release the plan in this change belongs to (`release: R-n`); only on a change holding a plan (D-79). */
+  /** The release this change belongs to (`release: R-n`, BR-2561); on a change holding a plan, the release of the plan (D-79). Never with `feature`. */
   readonly release?: string;
+  /** The feature this change belongs to (`feature: F-n`, BR-2561); its release is the one listing it. */
+  readonly feature?: string;
+  /** GitHub issue numbers this change fixes (`issues`, BR-2561). */
+  readonly issues?: readonly number[];
+  /** The changes this change depends on (`depends_on`, BR-2561); when they count as satisfied is BR-2564. */
+  readonly dependsOn?: readonly string[];
+  /** On a dropped change, the change that did its work instead (`done_by`, BR-2561, BR-2564). */
+  readonly doneBy?: string;
   /** The success criteria this change advances (`advances: [R-5/S1]`), or why it advances none (`"none: <reason>"`) (BR-2517). */
   readonly advances?: Advances;
   /** Questions the owner answered that confirm the goal changes this change lands (`owner_answers`, BR-2510). */

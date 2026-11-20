@@ -30,12 +30,12 @@ export function releaseFindings(root: string, corpus: Corpus): Finding[] {
       if (!corpus.docs.some((d) => d.id === id)) out.push({ path: rule.path, rule: "ref-dangling", message: `${rule.id} \`${key}\` names ${id}, which does not exist` });
     }
   }
-  const plans = corpus.docs.filter((d): d is Change => d.kind === "change" && d.release !== undefined);
-  for (const change of plans) {
+  const tagged = corpus.docs.filter((d): d is Change => d.kind === "change" && d.release !== undefined);
+  for (const change of tagged) {
     if (!corpus.docs.some((d) => d.id === change.release)) out.push({ path: change.path, rule: "ref-dangling", message: `${change.id} \`release\` names ${change.release!}, which does not exist` });
-    // reason: `release` on a change says which release its plan belongs to; without a plan it says nothing (D-79)
-    if (readPlan(change.body).kind !== "plan") out.push({ path: change.path, rule: "file-invalid", message: `${change.id} has \`release: ${change.release!}\` but no valid ## 计划: \`release\` on a change names the release its plan belongs to (D-79)` });
   }
+  // reason: a change without a plan may name its own release (BR-2561, D-148); only the plans of a shipped release are frozen (BR-2386)
+  const plans = tagged.filter((c) => readPlan(c.body).kind === "plan");
   for (const rule of rules) {
     if (rule.feature === undefined) continue;
     if (!corpus.docs.some((d) => d.id === rule.feature)) out.push({ path: rule.path, rule: "ref-dangling", message: `${rule.id} \`feature\` names ${rule.feature}, which does not exist` });
@@ -60,7 +60,7 @@ function frozenPlans(root: string, release: Release, tagged: readonly Change[], 
   const out: Finding[] = [];
   for (const id of then) {
     const now = corpus.docs.find((d): d is Change => d.kind === "change" && d.id === id);
-    if (now && now.release !== release.id) out.push({ path: now.path, rule: "release-frozen", message: `${id}'s plan was tagged ${release.id} when it shipped (${at.slice(0, 9)}); its \`release\` is ${now.release ?? "gone"} now, and the plans of a shipped release do not change (D-79)` });
+    if (now && readPlan(now.body).kind === "plan" && now.release !== release.id) out.push({ path: now.path, rule: "release-frozen", message: `${id}'s plan was tagged ${release.id} when it shipped (${at.slice(0, 9)}); its \`release\` is ${now.release ?? "gone"} now, and the plans of a shipped release do not change (D-79)` });
   }
   for (const change of tagged) {
     if (change.release === release.id && !then.has(change.id)) out.push({ path: change.path, rule: "release-frozen", message: `${change.id}'s plan is tagged ${release.id}, but it was not when ${release.id} shipped (${at.slice(0, 9)}); a plan added to a shipped release changes what shipped: tag it with a later release (D-79)` });

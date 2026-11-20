@@ -3,6 +3,9 @@ import { ok, type Result } from "../../kernel/result.ts";
 import { backlogAt, inBacklogOrder, type BacklogEntry } from "../../knowledge/documents/backlog.ts";
 import { parseDocFile } from "../../knowledge/documents/docfile.ts";
 import { planLink } from "../../knowledge/documents/planlink.ts";
+import { changeLinks } from "../../knowledge/changes/links.ts";
+import { waitingFor, waitingMark, type Waiting } from "../../knowledge/changes/deps.ts";
+import { criteriaByDoc } from "../../knowledge/releases/features.ts";
 import type { Change, ChangeStatus, Corpus } from "../../knowledge/documents/model.ts";
 import { CANON_DIR } from "../../knowledge/documents/read.ts";
 import type { ArchitectureBase } from "../../knowledge/check/architecture.ts";
@@ -22,6 +25,8 @@ export interface ListedChange {
   readonly handoff: Handoff | undefined;
   /** A claim binds it, judged as `canon work start` judges a takeover (BR-2100). */
   readonly claimed: boolean;
+  /** For an open change, its dependencies not satisfied on main's latest commit (BR-2564); empty otherwise. */
+  readonly waiting: readonly Waiting[];
 }
 
 /** What the listing found: the changes, and the branch files it could not read, each said on its own (BR-2292). */
@@ -36,7 +41,7 @@ export interface Listing {
  * order with started ones (a handoff or a change branch) ahead of the rest (BR-2148, BR-2291). A change that only
  * its branch has and that says `done` there is kept whatever `keep` says: its landing never reached main (BR-2294).
  */
-export function listedChanges(ws: Workspace, corpus: Corpus, backlog: readonly BacklogEntry[], keep: (c: Change) => boolean): Result<Listing> {
+export function listedChanges(ws: Workspace, corpus: Corpus, backlog: readonly BacklogEntry[], keep: (c: Change) => boolean, main: Corpus = corpus): Result<Listing> {
   const branches = changeBranches(ws);
   if (!branches.ok) return branches;
   const local = corpus.docs.filter((d): d is Change => d.kind === "change");
@@ -66,12 +71,17 @@ export function listedChanges(ws: Workspace, corpus: Corpus, backlog: readonly B
   const hs = new Map(handoffs(ws.db).map((h) => [h.subject, h]));
   const started = new Set([...hs.keys(), ...branches.value.keys()]);
   const held = new Set(liveClaims(ws.db).map((c) => c.subject));
+  // reason: a dependency is satisfied only once it landed on main; one this checkout or a branch has is not landed yet (BR-2564, D-149)
+  const landed = new Map(main.docs.filter((d): d is Change => d.kind === "change" && onMain.value.has(d.id)).map((c) => [c.id, c]));
+  const criteria = criteriaByDoc(main);
+  const elsewhere = new Set([...local.map((c) => c.id), ...branches.value.keys()].filter((id) => !landed.has(id)));
   return ok({
     listed: inBacklogOrder(all, backlog, started).map((change) => ({
       change,
       onBranch: found.get(change.id)?.onBranch ?? [],
       handoff: hs.get(change.id),
       claimed: held.has(change.id),
+      waiting: change.status === "open" ? waitingFor(change, landed, elsewhere, criteria) : [],
     })),
     unreadable,
   });
@@ -146,7 +156,7 @@ export function changeIdsOnBranches(ws: Workspace): Result<Set<string>> {
 /**
  * How a listed change is marked (BR-2291, BR-2293, BR-2294): `on branch <b>` when only its branch has it, or `ambiguous: <b>, <b>`
  * when several do (`canon work start` refuses it, BR-2107); `closed on branch, not landed` when that branch says done;
- * its handoff; `claimed`. `full` writes the handoff's next step (canon change list); the brief keeps it to `handoff`.
+ * its handoff; `claimed`; `waiting for …` when an open change's dependencies are not satisfied (BR-2564). `full` writes the handoff's next step (canon change list); the brief keeps it to `handoff`.
  */
 export function marksOf(l: ListedChange, full: boolean): string[] {
   const out: string[] = [];
@@ -155,6 +165,8 @@ export function marksOf(l: ListedChange, full: boolean): string[] {
   if (l.onBranch.length && l.change.status === "done") out.push("closed on branch, not landed");
   if (l.handoff) out.push(full ? `handoff: ${firstLine(l.handoff.next)}` : "handoff");
   if (l.claimed) out.push("claimed");
+  const waiting = waitingMark(l.waiting);
+  if (waiting) out.push(waiting);
   return out;
 }
 
@@ -216,7 +228,11 @@ export function changeOnBranch(ws: Workspace, id: string, ref: BranchRef): Resul
   // reason: a bad plan link is said as an unreadable file, never read as "no link": the step would look idle (BR-2292, D-77)
   const link = planLink(meta, type.prefix);
   if (typeof link === "string") return ok({ unreadable: `${where}: ${link}` });
-  return ok({ change: { kind: "change", id, title: meta["title"], path: path.value, body, status: status as ChangeStatus, rules, passes: {}, ...link } });
+  // reason: a bad link is said like a bad plan link: read as "no link", the change would show as the current batch or ready (BR-2292, BR-2561)
+  const prefixOf = (name: string, fallback: string) => ws.config.types.find((t) => t.name === name)?.prefix ?? fallback;
+  const links = changeLinks(meta, { change: type.prefix, release: prefixOf("release", "R"), feature: prefixOf("feature", "F") });
+  if (typeof links === "string") return ok({ unreadable: `${where}: ${links}` });
+  return ok({ change: { kind: "change", id, title: meta["title"], path: path.value, body, status: status as ChangeStatus, rules, passes: {}, ...link, ...links } });
 }
 
 function changeType(ws: Workspace) {

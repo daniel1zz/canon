@@ -13,6 +13,9 @@ import { createDoc, createDomain, setMeta } from "./write.ts";
 import { refuseOnGuardedMain } from "./guarded.ts";
 import { findDoc } from "../query/query.ts";
 import { planStatuses, progressMark, stepsMark } from "../plans/status.ts";
+import { waitingJson } from "../changes/deps.ts";
+import { LINK_ARGS, linkCmd, newLinks } from "../changes/commands.ts";
+import { mainCorpus } from "../../work/session/session.ts";
 
 /** `canon rule`, `decision`, `change`, `note`, `doc`: creating, listing and setting the status of documents. */
 
@@ -25,6 +28,8 @@ function newDocCommand(kind: string, extra: Record<string, { type: "string"; des
       const { corpus } = corpusOf(ws);
       const a = args as Record<string, unknown>;
       refuseOnGuardedMain(ws, kind === "" ? String(a["type"]) : kind, String(a["title"]));
+      // reason: the links are checked before an id is allocated, so a refused change leaves no number or file (BR-2562)
+      const links = kind === "change" && String(a["title"]).trim() !== "" ? newLinks(ws, a, corpus) : undefined;
       // reason: the domain's whole boundary is read at the moment a new rule would otherwise repeat part of it (BR-2432, D-96)
       if (kind === "rule" && typeof a["domain"] === "string") for (const line of contractLines(corpus, a["domain"])) say(line);
       const path = must(
@@ -35,7 +40,7 @@ function newDocCommand(kind: string, extra: Record<string, { type: "string"; des
           ...(typeof a["domain"] === "string" ? { domain: a["domain"] } : {}),
           ...(typeof a["untested"] === "string" ? { untested: a["untested"] } : {}),
           ...(typeof a["supersedes"] === "string" ? { supersedes: a["supersedes"] } : {}),
-          ...(kind === "change" ? { rules: list(a["rules"]) } : {}),
+          ...(kind === "change" ? { rules: list(a["rules"]), ...(links ? { links } : {}) } : {}),
         }, ws.config.templates),
       );
       say(path);
@@ -73,16 +78,18 @@ function listCommand(kind: Kind, describe: string) {
         // only on their change branch, so the list the guide points to holds released work too (BR-2148, BR-2291, D-50).
         // reason: read once with every change: progress counts the done ones too, which the list itself leaves out;
         // the list keeps what listedChanges would keep with `live`, a change done only on its branch included (BR-2384, BR-2294)
-        const { listed: every, unreadable } = must(listedChanges(ws, corpus, readBacklog(ws.root, ws.config.types), () => true));
+        // reason: dependencies are satisfied by what landed on main, not by this checkout's older copy of it (BR-2564, D-149)
+        const { listed: every, unreadable } = must(listedChanges(ws, corpus, readBacklog(ws.root, ws.config.types), () => true, must(mainCorpus(ws))));
         const listed = every.filter((l) => live(l.change) || (l.onBranch.length > 0 && l.change.status === "done"));
         const progress = new Map(planStatuses(corpus, every.map((l) => ({ change: l.change, onMain: l.onBranch.length === 0 }))).map((p) => [p.change.id, p]));
         if (args.json) {
-          json(listed.map(({ change: { body: _b, ...r }, onBranch, handoff, claimed }) => ({
+          json(listed.map(({ change: { body: _b, ...r }, onBranch, handoff, claimed, waiting }) => ({
             ...r,
             ...(progress.has(r.id) ? { plan_progress: { total: progress.get(r.id)!.steps.length, done: progress.get(r.id)!.counts.done, percent: progress.get(r.id)!.percent } } : {}),
             on_branch: onBranch,
             handoff: handoff ? { next: handoff.next, actor: handoff.actor, updated_at: handoff.updated_at } : null,
             claimed,
+            waiting_for: waitingJson(waiting),
           })));
         } else {
           for (const l of listed) {
@@ -204,9 +211,10 @@ const change = defineCommand({
   subCommands: {
     new: newDocCommand(
       "change",
-      { rules: { type: "string", description: "Comma-separated rule ids it adds, edits or retires" } },
-      "Create a change file only (allocates its id; edit the file afterwards). Refused where main is checked out and guarded, since the file could not be committed there: use `canon work start --title` instead (BR-2409)",
+      { rules: { type: "string", description: "Comma-separated rule ids it adds, edits or retires" }, ...LINK_ARGS },
+      "Create a change ahead of time: its file only, open, no worktree (allocates its id; it lands with the change you are in, then canon work start <C-n> starts it). Refused where main is checked out and guarded, since the file could not be committed there: use `canon work start --title` instead (BR-2409, BR-2562)",
     ),
+    link: linkCmd,
     list: listCommand("change", "List open changes in the owner's order (canon/backlog.md, then the rest by id; --all for done and dropped)"),
     drop: defineCommand({
       meta: { description: "Mark a change dropped (work will not happen)" },

@@ -1,6 +1,7 @@
 import type { Change, Corpus, Feature, Release, Rule } from "../documents/model.ts";
 import type { Finding } from "../check/check.ts";
 import { criteriaOf } from "./criteria.ts";
+import { readPlan } from "../plans/parse.ts";
 
 /** A release is made of the features it lists (D-130); these say which rules belong to it through them. */
 
@@ -83,7 +84,8 @@ export function compositionFindings(corpus: Corpus): Finding[] {
       if (d.release !== undefined && byId.get(d.release)?.status === "dropped" && landsIn(corpus, d.release) === undefined) out.push({ path: d.path, rule: "release-dropped", message: `${d.id} is tagged ${d.release}, which is dropped${hint(d.release)}` });
       if (d.feature !== undefined && features.get(d.feature)?.status === "dropped") out.push({ path: d.path, rule: "release-dropped", message: `${d.id} is attached to ${d.feature}, which is dropped: attach it to another feature, or retire it` });
     }
-    if (d.kind === "change" && d.status === "open" && d.release !== undefined && byId.get(d.release)?.status === "dropped" && landsIn(corpus, d.release) === undefined) {
+    // reason: only an open plan change is held to its release here; a change's own release is a link, not refused (BR-2512, D-139)
+    if (d.kind === "change" && d.status === "open" && d.release !== undefined && readPlan(d.body).kind === "plan" && byId.get(d.release)?.status === "dropped" && landsIn(corpus, d.release) === undefined) {
       out.push({ path: d.path, rule: "release-dropped", message: `${d.id}'s plan is tagged ${d.release}, which is dropped${hint(d.release)}` });
     }
   }

@@ -16,6 +16,7 @@ import { slugify, type Change, type Corpus } from "../../knowledge/documents/mod
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { planProblem } from "../../knowledge/plans/link.ts";
+import type { ChangeLinks } from "../../knowledge/changes/links.ts";
 import { createDoc, highestNumber } from "../../knowledge/documents/write.ts";
 import { worktreesDirOf } from "./config-keys.ts";
 import { noPort, portFor, type PortLookup } from "../hooks/ports.ts";
@@ -77,7 +78,7 @@ function startedBefore(ws: Workspace, id: string): boolean {
   return refs.ok && refs.value.trim() !== "";
 }
 
-export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] } }, say: Say, opts: { fixMain?: boolean; settles?: readonly number[] } = {}): Result<Started> {
+export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] }; links?: ChangeLinks }, say: Say, opts: { fixMain?: boolean; settles?: readonly number[] } = {}): Result<Started> {
   if (isWorker(ws.actor) && "title" in target) return workerNewWorkError();
   if ("change" in target) { const allowed = workerMayStart(ws.db, target.change.toUpperCase(), ws.actor); if (!allowed.ok) return allowed; }
   const main = ws.config.main;
@@ -168,7 +169,7 @@ export function startChore(ws: Workspace, target: { title: string } | { subject:
   return out;
 }
 
-function startWorkspace(ws: Workspace, input: { subject: string; branch: string; path: string; existing: boolean; document?: { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] } } }, say: Say): Result<Started> {
+function startWorkspace(ws: Workspace, input: { subject: string; branch: string; path: string; existing: boolean; document?: { title: string; rules?: readonly string[]; plan?: { id: string; steps: readonly string[] }; links?: ChangeLinks } }, say: Say): Result<Started> {
   const { subject: changeId, branch, path, document: target } = input;
   const main = ws.config.main;
   if (isChore(changeId)) {
@@ -236,7 +237,7 @@ function startWorkspace(ws: Workspace, input: { subject: string; branch: string;
 
   if (target !== undefined) {
     const corpus = readCorpus(path, ws.config.types, ws.config).corpus;
-    const made = createDoc(path, corpus, ws.db, ws.actor, { kind: "change", title: target.title, rules: target.rules ?? [], ...(target.plan ? { plan: target.plan } : {}), id: changeId }, ws.config.templates);
+    const made = createDoc(path, corpus, ws.db, ws.actor, { kind: "change", title: target.title, rules: target.rules ?? [], ...(target.plan ? { plan: target.plan } : {}), ...(target.links ? { links: target.links } : {}), id: changeId }, ws.config.templates);
     const commit = (file: string): Result<unknown> => {
       const a = git(path, "add", file);
       return a.ok ? git(path, "commit", "-q", "-m", `canon: open ${changeId} ${target.title}`) : a;

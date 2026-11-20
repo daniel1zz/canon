@@ -7,6 +7,7 @@ import { slugify, type Corpus, type Doc } from "./model.ts";
 import { CANON_DIR } from "./read.ts";
 import { domainReadme, templateFor } from "./templates.ts";
 import { typeNamed } from "./types.ts";
+import { linkMeta, type ChangeLinks } from "../changes/links.ts";
 
 /**
  * Creating documents is the only write canon performs on knowledge files: it allocates the id and lays
@@ -29,6 +30,8 @@ export interface NewDoc {
   readonly plan?: { readonly id: string; readonly steps: readonly string[] };
   /** quality only: its aspect, judge and what it covers (BR-2553) */
   readonly quality?: { readonly aspect: string; readonly judge: string; readonly covers: readonly string[] };
+  /** change only: its release or feature, issues and dependencies, written by the command that creates it (BR-2562) */
+  readonly links?: ChangeLinks;
   /** An id already allocated by the caller (work start allocates the change id before the worktree exists). */
   readonly id?: string;
 }
@@ -73,7 +76,7 @@ export function createDoc(root: string, corpus: Corpus, db: CoordDb, actor: stri
       type.name === "decision"
         ? { id, title, status: type.defaultStatus, supersedes: input.supersedes, ...extra }
         : type.name === "change"
-          ? { id, title, status: type.defaultStatus, rules: [...(input.rules ?? [])], ...(input.plan ? { plan: input.plan.id, steps: [...input.plan.steps] } : {}), ...extra }
+          ? { id, title, status: type.defaultStatus, rules: [...(input.rules ?? [])], ...(input.plan ? { plan: input.plan.id, steps: [...input.plan.steps] } : {}), ...(input.links ? linkMeta(input.links) : {}), ...extra }
           : type.name === "quality" && input.quality
             ? { id, title, status: type.defaultStatus, aspect: input.quality.aspect, judge: input.quality.judge, covers: [...input.quality.covers], ...extra }
             : { id, title, status: type.defaultStatus, ...extra };

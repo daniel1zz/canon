@@ -42,7 +42,7 @@ export const BUILTIN_TYPES: readonly DocType[] = [
 ];
 
 /** Front-matter keys canon itself owns; a declared field may not reuse one. */
-export const RESERVED_FIELDS = new Set(["id", "title", "status", "untested", "lists", "supersedes", "rules", "code", "passes", "release", "changed_in", "shipped_at", "plan", "steps", "links", "feature", "features", "merged_into", "owner_answers", "advances"]);
+export const RESERVED_FIELDS = new Set(["id", "title", "status", "untested", "lists", "supersedes", "rules", "code", "passes", "release", "changed_in", "shipped_at", "plan", "steps", "links", "feature", "features", "merged_into", "owner_answers", "advances", "issues", "depends_on", "done_by"]);
 
 /** Directories under canon/ that are not document types. */
 export const RESERVED_DIRS = new Set(["templates"]);

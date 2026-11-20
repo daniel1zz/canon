@@ -41,6 +41,7 @@ import { failedReviewNotice } from "../../knowledge/review/landed-queue.ts";
 import { unpushedNotice } from "../remote/remote.ts";
 import { briefLine, othersDoing, planStatuses } from "../../knowledge/plans/status.ts";
 import { briefSummary, overview } from "../overview/overview.ts";
+import { LINK_ARGS, newLinks } from "../../knowledge/changes/commands.ts";
 
 /** `canon brief` and `canon work start`, `stop`, `status`, `clean`: a session and its change's worktree. */
 
@@ -54,6 +55,7 @@ const startCmd = defineCommand({
     step: { type: "string", description: "With --plan: the plan's step names this change does, comma separated (BR-2376)" },
     "fix-main": { type: "boolean", description: "Open the one change that fixes main's failing background floor (floor_timing: after, BR-2221)" },
     settles: { type: "string", description: "Open review finding numbers this change settles, comma separated (BR-2530)" },
+    ...LINK_ARGS,
     ...AS_ARG,
   },
   run({ args }) {
@@ -66,7 +68,11 @@ const startCmd = defineCommand({
     if (planned && (args.change || !args.title || fixMain)) fail({ code: "invalid", message: "--plan and --step go with --title for a new change, not with an existing change id or --fix-main" });
     const steps = list(args.step);
     if (planned && (String(args.plan).trim() === "" || steps.length === 0)) fail({ code: "invalid", message: "--plan needs a change id and --step at least one step name" });
-    const target = typeof args.change === "string" && args.change ? { change: args.change } : { title: String(args.title), rules: list(args.rules), ...(planned ? { plan: { id: String(args.plan).trim().toUpperCase(), steps } } : {}) };
+    const linked = Object.keys(LINK_ARGS).some((k) => (args as Record<string, unknown>)[k] !== undefined);
+    if (linked && (args.change || !args.title || fixMain)) fail({ code: "invalid", message: "--release, --feature, --issue and --depends go with --title for a new change; an existing change's links are edited with canon change link (BR-2562)" });
+    // reason: checked on main, which the new branch starts from, before an id is allocated (BR-2562)
+    const links = linked ? newLinks(ws, args as Record<string, unknown>, must(mainCorpus(ws))) : undefined;
+    const target = typeof args.change === "string" && args.change ? { change: args.change } : { title: String(args.title), rules: list(args.rules), ...(planned ? { plan: { id: String(args.plan).trim().toUpperCase(), steps } } : {}), ...(links ? { links } : {}) };
     const settles = list(args.settles).map((v) => v.replace(/^#/, ""));
     if (settles.some((v) => !/^[1-9]\d*$/.test(v))) fail({ code: "invalid", message: `--settles takes review finding numbers, comma separated (got ${String(args.settles)})` });
     if (fixMain && settles.length > 0) fail({ code: "invalid", message: "--fix-main opens its own change; give no --settles with it" });
@@ -323,13 +329,15 @@ function briefState(ws: Workspace, env: Readonly<Record<string, string | undefin
       if (line) say(line);
     }
     const open = every.value.listed.filter((l) => l.change.status === "open" || (l.onBranch.length > 0 && l.change.status === "done"));
-    if (open.length) {
-      const order = open.map((l) => {
-        const marks = marksOf(l, false);
-        return marks.length ? `${l.change.id} (${marks.join(", ")})` : l.change.id;
-      });
-      say(`Open changes in the owner's order (canon change list); with no task, take the first unclaimed, not ambiguous one: ${order.join(", ")}`);
-    }
+    const shown = (l: (typeof open)[number]) => {
+      const marks = marksOf(l, false);
+      return marks.length ? `${l.change.id} (${marks.join(", ")})` : l.change.id;
+    };
+    // reason: a change waiting for its dependencies is not offered to take; it is listed apart with what it waits for (BR-2564)
+    const ready = open.filter((l) => l.waiting.length === 0);
+    const waiting = open.filter((l) => l.waiting.length > 0);
+    if (ready.length) say(`Open changes in the owner's order (canon change list); with no task, take the first unclaimed, not ambiguous one: ${ready.map(shown).join(", ")}`);
+    if (waiting.length) say(`Waiting for dependencies, not ready to start: ${waiting.map(shown).join(", ")}`);
     // The main session's due list and, in Claude Code, the standing watch; a worker runs headless and has neither (BR-2529, D-136).
     if (!isWorker(ws.actor)) for (const line of dueSection(ws, env)) say(line);
   }
