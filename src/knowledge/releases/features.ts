@@ -1,7 +1,6 @@
 import type { Change, Corpus, Feature, Release, Rule } from "../documents/model.ts";
 import type { Finding } from "../check/check.ts";
-import { criteriaOf } from "./criteria.ts";
-import { readPlan } from "../plans/parse.ts";
+import { criteriaOf, criterionItems } from "./criteria.ts";
 
 /** A release is made of the features it lists (D-130); these say which rules belong to it through them. */
 
@@ -84,12 +83,39 @@ export function compositionFindings(corpus: Corpus): Finding[] {
       if (d.release !== undefined && byId.get(d.release)?.status === "dropped" && landsIn(corpus, d.release) === undefined) out.push({ path: d.path, rule: "release-dropped", message: `${d.id} is tagged ${d.release}, which is dropped${hint(d.release)}` });
       if (d.feature !== undefined && features.get(d.feature)?.status === "dropped") out.push({ path: d.path, rule: "release-dropped", message: `${d.id} is attached to ${d.feature}, which is dropped: attach it to another feature, or retire it` });
     }
-    // reason: only an open plan change is held to its release here; a change's own release is a link, not refused (BR-2512, D-139)
-    if (d.kind === "change" && d.status === "open" && d.release !== undefined && readPlan(d.body).kind === "plan" && byId.get(d.release)?.status === "dropped" && landsIn(corpus, d.release) === undefined) {
-      out.push({ path: d.path, rule: "release-dropped", message: `${d.id}'s plan is tagged ${d.release}, which is dropped${hint(d.release)}` });
-    }
   }
   return out;
+}
+
+/**
+ * The `canon check` hints for open changes linked to a release dropped with nowhere to go or to a dropped feature
+ * (BR-2512): a link is where the workload is counted, not a release condition, so it is said, never refused (D-139, D-151).
+ */
+export function changeLinkHints(corpus: Corpus): string[] {
+  const byId = new Map(corpus.docs.filter((d): d is Release => d.kind === "release").map((r) => [r.id, r]));
+  const dropped = new Set(corpus.docs.filter((d): d is Feature => d.kind === "feature" && d.status === "dropped").map((f) => f.id));
+  return corpus.docs
+    .filter((d): d is Change => d.kind === "change" && d.status === "open")
+    .sort((a, b) => num(a.id) - num(b.id))
+    .flatMap((c) => {
+      if (c.release !== undefined && byId.get(c.release)?.status === "dropped" && landsIn(corpus, c.release) === undefined) {
+        const into = byId.get(c.release)?.mergedInto;
+        return [`hint change-link-dropped: ${c.id} is linked to ${c.release}, which is dropped${into ? `; it went into ${into}: link ${into} instead (canon change link ${c.id} --release ${into})` : `: link it to another release or feature, or drop it`} (BR-2512)`];
+      }
+      if (c.feature !== undefined && dropped.has(c.feature)) return [`hint change-link-dropped: ${c.id} is linked to ${c.feature}, which is dropped: link it to another feature or release, or drop it (BR-2512)`];
+      return [];
+    });
+}
+
+/** The `canon check` hint for list items in ## 成功标准 without an id, which are not criteria (BR-2566, BR-2504); undefined when there are none. */
+export function unnumberedHint(corpus: Corpus): string | undefined {
+  const docs = corpus.docs
+    .filter((d): d is Release | Feature => (d.kind === "release" || d.kind === "feature") && d.status !== "dropped")
+    .sort((a, b) => (a.kind === b.kind ? num(a.id) - num(b.id) : a.kind === "release" ? -1 : 1))
+    .map((d) => ({ id: d.id, n: criterionItems(d.body).filter((i) => i.id === undefined).length }))
+    .filter((x) => x.n > 0);
+  if (docs.length === 0) return undefined;
+  return `hint criteria-unnumbered: list items in ## 成功标准 without an S<k> id are not success criteria (BR-2504): ${docs.map((x) => `${x.id} (${x.n})`).join(", ")}; give each criterion its id and move the rest out of the list: canon release migrate-criteria`;
 }
 
 /** The `canon check` hints for planned releases whose rules already passed (BR-2514). */
@@ -118,7 +144,7 @@ export function criteriaFindings(corpus: Corpus): Finding[] {
   for (const [id, criteria] of byDoc) {
     const seen = new Set<string>();
     const doubled = new Set<string>();
-    for (const c of criteria) if (c.id !== undefined) (seen.has(c.id) ? doubled : seen).add(c.id);
+    for (const c of criteria) (seen.has(c.id) ? doubled : seen).add(c.id);
     const doc = corpus.docs.find((d) => d.id === id)!;
     for (const d of doubled) out.push({ path: doc.path, rule: "file-invalid", message: `${id} has success criterion ${d} more than once: each id names one criterion of the document (BR-2516)` });
   }

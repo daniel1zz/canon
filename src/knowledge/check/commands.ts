@@ -8,7 +8,7 @@ import { designBasisNote } from "./design-basis/design-basis.ts";
 import { reportsFor } from "../../work/verify/changes.ts";
 import { architectureBase, changeIdsOnBranches, listedBefore } from "../../work/session/inflight.ts";
 import { budgetHint, sessionText, sizeLines } from "./session-text.ts";
-import { plannedHints } from "../releases/features.ts";
+import { changeLinkHints, plannedHints, unnumberedHint } from "../releases/features.ts";
 import { REVIEW_NONE } from "../review/config-keys.ts";
 import { reviewSettingsOn } from "../../work/land/checks/review-scope.ts";
 import { thisWorkChanges } from "../review/preview.ts";
@@ -74,6 +74,10 @@ const checkCmd = defineCommand({
     if (hint) console.error(hint);
     // A planned release whose rules already passed is said, never a failure (BR-2514, D-130).
     for (const line of plannedHints(read.corpus)) console.error(line);
+    // reason: links to a dropped release or feature and unnumbered criteria are said, never refused (BR-2512, BR-2566, D-139)
+    for (const line of changeLinkHints(read.corpus)) console.error(line);
+    const unnumbered = unnumberedHint(read.corpus);
+    if (unnumbered) console.error(unnumbered);
     // reason: a domain close to review_max_prompt_kb is said before a change to it is refused, and never fails the check (BR-2375, D-76, #145)
     // reason: in a worktree the landing's settings are main's (BR-2074) and this work's changed documents are counted, found as the landing finds them (BR-2375)
     const review = reviewSizeSettings(ws);

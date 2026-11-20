@@ -188,25 +188,23 @@ describe("canon release ship: what must be passed", () => {
     expect(agent(shippedRoot, "release", "ship", R(1)).code).toBe(5);
   });
 
-  test("BR-2333: a plan tagged with the release blocks shipping until all its steps are done, naming the steps not done", () => {
+  test("BR-2333: neither a plan not done nor an open linked change blocks shipping: past the rules, the owner's yes is what is missing", () => {
     const plan = "| 步骤 | 内容 | 依赖 |\n|---|---|---|\n| 1 | 建表 | - |\n| 2 | 接口 | 1 |\n| 3 | 界面 | 1 |\n| 4 | 联调 | 2, 3 |\n";
     const change = (n: number, status: string, front: string, body = "") => `---\nid: ${C(n)}\ntitle: 变更${n}\nstatus: ${status}\nrules: []\n${front}---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n${body}## 任务\n\n- [x] x\n`;
-    const files = (done: string) => ({
+    const files = {
       [`canon/changes/${C(5)}.md`]: change(5, "open", `release: ${R(1)}\n`, `## 计划\n\n${plan}\n`),
-      [`canon/changes/${C(6)}.md`]: change(6, "done", `plan: ${C(5)}\nsteps: [${done}]\n`),
-    });
-    const half = agent(fixture(files("1, 2")), "release", "ship", R(1));
+      [`canon/changes/${C(6)}.md`]: change(6, "done", `plan: ${C(5)}\nsteps: [1, 2]\n`),
+      [`canon/changes/${C(8)}.md`]: change(8, "open", `release: ${R(1)}\n`),
+    };
+    const half = agent(fixture(files), "release", "ship", R(1));
     expect(half.code).toBe(1);
-    expect(half.err).toContain(`plan ${C(5)} 变更5: 已完成 2/4; not done: 3, 4`);
-    expect(half.err).not.toContain("canon human ask"); // the plans come before the owner's yes, like the rules
-    const both = agent(fixture({ ...files("1, 2"), [`canon/rules/billing/${BR(3)}.md`]: ruleText(3, `release: ${R(1)}\n`, "planned") }), "release", "ship", R(1));
-    expect(both.code).toBe(1);
-    expect(both.err.indexOf(`${BR(3)} 规则3: 规划中`)).toBeGreaterThanOrEqual(0);
-    expect(both.err.indexOf(`plan ${C(5)}`)).toBeGreaterThan(both.err.indexOf(`${BR(3)} 规则3`)); // rules first, then plans
-    expect(both.err).not.toContain("canon human ask");
-    const all = agent(fixture(files("1, 2, 3, 4")), "release", "ship", R(1));
-    expect(all.err).not.toContain(`plan ${C(5)}`);
-    expect(all.err).toContain("canon human ask"); // past the blockers: the owner's yes is what is missing now
+    expect(half.err).not.toContain(`plan ${C(5)}`);
+    expect(half.err).not.toContain(C(8));
+    expect(half.err).toContain("canon human ask"); // past the blockers: the owner's yes is what is missing now
+    const rule = agent(fixture({ ...files, [`canon/rules/billing/${BR(3)}.md`]: ruleText(3, `release: ${R(1)}\n`, "planned") }), "release", "ship", R(1));
+    expect(rule.code).toBe(1);
+    expect(rule.err).toContain(`${BR(3)} 规则3: 规划中`);
+    expect(rule.err).not.toContain("canon human ask");
   });
 
   test("BR-2333: a retired tagged rule does not block", () => {

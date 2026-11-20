@@ -115,10 +115,10 @@ export function checkGoal(ws: Workspace, input: string, runtime: AgentRuntime, c
     return { systemMessage: `goal: ${STALL_LIMIT} continuations in a row without progress; stopping, the goal stays (canon goal stop ends it)` };
   }
   ws.db.db.query("UPDATE goals SET marker = ?, stalls = ? WHERE actor = ?").run(marker, stalls, actor);
-  const goalRefs = new Set(all.filter((x) => x.c.id !== undefined).map((x) => `${x.doc}/${x.c.id}`));
+  const goalRefs = new Set(all.map((x) => `${x.doc}/${x.c.id}`));
   const recent = landed(ws, corpus.value).slice(0, DRIFT_WINDOW);
   const drift = recent.filter((l) => l.advances?.kind !== "criteria" || !l.advances.refs.some((r) => goalRefs.has(r))).length;
-  const line = (x: { doc: string; c: CriterionView }) => `- ${x.doc}/${x.c.id ?? "-"} [${CRITERION_LABEL[x.c.state]}] ${x.c.text}${x.c.advancedBy.length > 0 ? `  (advanced by ${x.c.advancedBy.join(", ")})` : ""}`;
+  const line = (x: { doc: string; c: CriterionView }) => `- ${x.doc}/${x.c.id} [${CRITERION_LABEL[x.c.state]}] ${x.c.text}${x.c.advancedBy.length > 0 ? `  (advanced by ${x.c.advancedBy.join(", ")})` : ""}`;
   const reason = [
     `Goal (canon goal): ${names} not reached: ${open.length} success criteria still unmet or unproven.`,
     ...open.slice(0, NAMED).map(line),

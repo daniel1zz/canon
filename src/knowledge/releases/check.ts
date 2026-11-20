@@ -1,6 +1,5 @@
 import { parseDocFile } from "../documents/docfile.ts";
 import type { Change, Corpus, Release, Rule } from "../documents/model.ts";
-import { readPlan } from "../plans/parse.ts";
 import { section } from "../documents/templates.ts";
 import { git } from "../../kernel/git.ts";
 import type { Finding } from "../check/check.ts";
@@ -34,8 +33,6 @@ export function releaseFindings(root: string, corpus: Corpus): Finding[] {
   for (const change of tagged) {
     if (!corpus.docs.some((d) => d.id === change.release)) out.push({ path: change.path, rule: "ref-dangling", message: `${change.id} \`release\` names ${change.release!}, which does not exist` });
   }
-  // reason: a change without a plan may name its own release (BR-2561, D-148); only the plans of a shipped release are frozen (BR-2386)
-  const plans = tagged.filter((c) => readPlan(c.body).kind === "plan");
   for (const rule of rules) {
     if (rule.feature === undefined) continue;
     if (!corpus.docs.some((d) => d.id === rule.feature)) out.push({ path: rule.path, rule: "ref-dangling", message: `${rule.id} \`feature\` names ${rule.feature}, which does not exist` });
@@ -46,25 +43,7 @@ export function releaseFindings(root: string, corpus: Corpus): Finding[] {
     }
   }
   out.push(...compositionFindings(corpus), ...criteriaFindings(corpus));
-  for (const release of corpus.docs.filter((d): d is Release => d.kind === "release" && d.status === "shipped")) out.push(...frozenFindings(root, release, rules, corpus), ...frozenPlans(root, release, plans, corpus));
-  return out;
-}
-
-/** A shipped release's set of plans does not change either: the plan changes tagged with it at `shipped_at` (D-79, like BR-2326 for rules). */
-function frozenPlans(root: string, release: Release, tagged: readonly Change[], corpus: Corpus): Finding[] {
-  const at = release.shippedAt!;
-  // reason: a shipped_at the repository does not know is reported once, by the release's own freeze check (BR-2325)
-  if (!git(root, "cat-file", "-e", `${at}^{commit}`).ok) return [];
-  const then = taggedAt(root, at, "release", release.id, "canon/changes");
-  if (typeof then === "string") return [{ path: release.path, rule: "release-frozen", message: then }];
-  const out: Finding[] = [];
-  for (const id of then) {
-    const now = corpus.docs.find((d): d is Change => d.kind === "change" && d.id === id);
-    if (now && readPlan(now.body).kind === "plan" && now.release !== release.id) out.push({ path: now.path, rule: "release-frozen", message: `${id}'s plan was tagged ${release.id} when it shipped (${at.slice(0, 9)}); its \`release\` is ${now.release ?? "gone"} now, and the plans of a shipped release do not change (D-79)` });
-  }
-  for (const change of tagged) {
-    if (change.release === release.id && !then.has(change.id)) out.push({ path: change.path, rule: "release-frozen", message: `${change.id}'s plan is tagged ${release.id}, but it was not when ${release.id} shipped (${at.slice(0, 9)}); a plan added to a shipped release changes what shipped: tag it with a later release (D-79)` });
-  }
+  for (const release of corpus.docs.filter((d): d is Release => d.kind === "release" && d.status === "shipped")) out.push(...frozenFindings(root, release, rules, corpus));
   return out;
 }
 

@@ -66,8 +66,8 @@ describe("canon release status", () => {
     expect(r.code).toBe(0);
     const lines = r.out.trim().split("\n");
     expect(lines).toHaveLength(2);
-    expect(lines[0]!.replace(/\s+/g, " ")).toBe(`${R(1)} shipped 版本1 规划中 0 已通过 3 待 main 测试 0 待重新执行 0 发布后又改了 1`);
-    expect(lines[1]!.replace(/\s+/g, " ")).toBe(`${R(2)} active 版本2 规划中 1 已通过 0 待 main 测试 0 待重新执行 1`);
+    expect(lines[0]!.replace(/\s+/g, " ")).toBe(`${R(1)} shipped 版本1 规划中 0 已通过 3 待 main 测试 0 待重新执行 0 发布后又改了 1 成功标准 已满足 0/0 变更 已合入 0 进行中 0 在等 0 可开始 0 完成`);
+    expect(lines[1]!.replace(/\s+/g, " ")).toBe(`${R(2)} active 版本2 规划中 1 已通过 0 待 main 测试 0 待重新执行 1 成功标准 已满足 0/0 变更 已合入 0 进行中 0 在等 0 可开始 0 未完成`);
   });
 
   test("BR-2328: --json has one object per release with counts keyed by state, shipped_at null when not shipped", () => {
@@ -142,23 +142,78 @@ const commitAll = (root: string, msg: string) => {
   sh(root, "commit", "-qm", msg);
 };
 
-describe("plans tagged with a release", () => {
-  test("BR-2328: a plan tagged with a release adds its progress after the counts, and --json a plans array; other releases are unchanged", () => {
+const criteriaRelease = (n: number, status: string, criteria: string, extra = "") =>
+  `---\nid: ${R(n)}\ntitle: 版本${n}\nstatus: ${status}\n${extra}---\n\n${SECTIONS.map((x) => `## ${x}\n\n${x === "成功标准" ? criteria : "内容"}\n`).join("\n")}`;
+
+describe("progress: rules and criteria decide done, linked changes are workload", () => {
+  test("BR-2328 BR-2568: the line adds the criteria met, the workload of linked changes and done; a plan's steps are not shown", () => {
     const root = fixture();
     write(root, {
-      [`canon/changes/${C(5)}.md`]: changeText(5, "open", `release: ${R(2)}\n`, PLAN4),
-      [`canon/changes/${C(6)}.md`]: changeText(6, "done", `plan: ${C(5)}\nsteps: [1]\n`),
+      [`canon/releases/${R(2)}.md`]: criteriaRelease(2, "active", `- S1 能存档。（已满足：${C(7)}）\n- S2 能读档。\n- 验收方式：自己验收。`),
+      [`canon/changes/${C(5)}.md`]: changeText(5, "done", `release: ${R(2)}\n`),
+      [`canon/changes/${C(6)}.md`]: changeText(6, "open", `release: ${R(2)}\n`, PLAN4),
     });
-    commitAll(root, "plan");
+    commitAll(root, "links");
     const lines = canon(root, "release", "status").out.trim().split("\n").map((l) => l.replace(/\s+/g, " "));
-    expect(lines[1]).toBe(`${R(2)} active 版本2 规划中 1 已通过 0 待 main 测试 0 待重新执行 1 计划 ${C(5)} 已完成 1/4 (25%)`);
-    expect(lines[0]).toBe(`${R(1)} shipped 版本1 规划中 0 已通过 3 待 main 测试 0 待重新执行 0 发布后又改了 1`);
-    const j = JSON.parse(canon(root, "release", "status", "--json").out) as { id: string; plans?: unknown }[];
-    expect(j[1]!.plans).toEqual([{ id: C(5), title: "变更5", total: 4, done: 1, percent: 25 }]);
-    expect(j[0]).not.toHaveProperty("plans");
-    expect(canon(root, "release", "status", R(2)).out.split("\n")[0]!.replace(/\s+/g, " ")).toContain(`计划 ${C(5)} 已完成 1/4 (25%)`);
-    write(root, { [`canon/changes/${C(5)}.md`]: changeText(5, "open", `release: ${R(2)}\n`, "| 步骤 | 内容 | 依赖 |\n|---|---|---|\n| 1 | a | - |\n| 2 | b | - |\n| 3 | c | - |\n") });
-    expect(canon(root, "release", "status").out).toContain(`计划 ${C(5)} 已完成 1/3 (33%)`); // rounded down
+    expect(lines[1]).toBe(`${R(2)} active 版本2 规划中 1 已通过 0 待 main 测试 0 待重新执行 1 成功标准 已满足 1/2 变更 已合入 1 进行中 0 在等 0 可开始 1 未完成`);
+    expect(lines.join("\n")).not.toContain("计划");
+    const j = JSON.parse(canon(root, "release", "status", "--json").out) as Record<string, unknown>[];
+    expect(j[1]).toMatchObject({ criteria: { met: 1, unmet: 0, owner: 0, unproven: 1 }, changes: { landed: 1, in_progress: 0, waiting: 0, ready: 1 }, done: false });
+    expect(j[1]).not.toHaveProperty("plans");
+    expect(j[0]).toMatchObject({ done: true });
+  });
+
+  test("BR-2568: done needs every rule passed and every criterion met, whatever the changes; nothing to judge is not done", () => {
+    const root = fixture();
+    // R-1: its rules all passed; a met criterion keeps it done, an unproven one does not; open linked changes do not matter
+    write(root, {
+      [`canon/releases/${R(1)}.md`]: criteriaRelease(1, "shipped", `- S1 甲（已满足：${C(7)}）`, `shipped_at: ${"a".repeat(40)}\n`),
+      [`canon/changes/${C(5)}.md`]: changeText(5, "open", `release: ${R(1)}\n`),
+      [`canon/releases/${R(3)}.md`]: releaseFile(3, "planned"),
+    });
+    commitAll(root, "done");
+    const done = (n: number) => (JSON.parse(canon(root, "release", "status", R(n), "--json").out) as { done: boolean }).done;
+    expect(done(1)).toBe(true);
+    expect(done(3)).toBe(false); // no rule and no criterion
+    write(root, { [`canon/releases/${R(1)}.md`]: criteriaRelease(1, "shipped", `- S1 甲（已满足：${C(7)}）\n- S2 乙`, `shipped_at: ${"a".repeat(40)}\n`) });
+    expect(done(1)).toBe(false);
+  });
+
+  test("BR-2329: a release lists its criteria after its rules, its own then its features', each with its state", () => {
+    const root = fixture();
+    write(root, {
+      [`canon/releases/${R(2)}.md`]: criteriaRelease(2, "active", `- S1 能存档。（已满足：${C(7)}）`, `features: [${id("F", 1)}]\n`),
+      [`canon/features/${id("F", 1)}.md`]: `---\nid: ${id("F", 1)}\ntitle: 读档\nstatus: active\n---\n\n## 目标\n\nx\n\n## 范围\n\nx\n\n## 不做\n\nx\n\n## 成功标准\n\n- S1 能读档。\n`,
+    });
+    const out = canon(root, "release", "status", R(2)).out.trim().split("\n");
+    expect(out.slice(-2)).toEqual([`  ${R(2)}/S1 已满足 能存档。`, `  ${id("F", 1)}/S1 未证明 能读档。`]);
+    const j = JSON.parse(canon(root, "release", "status", R(2), "--json").out) as { criteria_list: unknown[] };
+    expect(j.criteria_list).toEqual([{ doc: R(2), id: "S1", text: "能存档。", state: "met", evidence: [C(7)] }, { doc: id("F", 1), id: "S1", text: "能读档。", state: "unproven", evidence: [] }]);
+  });
+
+  test("BR-2569: canon feature status gives each active feature's rules, criteria, workload and done; one feature in detail; not a feature is exit 3", () => {
+    const root = fixture();
+    const F = (n: number) => id("F", n);
+    const feature = (n: number, status: string, criteria: string) => `---\nid: ${F(n)}\ntitle: 模块${n}\nstatus: ${status}\n---\n\n## 目标\n\nx\n\n## 范围\n\nx\n\n## 不做\n\nx\n\n## 成功标准\n\n${criteria}\n`;
+    write(root, {
+      [`canon/features/${F(1)}.md`]: feature(1, "active", `- S1 甲（已满足：${C(7)}）\n- S2 乙`),
+      [`canon/features/${F(2)}.md`]: feature(2, "dropped", "- S1 丙"),
+      [`canon/rules/billing/${BR(9)}.md`]: ruleText(9, `feature: ${F(1)}\n`),
+      [`canon/rules/billing/${BR(10)}.md`]: ruleText(10, `feature: ${F(1)}\n`, "planned"),
+      [`canon/changes/${C(5)}.md`]: changeText(5, "done", `feature: ${F(1)}\n`),
+    });
+    commitAll(root, "features");
+    const r = canon(root, "feature", "status");
+    expect(r.code).toBe(0);
+    expect(r.out.trim().split("\n").map((l) => l.replace(/\s+/g, " "))).toEqual([`${F(1)} active 模块1 规划中 1 已通过 1 待 main 测试 0 待重新执行 0 成功标准 已满足 1/2 变更 已合入 1 进行中 0 在等 0 可开始 0 未完成`]);
+    const one = canon(root, "feature", "status", F(1)).out.trim().split("\n");
+    expect(one.slice(1)).toEqual([`  规划中: ${BR(10)}`, `  已通过: ${BR(9)} (${C(7)})`, `  ${F(1)}/S1 已满足 甲`, `  ${F(1)}/S2 未证明 乙`]);
+    expect(canon(root, "feature", "status", F(2)).code).toBe(0);
+    const j = JSON.parse(canon(root, "feature", "status", "--json").out) as Record<string, unknown>[];
+    expect(j).toHaveLength(1);
+    expect(j[0]).toMatchObject({ id: F(1), done: false, criteria: { met: 1 }, changes: { landed: 1 } });
+    for (const target of [F(9), R(1)]) expect([canon(root, "feature", "status", target).code, canon(root, "feature", "status", target).out]).toEqual([3, ""]);
+    expect(canon(project(), "feature", "status").out.trim()).toBe("(no features)");
   });
 
   test("BR-2386 BR-2561: release on a change names an existing release, with or without a plan; a bad id is file-invalid", () => {
@@ -177,7 +232,7 @@ describe("plans tagged with a release", () => {
     expect(out).toMatch(new RegExp(`file-invalid\\s+canon/changes/${C(11)}\\.md: .*must be one release id`));
   });
 
-  test("BR-2386: a shipped release keeps its plans: a plan retagged or newly tagged after shipping is release-frozen, an unchanged one is not", () => {
+  test("BR-2386: shipping freezes no plan: a plan retagged or newly tagged after shipping is no finding", () => {
     const root = project();
     write(root, {
       [`canon/releases/${R(1)}.md`]: releaseFile(1, "active"),
@@ -190,14 +245,45 @@ describe("plans tagged with a release", () => {
     const at = sh(root, "rev-parse", "HEAD").trim();
     write(root, { [`canon/releases/${R(1)}.md`]: releaseFile(1, "shipped", `shipped_at: ${at}\n`) });
     commitAll(root, "shipped");
-    expect(canon(root, "check").out).not.toContain("release-frozen");
     write(root, {
       [`canon/changes/${C(2)}.md`]: changeText(2, "open", `release: ${R(2)}\n`, PLAN4),
       [`canon/changes/${C(3)}.md`]: changeText(3, "open", `release: ${R(1)}\n`, PLAN4),
     });
-    const out = canon(root, "check").out;
-    expect(out).toMatch(new RegExp(`release-frozen\\s+canon/changes/${C(2)}\\.md: ${C(2)}'s plan was tagged ${R(1)}`));
-    expect(out).toMatch(new RegExp(`release-frozen\\s+canon/changes/${C(3)}\\.md: ${C(3)}'s plan is tagged ${R(1)}, but it was not`));
-    expect(out).not.toMatch(new RegExp(`release-frozen\\s+canon/changes/${C(1)}\\.md`));
+    expect(canon(root, "check").out).not.toContain("release-frozen");
+  });
+});
+
+describe("canon release migrate-criteria", () => {
+  test("BR-2567: prints what it would do, writes with --write, moves --note items out of the list; again is nothing to migrate", () => {
+    const root = fixture();
+    write(root, { [`canon/releases/${R(2)}.md`]: criteriaRelease(2, "active", "- S1 甲\n- 乙（未满足）\n- 验收方式：自己验收。") });
+    commitAll(root, "old criteria");
+    const dry = canon(root, "release", "migrate-criteria");
+    expect(dry.code).toBe(0);
+    expect(dry.out).toContain(`${R(2)}: 2 list item(s) without an id\n  ${R(2)}#2 → S2  乙（未满足）\n  ${R(2)}#3 → S3  验收方式：自己验收。\n`);
+    expect(sh(root, "status", "--porcelain").trim()).toBe("");
+    for (const bad of [`${R(2)}#1`, `${R(2)}-3`]) {
+      const r = canon(root, "release", "migrate-criteria", "--write", "--note", bad);
+      expect(r.code).toBe(2);
+      expect(sh(root, "status", "--porcelain").trim()).toBe("");
+    }
+    expect(canon(root, "release", "migrate-criteria", BR(3)).code).toBe(3);
+    const w = canon(root, "release", "migrate-criteria", R(2), "--write", "--note", `${R(2)}#3`);
+    expect(w.code).toBe(0);
+    expect(w.out).toContain(`${R(2)}: numbered S2; moved 1 item(s) out of the list (canon/releases/${R(2)}.md; commit it with your change)`);
+    expect(canon(root, "show", R(2)).out).toContain("## 成功标准\n\n- S1 甲\n- S2 乙（未满足）\n\n验收方式：自己验收。\n");
+    expect(canon(root, "release", "migrate-criteria").out.trim()).toBe("nothing to migrate");
+  });
+
+  test("BR-2566: canon check names the documents with unnumbered items in one hint and keeps its exit code; dropped ones and numbered items are not counted", () => {
+    const root = fixture();
+    write(root, {
+      [`canon/releases/${R(2)}.md`]: criteriaRelease(2, "active", "- S1 甲\n- 验收方式：自己验收。\n- 乙（未满足）\n  - 子项"),
+      [`canon/releases/${R(3)}.md`]: criteriaRelease(3, "dropped", "- 丙"),
+    });
+    const r = canon(root, "check");
+    expect(r.err).toContain(`hint criteria-unnumbered: list items in ## 成功标准 without an S<k> id are not success criteria (BR-2504): ${R(2)} (2); give each criterion its id and move the rest out of the list: canon release migrate-criteria`);
+    const clean = fixture();
+    expect([canon(clean, "check").err.includes("criteria-unnumbered"), canon(clean, "check").code]).toEqual([false, r.code]);
   });
 });

@@ -23,7 +23,7 @@ function write(root: string, files: Record<string, string>) {
 const SECTIONS = (criteria: string) => ["目标", "用户", "范围", "不做"].map((s) => `## ${s}\n\n内容\n`).join("\n") + `\n## 成功标准\n\n${criteria}\n\n## 故事地图切片\n\n内容\n`;
 const release = (n: number, front: string, criteria: string) => `---\nid: ${R(n)}\ntitle: 版本${n}\n${front}---\n\n${SECTIONS(criteria)}`;
 const feature = (n: number) => `---\nid: ${F(n)}\ntitle: 模块${n}\nstatus: active\n---\n\n${["目标", "范围", "不做", "成功标准"].map((s) => `## ${s}\n\n内容\n`).join("\n")}`;
-const CRITERIA = "- 负责人玩通主线。（待负责人）\n- 没人解释也能玩。";
+const CRITERIA = "- S1 负责人玩通主线。（待负责人）\n- S2 没人解释也能玩。";
 const R5 = (front = `status: active\nfeatures: [${F(1)}, ${F(2)}]\n`, criteria = CRITERIA) => release(5, front, criteria);
 
 function fixture(): string {
@@ -60,20 +60,20 @@ async function attempt(root: string, title: string, files: Record<string, string
 
 const reasonOf = (o: Awaited<ReturnType<typeof land>>) => (o.kind === "refused" ? o.reason : o.kind);
 const messageOf = (o: Awaited<ReturnType<typeof land>>) => (o.kind === "refused" ? o.message : "");
-const ACCEPTED = `- 负责人玩通主线。（已满足：${F(1)}）\n- 没人解释也能玩。`;
+const ACCEPTED = `- S1 负责人玩通主线。（已满足：${F(1)}）\n- S2 没人解释也能玩。`;
 
 describe("the goal: the AI may change it, the owner sees it", () => {
   test("BR-2510: an added criterion, a feature added and a drop land without the owner and list each change; marks and a reorder list nothing", async () => {
     const root = fixture();
-    const added = await attempt(root, "加标准", { [`canon/releases/${R(5)}.md`]: R5(undefined, `${CRITERIA}\n- 支持手柄。`) });
+    const added = await attempt(root, "加标准", { [`canon/releases/${R(5)}.md`]: R5(undefined, `${CRITERIA}\n- S3 支持手柄。`) });
     expect(reasonOf(added.outcome)).toBe("landed");
     expect(added.said).toContain(`goal: ${added.change} changes the goal:`);
     expect(added.said).toMatch(new RegExp(`${R(5)}: success criterion added or reworded: 支持手柄`));
-    const more = await attempt(root, "加模块", { [`canon/releases/${R(5)}.md`]: R5(`status: active\nfeatures: [${F(1)}, ${F(2)}, ${F(3)}]\n`, `${CRITERIA}\n- 支持手柄。`) });
+    const more = await attempt(root, "加模块", { [`canon/releases/${R(5)}.md`]: R5(`status: active\nfeatures: [${F(1)}, ${F(2)}, ${F(3)}]\n`, `${CRITERIA}\n- S3 支持手柄。`) });
     expect([reasonOf(more.outcome), more.said.includes(`features [${F(1)}, ${F(2)}] → [${F(1)}, ${F(2)}, ${F(3)}]`)]).toEqual(["landed", true]);
     const dropped = await attempt(root, "取消", { [`canon/releases/${R(6)}.md`]: release(6, `status: dropped\nmerged_into: ${R(5)}\n`, "- 内容") });
     expect([reasonOf(dropped.outcome), dropped.said.includes(`${R(6)}: status planned → dropped`)]).toEqual(["landed", true]);
-    const marks = await attempt(root, "标记和换顺序", { [`canon/releases/${R(5)}.md`]: R5(`status: active\nfeatures: [${F(3)}, ${F(2)}, ${F(1)}]\n`, `- 负责人玩通主线。（待负责人）\n- 没人解释也能玩。（未满足：还差引导）\n- 支持手柄。`) });
+    const marks = await attempt(root, "标记和换顺序", { [`canon/releases/${R(5)}.md`]: R5(`status: active\nfeatures: [${F(3)}, ${F(2)}, ${F(1)}]\n`, `- S1 负责人玩通主线。（待负责人）\n- S2 没人解释也能玩。（未满足：还差引导）\n- S3 支持手柄。`) });
     expect([reasonOf(marks.outcome), marks.said.includes("goal:")]).toEqual(["landed", false]);
   });
 
@@ -86,9 +86,9 @@ describe("the goal: the AI may change it, the owner sees it", () => {
     expect(reasonOf((await attempt(root, "验收 2", accept, () => `[${old}]`)).outcome)).toBe("release");
     const pending = await attempt(root, "验收 3", accept, (c) => `[${question(root, c, false)}]`);
     expect(reasonOf(pending.outcome)).toBe("release");
-    const reworded = await attempt(root, "改字验收", { [`canon/releases/${R(5)}.md`]: R5(undefined, `- 负责人玩通了主线。（已满足：${F(1)}）\n- 没人解释也能玩。`) });
+    const reworded = await attempt(root, "改字验收", { [`canon/releases/${R(5)}.md`]: R5(undefined, `- S1 负责人玩通了主线。（已满足：${F(1)}）\n- S2 没人解释也能玩。`) });
     expect(reasonOf(reworded.outcome)).toBe("release");
-    const removed = await attempt(root, "删掉", { [`canon/releases/${R(5)}.md`]: R5(undefined, "- 没人解释也能玩。") });
+    const removed = await attempt(root, "删掉", { [`canon/releases/${R(5)}.md`]: R5(undefined, "- S2 没人解释也能玩。") });
     expect(reasonOf(removed.outcome)).toBe("release");
     const yes = await attempt(root, "验收 4", accept, (c) => `[${question(root, c, true)}]`);
     expect(reasonOf(yes.outcome)).toBe("landed");
@@ -98,7 +98,7 @@ describe("the goal: the AI may change it, the owner sees it", () => {
     const root = fixture();
     const c = startChore(ws(root), { title: "顺手改字" }, quiet);
     if (!c.ok) throw new Error(c.error.message);
-    write(c.value.worktree, { [`canon/releases/${R(5)}.md`]: R5(undefined, "- 负责人玩通全部主线。（待负责人）\n- 没人解释也能玩。") });
+    write(c.value.worktree, { [`canon/releases/${R(5)}.md`]: R5(undefined, "- S1 负责人玩通全部主线。（待负责人）\n- S2 没人解释也能玩。") });
     sh(c.value.worktree, "add", "-A");
     sh(c.value.worktree, "commit", "-qm", "chore");
     const o = await land(ws(c.value.worktree), FAST, quiet);

@@ -134,7 +134,7 @@ describe("release start and drop", () => {
 });
 
 describe("what a release is made of", () => {
-  test("BR-2512: missing, dropped or doubly listed features, and rules or open plans naming a dropped release or feature, are findings", () => {
+  test("BR-2512: missing, dropped or doubly listed features, and rules naming a dropped release or feature, are findings", () => {
     const root = project();
     const sha = sh(root, "rev-parse", "HEAD").trim();
     write(root, {
@@ -160,6 +160,30 @@ describe("what a release is made of", () => {
     expect(has("release-dropped", `${BR(8)}.md`, F(2))).toBe(true);
     expect(got.some((f) => f.path.endsWith(`${BR(9)}.md`))).toBe(false);
     expect(got.some((f) => f.path.endsWith(`${R(1)}.md`) || f.path.endsWith(`${R(3)}.md`))).toBe(false);
+  });
+
+  test("BR-2512: an open change, with a plan or without, linked to a release dropped with nowhere to go or to a dropped feature is a hint, not a finding", () => {
+    const root = project();
+    const change = (n: number, status: string, front: string, body = "") => `---\nid: ${C(n)}\ntitle: 变更${n}\nstatus: ${status}\nrules: []\n${front}---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n${body}`;
+    const plan = "## 计划\n\n| 步骤 | 内容 | 依赖 |\n|---|---|---|\n| 1 | 建表 | - |\n";
+    write(root, {
+      ...DOMAIN,
+      [`canon/features/${F(2)}.md`]: feature(2, "dropped"),
+      [`canon/releases/${R(3)}.md`]: release(3, "status: dropped\n"),
+      [`canon/releases/${R(4)}.md`]: release(4, "status: active\n"),
+      [`canon/changes/${C(4)}.md`]: change(4, "open", `release: ${R(3)}\n`, plan),
+      [`canon/changes/${C(5)}.md`]: change(5, "open", `feature: ${F(2)}\n`),
+      [`canon/changes/${C(6)}.md`]: change(6, "done", `release: ${R(3)}\n`),
+      [`canon/changes/${C(7)}.md`]: change(7, "open", `release: ${R(4)}\n`),
+    });
+    expect(findings(root).filter((f) => f.path.includes("canon/changes/"))).toEqual([]);
+    const r = canon(root, "check");
+    expect(r.err).toContain(`hint change-link-dropped: ${C(4)} is linked to ${R(3)}, which is dropped`);
+    expect(r.err).toContain(`hint change-link-dropped: ${C(5)} is linked to ${F(2)}, which is dropped`);
+    expect(r.err).not.toContain(`${C(6)} is linked`);
+    expect(r.err).not.toContain(`${C(7)} is linked`);
+    write(root, { [`canon/releases/${R(3)}.md`]: release(3, `status: dropped\nmerged_into: ${R(4)}\n`) });
+    expect(canon(root, "check").err).not.toContain(`${C(4)} is linked`);
   });
 
   test("BR-2514: a planned release with passed rules, directly or through a feature, gets a hint on stderr; active gets none", () => {
@@ -236,7 +260,7 @@ describe("releases merged into another", () => {
       ...DOMAIN,
       [`canon/features/${F(2)}.md`]: feature(2),
       [`canon/releases/${R(2)}.md`]: release(2, `status: dropped\nmerged_into: ${R(3)}\n`),
-      [`canon/releases/${R(3)}.md`]: release(3, `status: dropped\nmerged_into: ${R(5)}\nfeatures: [${F(2)}]\n`).replace("## 成功标准\n\n内容\n", "## 成功标准\n\n- 负责人试玩 R-3。（待负责人）\n"),
+      [`canon/releases/${R(3)}.md`]: release(3, `status: dropped\nmerged_into: ${R(5)}\nfeatures: [${F(2)}]\n`).replace("## 成功标准\n\n内容\n", "## 成功标准\n\n- S1 负责人试玩 R-3。（待负责人）\n"),
       [`canon/releases/${R(5)}.md`]: release(5, "status: active\n"),
       [`canon/rules/billing/${BR(6)}.md`]: rule(6, `release: ${R(2)}\n`, "planned"),
       [`canon/rules/billing/${BR(7)}.md`]: rule(7, `release: ${R(3)}\n`, "planned"),

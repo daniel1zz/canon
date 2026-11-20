@@ -14,7 +14,7 @@ import { refuseOnGuardedMain } from "./guarded.ts";
 import { findDoc } from "../query/query.ts";
 import { planStatuses, progressMark, stepsMark } from "../plans/status.ts";
 import { waitingJson } from "../changes/deps.ts";
-import { LINK_ARGS, linkCmd, newLinks } from "../changes/commands.ts";
+import { graphCmd, LINK_ARGS, linkCmd, newLinks } from "../changes/commands.ts";
 import { mainCorpus } from "../../work/session/session.ts";
 
 /** `canon rule`, `decision`, `change`, `note`, `doc`: creating, listing and setting the status of documents. */
@@ -215,6 +215,7 @@ const change = defineCommand({
       "Create a change ahead of time: its file only, open, no worktree (allocates its id; it lands with the change you are in, then canon work start <C-n> starts it). Refused where main is checked out and guarded, since the file could not be committed there: use `canon work start --title` instead (BR-2409, BR-2562)",
     ),
     link: linkCmd,
+    graph: graphCmd,
     list: listCommand("change", "List open changes in the owner's order (canon/backlog.md, then the rest by id; --all for done and dropped)"),
     drop: defineCommand({
       meta: { description: "Mark a change dropped (work will not happen)" },

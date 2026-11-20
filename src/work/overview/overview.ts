@@ -6,13 +6,14 @@ import { backlogAt } from "../../knowledge/documents/backlog.ts";
 import type { Advances, Change, Corpus, Feature, Release } from "../../knowledge/documents/model.ts";
 import { planStatuses, summaryLine as planLine, type PlanStatus } from "../../knowledge/plans/status.ts";
 import { CRITERION_LABEL, criteriaCountLine, criteriaOf, type Criterion } from "../../knowledge/releases/criteria.ts";
-import { releaseStatuses, summaryLine as releaseLine, type ReleaseStatus } from "../../knowledge/releases/status.ts";
+import { releaseStatuses, summaryLine as releaseLine, type ReleaseStatus, type Workload } from "../../knowledge/releases/status.ts";
+import { changeGraph, memberOf, workload } from "../../knowledge/changes/graph.ts";
 import { releaseScope } from "../../knowledge/releases/features.ts";
 import { briefQualityLine, overviewQualityLine, qualitySummary, type QualitySummary } from "../../knowledge/quality/aspects.ts";
 import { openFindings, type OpenFinding } from "../../knowledge/review/findings/findings.ts";
 import { executionStates } from "../execution/state.ts";
 import { questions, type Question } from "../humans/questions.ts";
-import { listedChanges, marksOf, type ListedChange } from "../session/inflight.ts";
+import { changeIdsOnBranches, listedChanges, marksOf, type ListedChange } from "../session/inflight.ts";
 import { mainCorpus } from "../session/session.ts";
 import { isChore } from "../session/subject.ts";
 import type { Workspace } from "../workspace.ts";
@@ -53,6 +54,8 @@ export interface CurrentRelease {
   readonly features: readonly FeatureView[];
   /** The dropped releases merged into it, with their own criteria (BR-2521). */
   readonly merged: readonly { readonly doc: Release; readonly criteria: readonly CriterionView[] }[];
+  /** The workload of its linked changes, with the rule counts only (BR-2328, BR-2570). */
+  readonly work?: Workload;
 }
 
 export interface Overview {
@@ -120,7 +123,7 @@ export function releaseViews(corpus: Corpus, picks: readonly { doc: Release; fal
   const view = (docId: string, body: string): CriterionView[] =>
     criteriaOf(body, corpus.types).map((c) => ({
       ...c,
-      advancedBy: c.id === undefined ? [] : changes.filter((ch) => ch.advances?.kind === "criteria" && ch.advances.refs.includes(`${docId}/${c.id}`)).slice(0, ADVANCED_SHOWN).map((ch) => ch.id),
+      advancedBy: changes.filter((ch) => ch.advances?.kind === "criteria" && ch.advances.refs.includes(`${docId}/${c.id}`)).slice(0, ADVANCED_SHOWN).map((ch) => ch.id),
     }));
   return picks.map(({ doc, fallback }) => {
     const scope = releaseScope(corpus, doc);
@@ -149,7 +152,11 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean }):
   if (!every.ok) return every;
   const current = releasesInProgress(corpus.value);
   const statuses = current.length > 0 && opts.ruleCounts ? releaseStatuses(corpus.value, executionStates(ws.root, corpus.value, ws.config.floorTiming)) : [];
-  const releases = releaseViews(corpus.value, current, statuses);
+  const views = releaseViews(corpus.value, current, statuses);
+  // reason: the line is the one `canon release status` prints, workload included; read only when the rule counts are (BR-2505, BR-2328)
+  const branches = statuses.length > 0 ? changeIdsOnBranches(ws) : ok(new Set<string>());
+  if (!branches.ok) return branches;
+  const releases = statuses.length > 0 ? views.map((r) => ({ ...r, work: workload(changeGraph({ listed: every.value.listed, branches: branches.value }, memberOf(corpus.value, r.doc))) })) : views;
   const owner = releases.flatMap((r) => [
     ...r.criteria.filter((c) => c.state === "owner").map((c) => ({ doc: r.doc.id, text: c.text })),
     ...[...r.features, ...r.merged].flatMap((f) => f.criteria.filter((c) => c.state === "owner").map((c) => ({ doc: f.doc.id, text: c.text }))),
@@ -201,7 +208,7 @@ const minute = (iso: string) => `${iso.slice(0, 10)} ${iso.slice(11, 16)} UTC`;
 
 /** One criterion's line (BR-2505): state, id, text, evidence, the changes advancing it. */
 const criterionLine = (c: CriterionView) =>
-  `[${CRITERION_LABEL[c.state]}] ${c.id !== undefined ? `${c.id} ` : ""}${c.text}${c.evidence.length > 0 ? `  证据：${c.evidence.join(", ")}` : ""}${c.advancedBy.length > 0 ? `  推进：${c.advancedBy.join(", ")}` : ""}`;
+  `[${CRITERION_LABEL[c.state]}] ${c.id} ${c.text}${c.evidence.length > 0 ? `  证据：${c.evidence.join(", ")}` : ""}${c.advancedBy.length > 0 ? `  推进：${c.advancedBy.join(", ")}` : ""}`;
 
 /** All criteria of a release in progress: its own and its features' (BR-2506). */
 export const allCriteria = (r: CurrentRelease): Criterion[] => [...r.criteria, ...r.features.flatMap((f) => f.criteria), ...r.merged.flatMap((m) => m.criteria)];
@@ -220,7 +227,7 @@ export function overviewLines(o: Overview): string[] {
   const out: string[] = ["## 当前版本"];
   if (o.releases.length === 0) out.push("(no release in progress)");
   for (const r of o.releases) {
-    out.push(r.status ? releaseLine(r.status) : headLine(r.doc));
+    out.push(r.status ? releaseLine(r.status, r.work) : headLine(r.doc));
     if (r.fallback) out.push(FALLBACK);
     out.push(criteriaCountLine(r.criteria), ...r.criteria.map((c) => `  ${criterionLine(c)}`));
     for (const f of r.features) out.push(`  模块 ${f.doc.id} ${f.doc.title}  ${criteriaCountLine(f.criteria)}`, ...f.criteria.map((c) => `    ${criterionLine(c)}`));
@@ -247,7 +254,7 @@ export function overviewLines(o: Overview): string[] {
   return out;
 }
 
-const criterionJson = (c: CriterionView) => ({ id: c.id ?? null, text: c.text, state: c.state, evidence: c.evidence, advanced_by: c.advancedBy });
+const criterionJson = (c: CriterionView) => ({ id: c.id, text: c.text, state: c.state, evidence: c.evidence, advanced_by: c.advancedBy });
 
 /** The `--json` form (BR-2505). */
 export function overviewJson(o: Overview): Record<string, unknown> {

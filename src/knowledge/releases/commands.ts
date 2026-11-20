@@ -1,5 +1,7 @@
+import { readFileSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
 import { defineCommand } from "citty";
-import { corpusOf, entry, EXIT, fail, json, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
+import { corpusOf, entry, EXIT, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { executionStates } from "../../work/execution/state.ts";
 import type { Release } from "../documents/model.ts";
 import { findDoc } from "../query/query.ts";
@@ -8,7 +10,10 @@ import type { Feature } from "../documents/model.ts";
 import { releasesListing } from "./features.ts";
 import { refuseOnGuardedMain } from "../documents/guarded.ts";
 import { shipRelease } from "./ship.ts";
-import { detailLines, releaseStatuses, statusJson, summaryLine } from "./status.ts";
+import { migrated, migrationSteps } from "./migrate.ts";
+import { detailLines, featureStatuses, releaseStatuses, statusJson, summaryLine, type Workload } from "./status.ts";
+import { changeGraph, graphInputs, memberOf, workload } from "../changes/graph.ts";
+import type { Corpus } from "../documents/model.ts";
 
 /** `canon release`: a version's PRD document and what hangs on it (D-61). */
 
@@ -49,10 +54,12 @@ const release = defineCommand({
         if (target !== undefined && findDoc(corpus, target)?.kind !== "release") fail({ code: "not_found", message: `${target} is not a release` });
         const all = releaseStatuses(corpus, executionStates(ws.root, corpus, ws.config.floorTiming));
         const one = target === undefined ? undefined : all.find((s) => s.release.id === target)!;
-        if (args.json) return json(one ? statusJson(one, true) : all.map((s) => statusJson(s, false)));
-        if (one) for (const l of detailLines(one)) say(l);
+        // reason: the linked changes are workload beside the status, never part of done (BR-2328, BR-2568)
+        const work = workloadOf(ws, corpus);
+        if (args.json) return json(one ? statusJson(one, true, work(one.release)) : all.map((s) => statusJson(s, false, work(s.release))));
+        if (one) for (const l of detailLines(one, work(one.release))) say(l);
         else {
-          for (const s of all) say(summaryLine(s));
+          for (const s of all) say(summaryLine(s, work(s.release)));
           if (all.length === 0) say("(no releases)");
         }
       },
@@ -90,6 +97,55 @@ const release = defineCommand({
         say(`${r.id} → dropped (${r.path}; commit it with your change)`);
       },
     }),
+    "migrate-criteria": defineCommand({
+      meta: { description: "Number the success criteria written the old way: list items in ## 成功标准 without an S<k> id get the next free one, or with --note move out of the list; prints what it would do unless --write" },
+      args: {
+        id: { type: "positional", required: false, description: "One release or feature (R-n, F-n); default every one in this checkout" },
+        note: { type: "string", description: "Items to move out of the list instead, as printed: R-2#3,F-1#2" },
+        write: { type: "boolean", description: "Write the files (commit them with your change)" },
+      },
+      run({ args }) {
+        const ws = workspace();
+        const { corpus } = corpusOf(ws);
+        const target = typeof args.id === "string" && args.id.trim() !== "" ? args.id.trim().toUpperCase() : undefined;
+        const goalDocs = corpus.docs.filter((d): d is Release | Feature => d.kind === "release" || d.kind === "feature");
+        // reason: an id that is no release or feature is not found (BR-2567, BR-2022)
+        if (target !== undefined && !goalDocs.some((d) => d.id === target)) fail({ code: "not_found", message: `${target} is not a release or feature` });
+        const docs = goalDocs.filter((d) => target === undefined || d.id === target).sort((a, b) => (a.kind === b.kind ? byNumber(a, b) : a.kind === "release" ? -1 : 1));
+        const notes = new Map<string, Set<number>>();
+        for (const raw of list(args.note)) {
+          const m = /^([A-Z]+-\d+)#(\d+)$/.exec(raw.toUpperCase());
+          if (!m) fail({ code: "invalid", message: `--note ${raw}: name an item as printed, e.g. R-2#3` });
+          notes.set(m[1]!, (notes.get(m[1]!) ?? new Set()).add(Number(m[2])));
+        }
+        const plans = docs.map((d) => {
+          const text = readFileSync(join(ws.root, d.path), "utf8");
+          return { d, text, steps: migrationSteps(text, notes.get(d.id) ?? new Set()) };
+        });
+        // reason: a note must name an unnumbered item of a document migrated here, or nothing is written at all (BR-2567)
+        for (const [id, positions] of notes) {
+          const plan = plans.find((p) => p.d.id === id);
+          for (const n of positions) if (!plan?.steps.some((s) => s.item.position === n)) fail({ code: "invalid", message: `--note ${id}#${n}: not a list item without an id in ${id}'s ## 成功标准; nothing written` });
+        }
+        const todo = plans.filter((p) => p.steps.length > 0);
+        if (todo.length === 0) return say("nothing to migrate");
+        if (!args.write) {
+          for (const p of todo) {
+            say(`${p.d.id}: ${p.steps.length} list item(s) without an id`);
+            for (const s of p.steps) say(`  ${p.d.id}#${s.item.position} → ${s.to}  ${s.item.first}`);
+          }
+          return say("nothing written: --write numbers them; --note <id>#<n>,… moves the named ones out of the list instead (BR-2504)");
+        }
+        refuseOnGuardedMain(ws, "release", todo[0]!.d.title);
+        for (const p of todo) {
+          writeFileSync(join(ws.root, p.d.path), migrated(p.text, p.steps));
+          const numbered = p.steps.filter((s) => s.to !== "note").map((s) => s.to);
+          const moved = p.steps.length - numbered.length;
+          const parts = [numbered.length > 0 ? `numbered ${numbered.join(", ")}` : "", moved > 0 ? `moved ${moved} item(s) out of the list` : ""].filter(Boolean);
+          say(`${p.d.id}: ${parts.join("; ")} (${p.d.path}; commit it with your change)`);
+        }
+      },
+    }),
     ship: defineCommand({
       meta: { description: "Ship a release: needs every rule tagged with it passed and the owner's recorded yes (a canon human question naming `ship R-n`); lands status shipped and shipped_at as a change of its own, then tags release/R-n" },
       args: { id: { type: "positional", required: true, description: "The release id (R-1)" }, timeout: { type: "string", description: "Minutes to wait in the landing queue (default: land_timeout_minutes, 60)" } },
@@ -111,6 +167,12 @@ const release = defineCommand({
     }),
   },
 });
+
+/** The workload of each release or feature: its linked changes by graph state, read once (BR-2570, BR-2568). */
+function workloadOf(ws: ReturnType<typeof workspace>, corpus: Corpus): (doc: Release | Feature) => Workload {
+  const inputs = must(graphInputs(ws));
+  return (doc) => workload(changeGraph(inputs, memberOf(corpus, doc)));
+}
 
 /** The release `raw` names, or exit 3 (BR-2508, BR-2511). */
 function releaseNamed(ws: ReturnType<typeof workspace>, raw: string): Release {
@@ -154,6 +216,27 @@ const feature = defineCommand({
         if (args.json) return json(rows.map(({ f, releases }) => ({ id: f.id, status: f.status, title: f.title, releases })));
         for (const { f, releases } of rows) say(`${f.id.padEnd(8)} ${f.status.padEnd(8)} ${f.title}  ${releases.length > 0 ? releases.join(", ") : "(no release)"}`);
         if (rows.length === 0) say("(no features)");
+      },
+    }),
+    status: defineCommand({
+      meta: { description: "Progress of features: their rules by execution state, their success criteria met, the workload of their linked changes, done or not (one line per active feature without an id)" },
+      args: { id: { type: "positional", required: false, description: "A feature id (F-1): its rule ids by state and its criteria" }, json: { type: "boolean" } },
+      run({ args }) {
+        const ws = workspace();
+        const { corpus } = corpusOf(ws);
+        const target = typeof args.id === "string" && args.id.trim() !== "" ? args.id.trim().toUpperCase() : undefined;
+        // reason: an id that is no feature is not found, and nothing goes to stdout (BR-2569, BR-2022)
+        if (target !== undefined && findDoc(corpus, target)?.kind !== "feature") fail({ code: "not_found", message: `${target} is not a feature` });
+        const all = featureStatuses(corpus, executionStates(ws.root, corpus, ws.config.floorTiming));
+        const work = workloadOf(ws, corpus);
+        const one = target === undefined ? undefined : all.find((s) => s.doc.id === target)!;
+        const shown = all.filter((s) => s.doc.status !== "dropped");
+        if (args.json) return json(one ? statusJson(one, true, work(one.doc)) : shown.map((s) => statusJson(s, false, work(s.doc))));
+        if (one) for (const l of detailLines(one, work(one.doc))) say(l);
+        else {
+          for (const s of shown) say(summaryLine(s, work(s.doc)));
+          if (shown.length === 0) say("(no features)");
+        }
       },
     }),
     drop: defineCommand({

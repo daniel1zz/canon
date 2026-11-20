@@ -37,7 +37,7 @@ const release = (n: number, status: string, criteria = "内容", extra = "") =>
   `---\nid: ${R(n)}\ntitle: 版本${n}\nstatus: ${status}\n${extra}---\n\n## 目标\n\n内容\n\n## 成功标准\n\n${criteria}\n\n## 故事地图切片\n\n内容\n`;
 const change = (n: number, status: string, body = "", front = "") => `---\nid: ${C(n)}\ntitle: 变更${n}\nstatus: ${status}\nrules: []\n${front}---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n${body}`;
 const PLAN = "## 计划\n\n| 步骤 | 内容 | 依赖 |\n|---|---|---|\n| 1 | 建表 | - |\n| 2 | 接口 | 1 |\n";
-const CRITERIA = `- 规则全过。（已满足：${C(4)}）\n- 负责人玩通。（待负责人）\n- 没人解释也能玩。`;
+const CRITERIA = `- S1 规则全过。（已满足：${C(4)}）\n- S2 负责人玩通。（待负责人）\n- S3 没人解释也能玩。`;
 
 /**
  * R-1 shipped, R-2 planned, R-3 active with three criteria (met by C-4, owner, unmarked) and one planned rule; C-4 done;
@@ -76,11 +76,11 @@ describe("canon overview", () => {
     expect(r.code).toBe(0);
     expect(squash(r.out).trim().split("\n")).toEqual([
       "## 当前版本",
-      `${R(3)} active 版本3 规划中 1 已通过 0 待 main 测试 0 待重新执行 0`,
+      `${R(3)} active 版本3 规划中 1 已通过 0 待 main 测试 0 待重新执行 0 成功标准 已满足 1/3 变更 已合入 0 进行中 0 在等 0 可开始 0 未完成`,
       "成功标准 3 条：已满足 1 未满足 0 待负责人 1 未证明 1",
-      ` [已满足] 规则全过。 证据：${C(4)}`,
-      " [待负责人] 负责人玩通。",
-      " [未证明] 没人解释也能玩。",
+      ` [已满足] S1 规则全过。 证据：${C(4)}`,
+      " [待负责人] S2 负责人玩通。",
+      " [未证明] S3 没人解释也能玩。",
       NO_QUALITY,
       "",
       "## 计划",
@@ -160,9 +160,9 @@ describe("canon overview", () => {
     expect(o.releases).toHaveLength(1);
     expect(o.releases[0]).toMatchObject({ id: R(3), status: "active", fallback: false, counts: { planned: 1, passed: 0 }, features: [] });
     expect(o.releases[0].criteria).toEqual([
-      { id: null, text: "规则全过。", state: "met", evidence: [C(4)], advanced_by: [] },
-      { id: null, text: "负责人玩通。", state: "owner", evidence: [], advanced_by: [] },
-      { id: null, text: "没人解释也能玩。", state: "unproven", evidence: [], advanced_by: [] },
+      { id: "S1", text: "规则全过。", state: "met", evidence: [C(4)], advanced_by: [] },
+      { id: "S2", text: "负责人玩通。", state: "owner", evidence: [], advanced_by: [] },
+      { id: "S3", text: "没人解释也能玩。", state: "unproven", evidence: [], advanced_by: [] },
     ]);
     expect(o.plans).toEqual([{ id: C(5), title: "变更5", total: 2, done: 0, percent: 0 }]);
     expect(o.waiting.questions.map((q: { id: number }) => q.id)).toEqual([1]);
@@ -224,10 +224,10 @@ describe("recent changes to the goal", () => {
 
   test("BR-2505 BR-2506: a commit of the last 7 days that changed a criterion is listed in the overview and named in the brief; an older one is not", () => {
     const root = project();
-    commitAt(root, { [`canon/releases/${R(3)}.md`]: release(3, "active", "- 甲") }, "add release", 20);
-    commitAt(root, { [`canon/releases/${R(3)}.md`]: release(3, "active", "- 甲\n- 乙") }, "old goal change", 8);
+    commitAt(root, { [`canon/releases/${R(3)}.md`]: release(3, "active", "- S1 甲") }, "add release", 20);
+    commitAt(root, { [`canon/releases/${R(3)}.md`]: release(3, "active", "- S1 甲\n- S2 乙") }, "old goal change", 8);
     expect(canon(root, "overview").out).not.toContain("最近 7 天的目标改动");
-    commitAt(root, { [`canon/releases/${R(3)}.md`]: release(3, "active", "- 甲\n- 乙\n- 支持手柄。") }, "加手柄", 3);
+    commitAt(root, { [`canon/releases/${R(3)}.md`]: release(3, "active", "- S1 甲\n- S2 乙\n- S3 支持手柄。") }, "加手柄", 3);
     const lines = canon(root, "overview").out.split("\n");
     const at = lines.indexOf("最近 7 天的目标改动：");
     expect(at).toBeGreaterThan(-1);
@@ -249,7 +249,7 @@ describe("releases made of features", () => {
     const root = project();
     write(root, {
       [`canon/releases/${R(3)}.md`]: release(3, "active", "- S1 负责人玩通。（待负责人）").replace("status: active\n", `status: active\nfeatures: [${F(1)}, ${F(2)}]\n`),
-      [`canon/releases/${R(5)}.md`]: release(5, "active", "- 甲"),
+      [`canon/releases/${R(5)}.md`]: release(5, "active", "- S1 甲"),
       [`canon/features/${F(1)}.md`]: feature(1, "active", "- S1 五个分支各有构筑通关。（未满足）\n- S2 有引导。"),
       [`canon/features/${F(2)}.md`]: feature(2, "dropped", "- S1 不做了"),
       [`canon/changes/${C(7)}.md`]: advancing(7, "done", `[${F(1)}/S1]`),
@@ -263,15 +263,15 @@ describe("releases made of features", () => {
     const lines = canon(root, "overview").out.split("\n");
     const end = lines.indexOf("## 计划");
     expect(lines.slice(1, end - 1).map(squash)).toEqual([
-      `${R(3)} active 版本3 规划中 0 已通过 0 待 main 测试 0 待重新执行 0`,
+      `${R(3)} active 版本3 规划中 0 已通过 0 待 main 测试 0 待重新执行 0 成功标准 已满足 0/3 变更 已合入 0 进行中 0 在等 0 可开始 0 未完成`,
       "成功标准 1 条：已满足 0 未满足 0 待负责人 1 未证明 0",
       ` [待负责人] S1 负责人玩通。 推进：${C(9)}`,
       ` 模块 ${F(1)} 模块1 成功标准 2 条：已满足 0 未满足 1 待负责人 0 未证明 1`,
       ` [未满足] S1 五个分支各有构筑通关。 推进：${C(9)}, ${C(7)}`,
       " [未证明] S2 有引导。",
-      `${R(5)} active 版本5 规划中 0 已通过 0 待 main 测试 0 待重新执行 0`,
+      `${R(5)} active 版本5 规划中 0 已通过 0 待 main 测试 0 待重新执行 0 成功标准 已满足 0/1 变更 已合入 0 进行中 0 在等 0 可开始 0 未完成`,
       "成功标准 1 条：已满足 0 未满足 0 待负责人 0 未证明 1",
-      " [未证明] 甲",
+      " [未证明] S1 甲",
       NO_QUALITY,
     ]);
     expect(lines).toContain(`成功标准 ${R(3)}: 负责人玩通。`);

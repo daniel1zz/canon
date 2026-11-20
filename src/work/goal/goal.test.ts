@@ -41,7 +41,7 @@ const feature = (n: number, criteria: string) => `---\nid: ${F(n)}\ntitle: 模�
 describe("canon goal", () => {
   test("BR-2518: start takes the releases in progress or the ones named, stop ends it, a bare goal shows it; each session has its own", () => {
     const root = project();
-    write(root, { [`canon/releases/${R(1)}.md`]: release(1, "shipped", "- x", `shipped_at: ${"a".repeat(40)}\n`), [`canon/releases/${R(5)}.md`]: release(5, "active", "- S1 甲（未满足）\n- 乙"), [`canon/releases/${R(6)}.md`]: release(6, "planned", "- 丙") });
+    write(root, { [`canon/releases/${R(1)}.md`]: release(1, "shipped", "- x", `shipped_at: ${"a".repeat(40)}\n`), [`canon/releases/${R(5)}.md`]: release(5, "active", "- S1 甲（未满足）\n- S2 乙"), [`canon/releases/${R(6)}.md`]: release(6, "planned", "- S1 丙") });
     const started = canon(root, SESSION, ["goal", "start"]);
     expect([started.code, started.out.split("\n")[0]]).toEqual([0, `goal: ${R(5)}`]);
     expect(started.out).toContain(`${R(5)}  active  版本5  成功标准 2 条：已满足 0  未满足 1  待负责人 0  未证明 1`);

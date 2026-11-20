@@ -1,5 +1,5 @@
 import { defineCommand } from "citty";
-import { corpusOf, fail, list, must, say, workspace } from "../../invocation/command.ts";
+import { corpusOf, fail, json, list, must, say, workspace } from "../../invocation/command.ts";
 import type { Change, Corpus } from "../documents/model.ts";
 import { setMeta } from "../documents/write.ts";
 import { findDoc } from "../query/query.ts";
@@ -7,6 +7,7 @@ import { changeIdsOnBranches, listedChanges } from "../../work/session/inflight.
 import { mainCorpus } from "../../work/session/session.ts";
 import type { Workspace } from "../../work/workspace.ts";
 import { cycleThrough } from "./deps.ts";
+import { changeGraph, graphInputs, graphJson, graphLines, memberOf } from "./graph.ts";
 import { dependsArg, isCriterionRef, issueArg, linkMeta, type ChangeLinks, type Prefixes } from "./links.ts";
 import { criteriaByDoc } from "../releases/features.ts";
 
@@ -159,3 +160,20 @@ function describe(l: ChangeLinks): string {
   ];
   return parts.filter(Boolean).join("; ");
 }
+
+/** `canon change graph <R-n|F-n>`: the dependency graph of a release's or feature's changes, worked out now (BR-2570). */
+export const graphCmd = defineCommand({
+  meta: { description: "The dependency graph of a release's or feature's changes (landed, in progress, waiting for whom, ready), from depends_on; --json for scripts" },
+  args: { id: { type: "positional", required: true, description: "A release (R-n) or feature (F-n)" }, json: { type: "boolean" } },
+  run({ args }) {
+    const ws = workspace();
+    const { corpus } = corpusOf(ws);
+    const id = String(args.id).trim().toUpperCase();
+    const doc = findDoc(corpus, id);
+    // reason: an id that is no release or feature is not found, and nothing goes to stdout (BR-2570, BR-2022)
+    if (!doc || (doc.kind !== "release" && doc.kind !== "feature")) fail({ code: "not_found", message: `${id} is not a release or feature` });
+    const nodes = changeGraph(must(graphInputs(ws)), memberOf(corpus, doc));
+    if (args.json) return json(graphJson(doc, nodes));
+    for (const line of graphLines(doc, nodes)) say(line);
+  },
+});
