@@ -149,9 +149,9 @@ function matchItem(raw: string, template: Template): Match {
     try {
       // reason: RE2JS's exec is typed any[]; it returns a RegExp-like array whose groups hold the named captures (BR-2547)
       matched = linearRegex(`^${built.source}$`).exec(raw) as { readonly groups?: Readonly<Record<string, string | undefined>> } | null;
-    } catch {
-      // a pattern that cannot be embedded was refused when the declaration was read; a code-built one is canon's bug
-      continue;
+    } catch (e) {
+      // reason: a pattern that cannot be embedded was refused when the declaration was read, so reaching here is canon's own bug; fail loud instead of reading the item as unmatched (BR-2547)
+      throw new Error(`canon bug: item pattern ${JSON.stringify(built.source)} did not compile: ${e instanceof Error ? e.message : String(e)}`);
     }
     if (matched === null) continue;
     const slots: Record<string, string> = {};
