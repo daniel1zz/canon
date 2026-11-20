@@ -354,12 +354,3 @@ export function stalledDelegations(ws: Workspace, now: number = Date.now()): Res
   if (!all.ok) return all;
   return ok(all.value.states.flatMap((s) => (s.stalled ? [s.stalled] : [])).sort((a, b) => (a.subject < b.subject ? -1 : 1)));
 }
-
-/** The delegation records `canon work status` lists: every one whose change is not closed (BR-2497, BR-2571). */
-export function listedDelegations(ws: Workspace): Result<string[]> {
-  const all = changeStates(ws, { delegatable: false });
-  if (!all.ok) return all;
-  const closed = new Set(all.value.states.filter(isClosed).map((s) => s.id));
-  const rows = ws.db.db.query<{ subject: string }, []>("SELECT subject FROM delegations ORDER BY subject").all();
-  return ok(rows.map((r) => r.subject).filter((s) => !closed.has(s)));
-}
