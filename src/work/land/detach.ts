@@ -47,11 +47,12 @@ export function backgroundRun(env: Record<string, string | undefined> = process.
   // variable here does not hide it from the floor or hooks; a `canon work land` they run has another parent and is not the landing (BR-2390)
   delete env[name];
   const m = /^(\d+):(.+)$/.exec(value ?? "");
-  if (!m) return undefined;
-  if (Number(m[1]) === parent) return m[2];
+  const dir = m?.[2];
+  if (!m || dir === undefined) return undefined;
+  if (Number(m[1]) === parent) return dir;
   // reason: a follower killed right after it started the landing leaves it a child of init; the `pid` file it wrote still
   // names the landing, which must not take itself for a landing still starting and follow itself (BR-2390, BR-2392)
-  return runProcess(m[2])?.pid === self ? m[2] : undefined;
+  return runProcess(dir)?.pid === self ? dir : undefined;
 }
 
 /** Writes this process's exit code into its run directory as it exits, whichever path it exits by (BR-2390). */
