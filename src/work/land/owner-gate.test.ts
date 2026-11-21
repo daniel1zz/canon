@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 import { land } from "./land.ts";
+import { approvalOf } from "./owner-gate.ts";
 import { agenda, dueList, type Readings } from "../reminders/agenda.ts";
 
 // reason: each case lands or spawns canon several times; a loaded machine took longer than bun's 5 s default
@@ -75,6 +76,18 @@ test("BR-2616: land --finish waits for the owner's latest approve answer; a late
   expect(await land(ws(f.worktree, "agent:s1"), FAST, quiet)).toMatchObject({ kind: "landed", finished: false });
   answered(f.root, `approve ${f.change}: 设计稿 v2?`, "可以。", { by: "agent:s1", relayed: "可以。", witness: "match" });
   expect(await finish(f.worktree)).toMatchObject({ kind: "landed", finished: true });
+});
+
+test("BR-2616: an approval is one of 批准 同意 可以 是 yes, any case, trimmed and without trailing punctuation; only a question naming the whole id counts", () => {
+  const f = gated();
+  const approved = () => approvalOf(ws(f.root).db, f.change).approved;
+  for (const [answer, yes] of [[" 可以。", true], ["YES", true], ["同意！", true], ["批准了", false], ["不批准", false], ["是", true], ["好的", false]] as const) {
+    answered(f.root, `approve ${f.change}: 设计稿?`, answer);
+    expect([answer, approved()]).toEqual([answer, yes]);
+  }
+  answered(f.root, `approve ${f.change}: 设计稿?`, "不批准");
+  answered(f.root, `approve ${f.change}0: other?`, "批准"); // C-n0 is another change: the latest answer for C-n is still 不批准
+  expect(approved()).toBe(false);
 });
 
 test("BR-2617: until approved the main session's agenda says to ask, then that it waits for the answer; approved, it is gone", () => {
