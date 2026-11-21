@@ -74,13 +74,13 @@ test("BR-2616: land --finish waits for the owner's latest approve answer; the re
   const no = await finish(f.worktree);
   expect(no.kind === "refused" && no.message).toContain('answered "不批准"');
   expect(await land(ws(f.worktree, "agent:s1"), FAST, quiet)).toMatchObject({ kind: "landed", finished: false });
-  answered(f.root, `approve ${f.change}: 设计稿 v2?`, "可以。", { by: "agent:s1", relayed: "可以。", witness: "match" });
+  answered(f.root, `approve ${f.change}: 设计稿?`, "可以。", { by: "agent:s1", relayed: "可以。", witness: "match" });
   expect(await finish(f.worktree)).toMatchObject({ kind: "landed", finished: true });
 });
 
 test("BR-2616: an approval is one of 批准 同意 可以 是 yes, any case, trimmed and without trailing punctuation; only a question naming the whole id counts", () => {
   const f = gated();
-  const approved = () => approvalOf(ws(f.root).db, f.change).approved;
+  const approved = () => approvalOf(ws(f.root).db, f.change, "设计稿").approved;
   for (const [answer, yes] of [[" 可以。", true], ["YES", true], ["同意！", true], ["批准了", false], ["不批准", false], ["是", true], ["好的", false]] as const) {
     answered(f.root, `approve ${f.change}: 设计稿?`, answer);
     expect([answer, approved()]).toEqual([answer, yes]);
@@ -88,6 +88,32 @@ test("BR-2616: an approval is one of 批准 同意 可以 是 yes, any case, tri
   answered(f.root, `approve ${f.change}: 设计稿?`, "不批准");
   answered(f.root, `approve ${f.change}0: other?`, "批准"); // C-n0 is another change: the latest answer for C-n is still 不批准
   expect(approved()).toBe(false);
+});
+
+test("BR-2616: an approval counts only for the owner_gate text its question asked about; after the text changes, land --finish is refused naming the old question and its text; full-width colon and question mark count", async () => {
+  const f = gated();
+  answered(f.root, `approve ${f.change}: 设计稿?`, "批准");
+  // the worker changes what the owner is to approve after the approval (#296)
+  const path = join(f.worktree, "canon/changes", readdirSync(join(f.worktree, "canon/changes")).find((p) => p.startsWith(f.change))!);
+  writeFileSync(path, readFileSync(path, "utf8").replace('owner_gate: "设计稿"', 'owner_gate: "上线到生产"'));
+  sh(f.worktree, "add", "-A"); sh(f.worktree, "commit", "-qm", "new gate");
+  const refused = await finish(f.worktree);
+  expect(refused).toMatchObject({ kind: "refused", reason: "owner-gate" });
+  expect(refused.kind === "refused" && refused.message).toMatch(/the owner has not been asked about this text yet: question #\d+ was about "设计稿", and owner_gate has changed since/);
+  expect(refused.kind === "refused" && refused.message).toContain(`canon human ask "approve ${f.change}: 上线到生产?"`);
+  answered(f.root, `approve ${f.change}: 上线到生产 v2?`, "批准"); // another text again: not this one either
+  answered(f.root, `approve ${f.change}0: 上线到生产?`, "批准"); // another change
+  expect(approvalOf(ws(f.root).db, f.change, "上线到生产").approved).toBe(false);
+  answered(f.root, `approve ${f.change}：上线到生产？`, "批准"); // full-width colon and question mark
+  expect(approvalOf(ws(f.root).db, f.change, "上线到生产").approved).toBe(true);
+});
+
+test("BR-2617: the agenda item of a gate whose text changed after an approval names the old question and says to ask again", () => {
+  const f = gated('owner_gate: "上线到生产"\n');
+  answered(f.root, `approve ${f.change}: 设计稿?`, "批准");
+  const item = dueList(must(agenda(ws(f.root, "agent:s2"), { read: CALM }))).find((i) => i.key === `owner-gate:${f.change}`);
+  expect(item!.summary).toMatch(/question #\d+ was about an earlier owner_gate text, "设计稿", so ask again$/);
+  expect(item!.next).toBe(`canon human ask "approve ${f.change}: 上线到生产?" --option 批准,不批准 --change ${f.change}`);
 });
 
 test("BR-2616: a worker refused for the owner gate is told it cannot ask the owner and hands the change back", () => {

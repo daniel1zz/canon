@@ -182,9 +182,9 @@ export function mainItems(ws: Workspace, now: number, states: readonly ChangeSta
   for (const s of states) {
     const gate = s.change?.ownerGate;
     if (gate === undefined || s.state === "landed" || s.state === "dropped") continue;
-    const a = approvalOf(ws.db, s.id);
+    const a = approvalOf(ws.db, s.id, gate);
     if (a.approved) continue;
-    const before = a.latest ? `; question #${a.latest.id} was answered ${JSON.stringify(a.latest.answer)}${a.latest.owners ? "" : " (not the owner's own answer)"}` : "";
+    const before = a.latest ? `; question #${a.latest.id} was answered ${JSON.stringify(a.latest.answer)}${a.latest.owners ? "" : " (not the owner's own answer)"}` : a.stale ? `; question #${a.stale.id} was about an earlier owner_gate text, ${JSON.stringify(clip(a.stale.gate, 40))}, so ask again` : "";
     if (a.pending !== undefined) items.push(item(`owner-gate:${s.id}`, "owner-gate", null, `${s.id} needs the owner's approval of: ${clip(gate, 60)}; waiting for the answer to question #${a.pending}`, `ask the owner question #${a.pending} in the conversation, word for word, with the question tool`, "ask the owner the approve question in the conversation", "judge", 2));
     else items.push(item(`owner-gate:${s.id}`, "owner-gate", null, `${s.id} needs the owner's approval of: ${clip(gate, 60)}; ask when it is ready to show${before}`, askLine(s.id, gate), `canon human ask "approve <n>: <owner_gate>?" --option 批准,不批准 --change <n>`, "judge", 2));
   }

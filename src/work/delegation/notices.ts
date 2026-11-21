@@ -102,7 +102,7 @@ export function changeFacts(ctx: NoticeContext, subject: string, own: Pick<Chang
 
 /** BR-2618: a change the owner must approve, not approved yet, cannot be finished by the worker it goes to. */
 function gateLines(ctx: NoticeContext, subject: string, own: Pick<Change, "ownerGate">): string[] {
-  if (own.ownerGate === undefined || !ctx.db || approvalOf(ctx.db, subject).approved) return [];
+  if (own.ownerGate === undefined || !ctx.db || approvalOf(ctx.db, subject, own.ownerGate).approved) return [];
   return [`owner gate: ${subject} needs the owner's approval of "${own.ownerGate}" before it can finish (BR-2616); the worker cannot ask the owner, so it lands without --finish or hands back, and you ask`];
 }
 

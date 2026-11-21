@@ -220,7 +220,7 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
         if (!hasLessons(doc.body)) return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
         // reason: the owner asked to see it before it is done; only this change's finishing waits, a landing without --finish goes on (BR-2616, D-158)
         if (doc.ownerGate !== undefined) {
-          const approval = approvalOf(ws.db, subject);
+          const approval = approvalOf(ws.db, subject, doc.ownerGate);
           if (!approval.approved) return early("owner-gate", gateRefusal(subject, doc.ownerGate, approval, isWorker(ws.actor)));
         }
         // reason: a rule without evidence lands with no pass record, so it shows as 待重新执行; said here and listed by
