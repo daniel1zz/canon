@@ -59,7 +59,7 @@ function landingCommand(chore: boolean) { return defineCommand({
       // reason: the main session hears the agenda where its landing ends; a worker's main session hears it through watch (BR-2584, BR-2528).
       // It comes before the red-main lines, which end the output with the lessons reminder last (BR-2306, BR-2163).
       if (!isWorker(ws.actor)) for (const line of afterLandLines(ws, out)) say(line);
-      for (const line of redMainLandingLines(ws.db)) say(line);
+      for (const line of redMainLandingLines(ws.db, ws.actor)) say(line);
       if (out.finished && !isChore(out.change)) say(LESSON_REMINDER);
       return;
     }
@@ -69,7 +69,7 @@ function landingCommand(chore: boolean) { return defineCommand({
     }
     console.error(`canon: land refused (${out.reason}): ${out.message}`);
     for (const f of out.findings ?? []) console.error(`  ${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
-    for (const line of redMainLandingLines(ws.db)) console.error(line);
+    for (const line of redMainLandingLines(ws.db, ws.actor)) console.error(line);
     if (out.reason === "claimed") process.exit(EXIT.conflict);
     if (out.reason === "environment") process.exit(EXIT.env);
     process.exit(out.reason === "dirty" || out.reason === "on-main" || out.reason === "no-floor" || out.reason === "no-claim" ? EXIT.usage : EXIT.refused);

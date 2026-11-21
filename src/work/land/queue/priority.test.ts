@@ -32,7 +32,7 @@ describe("what jumps the landing queue", () => {
     const root = project();
     const w = ws(root);
     expect(priorityNow(w).fix).toBeUndefined();
-    recordFailure(w.db, { sha: "a".repeat(40), log: "/x.log", tail: "boom", green: null });
+    recordFailure(w.db, { sha: "a".repeat(40), log: "/x.log", tail: "boom", green: null, files: [], reported: false });
     w.db.db.query("UPDATE red_main SET change = 'C-7' WHERE id = 1").run();
     expect(priorityNow(w).fix).toBe("C-7");
   });

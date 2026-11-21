@@ -370,7 +370,7 @@ async function testCommit(ws: Workspace, say: Say, sha: string): Promise<Result<
     if (!passed) {
       const green = git(ws.primary, "rev-parse", "--verify", "--quiet", GREEN_REF);
       const tail = readFileSync(log, "utf8").split("\n").slice(-40).join("\n");
-      const recorded = record(() => recordFailure(ws.db, { sha, log, tail, green: green.ok && green.value !== "" ? green.value : null, fixLanded: fixLandedIn(ws, sha) }));
+      const recorded = record(() => recordFailure(ws.db, { sha, log, tail, green: green.ok && green.value !== "" ? green.value : null, fixLanded: fixLandedIn(ws, sha), files: failing, reported }));
       if (!recorded.ok) return recorded;
       say(`floor watch: ${ws.config.main} ${sha.slice(0, 9)} failed (${why}); recorded for a fix change (canon work start --fix-main)`);
       return ok({ sha, passed, log, files: failing, reported });

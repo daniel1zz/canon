@@ -2,7 +2,7 @@ import { openFindings, type OpenFinding } from "../../knowledge/review/findings/
 import { questions } from "../humans/questions.ts";
 import type { ChangeState } from "../../knowledge/changes/state.ts";
 import { pendingRequests } from "../delegation/requests.ts";
-import { redMain } from "../watch/redmain.ts";
+import { redMain, revertSettled } from "../watch/redmain.ts";
 import { flakyFiles, revertedChanges } from "../watch/revert.ts";
 import type { Workspace } from "../workspace.ts";
 import type { Change, Corpus } from "../../knowledge/documents/model.ts";
@@ -155,7 +155,8 @@ export function qualityItems(ws: Workspace, corpus: Corpus): DueItem[] {
 export function mainItems(ws: Workspace, now: number, states: readonly ChangeState[], corpus: Corpus): DueItem[] {
   const items: DueItem[] = [];
   const red = redMain(ws.db);
-  if (red && red.change === null) items.push(item("red-main", "red-main", red.since, `the background floor failed on ${red.sha.slice(0, 9)} (log: ${red.log})`, "canon work start --fix-main", "canon work start --fix-main", "judge", 0));
+  // reason: before the automatic revert has its result a fix change would stop it from locating the landing (BR-2601, BR-2535)
+  if (red && red.change === null && revertSettled(ws.db, red)) items.push(item("red-main", "red-main", red.since, `the background floor failed on ${red.sha.slice(0, 9)} (log: ${red.log})`, "canon work start --fix-main", "canon work start --fix-main", "judge", 0));
   // reason: a reverted change waits on its branch until someone fixes and lands it again (BR-2536)
   for (const r of revertedChanges(ws)) items.push(item(`reverted:${r.subject}`, "reverted", r.since, `reverted from main after the background floor failed${r.files.length > 0 ? ` (${r.files.join(", ")})` : " before the tests"}; its work is replayed on change/${r.subject}`, `canon work start ${r.subject}, fix the failure, land again`, "canon work start <n>, fix the failure, land again", "judge", 0));
   items.push(...failedReviews(ws));

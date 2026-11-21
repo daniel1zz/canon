@@ -253,6 +253,9 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   // Why a session stopped, one of HANDOFF_REASONS, and what an `owner` reason waits on (BR-2025, D-151); null on a handoff written before.
   ["handoffs", "reason TEXT"],
   ["handoffs", "on_ref TEXT"],
+  // The test files the background floor's last failure named, a JSON array, and why it is empty: `no-report` or `before-tests` (BR-2599, D-155).
+  ["red_main", "files TEXT"],
+  ["red_main", "files_unknown TEXT"],
 ];
 
 /**

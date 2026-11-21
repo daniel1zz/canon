@@ -46,7 +46,7 @@ describe("the owner's priority in the coordination DB", () => {
     const b = enqueue(d, "/wt/b", "C-2", "x");
     const c = enqueue(d, "/wt/c", "C-3", "x");
     mark(d, "agent:a", "C-2", "go");
-    recordFailure(d, { sha: "a".repeat(40), log: "/x.log", tail: "boom", green: null });
+    recordFailure(d, { sha: "a".repeat(40), log: "/x.log", tail: "boom", green: null, files: [], reported: false });
     d.db.query("UPDATE red_main SET change = 'C-3' WHERE id = 1").run();
     const p = priorityNow(ws(root));
     expect([p.fix, [...(p.marked ?? [])]]).toEqual(["C-3", ["C-2"]]);

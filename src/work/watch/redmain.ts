@@ -31,25 +31,59 @@ export interface RedMain {
   readonly change: string | null;
   readonly fix_pid: number | null;
   readonly fix_start: string | null;
+  /** The test files the latest failure named, sorted by path (BR-2599). */
+  readonly files: readonly string[];
+  /**
+   * Why `files` is empty: the floor writes no report, or it failed before the tests; null when files are named, or on a
+   * record written before canon recorded them.
+   */
+  readonly filesUnknown: FilesUnknown | null;
 }
 
+export type FilesUnknown = "no-report" | "before-tests";
+
+type Row = Omit<RedMain, "files" | "filesUnknown"> & { readonly files: string | null; readonly files_unknown: string | null };
+
 export function redMain(db: CoordDb): RedMain | undefined {
-  return db.db.query<RedMain, []>("SELECT sha, first_sha, log, tail, since, green, change, fix_pid, fix_start FROM red_main WHERE id = 1").get() ?? undefined;
+  const row = db.db.query<Row, []>("SELECT sha, first_sha, log, tail, since, green, change, fix_pid, fix_start, files, files_unknown FROM red_main WHERE id = 1").get();
+  if (!row) return undefined;
+  const { files, files_unknown, ...rest } = row;
+  const unknown = files_unknown === "no-report" || files_unknown === "before-tests" ? files_unknown : null;
+  return { ...rest, files: files ? (JSON.parse(files) as string[]) : [], filesUnknown: unknown };
 }
 
 /**
- * Records a background failure (BR-2220): a new record when there is none; otherwise only its failing commit, log
- * and output tail change, never when it began, the last passing commit or the fix change.
+ * Records a background failure (BR-2220): a new record when there is none; otherwise only its failing commit, log,
+ * output tail and failing test files change (BR-2599), never when it began, the last passing commit or the fix change.
+ * `reported` says whether the floor writes a report: only then does an empty `files` mean it failed before the tests.
  */
-export function recordFailure(db: CoordDb, f: { sha: string; log: string; tail: string; green: string | null; fixLanded?: boolean }): void {
+export function recordFailure(db: CoordDb, f: { sha: string; log: string; tail: string; green: string | null; fixLanded?: boolean; files: readonly string[]; reported: boolean }): void {
   const now = new Date().toISOString();
+  const files = [...new Set(f.files)].sort();
+  const unknown: FilesUnknown | null = files.length > 0 ? null : f.reported ? "before-tests" : "no-report";
   // reason: a fix change that has landed and is part of the commit that still fails has done what it could; the record must not keep naming it, or no one can open the next fix (BR-2221).
   if (f.fixLanded) db.db.query("UPDATE red_main SET change = NULL, fix_pid = NULL, fix_start = NULL WHERE id = 1").run();
   db.db
     .query(
-      "INSERT INTO red_main(id, sha, first_sha, log, tail, since, green, updated_at) VALUES (1, ?1, ?1, ?2, ?3, ?4, ?5, ?4) ON CONFLICT(id) DO UPDATE SET sha = excluded.sha, log = excluded.log, tail = excluded.tail, updated_at = excluded.updated_at",
+      "INSERT INTO red_main(id, sha, first_sha, log, tail, since, green, updated_at, files, files_unknown) VALUES (1, ?1, ?1, ?2, ?3, ?4, ?5, ?4, ?6, ?7) ON CONFLICT(id) DO UPDATE SET sha = excluded.sha, log = excluded.log, tail = excluded.tail, updated_at = excluded.updated_at, files = excluded.files, files_unknown = excluded.files_unknown",
     )
-    .run(f.sha, f.log, f.tail, now, f.green);
+    .run(f.sha, f.log, f.tail, now, f.green, JSON.stringify(files), unknown);
+}
+
+/**
+ * Whether the automatic revert has its result for this record (BR-2601, BR-2598): since the record began, a
+ * `revert.skip`, or a revert (`land.revert`) after which the background floor failed again. Without a live watcher
+ * nothing is locating or reverting any more, so that counts as a result too.
+ */
+export function revertSettled(db: CoordDb, r: RedMain): boolean {
+  if (db.db.query("SELECT 1 FROM events WHERE kind = 'revert.skip' AND ts >= ? LIMIT 1").get(r.since)) return true;
+  const failedAfterRevert = db.db
+    .query("SELECT 1 FROM events f WHERE f.kind = 'floor.fail' AND EXISTS (SELECT 1 FROM events v WHERE v.kind = 'land.revert' AND v.ts >= ? AND v.id < f.id) LIMIT 1")
+    .get(r.since);
+  if (failedAfterRevert) return true;
+  // reason: a watcher that died while locating never records a result; without this the reminder would never come and the hint would keep saying wait (D-155)
+  const w = db.db.query<{ pid: number; pid_start: string }, []>("SELECT pid, pid_start FROM watcher WHERE id = 1").get();
+  return !w || isGone({ pid: w.pid, start: w.pid_start }) === true;
 }
 
 /** Main passed: the record goes (BR-2222). */
@@ -79,7 +113,7 @@ const short = (sha: string) => sha.slice(0, 9);
  * The `canon brief` block about a failing main (BR-2220), first after the guide; empty when main is not failing.
  * `mine` is the change claimed in the worktree brief runs in, if any.
  */
-export function redMainNotice(db: CoordDb, mine: string | undefined): string[] {
+export function redMainNotice(db: CoordDb, mine: string | undefined, actor: string): string[] {
   const r = redMain(db);
   if (!r) return [];
   const lines = [
@@ -89,7 +123,9 @@ export function redMainNotice(db: CoordDb, mine: string | undefined): string[] {
     ...r.tail.trimEnd().split("\n").slice(-10).map((l) => `    ${l}`),
     `  last passing commit: ${r.green ? short(r.green) : "none recorded"}`,
   ];
-  lines.push(redMainFixer(r));
+  const files = filesLine(r);
+  if (files) lines.push(files);
+  lines.push(redMainFixer(db, r, actor));
   if (mine && mine === r.change) lines.push(`  ${mine} is the change that fixes it.`);
   else if (mine) lines.push(`  These failures are not caused by ${mine}: do not fix them in ${mine}; its own tests may fail for the same reason.`);
   return lines;
@@ -100,17 +136,53 @@ const redMainHead = (r: RedMain) => {
   return `main is failing floor since ${since}, first failed at ${r.since} (canon floor watch, D-31)`;
 };
 
-const redMainFixer = (r: RedMain) =>
-  r.change
-    ? `  being fixed in ${r.change}`
-    : r.fix_pid !== null
-      ? "  a session is opening the fix change right now (canon work start --fix-main)"
-      : "  nobody is fixing it yet: a session that has no claimed change runs `canon work start --fix-main` to fix it";
+/** The most failing test files the brief names (BR-2599). */
+const FILES_SHOWN = 10;
+
+/** The brief's line about which test files fail (BR-2599); undefined on a record written before canon recorded them. */
+function filesLine(r: RedMain): string | undefined {
+  if (r.files.length > 0) {
+    const more = r.files.length > FILES_SHOWN ? ` … and ${r.files.length - FILES_SHOWN} more` : "";
+    return `  failing test files (${r.files.length}): ${r.files.slice(0, FILES_SHOWN).join(", ")}${more}`;
+  }
+  if (r.filesUnknown === "no-report") return "  failing test files: not known, the floor writes no report ({report})";
+  if (r.filesUnknown === "before-tests") return "  failing test files: none, it failed before the tests (setup or typecheck)";
+  return undefined;
+}
+
+/** Who fixes a failing main, worded for the caller (BR-2598): a worker tells its main session; a main session opens the fix even with a claimed change. */
+function redMainFixer(db: CoordDb, r: RedMain, actor: string): string {
+  if (r.change) return `  being fixed in ${r.change}`;
+  if (r.fix_pid !== null) return "  a session is opening the fix change right now (canon work start --fix-main)";
+  // reason: a fix change stops the automatic revert from locating the landing (BR-2535), so nobody is sent to open one before it has its result (BR-2598)
+  if (!revertSettled(db, r)) return "  the automatic revert is still locating or reverting the landing that broke it: do not open a fix change yet (BR-2535)";
+  if (isWorker(actor)) return "  nobody is fixing it yet: tell the main session that delegated your change; a worker cannot open the fix change (D-155)";
+  return "  nobody is fixing it yet: whichever session sees this opens the fix change with `canon work start --fix-main`, even one holding a claimed change: stop that change first (canon work stop) or delegate it, and come back to it after the fix lands (D-155)";
+}
 
 /** The two lines of the brief's block that `canon work land` repeats with its result (BR-2306); empty when main is not failing. */
-export function redMainLandingLines(db: CoordDb): string[] {
+export function redMainLandingLines(db: CoordDb, actor: string): string[] {
   const r = redMain(db);
-  return r ? [redMainHead(r), redMainFixer(r)] : [];
+  return r ? [redMainHead(r), redMainFixer(db, r, actor)] : [];
+}
+
+/**
+ * What `canon work test` says before its run and again after it while main is failing (BR-2600): one line naming the
+ * fix change when there is one, else the head and BR-2598's hint; empty when main is not failing.
+ */
+export function redMainTestLines(db: CoordDb, actor: string): string[] {
+  const r = redMain(db);
+  if (!r) return [];
+  if (r.change) return [`${redMainHead(r)}: being fixed in ${r.change}`];
+  return [redMainHead(r), redMainFixer(db, r, actor)];
+}
+
+/** The failed files of a `canon work test` run that the failing-main record names too (BR-2600); empty with a fix change. */
+export function failingOnMainToo(db: CoordDb, failed: readonly string[]): string[] {
+  const r = redMain(db);
+  if (!r || r.change) return [];
+  const onMain = new Set(r.files);
+  return failed.filter((f) => onMain.has(f));
 }
 
 /** The title of the fix change for a failing commit (BR-2221). */

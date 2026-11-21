@@ -58,6 +58,9 @@ export function duration(text: string): number | undefined {
   return Number(m[1]) * { m: 60_000, h: 3_600_000, d: 86_400_000 }[m[2] as "m" | "h" | "d"];
 }
 
+/** The agenda key of a failing main (BR-2527, BR-2601). */
+export const RED_MAIN = "red-main";
+
 export interface Recorded {
   readonly key: string;
   readonly line: string;
@@ -75,6 +78,11 @@ export function recordOutcome(
   changeOpen: (id: string) => boolean,
   now: number,
 ): Result<Recorded[]> {
+  // reason: a failing main is fixed, never put off or dropped (BR-2601, D-155); handing it to a fix change is still recorded
+  if (what.outcome !== "handed" && keys.includes(RED_MAIN)) {
+    ws.db.event(ws.actor, "reminder.handled.refuse", null, { reason: "red-main", outcome: what.outcome, keys: [...keys] });
+    return err("refused", `${RED_MAIN} cannot be ${what.outcome === "deferred" ? "deferred" : "marked not doing"}: main failing cannot wait, it can only be fixed (canon work start --fix-main, or hand it to the fix change with --to <C-n>). Nothing was recorded`);
+  }
   const missing = keys.filter((k) => !open.has(k));
   if (missing.length > 0) {
     ws.db.event(ws.actor, "reminder.handled.refuse", null, { reason: "not-on-agenda", keys: missing });

@@ -216,6 +216,8 @@ export interface WorkTestResult {
   readonly signal?: string;
   /** True when the run went past test_timeout_minutes and was stopped (BR-2466). */
   readonly timedOut?: boolean;
+  /** The test files that failed, when the run reached its summary (BR-2600). */
+  readonly failedFiles?: readonly string[];
 }
 
 /** True when `canon work test` must exit 1: a test file, the type check or canon check failed. */
@@ -484,7 +486,7 @@ async function runWorkTest(ws: Workspace, all: boolean, say: (line: string) => v
   const ms = Math.round(performance.now() - t0);
   // reason: a glob that matches nothing stopped protecting anything, which must not pass unnoticed (BR-2297)
   for (const g of unmatched) say(`always_tests: ${JSON.stringify(g)} matches no test file`);
-  const result: WorkTestResult = { files: files.length, failed: failed.length, typecheck, check: findings.length, unmatched: unmatched.length, evidence: missing.value.length };
+  const result: WorkTestResult = { files: files.length, failed: failed.length, typecheck, check: findings.length, unmatched: unmatched.length, evidence: missing.value.length, failedFiles: failed };
   if (files.length) say(`${files.length} file(s): ${files.length - failed.length} passed, ${failed.length} failed, ${secs(ms)}, at most ${jobs.peak} at once`);
   if (passedAlone.length) say(`failed alongside other files, passed alone: ${passedAlone.join(", ")}`);
   // A note, never a failure (BR-2472).

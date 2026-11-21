@@ -262,7 +262,7 @@ function briefState(ws: Workspace, env: Readonly<Record<string, string | undefin
   const mine = claimed ?? (chore.value ? { subject: chore.value } : undefined);
   const hs = handoffs(ws.db);
   // A failing main comes first, in every worktree (BR-2220); then the background floor starts if main's latest commit needs it (BR-2219).
-  for (const line of redMainNotice(ws.db, mine?.subject)) say(line);
+  for (const line of redMainNotice(ws.db, mine?.subject, ws.actor)) say(line);
   ensureWatcher(ws, say);
   // The design requests this session answers as design owner, in every worktree: a worker waits on them (BR-2499).
   for (const line of ownerRequestLines(ws.db, ws.actor)) say(line);

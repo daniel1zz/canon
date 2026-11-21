@@ -4,6 +4,7 @@ import { takesMany } from "../../invocation/strict.ts";
 import { workTest, workTestFailed } from "./verify.ts";
 import { backgroundRun, recordExit } from "../land/detach.ts";
 import { stopTest, testInBackground, TEST_RUN } from "./background.ts";
+import { failingOnMainToo, redMainTestLines } from "../watch/redmain.ts";
 
 /** `canon work test`. */
 
@@ -31,7 +32,12 @@ const test = takesMany(defineCommand({
     }
     if (args.stop) fail({ code: "invalid", message: "--stop is not for the background test run itself" });
     recordExit(run);
+    // A failing main is said before the run and again after it, on standard error, never changing the exit code (BR-2600).
+    for (const line of redMainTestLines(ws.db, ws.actor)) console.error(line);
     const r = must(await workTest(ws, Boolean(args.all), say, undefined, only));
+    const onMain = failingOnMainToo(ws.db, r.failedFiles ?? []);
+    if (onMain.length > 0) console.error(`failing on main too: ${onMain.join(", ")} (main's failures, not caused by this change)`);
+    for (const line of redMainTestLines(ws.db, ws.actor)) console.error(line);
     if (workTestFailed(r)) process.exit(EXIT.refused);
   },
 }));
