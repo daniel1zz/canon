@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FAST, project, quiet, sh, startNew, ws } from "../testkit.ts";
 import { land } from "./land.ts";
-import { approvalOf } from "./owner-gate.ts";
+import { approvalOf, gateRefusal } from "./owner-gate.ts";
 import { agenda, dueList, type Readings } from "../reminders/agenda.ts";
 
 // reason: each case lands or spawns canon several times; a loaded machine took longer than bun's 5 s default
@@ -90,7 +90,13 @@ test("BR-2616: an approval is one of 批准 同意 可以 是 yes, any case, tri
   expect(approved()).toBe(false);
 });
 
-test("BR-2617: until approved the main session's agenda says to ask, then that it waits for the answer; approved, it is gone", () => {
+test("BR-2616: a worker refused for the owner gate is told it cannot ask the owner and hands the change back", () => {
+  const msg = gateRefusal(["C", 9].join("-"), "设计稿", { approved: false }, true);
+  expect(msg).toContain("canon work stop --reason owner");
+  expect(gateRefusal(["C", 9].join("-"), "设计稿", { approved: false }, false)).not.toContain("canon work stop --reason owner");
+});
+
+test("BR-2617: until approved the main session's agenda says to ask, then that it waits for the answer; approved, it is gone; a worker's agenda has no such item", () => {
   const f = gated();
   const item = () => dueList(must(agenda(ws(f.root, "agent:s2"), { read: CALM }))).find((i) => i.key === `owner-gate:${f.change}`);
   expect(item()!.summary).toBe(`${f.change} needs the owner's approval of: 设计稿; ask when it is ready to show`);
