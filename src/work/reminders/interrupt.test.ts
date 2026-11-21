@@ -122,3 +122,11 @@ test("BR-2606: a worker's agenda has no interrupt item", () => {
   expect(cli(root, "agent:s1", ["priority", "set", "C-1", "P0", "--relayed", "这个最急"]).code).toBe(0);
   expect(dueList(must(agenda(ws(root, "agent:s1:w1"), { read: CALM, slots: slots() }))).some((i) => i.kind === "interrupt")).toBe(false);
 });
+
+test("BR-2607 BR-2614: a delegatable change whose text names a planned rule missing from rules: has that fact under it", () => {
+  const root = fresh();
+  onMain(root, { "canon/rules/x/BR-2.md": ruleDoc("BR-2").replace("status: active", "status: planned").replace("untested: fixture\n", ""), "canon/changes/C-1.md": changeDoc(1, "", "- BR-2 的加载检查") });
+  const lines = agendaLines(must(agenda(ws(root, "agent:s1"), { read: CALM, slots: slots() })));
+  expect(lines[1]).toStartWith("  ready:C-1 P2 - Work 1 → canon work start C-1 | canon work delegate C-1 --to <name>");
+  expect(lines[2]).toStartWith("    not in rules: BR-2 is planned and named in C-1's text");
+});
