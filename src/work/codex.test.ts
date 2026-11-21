@@ -75,7 +75,7 @@ describe("Codex coordination identity", () => {
     // A real short-lived executable named codex exercises the OS process boundary without an AI request.
     const host = join(root, "bin/codex");
     symlinkSync("/bin/sh", host);
-    const command = `"${process.execPath}" "${MAIN}" work start --title Liveness; code=$?; exit "$code"`;
+    const command = `"${process.execPath}" "${MAIN}" work start --title Liveness --owner-gate \"none: test\" --advances \"none: test\"; code=$?; exit "$code"`;
     const r = Bun.spawnSync([host, "-c", command], { cwd: root, env: envFor({ CODEX_THREAD_ID: "liveness-a" }), stdout: "pipe", stderr: "pipe" });
     expect(r.exitCode).toBe(0);
     const db = new Database(join(root, ".git/canon/state.db"), { readonly: true });

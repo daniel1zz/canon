@@ -33,7 +33,7 @@ const events = (root: string, kind: string) => db(root).db.query<{ actor: string
 async function claimedBy(name: string | undefined) {
   const root = project();
   const prepared = name ? prepareDelegation(root, "Sub work", S, name) : undefined;
-  const r = await canon(root, {}, "work", "start", ...(prepared ? [prepared.change, "--as", name!] : ["--title", "Sub work"]));
+  const r = await canon(root, {}, "work", "start", ...(prepared ? [prepared.change, "--as", name!] : ["--title", "Sub work", "--owner-gate", "none: test", "--advances", "none: test"]));
   expect(r.code).toBe(0);
   const id = r.out.match(/(C-\d+) →/)?.[1] ?? "C-1";
   const wt = join(root + ".worktrees", id);
