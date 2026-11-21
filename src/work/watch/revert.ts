@@ -141,9 +141,16 @@ export async function locate(ws: Workspace, f: Failure): Promise<Landing | strin
   return cands[hi]!;
 }
 
-/** Whether a revert was started since `since` (one automatic revert per failing-main record, BR-2535). */
+/**
+ * Whether a revert reached main since `since` (one automatic revert per failing-main record, BR-2535). `revert.start` is
+ * written before main is moved, so a start whose commit never reached main, because main kept moving, is no revert.
+ */
 function revertedSince(ws: Workspace, since: string): boolean {
-  return ws.db.db.query("SELECT 1 FROM events WHERE kind = 'revert.start' AND ts >= ? LIMIT 1").get(since) !== null;
+  const rows = ws.db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = 'revert.start' AND ts >= ?").all(since);
+  return rows.some((r) => {
+    const sha = (JSON.parse(r.detail) as { revert?: unknown }).revert;
+    return typeof sha === "string" && git(ws.primary, "merge-base", "--is-ancestor", sha, `refs/heads/${ws.config.main}`).ok;
+  });
 }
 
 /** The change file's path at `sha`, or undefined. */
