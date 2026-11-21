@@ -194,6 +194,9 @@ describe("canon accept (BR-2462)", () => {
     writeFileSync(join(root, "canon/config.yaml"), readFileSync(join(root, "canon/config.yaml"), "utf8") + "floor_timing: after\nfloor_quiet_minutes: 600\nfloor_max_untested: 100\nfloor_max_age_minutes: 600\n");
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "after mode");
+    // reason: with no commit of main tested yet, the watcher the landing starts would test the landing at once, while its review
+    // still runs, and not accept it (BR-2538); with the base tested it waits for its thresholds and the watch below takes its place (#283)
+    await watch(ws(root), quiet, { now: true });
     await landRule(root, "narrow", rule(1, " Only overseas."));
     await reviewLandings(root);
     await watch(ws(root), quiet, { now: true });
