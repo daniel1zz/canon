@@ -42,6 +42,11 @@ export function setPriority(ws: Workspace, req: SetRequest): Result<string> {
       if (req.by === "main-agent" && now?.ownerTier) {
         const lower = req.tier === undefined || tierIndex(req.tier) > tierIndex(now.ownerTier);
         if (lower) return refuse("owner-set", `the owner set ${req.change} to ${now.ownerTier} ("${now.ownerWords ?? ""}"): the main agent may raise it, not ${req.tier === undefined ? "clear" : "lower"} it`, { owner_tier: now.ownerTier });
+        // reason: the owner's own tier set again by the main agent changes nothing; it stays the owner's, a backlog urgent mark included (BR-2602, BR-2363)
+        if (now.by === "owner" && req.tier === now.tier) {
+          ws.db.event(ws.actor, "priority.set", req.change, { tier: now.tier, previous, by: req.by, reason: req.words, unchanged: true });
+          return ok(`${req.change}: ${now.tier} (unchanged: set by the owner: ${now.ownerWords ?? ""})`);
+        }
       }
       if (req.tier === undefined) clearTier(ws.db, req.change);
       else

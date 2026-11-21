@@ -68,8 +68,9 @@ export const tierOf = (tiers: ReadonlyMap<string, Assigned>, change: string): Ti
  * agent cannot go below (BR-2602); only `--clear` returns a change to having no tier set.
  */
 export function writeTier(db: CoordDb, a: { change: string; tier: Tier; by: "owner" | "main-agent"; words: string; actor: string; ownerTier: Tier | null; ownerWords: string | null }): void {
-  // reason: one fact per change: a tier set now replaces a `backlog urgent` mark, which would otherwise still say P1 (BR-2602)
-  db.db.query("DELETE FROM urgent WHERE change = ?").run(a.change);
+  // reason: one fact per change: the owner's later word replaces a `backlog urgent` mark, which would otherwise still say P1
+  // (BR-2602, BR-2363); the main agent never reaches here for a marked change: it cannot lower the owner's P1 nor set P0
+  if (a.by === "owner") db.db.query("DELETE FROM urgent WHERE change = ?").run(a.change);
   db.db
     .query("INSERT INTO priorities(change, tier, set_by, words, actor, at, owner_tier, owner_words) VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT(change) DO UPDATE SET tier = excluded.tier, set_by = excluded.set_by, words = excluded.words, actor = excluded.actor, at = excluded.at, owner_tier = excluded.owner_tier, owner_words = excluded.owner_words")
     .run(a.change, a.tier, a.by, a.words, a.actor, new Date().toISOString(), a.ownerTier, a.ownerWords);

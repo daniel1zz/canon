@@ -136,6 +136,9 @@ describe("BR-2602: canon priority set", () => {
     const lower = cli(root, MAIN_AGENT, "priority", "set", "C-8", "P2", "--reason", "x");
     expect(lower.code).toBe(1);
     expect(lower.err).toContain("先合这个");
+    // setting the owner's own tier again changes nothing: it stays the owner's mark
+    expect(cli(root, MAIN_AGENT, "priority", "set", "C-8", "P1", "--reason", "x")).toMatchObject({ code: 0, out: "C-8: P1 (unchanged: set by the owner: 先合这个)\n" });
+    expect(json().find((c) => c.id === "C-8")).toMatchObject({ priority: "P1", priority_by: "owner" });
     // a mark an older canon wrote straight into the urgent table, with no tier row, still counts as the owner's P1
     db(root, (d) => d.db.query("INSERT INTO urgent(change, words, actor, at) VALUES ('C-7', '旧的标记', 'agent:old', '2026-11-01T00:00:00.000Z')").run());
     expect(json().find((c) => c.id === "C-7")).toMatchObject({ priority: "P1", priority_by: "owner" });
