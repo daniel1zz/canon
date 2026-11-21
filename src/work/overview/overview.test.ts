@@ -72,10 +72,28 @@ function fixture(): string {
 }
 
 const squash = (s: string) => s.replace(/ {2,}/g, " ");
+
+/** BR-2625: open and recently landed changes stating `owner_gate: "none: …"`, and the ones that are not listed. */
+function ungatedFixture(open: number): string {
+  const root = project();
+  const none = (why: string) => `owner_gate: "none: ${why}"\n`;
+  write(root, {
+    ...Object.fromEntries(Array.from({ length: open }, (_, i) => [`canon/changes/${C(20 + i)}.md`, change(20 + i, "open", "", none(`工具${20 + i}`))])),
+    [`canon/changes/${C(5)}.md`]: change(5, "done", "", none("修 bug")),
+    [`canon/changes/${C(6)}.md`]: change(6, "done", "", none("太久以前")),
+    [`canon/changes/${C(7)}.md`]: change(7, "open", "", 'owner_gate: "研究站剧情设计稿"\n'),
+    [`canon/changes/${C(8)}.md`]: change(8, "open"),
+  });
+  const land = ws(root).db.db.query("INSERT INTO events(ts, actor, kind, subject, detail) VALUES (?, 'agent:a', 'land.ok', ?, '{}')");
+  land.run(new Date(Date.now() - 10 * 86_400_000).toISOString(), C(6));
+  land.run(new Date(Date.now() - 2 * 86_400_000).toISOString(), C(5));
+  return root;
+}
+const section = (out: string) => out.slice(out.indexOf("## 不需负责人批准"), out.indexOf("## 历史")).trim().split("\n");
 const HISTORY = "细节：canon overview --history";
 
 describe("canon overview", () => {
-  test("BR-2505: four sections, the current release with one line per criterion, the agenda, what is in flight, the history outline; no plan section", () => {
+  test("BR-2505: five sections, the current release with one line per criterion, the agenda, what is in flight, the history outline; no plan section", () => {
     const r = canon(fixture(), "overview");
     expect(r.code).toBe(0);
     expect(r.out.trim().split("\n")).toEqual([
@@ -96,6 +114,9 @@ describe("canon overview", () => {
       "(none)",
       "当前这一批（没挂版本或模块）：7 个：C-5, C-6, C-7, C-8, C-9, C-10, C-11",
       "",
+      "## 不需负责人批准",
+      "(none)",
+      "",
       "## 历史",
       `${C(9)} 变更9  2026-11-16 07:42 UTC`,
       `${C(12)} 轻变更12  2026-11-16 06:00 UTC`,
@@ -103,6 +124,24 @@ describe("canon overview", () => {
       HISTORY,
     ]);
     expect(r.out).not.toContain("## 计划");
+  });
+
+  test("BR-2625: open changes with owner_gate none, then ones landed in the last 7 days, with their reasons; a real gate, no gate or an old landing are not listed; at most 15 lines", () => {
+    const one = canon(ungatedFixture(1), "overview");
+    expect(one.code).toBe(0);
+    const lines = section(one.out);
+    expect(lines[0]).toBe("## 不需负责人批准");
+    expect(lines[1]).toBe(`${C(20)} 变更20  正在做：工具20`);
+    expect(lines[2]).toMatch(new RegExp(`^${C(5)} 变更5  合入 \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2} UTC：修 bug$`));
+    expect(lines.length).toBe(3);
+    const many = ungatedFixture(16);
+    const shown = section(canon(many, "overview").out);
+    expect(shown.length).toBe(1 + 15 + 1);
+    expect(shown.at(-1)).toBe("… 还有 2 个（canon overview --json）");
+    const json = JSON.parse(canon(many, "overview", "--json").out) as { ungated: { id: string; reason: string; landed_at: string | null }[] };
+    expect(json.ungated.length).toBe(17);
+    expect(json.ungated.find((u) => u.id === C(5))?.reason).toBe("修 bug");
+    expect(json.ungated.find((u) => u.id === C(20))?.landed_at).toBeNull();
   });
 
   test("BR-2505: with no active release the lowest planned one stands in with a hint; with none at all the section says so and the rest still comes", () => {
@@ -120,7 +159,7 @@ describe("canon overview", () => {
   test("BR-2505: with nothing on the agenda, nothing in flight and no landing each section says so", () => {
     const r = canon(project(), "overview");
     expect(r.code).toBe(0);
-    expect(r.out.trim().split("\n")).toEqual(["## 当前版本", "(no release in progress)", NO_QUALITY, "", "## 议程", "(nothing)", "", "## 正在做和在等", "(none)", "当前这一批（没挂版本或模块）：没有", "", "## 历史", HISTORY]);
+    expect(r.out.trim().split("\n")).toEqual(["## 当前版本", "(no release in progress)", NO_QUALITY, "", "## 议程", "(nothing)", "", "## 正在做和在等", "(none)", "当前这一批（没挂版本或模块）：没有", "", "## 不需负责人批准", "(none)", "", "## 历史", HISTORY]);
   });
 
   test("BR-2505: changes in progress or waiting are listed in canon change list's order with their state or what they wait for; ready ones are not", () => {
@@ -132,7 +171,7 @@ describe("canon overview", () => {
     const started = startNew(root, "做点事");
     const out = canon(root, "overview").out.split("\n");
     const at = out.indexOf("## 正在做和在等");
-    expect(out.slice(at + 1, out.indexOf("## 历史") - 2)).toEqual([`${started.change} 做点事  in-progress`, `${C(7)} 变更7  waiting-deps: ${C(6)}`]);
+    expect(out.slice(at + 1, out.indexOf("## 不需负责人批准") - 2)).toEqual([`${started.change} 做点事  in-progress`, `${C(7)} 变更7  waiting-deps: ${C(6)}`]);
     const json = JSON.parse(canon(root, "overview", "--json").out);
     expect(json.changes.map((c: { id: string; state: string }) => [c.id, c.state])).toEqual([[started.change, "in-progress"], [C(7), "waiting-deps"]]);
   });

@@ -21,12 +21,15 @@ function noneReason(v: unknown): string | undefined {
 const isNone = (v: unknown): boolean => typeof v === "string" && v.trim().startsWith("none:");
 
 /** A change's `owner_gate` (BR-2615, BR-2623): the text when it gates; undefined when absent or `none: <reason>`; the problem as `{ problem }`. */
-export function ownerGateOf(v: unknown): { gate: string | undefined } | { problem: string } {
+export function ownerGateOf(v: unknown): { gate: string | undefined; none?: string } | { problem: string } {
   if (v === undefined) return { gate: undefined };
   const bad = { problem: "`owner_gate` must be a non-empty text saying what the owner approves, such as \"研究站剧情设计稿\", or \"none: <reason>\" (BR-2615, BR-2623)" };
   if (typeof v !== "string" || v.trim() === "") return bad;
   // reason: `none: <reason>` states that no approval is needed; it is no gate (BR-2623, D-159)
-  if (isNone(v)) return noneReason(v) !== undefined ? { gate: undefined } : bad;
+  if (isNone(v)) {
+    const reason = noneReason(v);
+    return reason !== undefined ? { gate: undefined, none: reason } : bad;
+  }
   return { gate: v.trim() };
 }
 

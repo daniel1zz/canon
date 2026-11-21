@@ -221,7 +221,7 @@ export function changeOnBranch(ws: Workspace, id: string, ref: BranchRef): Resul
   // reason: a change the owner must approve says so on its branch too, before it reaches main (BR-2617, BR-2618)
   const gate = ownerGateOf(meta["owner_gate"]);
   if ("problem" in gate) return ok({ unreadable: `${where}: ${gate.problem}` });
-  return ok({ change: { kind: "change", id, title: meta["title"], path: path.value, body, status: status as ChangeStatus, rules, passes: {}, ...links, ...(gate.gate !== undefined ? { ownerGate: gate.gate } : {}) } });
+  return ok({ change: { kind: "change", id, title: meta["title"], path: path.value, body, status: status as ChangeStatus, rules, passes: {}, ...links, ...(gate.gate !== undefined ? { ownerGate: gate.gate } : {}), ...(gate.none !== undefined ? { ownerGateNone: gate.none } : {}) } });
 }
 
 function changeType(ws: Workspace) {

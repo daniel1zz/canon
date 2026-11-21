@@ -1,5 +1,5 @@
 import { git } from "../../kernel/git.ts";
-import { changeStates, hasFile, isClosed, stateMark, type Filed } from "../../knowledge/changes/state.ts";
+import { changeStates, hasFile, isClosed, stateMark, type ChangeState, type Filed } from "../../knowledge/changes/state.ts";
 import { waitingMark } from "../../knowledge/changes/deps.ts";
 import { ok, type Result } from "../../kernel/result.ts";
 import { goalChangesBetween } from "../../knowledge/releases/goal-landing.ts";
@@ -42,6 +42,18 @@ export interface Landed {
   readonly advances: Advances | undefined;
 }
 
+/** A change whose `owner_gate` is `none: <reason>` (BR-2625): one not closed, or one landed in the last GOAL_DAYS days. */
+export interface Ungated {
+  readonly id: string;
+  readonly title: string;
+  readonly reason: string;
+  /** The `land.ok` time, ISO; undefined while it is not closed. */
+  readonly landedAt: string | undefined;
+}
+
+/** The most lines the ungated section shows (BR-2625). */
+const UNGATED_SHOWN = 15;
+
 export interface GoalCommit {
   readonly sha: string;
   readonly subject: string;
@@ -62,6 +74,8 @@ export interface Overview {
   readonly batch: readonly Filed[];
   readonly goalCommits: readonly GoalCommit[];
   readonly landed: readonly Landed[];
+  /** Changes stated as needing no owner approval (BR-2625); empty where the agenda was not asked for. */
+  readonly ungated: readonly Ungated[];
 }
 
 /** main's commits of the last GOAL_DAYS days that changed a release's or feature's goal, worked out from git each time (BR-2510). */
@@ -101,6 +115,7 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean; re
   const releases = releaseViews(corpus.value, current, statuses);
   let changes: Filed[] = [];
   let batch: Filed[] = [];
+  let openStates: ChangeState[] = [];
   let a: Agenda | string | undefined;
   if (opts.agenda !== false) {
     // reason: every change's state from the one place that computes it, read once with the agenda (BR-2571, D-151)
@@ -115,6 +130,7 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean; re
     changes = states.filter(hasFile).filter((s) => IN_FLIGHT.has(s.state));
     // reason: the same states, so the batch is never a second computation of which changes are open (BR-2505, D-149)
     batch = states.filter(hasFile).filter((s) => !isClosed(s) && s.change.release === undefined && s.change.feature === undefined);
+    openStates = states.filter(hasFile).filter((s) => !isClosed(s));
   }
   const summary = qualitySummary(corpus.value);
   let verdicts: Overview["verdicts"];
@@ -132,7 +148,32 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean; re
     batch,
     goalCommits: goalCommits(ws),
     landed: landed(ws, corpus.value, opts.landed ?? LANDED_OUTLINE),
+    ungated: opts.agenda !== false ? ungated(ws, corpus.value, openStates) : [],
   });
+}
+
+/**
+ * BR-2625: the changes whose `owner_gate` says no approval is needed: the ones not closed (in `states` order), then the
+ * ones landed in the last GOAL_DAYS days, newest first, each once.
+ */
+function ungated(ws: Workspace, corpus: Corpus, states: readonly ChangeState[]): Ungated[] {
+  const out: Ungated[] = [];
+  const seen = new Set<string>();
+  for (const s of states) {
+    if (!s.change?.ownerGateNone || seen.has(s.id)) continue;
+    seen.add(s.id);
+    out.push({ id: s.id, title: s.change.title, reason: s.change.ownerGateNone, landedAt: undefined });
+  }
+  const since = new Date(Date.now() - GOAL_DAYS * 24 * 3600 * 1000).toISOString();
+  const rows = ws.db.db.query<{ ts: string; subject: string | null }, [string]>("SELECT ts, subject FROM events WHERE kind = 'land.ok' AND ts >= ? ORDER BY id DESC").all(since);
+  const changes = new Map(corpus.docs.filter((d): d is Change => d.kind === "change").map((c) => [c.id, c]));
+  for (const r of rows) {
+    const doc = r.subject ? changes.get(r.subject) : undefined;
+    if (!doc?.ownerGateNone || seen.has(doc.id)) continue;
+    seen.add(doc.id);
+    out.push({ id: doc.id, title: doc.title, reason: doc.ownerGateNone, landedAt: r.ts });
+  }
+  return out;
 }
 
 /**
@@ -212,6 +253,10 @@ export function overviewLines(o: Overview): string[] {
   for (const s of o.changes) out.push(`${s.id} ${s.change.title}  ${s.state === "waiting-deps" ? `waiting-deps: ${waitingMark(s.waiting)?.replace(/^waiting for /, "") ?? ""}` : stateMark(s)}`);
   if (o.changesMore > 0) out.push(`… 还有 ${o.changesMore} 个（canon change list）`);
   out.push(batchLine(o.batch));
+  out.push("", "## 不需负责人批准");
+  if (o.ungated.length === 0) out.push("(none)");
+  for (const u of o.ungated.slice(0, UNGATED_SHOWN)) out.push(`${u.id} ${u.title}  ${u.landedAt === undefined ? "正在做" : `合入 ${minute(u.landedAt)}`}：${u.reason}`);
+  if (o.ungated.length > UNGATED_SHOWN) out.push(`… 还有 ${o.ungated.length - UNGATED_SHOWN} 个（canon overview --json）`);
   out.push("", "## 历史");
   const counts = goalCounts(o.goalCommits);
   if (counts.length > 0) out.push(`最近 ${GOAL_DAYS} 天的目标改动：${counts.map((c) => `${c.doc} ${c.count} 处`).join("，")}`);
@@ -250,6 +295,7 @@ export function overviewJson(o: Overview): Record<string, unknown> {
     current_batch: o.batch.map((s) => ({ id: s.id, title: s.change.title })),
     goal_changes: goalCounts(o.goalCommits),
     landed: o.landed.map((l) => ({ id: l.id, title: l.title ?? null, at: l.at })),
+    ungated: o.ungated.map((u) => ({ id: u.id, title: u.title, reason: u.reason, landed_at: u.landedAt ?? null })),
   };
 }
 

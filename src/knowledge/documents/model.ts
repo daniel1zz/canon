@@ -114,6 +114,8 @@ export interface Change extends Base {
   readonly chore?: string;
   /** What the owner must approve before this change can finish (`owner_gate`, BR-2615, D-158). */
   readonly ownerGate?: string;
+  /** The reason when `owner_gate` is `none: <reason>`: the session stated no approval is needed (BR-2623, BR-2625). */
+  readonly ownerGateNone?: string;
 }
 
 /** A change's `advances` (BR-2517): references `<R-n|F-n>/S<k>`, or none with the reason. */

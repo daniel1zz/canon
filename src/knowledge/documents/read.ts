@@ -241,7 +241,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: gate.problem });
           continue;
         }
-        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...links, ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}), ...(chore !== undefined ? { chore: (chore as string).toLowerCase() } : {}), ...(advances !== undefined ? { advances } : {}), ...(gate.gate !== undefined ? { ownerGate: gate.gate } : {}) });
+        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...links, ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}), ...(chore !== undefined ? { chore: (chore as string).toLowerCase() } : {}), ...(advances !== undefined ? { advances } : {}), ...(gate.gate !== undefined ? { ownerGate: gate.gate } : {}), ...(gate.none !== undefined ? { ownerGateNone: gate.none } : {}) });
       } else if (type.name === "release") {
         const shippedAt = p.meta["shipped_at"];
         const shipped = p.status === "shipped";
