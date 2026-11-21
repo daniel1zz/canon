@@ -103,6 +103,8 @@ export function takeBack(db: CoordDb, subject: string, actor: string, from: stri
     // the owner ends it so the change and its rule proposals come back, keeping a claim the owner already holds (BR-2500)
     if (!cur || cur.holder === actor) {
       if (from !== d.worker) return refuse(`${subject} is delegated to ${d.worker}, not to ${from}; nothing changed`);
+      const running = landingInProgress(db, subject, cur?.worktree ?? null);
+      if (running) return refuse(`${subject}: ${running}; end the delegation once that landing ends (landed or refused); nothing changed`, { landing: running });
       endDelegation(db, d, actor, from, cur?.worktree ?? null, { claim: cur ? "owner" : "none" });
       return ok({ worktree: cur?.worktree ?? "", epoch: d.epoch + 1, asserted: false });
     }

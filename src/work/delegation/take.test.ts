@@ -186,3 +186,19 @@ test("BR-2500: a worker that released its claim leaves nothing to hand over; the
   expect(t.claim?.holder).toBe("agent:s1"); expect(t.delegation?.ended).not.toBeNull();
   expect(events(g.root, "claim.handover")).toEqual([expect.objectContaining({ claim: "owner", epoch: 2 })]);
 });
+
+test("BR-2500: with the worker's claim released, a landing of the change still queued blocks ending the delegation until it ends", () => {
+  const f = fixture(); setClaim(f.root, f.change, GONE);
+  expect(cli(f.worktree, "agent:s7:w1", "work", "stop", "--reason", "design", "--next", "x", "--release").code).toBe(0);
+  const lander = ALIVE();
+  let w = ws(f.root);
+  const now = new Date().toISOString();
+  const id = Number(w.db.db.query("INSERT INTO queue(worktree, subject, state, enqueued_at, heartbeat, pid, pid_start) VALUES (?, ?, 'waiting', ?, ?, ?, ?)").run(f.worktree, f.change, now, now, lander.pid, lander.start).lastInsertRowid);
+  w.db.close();
+  const r = cli(f.root, "agent:s1", "work", "take", f.change, "--from", "w1");
+  expect(r.code).toBe(5); expect(r.text).toContain("queued");
+  expect(state(f.root, f.change).delegation?.ended).toBeNull();
+  w = ws(f.root); w.db.db.query("UPDATE queue SET state = 'failed' WHERE id = ?").run(id); w.db.close();
+  expect(cli(f.root, "agent:s1", "work", "take", f.change, "--from", "w1").code).toBe(0);
+  expect(state(f.root, f.change).delegation?.ended).not.toBeNull();
+});
