@@ -28,6 +28,8 @@ import { processesIn, type Occupant } from "../../kernel/process.ts";
 import { isWorker } from "../delegation/worker.ts";
 import { workerMayStart, workerNewWorkError } from "../delegation/access.ts";
 import { delegationNotice } from "../delegation/records.ts";
+import { delegateImplicitly, implicitEligible } from "../delegation/implicit.ts";
+import { startNotices } from "../delegation/notices.ts";
 
 /**
  * The work flow (design §6): one change, one worktree, one agent from start to land. This part starts,
@@ -86,7 +88,9 @@ function startedBefore(ws: Workspace, id: string): boolean {
 
 export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; links?: ChangeLinks }, say: Say, opts: { fixMain?: boolean; settles?: readonly number[] } = {}): Result<Started> {
   if (isWorker(ws.actor) && "title" in target) return workerNewWorkError();
-  if ("change" in target) { const allowed = workerMayStart(ws.db, target.change.toUpperCase(), ws.actor); if (!allowed.ok) return allowed; }
+  // reason: a main session's own subagent may start an undelegated change; it is delegated for its session below, once the change is known to be open (BR-2610, D-156)
+  const implicit = "change" in target && implicitEligible(ws, target.change.toUpperCase());
+  if ("change" in target && !implicit) { const allowed = workerMayStart(ws.db, target.change.toUpperCase(), ws.actor); if (!allowed.ok) return allowed; }
   const main = ws.config.main;
   // reason: --settles names the open findings a change settles; every number must be an open finding, so a stale or made-up one opens nothing (BR-2530, #209)
   if (opts.settles && opts.settles.length > 0) {
@@ -126,6 +130,10 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
       ws.db.event(ws.actor, "start.refuse", doc.id, { reason: "not-open", status: doc.status });
       return err("invalid", `${doc.id} is ${doc.status}`);
     }
+    if (implicit) {
+      const made = delegateImplicitly(ws, doc.id, say);
+      if (!made.ok) return made;
+    }
     // reason: only a first start reminds of owed findings; resuming, --fix-main and chores do not (BR-2530)
     remind = !opts.fixMain && !existing && !startedBefore(ws, doc.id);
     rules = doc.rules;
@@ -150,6 +158,8 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
     recordSettles(ws, changeId, opts.settles.map((id) => ({ id, openedAt: open.get(id)! })));
   }
   if (started.ok && remind) remindOwed(ws, changeId, rules, say);
+  // reason: an implicit delegation already printed them (BR-2608); a new change has no rules to share yet
+  if (started.ok && !implicit && !fresh) for (const line of startNotices(ws, changeId, false)) say(line);
   return started;
 }
 

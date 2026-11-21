@@ -12,6 +12,7 @@ import { isWorker } from "./worker.ts";
 import { delegationKeys } from "./config-keys.ts";
 import { measure, refusal, refusalMessage, unmeasured, unmeasuredLines } from "./capacity.ts";
 import { delegation, delegationNotice, type ContractItem, type Delegation } from "./records.ts";
+import { startNotices } from "./notices.ts";
 import { parseDocFile } from "../../knowledge/documents/docfile.ts";
 import { isDeepStrictEqual } from "node:util";
 
@@ -82,7 +83,12 @@ export function contractWanted(docOf: (id: string) => Doc | undefined, types: Co
   return { wanted, unpublished };
 }
 
-export function delegate(ws: Workspace, subject: string, worker: string, contracts: readonly string[], say: Say): Result<Delegation> {
+/**
+ * `implicit`: the delegation a main session's own subagent `by` makes for its session when it starts an undelegated change
+ * (BR-2610); `ws.actor` is then that session, the design owner. It is not refused for machine capacity: the subagent is
+ * already running, and refusing its claim frees nothing.
+ */
+export function delegate(ws: Workspace, subject: string, worker: string, contracts: readonly string[], say: Say, implicit?: { readonly by: string }): Result<Delegation> {
   if (isWorker(ws.actor) || ws.actor === "agent:unknown") return err("invalid", "only a recognized primary session can delegate work");
   if (!/^[A-Za-z0-9_-]+$/.test(worker)) return err("invalid", "--to is letters, digits, - and _ only");
   const revision = git(ws.primary, "rev-parse", "--verify", `${ws.config.main}^{commit}`);
@@ -130,7 +136,8 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
       ws.db.event(ws.actor, "delegation.refuse", subject, { reason: "conflict", worker: previous.worker, owner: previous.owner });
       return err("conflict", `${subject} is already delegated to ${previous.worker} by ${previous.owner}; it is not stalled. Delegate another change, or leave it to ${previous.owner}`);
     }
-    if (adds) {
+    // reason: the subagent of an implicit delegation already runs; capacity guards starting new workers (BR-2610, BR-2526)
+    if (adds && !implicit) {
       const no = refusal(ws, cap.value);
       if (no) {
         ws.db.event(ws.actor, "delegation.refuse", subject, no.detail);
@@ -138,7 +145,8 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
       }
     }
     const claim = ws.db.db.query<{ holder: string }, [string]>("SELECT holder FROM claims WHERE subject = ?").get(subject);
-    if (claim && claim.holder !== ws.actor && !isWorker(claim.holder)) return err("conflict", `${subject} is claimed by ${claim.holder}`);
+    // reason: an implicit delegation is made only when no live claim binds the change; a lapsed row is taken over by the start that follows (BR-2610, BR-2011)
+    if (claim && claim.holder !== ws.actor && !isWorker(claim.holder) && !implicit) return err("conflict", `${subject} is claimed by ${claim.holder}`);
     const accepted = claim && claim.holder === previous?.acceptor;
     if (accepted && worker !== previous!.worker) return err("conflict", `${subject} is held by ${claim.holder}; canon work take it before changing the worker`);
     const d: Delegation = { subject, worker, owner: ws.actor, revision: revision.value, epoch: (previous?.epoch ?? 0) + 1, acceptor: accepted ? previous!.acceptor : null, manifest, taskHash, ended: null };
@@ -147,12 +155,13 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
     if (claim?.holder === ws.actor) ws.db.db.query("DELETE FROM claims WHERE subject = ? AND holder = ?").run(subject, ws.actor);
     added = adds;
     const missing = adds ? unmeasured(cap.value) : [];
-    ws.db.event(ws.actor, previous ? "delegation.update" : "delegation.create", subject, { ...d, ...(previous ? { previous } : {}), ...(missing.length ? { unmeasured: missing } : {}) });
+    ws.db.event(ws.actor, previous ? "delegation.update" : "delegation.create", subject, { ...d, ...(previous ? { previous } : {}), ...(missing.length ? { unmeasured: missing } : {}), ...(implicit ? { implicit: true, by: implicit.by } : {}) });
     return ok(d);
   }).immediate();
   if (!result.ok) return result;
   if (added) for (const line of unmeasuredLines(cap.value)) say(line);
   for (const line of delegationNotice(ws.db, subject)) say(line);
+  for (const line of startNotices(ws, subject, true)) say(line);
   say(`contract: ${manifest.map((i) => `${i.id ?? i.path} ${i.hash}`).join(", ")}; task ${taskHash}`);
   const hooks = config.hooks as { after_land?: string | string[] } | undefined;
   const afterLand = hooks?.after_land;

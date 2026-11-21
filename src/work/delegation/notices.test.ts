@@ -1,0 +1,112 @@
+import { afterEach, expect, test } from "bun:test";
+import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { join } from "node:path";
+import { project, sh, startNew, ws } from "../testkit.ts";
+
+const roots: string[] = [];
+afterEach(() => { for (const root of roots.splice(0)) { rmSync(root, { recursive: true, force: true }); rmSync(`${root}.worktrees`, { recursive: true, force: true }); } });
+const rule = (id: string, body: string, extra = "") => `---\nid: ${id}\ntitle: ${id}\nstatus: planned\nbusiness: dispatch\n${extra}---\n\n## 规则\n\n${body}\n\n## 例子\n\n- Works.\n`;
+function put(root: string, path: string, text: string) { mkdirSync(join(root, path, ".."), { recursive: true }); writeFileSync(join(root, path), text); }
+function commit(root: string) { sh(root, "add", "-A"); sh(root, "commit", "-qm", "fixture"); }
+function cli(root: string, actor: string, args: string[], env: Record<string, string> = {}) {
+  const base = { ...process.env } as Record<string, string | undefined>;
+  delete base["CLAUDE_DELEGATE_CHILD"]; delete base["CANON_SUBAGENT"];
+  const p = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), ...args], { cwd: root, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...base, CANON_ACTOR: actor, ...env } });
+  return { code: p.exitCode, text: p.stdout.toString() + p.stderr.toString() };
+}
+function repo(config = "") {
+  const root = project(); roots.push(root);
+  if (config) writeFileSync(join(root, "canon/config.yaml"), readFileSync(join(root, "canon/config.yaml"), "utf8") + config);
+  put(root, "canon/product.md", "# Product\n\nShared work.\n");
+  put(root, "canon/rules/task/BR-50.md", rule("BR-50", "Do the first thing.", "will_amend: [BR-52]\n"));
+  put(root, "canon/rules/task/BR-51.md", rule("BR-51", "Do another thing."));
+  put(root, "canon/rules/task/BR-52.md", rule("BR-52", "The rule a planned rule amends."));
+  commit(root);
+  return root;
+}
+/** A change made by `owner` with `rules`; released unless `keep`, so it is open and unclaimed. */
+function change(root: string, title: string, owner: string, rules: string[], keep = false) {
+  const s = startNew(root, title, owner);
+  const path = join(s.worktree, "canon/changes", readdirSync(join(s.worktree, "canon/changes")).find((p) => p.startsWith(`${s.change}-`) || p === `${s.change}.md`)!);
+  writeFileSync(path, readFileSync(path, "utf8").replace(/rules: \[\]/, `rules: [${rules.join(", ")}]`)); commit(s.worktree);
+  if (!keep) expect(cli(s.worktree, owner, ["work", "stop", "--reason", "partial", "--next", "later", "--release"]).code).toBe(0);
+  return s;
+}
+function delegationEvent(root: string, subject: string) {
+  const w = ws(root); try { return w.db.db.query<{ actor: string; detail: string }, [string]>("SELECT actor,detail FROM events WHERE subject = ? AND kind = 'delegation.create' ORDER BY id DESC LIMIT 1").get(subject); } finally { w.db.close(); }
+}
+function claimOf(root: string, subject: string) {
+  const w = ws(root); try { return w.db.db.query<{ holder: string }, [string]>("SELECT holder FROM claims WHERE subject = ?").get(subject)?.holder; } finally { w.db.close(); }
+}
+
+test("BR-2608: starting or delegating a change names each change in progress whose contract rules it shares, and who works on it", () => {
+  const root = repo();
+  const a = change(root, "First", "agent:s1", ["BR-51"], true);
+  const b = change(root, "Second", "agent:s2", ["BR-51"]);
+  const c = change(root, "Third", "agent:s4", ["BR-50"]);
+  const started = cli(root, "agent:s3", ["work", "start", b.change]);
+  expect(started.code).toBe(0);
+  expect(started.text).toContain(`${b.change} shares BR-51 with ${a.change} (claimed by agent:s1)`);
+  expect(started.text).toContain("depends_on");
+  // reason: C's contract is BR-50 and its will_amend target BR-52; neither is A's or B's
+  const third = cli(root, "agent:s5", ["work", "delegate", c.change, "--to", "w5"]);
+  expect(third.code).toBe(0);
+  expect(third.text).not.toContain(" shares ");
+  const d = change(root, "Fourth", "agent:s6", ["BR-52"]);
+  const fourth = cli(root, "agent:s6", ["work", "start", d.change]);
+  expect(fourth.code).toBe(0);
+  expect(fourth.text).toContain(`${d.change} shares BR-52 with ${c.change} (delegated to w5 by agent:s5)`);
+});
+
+test("BR-2609: delegating a change whose planned rule will amend a rule not yet naming it says the design is not settled", () => {
+  const root = repo();
+  const a = change(root, "Amends", "agent:s1", ["BR-50"]);
+  const started = cli(root, "agent:s1", ["work", "start", a.change]);
+  expect(started.code).toBe(0);
+  expect(started.text).not.toContain("design not settled");
+  expect(cli(a.worktree, "agent:s1", ["work", "stop", "--reason", "partial", "--next", "x", "--release"]).code).toBe(0);
+  const first = cli(root, "agent:s1", ["work", "delegate", a.change, "--to", "w1"]);
+  expect(first.code).toBe(0);
+  expect(first.text).toContain("design not settled: BR-50 will amend BR-52");
+  put(root, "canon/rules/task/BR-52.md", rule("BR-52", "The rule BR-50 amends; with BR-50 it also does more.")); commit(root);
+  const again = cli(root, "agent:s1", ["work", "delegate", a.change, "--to", "w1"]);
+  expect(again.code).toBe(0);
+  expect(again.text).not.toContain("design not settled");
+});
+
+test("BR-2610 BR-2498: a main session's own subagent starts an undelegated change; the session is recorded as its design owner", () => {
+  const root = repo();
+  const a = change(root, "Own subagent", "agent:s1", ["BR-51"]);
+  const r = cli(root, "agent:s1:sub1", ["work", "start", a.change]);
+  expect(r.code).toBe(0);
+  expect(r.text).toContain("implicit");
+  const e = delegationEvent(root, a.change)!;
+  expect(e.actor).toBe("agent:s1");
+  expect(JSON.parse(e.detail)).toMatchObject({ owner: "agent:s1", worker: "sub1", implicit: true, by: "agent:s1:sub1", epoch: 1 });
+  expect(claimOf(root, a.change)).toBe("agent:s1:sub1");
+});
+
+test("BR-2610 BR-2498: a worker another session started, or a change with a live claim, is still refused as undelegated", () => {
+  const root = repo();
+  const a = change(root, "Launched worker", "agent:s1", ["BR-51"]);
+  const launched = cli(root, "agent:s1:w1", ["work", "start", a.change], { CLAUDE_DELEGATE_CHILD: "1" });
+  expect(launched.code).toBe(1);
+  expect(launched.text).toContain("未派发");
+  expect(delegationEvent(root, a.change)).toBeNull();
+  const b = change(root, "Held", "agent:s2", ["BR-51"], true);
+  const held = cli(root, "agent:s2:sub1", ["work", "start", b.change]);
+  expect(held.code).toBe(1);
+  expect(held.text).toContain("未派发");
+  expect(claimOf(root, b.change)).toBe("agent:s2");
+});
+
+test("BR-2610 BR-2526: the implicit delegation is not refused for machine capacity", () => {
+  const root = repo("delegate_max_workers: 1\n");
+  const x = change(root, "Occupies the slot", "agent:s1", ["BR-52"]);
+  expect(cli(root, "agent:s1", ["work", "delegate", x.change, "--to", "w9"]).code).toBe(0);
+  const a = change(root, "Busy machine", "agent:s1", ["BR-51"]);
+  expect(cli(root, "agent:s1", ["work", "delegate", a.change, "--to", "w2"]).code).toBe(1);
+  const r = cli(root, "agent:s1:sub1", ["work", "start", a.change]);
+  expect(r.code).toBe(0);
+  expect(claimOf(root, a.change)).toBe("agent:s1:sub1");
+});
