@@ -51,8 +51,9 @@ test("BR-2615: owner_gate is a non-empty text or none: <reason>; empty, not text
   }
 });
 
-test("BR-2615 BR-2623: owner_gate none: <reason> is no gate: land --finish does not wait for the owner", async () => {
+test("BR-2615 BR-2623 BR-2616 BR-2617: owner_gate none: <reason> is no gate: no agenda item, and land --finish does not wait for the owner", async () => {
   const f = gated('owner_gate: "none: 内部工具"\n');
+  expect(dueList(must(agenda(ws(f.root, "agent:s2"), { read: CALM }))).some((i) => i.key === `owner-gate:${f.change}`)).toBe(false);
   expect(await finish(f.worktree)).toMatchObject({ kind: "landed", finished: true });
 });
 
