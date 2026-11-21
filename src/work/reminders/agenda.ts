@@ -8,6 +8,9 @@ import { age, ageOf, mainItems, renderDue, workerItems, type DueItem } from "./d
 import { holds, outcomes } from "./handled.ts";
 import { runningFullRuns, type HeavyRuns, type Slots } from "./heavy.ts";
 import { roomDetail, roomOf, type Room } from "./room.ts";
+import { interruptItems } from "./interrupt.ts";
+import { changeFacts, contextOf } from "../delegation/notices.ts";
+import { DEFAULT_TIER, type Tier } from "../priority/tiers.ts";
 
 /**
  * The agenda (BR-2527, D-151): the one place that works out what the main agent should hear about. Three groups (what can
@@ -24,9 +27,19 @@ export interface Ready {
   readonly title: string;
 }
 
+/** A change that can start now, as the agenda's first group lists it (BR-2607): both ways, and the facts to weigh. */
+export interface ReadyItem extends Ready {
+  readonly tier: Tier;
+  readonly delegatable: boolean;
+  /** Why it cannot be delegated (BR-2571); empty when it can. */
+  readonly notDelegatable: readonly string[];
+  /** BR-2608's and BR-2609's lines for it. */
+  readonly facts: readonly string[];
+}
+
 export interface Agenda {
   /** Null for a worker: it delegates nothing. */
-  readonly delegate: { readonly room: Room; readonly changes: readonly Ready[] } | null;
+  readonly delegate: { readonly room: Room; readonly changes: readonly Ready[]; readonly ready: readonly ReadyItem[] } | null;
   readonly judge: readonly DueItem[];
   readonly owner: readonly DueItem[];
   readonly yours: readonly DueItem[];
@@ -83,10 +96,16 @@ export function agenda(ws: Workspace, opts: AgendaOptions = {}): Result<Agenda> 
     const o = done.get(key);
     return !o || !holds(o, since, (id) => closed.has(id) || !states.some((s) => s.id === id), now);
   };
-  const items = mainItems(ws, now, states, corpus.value).filter((it) => keep(it.key, it.since));
-  const ready = states.filter((s): s is ChangeState & { change: NonNullable<ChangeState["change"]> } => s.state === "ready-delegatable" && s.change !== undefined && keep(`ready:${s.id}`, null));
+  const ctx = contextOf(corpus.value, states, ws.db);
+  const items = [...mainItems(ws, now, states, corpus.value), ...interruptItems(ws, states, room, ctx)].filter((it) => keep(it.key, it.since));
+  // reason: the main agent chooses who does a change, so every change that can start is listed with both ways, not only the delegatable ones (BR-2607, D-156)
+  const startable = states.filter((s): s is ChangeState & { change: NonNullable<ChangeState["change"]> } => (s.state === "ready-delegatable" || s.state === "ready-self") && s.change !== undefined && keep(`ready:${s.id}`, null));
+  const ready: ReadyItem[] = startable.map((s) => {
+    const delegatable = s.state === "ready-delegatable";
+    return { id: s.id, title: s.change.title, tier: s.priority?.tier ?? DEFAULT_TIER, delegatable, notDelegatable: s.notDelegatable, facts: changeFacts(ctx, s.id, s.change, delegatable) };
+  });
   return ok({
-    delegate: { room, changes: ready.map((s) => ({ id: s.id, title: s.change.title })) },
+    delegate: { room, changes: ready.filter((r) => r.delegatable).map((r) => ({ id: r.id, title: r.title })), ready },
     judge: items.filter((it) => it.group === "judge").sort(byOrder),
     owner: items.filter((it) => it.group === "owner").sort(byOrder),
     yours: [],
@@ -100,7 +119,7 @@ export function agenda(ws: Workspace, opts: AgendaOptions = {}): Result<Agenda> 
 export const dueList = (a: Agenda): DueItem[] => [...a.judge, ...a.owner, ...a.yours];
 
 /** Whether nothing would be printed (BR-2527, BR-2529). */
-export const isEmpty = (a: Agenda): boolean => (a.delegate === null || a.delegate.changes.length === 0) && dueList(a).length === 0 && a.heavy.running.length === 0 && a.heavy.waiting === 0;
+export const isEmpty = (a: Agenda): boolean => (a.delegate === null || a.delegate.ready.length === 0) && dueList(a).length === 0 && a.heavy.running.length === 0 && a.heavy.waiting === 0;
 
 /** One group's items with the same kind folded together where there are two or more, in the order of each kind's first item (BR-2527). */
 export function folded(items: readonly DueItem[]): DueItem[][] {
@@ -137,16 +156,26 @@ export function delegateHead(d: NonNullable<Agenda["delegate"]>): string {
   return `delegate: busy (${d.room.reasons.join("; ")}); delegatable once it falls: ${d.changes.slice(0, DELEGATE_SHOWN).map((c) => c.id).join(", ")}`;
 }
 
-/** The whole agenda as `canon work due` prints it (BR-2527, BR-2581, BR-2582). */
+/** The first group's head in `canon work due` (BR-2607): the machine's room, and that the choice is the main agent's. */
+export function startHead(d: NonNullable<Agenda["delegate"]>): string {
+  const room = d.room.room ? `delegate: room for ${d.room.fits} more (${roomDetail(d.room)})` : `delegate: busy (${d.room.reasons.join("; ")})`;
+  return `${room}; start or delegate: your call (D-156)`;
+}
+
+/** One change that can start (BR-2607): `ready:C-5 P2 - <title> → canon work start C-5 | canon work delegate C-5 --to <name>`. */
+export function readyLine(r: ReadyItem): string {
+  const ways = r.delegatable ? `canon work start ${r.id} | canon work delegate ${r.id} --to <name>` : `canon work start ${r.id} (not delegatable: ${r.notDelegatable.join("; ")})`;
+  return `ready:${r.id} ${r.tier} - ${r.title} → ${ways}`;
+}
+
+/** The whole agenda as `canon work due` prints it (BR-2527, BR-2607, BR-2582). */
 export function agendaLines(a: Agenda, now: number = Date.now()): string[] {
   const out: string[] = [];
   const d = a.delegate;
-  if (d && d.changes.length > 0) {
-    out.push(delegateHead(d));
-    if (d.room.room) {
-      for (const c of d.changes.slice(0, DELEGATE_SHOWN)) out.push(`  ready:${c.id} - ${c.title} → canon work delegate ${c.id} --to <name>`);
-      if (d.changes.length > DELEGATE_SHOWN) out.push(`  … ${d.changes.length - DELEGATE_SHOWN} more ready-delegatable (canon change list)`);
-    }
+  if (d && d.ready.length > 0) {
+    out.push(startHead(d));
+    for (const r of d.ready.slice(0, DELEGATE_SHOWN)) out.push(`  ${readyLine(r)}`, ...r.facts.map((f) => `    ${f}`));
+    if (d.ready.length > DELEGATE_SHOWN) out.push(`  … ${d.ready.length - DELEGATE_SHOWN} more ready (canon change list)`);
   }
   for (const [name, items] of [["judge", a.judge], ["owner", a.owner], ["yours", a.yours]] as const) {
     if (items.length === 0) continue;
@@ -189,7 +218,7 @@ const itemJson = (it: DueItem) => ({ key: it.key, kind: it.kind, since: it.since
 export function agendaJson(a: Agenda): Record<string, unknown> {
   const d = a.delegate;
   return {
-    delegate: d ? { room: d.room.room, fits: d.room.fits, reasons: d.room.reasons, load: d.room.load ?? null, limit: d.room.limit ?? null, cpus: d.room.cpus ?? null, held: d.room.held, max: d.room.max, full_runs: d.room.fullRuns, changes: d.changes.map((c) => c.id) } : null,
+    delegate: d ? { room: d.room.room, fits: d.room.fits, reasons: d.room.reasons, load: d.room.load ?? null, limit: d.room.limit ?? null, cpus: d.room.cpus ?? null, held: d.room.held, max: d.room.max, full_runs: d.room.fullRuns, changes: d.changes.map((c) => c.id), ready: d.ready.map((r) => ({ id: r.id, tier: r.tier, delegatable: r.delegatable, not_delegatable: r.notDelegatable, facts: r.facts })) } : null,
     judge: a.judge.map(itemJson),
     owner: a.owner.map(itemJson),
     yours: a.yours.map(itemJson),

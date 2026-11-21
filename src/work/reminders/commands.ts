@@ -4,7 +4,7 @@ import { changeStates, isClosed } from "../../knowledge/changes/state.ts";
 import { isWorker } from "../delegation/worker.ts";
 import { parseSince } from "../stats/window.ts";
 import { agenda, agendaJson, agendaLines, dueList } from "./agenda.ts";
-import { duration, recordOutcome, type OutcomeKind } from "./handled.ts";
+import { duration, recordOutcome, RED_MAIN, type OutcomeKind } from "./handled.ts";
 import { watchDue } from "./watch.ts";
 
 /** `canon work due`, `canon work watch` and `canon work handled`: the agenda, as it changes, and the main agent's outcomes (BR-2527, BR-2528, BR-2583, D-151). */
@@ -84,10 +84,11 @@ const handledCmd = defineCommand({
     }
     const now = Date.now();
     const a = must(agenda(ws, { now }));
-    const open = new Map<string, string | null>([...dueList(a).map((it) => [it.key, it.since] as const), ...(a.delegate?.changes ?? []).map((c) => [`ready:${c.id}`, null] as const)]);
+    const open = new Map<string, string | null>([...dueList(a).map((it) => [it.key, it.since] as const), ...(a.delegate?.ready ?? []).map((c) => [`ready:${c.id}`, null] as const)]);
+    const fixOnly = new Set([RED_MAIN, ...dueList(a).filter((it) => it.fixOnly).map((it) => it.key)]);
     const states = must(changeStates(ws, { delegatable: false })).states;
     const changeOpen = (id: string) => states.some((s) => s.id === id && s.change !== undefined && !isClosed(s));
-    for (const r of must(recordOutcome(ws, keys, what, open, changeOpen, now))) say(r.line);
+    for (const r of must(recordOutcome(ws, keys, what, open, changeOpen, now, fixOnly))) say(r.line);
   },
 });
 

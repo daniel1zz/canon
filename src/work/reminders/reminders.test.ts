@@ -183,31 +183,32 @@ test("BR-2527 BR-2241: a change done on main whose landing left a rule without e
   expect(must(dueItems(ws(root), Date.now(), CALM, NONE())).map((i) => i.key)).not.toContain("unverified:C-7");
 });
 
-test("BR-2581: with room, the delegatable changes in the owner's order, at most five, and how many more fit; a running full test run takes a slot", () => {
+test("BR-2581 BR-2607: with room, the changes that can start in the owner's order, at most five, both ways, and how many more fit; a running full test run takes a slot", () => {
   const root = fresh();
   onMain(root, { ...Object.fromEntries([1, 2, 3, 4, 5, 6, 7].map((n) => [n, changeDoc(n)])), 8: changeDoc(8).replace("\n## 要改什么\n\nx\n", "\n## 要改什么\n\n") });
   const w = ws(root);
   const q = queue();
   const lines = agendaLines(must(agenda(w, { read: CALM, slots: q.slots })));
-  expect(lines.slice(0, 2)).toEqual(["delegate: room for 10 more (load 1.0 of 16 on 8 CPUs, 0/10 slots)", "  ready:C-1 - Work 1 → canon work delegate C-1 --to <name>"]);
+  expect(lines.slice(0, 2)).toEqual(["delegate: room for 10 more (load 1.0 of 16 on 8 CPUs, 0/10 slots); start or delegate: your call (D-156)", "  ready:C-1 P2 - Work 1 → canon work start C-1 | canon work delegate C-1 --to <name>"]);
   expect(lines.filter((l) => l.startsWith("  ready:"))).toHaveLength(5);
-  expect(lines).toContain("  … 2 more ready-delegatable (canon change list)");
+  expect(lines).toContain("  … 3 more ready (canon change list)");
   expect(lines.some((l) => l.includes("C-8"))).toBe(false);
   q.add("C-637", 4242, 0);
-  expect(agendaLines(must(agenda(w, { read: CALM, slots: q.slots })))[0]).toBe("delegate: room for 9 more (load 1.0 of 14.4 on 8 CPUs, 0/10 slots, 1 full test run(s) running)");
+  expect(agendaLines(must(agenda(w, { read: CALM, slots: q.slots })))[0]).toBe("delegate: room for 9 more (load 1.0 of 14.4 on 8 CPUs, 0/10 slots, 1 full test run(s) running); start or delegate: your call (D-156)");
   expect(summary(must(agenda(w, { read: CALM, slots: q.slots })))[1]).toBe("  delegate: room for 9 more (load 1.0 of 14.4 on 8 CPUs, 0/10 slots, 1 full test run(s) running): C-1, C-2, C-3, C-4, C-5");
 });
 
-test("BR-2581: busy says why and what can be delegated once it falls; a full test run lowers the load limit to 0.9 of it and takes the last slot", () => {
+test("BR-2581 BR-2607: busy says why and still lists both ways; a full test run lowers the load limit to 0.9 of it and takes the last slot", () => {
   const root = fresh();
   onMain(root, { 9: changeDoc(9), 10: changeDoc(10) });
   const w = ws(root);
   const q = queue();
   expect(agendaLines(must(agenda(w, { read: machine(15), slots: q.slots })))[0]).toStartWith("delegate: room for 10 more");
-  expect(agendaLines(must(agenda(w, { read: machine(16), slots: q.slots })))[0]).toBe("delegate: busy (5-minute load 16.0 on 8 CPUs (limit 16)); delegatable once it falls: C-9, C-10");
+  expect(agendaLines(must(agenda(w, { read: machine(16), slots: q.slots })))[0]).toBe("delegate: busy (5-minute load 16.0 on 8 CPUs (limit 16)); start or delegate: your call (D-156)");
   q.add(null, 4242, 0);
   const busy = agendaLines(must(agenda(w, { read: machine(15), slots: q.slots })));
-  expect(busy).toEqual(["delegate: busy (5-minute load 15.0 on 8 CPUs (limit 14.4 while a full test run is running)); delegatable once it falls: C-9, C-10", "heavy: main full test run 0m"]);
+  expect(busy).toEqual(["delegate: busy (5-minute load 15.0 on 8 CPUs (limit 14.4 while a full test run is running)); start or delegate: your call (D-156)", "  ready:C-9 P2 - Work 9 → canon work start C-9 | canon work delegate C-9 --to <name>", "  ready:C-10 P2 - Work 10 → canon work start C-10 | canon work delegate C-10 --to <name>", "heavy: main full test run 0m"]);
+  expect(summary(must(agenda(w, { read: machine(15), slots: q.slots })))[1]).toBe("  delegate: busy (5-minute load 15.0 on 8 CPUs (limit 14.4 while a full test run is running)); delegatable once it falls: C-9, C-10");
   const slots = roomOf({ ...w, config: { ...w.config, delegateMaxWorkers: 10 } } as Workspace, CALM(), 9, 1);
   expect([slots.room, slots.reasons]).toEqual([false, ["9 of delegate_max_workers (10) in use; 1 full test run(s) take the last slot(s)"]]);
   expect(roomOf(w, machine(1, true)(), 0, 0).reasons).toEqual(["memory pressure warn"]);
@@ -381,7 +382,7 @@ test("BR-2528: after a landing, whoever landed, the changes that can start becau
   const at = out.findIndex((l) => /^#\d+ land\.ok C-1 agent:s7:w1/.test(l));
   expect(at).toBeGreaterThan(-1);
   expect(out[at + 1]).toBe("C-1 landed; C-2 can start now");
-  expect(out).toContain("+ delegate ready:C-2 - Work 2");
+  expect(out).toContain("+ delegate ready:C-2 P2 - Work 2 → canon work start C-2 | canon work delegate C-2 --to <name>");
   expect(out).toContain("- ready:C-1");
 });
 

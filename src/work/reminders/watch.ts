@@ -5,7 +5,7 @@ import { readings } from "../delegation/capacity.ts";
 import { isWorker } from "../delegation/worker.ts";
 import { eventsSince, lastEventId, type EventRow } from "../stats/window.ts";
 import type { Workspace } from "../workspace.ts";
-import { agenda, DELEGATE_SHOWN, dueList, heavyLine, summary, type Agenda, type Readings } from "./agenda.ts";
+import { agenda, DELEGATE_SHOWN, dueList, heavyLine, readyLine, summary, type Agenda, type Readings } from "./agenda.ts";
 import { renderDue, workerSubjects } from "./due.ts";
 import { runningFullRuns, type Slots } from "./heavy.ts";
 import { roomOf } from "./room.ts";
@@ -80,7 +80,7 @@ function concerns(ws: Workspace, e: EventRow, own: ReadonlySet<string>): boolean
 /** Every item of an agenda by key, each with the line `+` prints for it (BR-2528 point 4). */
 function itemLines(a: Agenda, now: number): Map<string, string> {
   const out = new Map<string, string>();
-  for (const c of a.delegate?.changes ?? []) out.set(`ready:${c.id}`, `+ delegate ready:${c.id} - ${c.title}`);
+  for (const r of a.delegate?.ready ?? []) out.set(`ready:${r.id}`, [`+ delegate ${readyLine(r)}`, ...r.facts.map((f) => `    ${f}`)].join("\n"));
   for (const it of dueList(a)) out.set(it.key, `+ ${it.group} ${renderDue(it, now)}`);
   return out;
 }

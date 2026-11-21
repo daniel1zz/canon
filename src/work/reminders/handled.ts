@@ -77,11 +77,18 @@ export function recordOutcome(
   open: ReadonlyMap<string, string | null>,
   changeOpen: (id: string) => boolean,
   now: number,
+  fixOnly: ReadonlySet<string> = new Set([RED_MAIN]),
 ): Result<Recorded[]> {
   // reason: a failing main is fixed, never put off or dropped (BR-2601, D-155); handing it to a fix change is still recorded
   if (what.outcome !== "handed" && keys.includes(RED_MAIN)) {
     ws.db.event(ws.actor, "reminder.handled.refuse", null, { reason: "red-main", outcome: what.outcome, keys: [...keys] });
     return err("refused", `${RED_MAIN} cannot be ${what.outcome === "deferred" ? "deferred" : "marked not doing"}: main failing cannot wait, it can only be fixed (canon work start --fix-main, or hand it to the fix change with --to <C-n>). Nothing was recorded`);
+  }
+  // reason: a P0 change must be done now; its interrupt is not put off or dropped either (BR-2606, D-155)
+  const p0 = keys.filter((k) => k !== RED_MAIN && fixOnly.has(k));
+  if (what.outcome !== "handed" && p0.length > 0) {
+    ws.db.event(ws.actor, "reminder.handled.refuse", null, { reason: "p0", outcome: what.outcome, keys: [...keys] });
+    return err("refused", `${p0.join(", ")} cannot be ${what.outcome === "deferred" ? "deferred" : "marked not doing"}: a P0 change must be done now; start it, delegate it, or have the owner lower its tier. Nothing was recorded`);
   }
   const missing = keys.filter((k) => !open.has(k));
   if (missing.length > 0) {
