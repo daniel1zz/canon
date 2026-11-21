@@ -1,5 +1,6 @@
 import { failedOnBranch } from "./checks/tested.ts";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
+import { join } from "node:path";
 import type { Say, Workspace } from "../workspace.ts";
 import { type Finding } from "../../knowledge/check/check.ts";
 import { bindToLander, claimOfWorktree, keepClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
@@ -11,7 +12,7 @@ import { choreIn, isChore } from "../session/subject.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { setMeta } from "../../knowledge/documents/write.ts";
-import { hasLessons, LESSONS_SECTION } from "../../knowledge/documents/templates.ts";
+import { duplicateHeadings, hasLessons, LESSONS_SECTION, linesSaid } from "../../knowledge/documents/templates.ts";
 import { git, isClean, removeWorktree } from "../../kernel/git.ts";
 import { ensureWatcher, pathCanonReads, timingOf } from "../watch/watch.ts";
 import { missingMessage, passesMeta, planClose } from "../execution/landing.ts";
@@ -203,6 +204,9 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
       if (!isChore(subject) && doc?.kind !== "change") return early("check", `${subject}: its Change document is missing; this is not a chore`);
       if (doc?.kind === "change" && doc.status === "open") {
         // reason: lessons are known when the work ends, so closing is where they are required; old closed changes stay valid (BR-2161, D-24)
+        // reason: a second ## 教训 is never read, so "not filled" would point at the wrong copy (BR-2161, BR-2596)
+        const twice = duplicateHeadings(readFileSync(join(wt, doc.path), "utf8")).find((h) => h.heading === LESSONS_SECTION);
+        if (twice) return early("lessons", `${subject}: ${LESSONS_SECTION} appears on lines ${linesSaid(twice.lines)} of ${doc.path}; canon reads only the first, so merge them into one section; commit, then land --finish again`);
         if (!hasLessons(doc.body)) return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
         // reason: a rule without evidence lands with no pass record, so it shows as 待重新执行; said here and listed by
         // canon work due until it is executed, never refused (BR-2241, D-141, D-139)

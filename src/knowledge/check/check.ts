@@ -20,7 +20,7 @@ import { releaseFindings } from "../releases/check.ts";
 import { qualityFindings } from "../quality/check.ts";
 import { linkFindings } from "../changes/deps.ts";
 import { staleLinks } from "../links/links.ts";
-import { EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, RULE_SECTION, section } from "../documents/templates.ts";
+import { duplicateHeadings, EXAMPLE_SECTION, hasPlaceholderLine, isPlaceholderLine, linesSaid, RULE_SECTION, section } from "../documents/templates.ts";
 import { itemFindings } from "../documents/items/report.ts";
 
 /**
@@ -63,6 +63,7 @@ export type CheckRule =
   | "source-malformed" // a source line in a decision's options does not name a target and quote it (BR-2110)
   | "source-quote-missing" // a current decision's source names a repository file that no longer holds its quote (BR-2252)
   | "doc-missing-section" // a document lacks a section its type requires, or the section is empty (BR-2091)
+  | "section-duplicate" // a document holds one `## ` heading twice, so only one copy is read (BR-2596)
   | "path-missing" // a current document names, in backticks, a repository path that was moved or deleted
   | "list-mismatch" // a rule's `lists` front matter disagrees with its text or with the code (BR-2180)
   | "item-mismatch" // an item of a declared section that the declaration cannot read, or that lacks a required slot (BR-2549)
@@ -408,6 +409,12 @@ function structureFindings(root: string, corpus: Corpus): Finding[] {
     const missing = required.filter((s) => !filled(d.body, s));
     if (missing.length) {
       out.push({ path: d.path, rule: "doc-missing-section", message: `${d.id} lacks or leaves empty: ${missing.map((s) => `## ${s}`).join(", ")}` });
+    }
+    // reason: a closed change is history and stays valid as it was written, as for its lessons (BR-2596, D-24)
+    if (!(d.kind === "change" && d.status !== "open")) {
+      for (const dup of duplicateHeadings(readFileSync(join(root, d.path), "utf8"))) {
+        out.push({ path: d.path, rule: "section-duplicate", message: `${d.id}: ${dup.heading} appears on lines ${linesSaid(dup.lines)}; canon reads only the first, so merge them into one` });
+      }
     }
     if (d.kind !== "note" && unfilled(d.body)) {
       out.push({ path: d.path, rule: "template-unfilled", message: `${d.id} still contains a template placeholder line` });

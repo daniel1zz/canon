@@ -301,6 +301,27 @@ describe("required sections", () => {
   });
 });
 
+describe("duplicated headings", () => {
+  test("BR-2596: a ## heading held twice outside code blocks is reported once per heading with its file lines; closed changes and code blocks are not", () => {
+    const body = "## 为什么\n\nW.\n\n## 要改什么\n\nX.\n";
+    const root = repo({
+      // lines 1-5 front matter, 6 为什么, 10 要改什么, 14 教训, 18 要改什么, 22 教训
+      "canon/changes/C-1.md": `---\nid: C-1\ntitle: Twice\nstatus: open\n---\n${body}\n## 教训\n\n<每条一行>\n\n## 要改什么\n\nY.\n\n## 教训\n\n无。\n`,
+      "canon/changes/C-2.md": `---\nid: C-2\ntitle: Closed\nstatus: done\n---\n${body}\n## 教训\n\nA.\n\n## 教训\n\nB.\n`,
+      "canon/changes/C-3.md": `---\nid: C-3\ntitle: Fenced\nstatus: open\n---\n${body}\n## 教训\n\n无。\n\n\`\`\`\n## 教训\n\`\`\`\n\n## 教训二\n\nZ.\n`,
+      [`canon/decisions/${d(1)}.md`]: `---\nid: ${d(1)}\ntitle: X\nstatus: superseded\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n\n## 方案\n\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`,
+    });
+    const got = check({ root, ...readCorpus(root), testFiles: [] }).filter((f) => f.rule === "section-duplicate").map((f) => f.message);
+    expect(got.sort()).toEqual(
+      [
+        "C-1: ## 教训 appears on lines 14 and 22; canon reads only the first, so merge them into one",
+        "C-1: ## 要改什么 appears on lines 10 and 18; canon reads only the first, so merge them into one",
+        `${d(1)}: ## 方案 appears on lines 10 and 14; canon reads only the first, so merge them into one`,
+      ].sort(),
+    );
+  });
+});
+
 describe("decision options and sources", () => {
   const decision = (n: number, options: string) =>
     ({ [`canon/decisions/${d(n)}.md`]: `---\nid: ${d(n)}\ntitle: X\nstatus: accepted\n---\n## 背景\n\nB.\n\n## 方案\n\n${options}\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n` });

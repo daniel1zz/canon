@@ -89,6 +89,22 @@ export function domainReadme(name: string, description: string): string {
   return `# ${name}\n\n${description || "<这个领域管什么、不管什么。>"}\n\n## 术语\n\n- **<术语>**：<在这个领域里的含义>\n\n## 业务\n\n- **<业务名>**：<这个业务管什么>\n`;
 }
 
+/** Each `## ` heading that `text` holds more than once outside fenced code, with the 1-based line of every copy (BR-2596). */
+export function duplicateHeadings(text: string): { heading: string; lines: number[] }[] {
+  const seen = new Map<string, number[]>();
+  let fenced = false;
+  text.split("\n").forEach((l, i) => {
+    if (/^\s*(```|~~~)/.test(l)) fenced = !fenced;
+    else if (!fenced && /^##\s/.test(l)) seen.set(l.trim(), [...(seen.get(l.trim()) ?? []), i + 1]);
+  });
+  return [...seen].filter(([, lines]) => lines.length > 1).map(([heading, lines]) => ({ heading, lines }));
+}
+
+/** The lines of a duplicated heading, said once: `67 and 79`, `3, 9 and 12`. */
+export function linesSaid(lines: readonly number[]): string {
+  return lines.length < 2 ? `${lines[0] ?? ""}` : `${lines.slice(0, -1).join(", ")} and ${lines[lines.length - 1]}`;
+}
+
 /** The text of one `## ` section of a rule body, or undefined when the section is absent. */
 export function section(body: string, heading: string): string | undefined {
   const lines = body.split("\n");

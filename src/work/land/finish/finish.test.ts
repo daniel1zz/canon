@@ -38,6 +38,22 @@ describe("lessons when a change closes", () => {
     expect(await land(ws(s.worktree), { ...FAST, finish: true }, quiet)).toMatchObject({ kind: "refused", reason: "lessons" });
   });
 
+  test("BR-2161 BR-2596: --finish with ## 教训 twice (an unfilled copy, then a filled one) is refused naming both lines, not as unfilled", async () => {
+    const root = project();
+    const s = startNew(root, "Lessons twice");
+    const name = readdirSync(join(s.worktree, "canon/changes")).find((f) => f.startsWith(s.change))!;
+    const path = join(s.worktree, "canon/changes", name);
+    const text = readFileSync(path, "utf8").replace(/\n## 教训\n\n[^#]*/, "\n## 教训\n\n<每条一行>\n\n");
+    writeFileSync(path, `${text.trimEnd()}\n\n## 教训\n\n- a real lesson → 待负责人确认是否固化\n`);
+    sh(s.worktree, "commit", "-qam", "lessons twice");
+    const lines = readFileSync(path, "utf8").split("\n").flatMap((l, i) => (l === "## 教训" ? [i + 1] : []));
+    expect(lines).toHaveLength(2);
+    const out = await land(ws(s.worktree), { ...FAST, finish: true }, quiet);
+    expect(out).toMatchObject({ kind: "refused", reason: "lessons" });
+    expect(out.kind === "refused" && out.message).toContain(`## 教训 appears on lines ${lines[0]} and ${lines[1]}`);
+    expect(subjects(root)).not.toContain(`close ${s.change}`);
+  });
+
   test("BR-2161: a lessons section saying 无 closes the change; land without --finish never asks for it", async () => {
     const root = project();
     const plain = startNew(root, "Plain land");
