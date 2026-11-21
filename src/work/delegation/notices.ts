@@ -1,15 +1,31 @@
-import type { Change, Doc } from "../../knowledge/documents/model.ts";
-import { changeStates, isClosed } from "../../knowledge/changes/state.ts";
+import type { Change, Corpus, Doc } from "../../knowledge/documents/model.ts";
+import { changeStates, isClosed, type ChangeState } from "../../knowledge/changes/state.ts";
 import { liveClaims } from "../claims/claims.ts";
+import type { CoordDb } from "../db.ts";
 import type { Workspace } from "../workspace.ts";
 import { mainCorpus } from "../session/session.ts";
 
 /**
- * The reminders canon prints when a change is started or delegated (D-156): facts the main agent weighs when it chooses
- * who does a change, never a refusal. They change no exit code, claim or delegation.
+ * The reminders canon prints when a change is started or delegated (D-156), and the facts the agenda lists under a change
+ * that can start (BR-2607, BR-2606): what the main agent weighs when it chooses who does a change, never a refusal. They
+ * change no exit code, claim or delegation.
  */
 
 type DocOf = (id: string) => Doc | undefined;
+
+/** What the facts are read from: main's documents, the change states (BR-2571) and who holds a live claim on what. */
+export interface NoticeContext {
+  readonly docOf: DocOf;
+  readonly states: readonly ChangeState[];
+  /** Change → the actor holding its live claim. */
+  readonly holders: ReadonlyMap<string, string>;
+}
+
+/** The context from main's corpus and change states already read (the agenda has both). */
+export function contextOf(corpus: Corpus, states: readonly ChangeState[], db: CoordDb): NoticeContext {
+  const docs = new Map(corpus.docs.map((d) => [d.id, d]));
+  return { docOf: (id) => docs.get(id), states, holders: new Map(liveClaims(db).map((c) => [c.subject, c.actor])) };
+}
 
 /** A change's contract rules (BR-2608): the rules its `rules:` lists, plus the `will_amend` targets of those that are planned. */
 export function contractRules(docOf: DocOf, change: Pick<Change, "rules">): Set<string> {
@@ -44,32 +60,42 @@ export function unsettledLines(docOf: DocOf, change: Pick<Change, "rules">): str
 }
 
 /**
- * The BR-2608 lines, and the BR-2609 lines when `delegating`, for `subject`: for every other change in progress (a live
- * claim or a live delegation, not closed) whose contract rules meet `subject`'s, one line naming the shared rules and who
- * works on it. Rules are read from main; the change files from wherever the change states find them (main or the change's
+ * BR-2608: for every other change in progress (a live claim or a live delegation, not closed) whose contract rules meet
+ * `subject`'s, one line naming the shared rules and who works on it.
+ */
+export function sharedLines(ctx: NoticeContext, subject: string, own: Pick<Change, "rules">): string[] {
+  const mine = contractRules(ctx.docOf, own);
+  if (mine.size === 0) return [];
+  const out: string[] = [];
+  for (const s of ctx.states) {
+    if (s.id === subject || !s.change || isClosed(s)) continue;
+    const holder = ctx.holders.get(s.id);
+    // reason: only work someone is doing now can land first and change the shared text under this one (BR-2608, D-156)
+    if (!holder && !s.delegation) continue;
+    const shared = [...contractRules(ctx.docOf, s.change)].filter((r) => mine.has(r)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+    if (shared.length === 0) continue;
+    const who = holder ? `claimed by ${holder}` : `delegated to ${s.delegation!.worker} by ${s.delegation!.owner}`;
+    out.push(`${subject} shares ${shared.join(", ")} with ${s.id} (${who}): whichever lands second may have to redo its work against the first one's text; order them (depends_on) or have one session do both (D-156)`);
+  }
+  return out;
+}
+
+/** The facts for one change: its BR-2608 lines, and its BR-2609 lines when it is to be delegated. */
+export function changeFacts(ctx: NoticeContext, subject: string, own: Pick<Change, "rules">, delegating: boolean): string[] {
+  return delegating ? [...sharedLines(ctx, subject, own), ...unsettledLines(ctx.docOf, own)] : sharedLines(ctx, subject, own);
+}
+
+/**
+ * The BR-2608 lines, and the BR-2609 lines when `delegating`, that `canon work start` and `canon work delegate` print for
+ * `subject`. Rules are read from main; the change files from wherever the change states find them (main or the change's
  * branch). A state that cannot be read is said, not taken for none.
  */
 export function startNotices(ws: Workspace, subject: string, delegating: boolean): string[] {
   const main = mainCorpus(ws);
   if (!main.ok) return [`shares: cannot read ${ws.config.main}: ${main.error.message}`];
-  const docs = new Map(main.value.docs.map((d) => [d.id, d]));
-  const docOf: DocOf = (id) => docs.get(id);
   const states = changeStates(ws, { corpus: main.value, delegatable: false });
   if (!states.ok) return [`shares: cannot read the change states: ${states.error.message}`];
   const own = states.value.states.find((s) => s.id === subject)?.change;
   if (!own) return [];
-  const mine = contractRules(docOf, own);
-  const holders = new Map(liveClaims(ws.db).map((c) => [c.subject, c.actor]));
-  const out: string[] = [];
-  for (const s of mine.size === 0 ? [] : states.value.states) {
-    if (s.id === subject || !s.change || isClosed(s)) continue;
-    const holder = holders.get(s.id);
-    // reason: only work someone is doing now can land first and change the shared text under this one (BR-2608, D-156)
-    if (!holder && !s.delegation) continue;
-    const shared = [...contractRules(docOf, s.change)].filter((r) => mine.has(r)).sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
-    if (shared.length === 0) continue;
-    const who = holder ? `claimed by ${holder}` : `delegated to ${s.delegation!.worker} by ${s.delegation!.owner}`;
-    out.push(`${subject} shares ${shared.join(", ")} with ${s.id} (${who}): whichever lands second may have to redo its work against the first one's text; order them (depends_on) or have one session do both (D-156)`);
-  }
-  return delegating ? [...out, ...unsettledLines(docOf, own)] : out;
+  return changeFacts(contextOf(main.value, states.value.states, ws.db), subject, own, delegating);
 }
