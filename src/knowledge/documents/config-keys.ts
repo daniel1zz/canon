@@ -74,7 +74,28 @@ const TYPES_SCHEMA: JsonSchema = {
       statuses: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
       default: { type: "string" },
       // reason: the old list of names or a mapping of name → declaration (BR-2054, BR-2619); readTypes checks the rest
-      fields: { type: ["array", "object", "null"] },
+      fields: {
+        anyOf: [
+          { type: "null" },
+          { type: "array", items: { type: "string", pattern: "^[a-z_][a-z0-9_]*$", not: { enum: [...RESERVED_FIELDS] } } },
+          {
+            type: "object",
+            propertyNames: { pattern: "^[a-z_][a-z0-9_]*$", not: { enum: [...RESERVED_FIELDS] } },
+            additionalProperties: {
+              type: "object",
+              additionalProperties: false,
+              required: ["type"],
+              properties: {
+                type: { enum: ["text", "id", "ids", "enum", "pattern"] },
+                values: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
+                pattern: { type: "string" },
+                none: { type: "boolean" },
+                due: { enum: ["create"] },
+              },
+            },
+          },
+        ],
+      },
       sections: { type: "array", items: { type: "string", pattern: "^[^#\\n]*\\S[^#\\n]*$" } },
       items: { type: ["object", "null"], additionalProperties: ITEM_DECLARATION_SCHEMA },
     },
