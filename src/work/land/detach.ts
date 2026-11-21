@@ -38,16 +38,20 @@ const POLL_MS = 100;
 const GONE_MS = 5_000;
 
 /**
- * This process's run directory when it is the background landing (D-80): RUN_ENV holds `<follower pid>:<dir>`, and only
- * the process whose parent is that follower is the landing.
+ * This process's run directory when it is the background landing (D-80): RUN_ENV holds `<follower pid>:<dir>`, and the
+ * landing is the process whose parent is that follower, or the process that directory's `pid` file names.
  */
-export function backgroundRun(env: Record<string, string | undefined> = process.env, parent: number = process.ppid, name: string = RUN_ENV): string | undefined {
+export function backgroundRun(env: Record<string, string | undefined> = process.env, parent: number = process.ppid, name: string = RUN_ENV, self: number = process.pid): string | undefined {
   const value = env[name];
   // reason: Bun starts a child without an explicit env from the environment this process started with, so removing the
   // variable here does not hide it from the floor or hooks; a `canon work land` they run has another parent and is not the landing (BR-2390)
   delete env[name];
   const m = /^(\d+):(.+)$/.exec(value ?? "");
-  return m && Number(m[1]) === parent ? m[2] : undefined;
+  if (!m) return undefined;
+  if (Number(m[1]) === parent) return m[2];
+  // reason: a follower killed right after it started the landing leaves it a child of init; the `pid` file it wrote still
+  // names the landing, which must not take itself for a landing still starting and follow itself (BR-2390, BR-2392)
+  return runProcess(m[2])?.pid === self ? m[2] : undefined;
 }
 
 /** Writes this process's exit code into its run directory as it exits, whichever path it exits by (BR-2390). */

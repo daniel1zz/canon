@@ -61,6 +61,15 @@ describe("the landing runs in a background process (D-80)", () => {
     expect(backgroundRun({}, 41)).toBeUndefined();
   });
 
+  test("BR-2390 BR-2392: once the follower is gone, the process the run directory's pid file names is still the background landing; another is not", () => {
+    const dir = join(project(), "run");
+    mkdirSync(dir);
+    writeFileSync(join(dir, "pid"), "500\nMon Jan  1 00:00:00 2024\n");
+    expect(backgroundRun({ CANON_LAND_RUN: `41:${dir}` }, 1, "CANON_LAND_RUN", 500)).toBe(dir);
+    expect(backgroundRun({ CANON_LAND_RUN: `41:${dir}` }, 1, "CANON_LAND_RUN", 501)).toBeUndefined();
+    expect(backgroundRun({ CANON_LAND_RUN: `41:${dir}.none` }, 1, "CANON_LAND_RUN", 500)).toBeUndefined();
+  });
+
   test("BR-2390: a refusal in the background landing is printed on standard error with its exit code", async () => {
     const h = heldProject();
     writeFileSync(join(h.s.worktree, "loose.txt"), "x");
@@ -336,6 +345,8 @@ describe("canon work land --stop stops what the landing started (#262)", () => {
       expect(leftRunning(w, start)).toEqual([live.pid]);
       process.kill(-live.pid, "SIGKILL");
       await live.exited;
+      // reason: the loop's last child is reaped by init, not by this test, and counts as a process of the group until then
+      await waitFor("the killed group's last child to be reaped", () => leftRunning(w, start).length === 0);
       expect(leftRunning(w, start)).toEqual([]);
     } finally {
       live.kill("SIGKILL");
