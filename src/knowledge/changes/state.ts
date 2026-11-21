@@ -11,6 +11,8 @@ import { activeQueue } from "../../work/land/queue/queue.ts";
 import { firstLine, handoffs, reasonText, type Handoff } from "../../work/session/handoffs.ts";
 import { changeOnBranch, listedChanges, type BranchRef, type ListedChange } from "../../work/session/inflight.ts";
 import { mainCorpus } from "../../work/session/session.ts";
+import { assignedTiers, tierIndex, type Assigned } from "../../work/priority/store.ts";
+import { DEFAULT_TIER } from "../../work/priority/tiers.ts";
 import type { Workspace } from "../../work/workspace.ts";
 
 /**
@@ -75,6 +77,8 @@ export interface ChangeState {
   readonly notDelegatable: readonly string[];
   /** It has a change branch (started once), whether or not main has it too (BR-2570's in progress). */
   readonly hasBranch: boolean;
+  /** Its tier when one is set and it is not closed (BR-2602, BR-2603); undefined is the default P2. */
+  readonly priority: Assigned | undefined;
 }
 
 /** A change state with its file: every listed change has one, only the coordination-only ones lack it. */
@@ -82,7 +86,7 @@ export type Filed = ChangeState & { readonly change: Change };
 export const hasFile = (s: ChangeState): s is Filed => s.change !== undefined;
 
 export interface States {
-  /** The listed changes in the owner's order (BR-2148, BR-2291), then the ones only the coordination data has, by id. */
+  /** The listed changes by tier, P0 first, each tier in the owner's order (BR-2604, BR-2148, BR-2291), then the ones only the coordination data has, by id. */
   readonly states: readonly ChangeState[];
   /** The branch files that could not be read, one message each (BR-2292). */
   readonly unreadable: readonly string[];
@@ -121,12 +125,16 @@ export function changeStates(ws: Workspace, opts: StatesOptions = {}): Result<St
   const onMain = new Map(main.value.docs.filter((d): d is Change => d.kind === "change" && listing.value.onMain.has(d.id)).map((c) => [c.id, c]));
   const mainDocs = new Map(main.value.docs.map((d) => [d.id, d]));
   const design = opts.delegatable === false ? undefined : lazyDesign(ws, main.value, mainDocs);
-  const out: ChangeState[] = [];
+  const listedStates: ChangeState[] = [];
   for (const l of listing.value.listed) {
     const s = stateOf(ws, l, onMain.get(l.change.id), listing.value.branches.get(l.change.id) ?? [], mainDocs, f, design);
     if (!s.ok) return s;
-    out.push(s.value);
+    // reason: a landed or dropped change's tier has no effect and is not shown (BR-2603, D-155)
+    listedStates.push(isClosed(s.value) ? s.value : { ...s.value, priority: f.tiers.get(s.value.id) });
   }
+  // reason: the tier only reorders; Array.prototype.sort is stable, so each tier keeps the owner's order (BR-2604, BR-2148)
+  const rank = (s: ChangeState) => tierIndex(s.priority?.tier ?? DEFAULT_TIER);
+  const out = listedStates.sort((a, b) => rank(a) - rank(b));
   // reason: a change only the coordination data names (a branch-only change dropped since, a deleted branch) still has a state, or a stale delegation would show as stalled forever (BR-2571, C-671)
   const listed = new Set(out.map((s) => s.id));
   const prefix = ws.config.types.find((t) => t.name === "change")!.prefix; // reason: change is a built-in type, never removed
@@ -149,6 +157,8 @@ interface Facts {
   readonly handoffs: ReadonlyMap<string, Handoff>;
   /** Every subject the coordination data names: delegations (ended too), live claims, handoffs, drops. */
   readonly coordinated: readonly string[];
+  /** The tiers set, the fix change's P0 included (BR-2602). */
+  readonly tiers: ReadonlyMap<string, Assigned>;
 }
 
 function readFacts(ws: Workspace, now: number): Result<Facts> {
@@ -174,6 +184,7 @@ function readFacts(ws: Workspace, now: number): Result<Facts> {
     questions,
     handoffs: hs,
     coordinated: [...allDelegations.map((d) => d.subject), ...claimed, ...hs.keys(), ...dropDone],
+    tiers: assignedTiers(ws.db),
   });
 }
 
@@ -204,6 +215,7 @@ function withoutFile(id: string, f: Facts): ChangeState {
     landRefusedAt: undefined,
     notDelegatable: [],
     hasBranch: false,
+    priority: undefined,
   };
 }
 
@@ -212,7 +224,7 @@ function stateOf(ws: Workspace, l: ListedChange, main: Change | undefined, branc
   const delegation = f.delegations.get(id);
   const questions = f.questions.get(id) ?? [];
   const landing = f.lastLanding.get(id);
-  const base = { id, hasBranch: branches.length > 0 || l.onBranch.length > 0, change: l.change, onBranch: l.onBranch, flags: flagsOf(id, f, l.waiting, l.onBranch, l.change), handoff: f.handoffs.get(id), waiting: l.waiting, ownerQuestions: questions, delegation };
+  const base = { id, priority: undefined, hasBranch: branches.length > 0 || l.onBranch.length > 0, change: l.change, onBranch: l.onBranch, flags: flagsOf(id, f, l.waiting, l.onBranch, l.change), handoff: f.handoffs.get(id), waiting: l.waiting, ownerQuestions: questions, delegation };
   const done = (state: StateName, extra: Partial<ChangeState> = {}): Result<ChangeState> =>
     ok({ ...base, state, stalled: CLOSED.has(state) ? undefined : f.stalls.get(id), landRefusedAt: undefined, notDelegatable: [], ...extra });
   if (main?.status === "done") return done("landed");

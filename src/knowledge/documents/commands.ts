@@ -5,7 +5,9 @@ import { defineCommand } from "citty";
 import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import type { Doc, Kind } from "./model.ts";
 import { readBacklog } from "./backlog.ts";
-import { changeStates, marksOf, stateJson } from "../changes/state.ts";
+import { changeStates, isClosed, marksOf, stateJson } from "../changes/state.ts";
+import { tierLabel } from "../../work/priority/store.ts";
+import { DEFAULT_TIER } from "../../work/priority/tiers.ts";
 import type { readCorpus } from "./read.ts";
 import { technicalLayerWord, technicalNameAdvice } from "./domain-names.ts";
 import { contractLines } from "../domains/business.ts";
@@ -93,11 +95,15 @@ function listCommand(kind: Kind, describe: string) {
               claimed: s.flags.claimed,
               waiting_for: waitingJson(s.waiting),
               ...stateJson(s),
+              // reason: a closed change's tier has no effect, so it has none here (BR-2603, D-155)
+              priority: isClosed(s) ? null : (s.priority?.tier ?? DEFAULT_TIER),
+              priority_by: isClosed(s) ? null : (s.priority?.by ?? null),
             };
           }));
         } else {
           for (const s of listed) {
-            const marks = marksOf(s, true);
+            // reason: every open change says its tier, and who set it unless it is the default (BR-2603)
+            const marks = [...(isClosed(s) ? [] : [tierLabel(s.priority)]), ...marksOf(s, true)];
             say(`${s.id.padEnd(8)} ${(s.change?.status ?? "").padEnd(10)} ${s.change?.title ?? "(no file)"}  (${marks.join("; ")})`);
           }
           if (listed.length === 0 && unreadable.length === 0) say("(no changes)");
@@ -220,7 +226,7 @@ const change = defineCommand({
     link: linkCmd,
     graph: graphCmd,
     close: closeCmd,
-    list: listCommand("change", "List open changes in the owner's order (canon/backlog.md, then the rest by id; --all for done and dropped)"),
+    list: listCommand("change", "List open changes by priority tier (P0 first, canon priority set), each tier in the owner's order (canon/backlog.md, then the rest by id; --all for done and dropped)"),
     drop: defineCommand({
       meta: { description: "Mark a change dropped (work will not happen)" },
       args: { id: { type: "positional", required: true } },

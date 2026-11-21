@@ -8,7 +8,7 @@ import type { Workspace } from "../../workspace.ts";
 import { clear, mark } from "./urgent.ts";
 
 /** Change `id`'s status and whether it can still land: open on main, or open or closed by `land --finish` on its own branch and not yet on main. */
-function changeStatus(ws: Workspace, id: string): Result<{ status: string; canLand: boolean }> {
+export function changeStatus(ws: Workspace, id: string): Result<{ status: string; canLand: boolean }> {
   const onMain = mainCorpus(ws);
   if (!onMain.ok) return onMain;
   const doc = findDoc(onMain.value, id);
@@ -26,7 +26,7 @@ function changeStatus(ws: Workspace, id: string): Result<{ status: string; canLa
 const urgent = defineCommand({
   meta: {
     description:
-      "Record the owner's priority for a change at once: it lands before the other waiting changes (after the fix of a failing main). Agents use it ONLY when the owner asked for it in the conversation, passing their words with --relayed; it ends when the change lands or with --clear",
+      "Record the owner's priority for a change at once: it is the owner's P1 (canon priority set), landing before the waiting P1 to P3 changes and after P0 ones (a failing main's fix first). Agents use it ONLY when the owner asked for it in the conversation, passing their words with --relayed; it ends when the change lands or with --clear",
   },
   args: {
     change: { type: "positional", required: true, description: "The change (C-n)" },
@@ -50,7 +50,7 @@ const urgent = defineCommand({
       return;
     }
     must(mark(ws.db, ws.actor, subject, relayed));
-    say(`${subject} is urgent: it takes the next turn in the landing queue (relayed by ${ws.actor}); it ends when ${subject} lands or with --clear`);
+    say(`${subject} is urgent: P1 set by the owner, it takes the next turn in the landing queue after any P0 (relayed by ${ws.actor}); it ends when ${subject} lands or with --clear`);
   },
 });
 

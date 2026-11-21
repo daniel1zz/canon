@@ -1,5 +1,6 @@
 import type { CoordDb } from "../../db.ts";
 import { isGone, type Proc } from "../../claims/liveness.ts";
+import { DEFAULT_TIER, TIERS, type Tier } from "../../priority/tiers.ts";
 
 /**
  * Live coordination operations (design §2). Each is one transaction on the shared DB, so two sessions
@@ -131,9 +132,10 @@ export interface Turn {
 const REFUSED_IN_BATCH = "refused in batch: ";
 
 /**
- * Who lands first among waiting entries (BR-2232, BR-2363, D-34, D-73): the change that fixes a failing main, then the
- * changes the owner marked with `canon backlog urgent` (in the coordination DB), then the changes the owner lists
- * under 优先合入 in canon/backlog.md on main, then everyone else; within one rank, queue order.
+ * Who lands first among waiting entries: the tier first (BR-2605, D-155), P0 before P1, P2 and P3; within a tier the
+ * order before tiers (BR-2232, BR-2363, D-34, D-73): the change that fixes a failing main, then the changes the owner
+ * marked with `canon backlog urgent` (in the coordination DB), then the changes the owner lists under 优先合入 in
+ * canon/backlog.md on main, then everyone else; within one rank, queue order.
  */
 export interface Priority {
   readonly fix?: string | undefined;
@@ -142,10 +144,13 @@ export interface Priority {
   readonly urgent: ReadonlySet<string>;
   /** Queue entries that run a floor scope's command (BR-2399). */
   readonly scoped?: ReadonlySet<number> | undefined;
+  /** Each change's tier when not the default P2 (BR-2605); a chore has none. */
+  readonly tiers?: ReadonlyMap<string, Tier> | undefined;
 }
 
 export const NO_PRIORITY: Priority = { urgent: new Set() };
 
+/** The rank within a tier (BR-2232, BR-2363): higher lands first. */
 export function rankOf(subject: string | null, p: Priority): number {
   if (subject === null) return 0;
   if (p.fix !== undefined && subject === p.fix) return 3;
@@ -154,10 +159,23 @@ export function rankOf(subject: string | null, p: Priority): number {
 }
 
 /**
- * Whether entry `a` lands before entry `b`: higher rank first; within a rank a scoped entry before a full-floor one
- * (BR-2399, D-82); then the lower queue id (BR-2232, BR-2020).
+ * An entry's tier (BR-2605): the fix change is always P0 and a `backlog urgent` mark is the owner's P1 even when `tiers`
+ * does not say so; a chore, or a change with no tier set, is P2 (D-155).
+ */
+export function tierIn(subject: string | null, p: Priority): Tier {
+  if (subject === null) return DEFAULT_TIER;
+  if (p.fix !== undefined && subject === p.fix) return "P0";
+  return p.tiers?.get(subject) ?? (p.marked?.has(subject) ? "P1" : DEFAULT_TIER);
+}
+
+/**
+ * Whether entry `a` lands before entry `b`: the more urgent tier first (BR-2605); within a tier the higher rank; within a
+ * rank a scoped entry before a full-floor one (BR-2399, D-82); then the lower queue id (BR-2232, BR-2020).
  */
 export function landsBefore(a: { id: number; subject: string | null }, b: { id: number; subject: string | null }, p: Priority): boolean {
+  const ta = TIERS.indexOf(tierIn(a.subject, p));
+  const tb = TIERS.indexOf(tierIn(b.subject, p));
+  if (ta !== tb) return ta < tb;
   const ra = rankOf(a.subject, p);
   const rb = rankOf(b.subject, p);
   if (ra !== rb) return ra > rb;

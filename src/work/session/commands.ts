@@ -25,6 +25,8 @@ import { claimOfWorktree, claimsWithState, type ClaimState } from "../claims/cla
 import { questions } from "../humans/questions.ts";
 import { activeQueue, keptPlaces } from "../land/queue/queue.ts";
 import { marks } from "../land/queue/urgent.ts";
+import { priorityLine } from "../priority/set.ts";
+import type { Assigned } from "../priority/store.ts";
 import { agenda, summary } from "../reminders/agenda.ts";
 import { isWorker } from "../delegation/worker.ts";
 import { attemptIn, describeAttempt, goneLanders, openAttempts } from "../land/queue/interrupted.ts";
@@ -138,7 +140,7 @@ const status = defineCommand({
     const states = must(changeStates(ws, { delegatable: false })).states;
     const stalled = states.flatMap((s) => (s.stalled ? [s.stalled] : []));
     const closed = new Set(states.filter(isClosed).map((s) => s.id));
-    const data = { chores, ...(stalled.length > 0 ? { stalled } : {}), ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), ...(failedReviews.length > 0 ? { failed_reviews: failedReviews } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending"), design_requests: pendingRequests(ws.db), urgent: marks(ws.db) };
+    const data = { chores, ...(stalled.length > 0 ? { stalled } : {}), ...(untested.length > 0 ? { untested } : {}), ...(unreviewed.length > 0 ? { unreviewed } : {}), ...(failedReviews.length > 0 ? { failed_reviews: failedReviews } : {}), claims: claimsWithState(ws.db), queue: activeQueue(ws.db).map((q) => ({ ...q, lander_gone: gone.has(q.id) })), landings: openAttempts(ws.db, ws.config.main), resolving: keptPlaces(ws.db), handoffs: handoffs(ws.db), questions: questions(ws.db, "pending"), design_requests: pendingRequests(ws.db), urgent: marks(ws.db), priorities: openPriorities(states).map((a) => ({ change: a.change, tier: a.tier, by: a.by, at: a.at, words: a.words, actor: a.actor, owner_tier: a.ownerTier, owner_words: a.ownerWords })) };
     if (args.json) return json(data);
     const delegated = ws.db.db.query<{ subject: string }, []>("SELECT subject FROM delegations ORDER BY subject").all().map((r) => r.subject).filter((s) => !closed.has(s));
     for (const subject of delegated) for (const line of delegationNotice(ws.db, subject)) say(line);
@@ -162,11 +164,19 @@ const status = defineCommand({
     // The owner's priorities that put a change ahead in the landing queue (BR-2363).
     if (data.urgent.length > 0) say("Urgent by the owner:");
     for (const m of data.urgent) say(`  ${m.change}  relayed by ${m.actor} (${m.at}): ${m.words}`);
+    // Each open change with a tier set, who set it, when and why; a closed change's tier has no effect (BR-2603).
+    if (data.priorities.length > 0) say("Priorities:");
+    for (const a of openPriorities(states)) say(priorityLine(a));
     say("Handoffs:");
     for (const h of data.handoffs) say(`  ${h.subject.padEnd(8)} ${reasonText(h)}: next: ${firstLine(h.next)}  (${h.actor}, ${h.updated_at})`);
     say(`Questions waiting for a human: ${data.questions.length}`);
   },
 });
+
+/** The tiers set on changes that are not closed, in the order the changes are listed (BR-2603). */
+function openPriorities(states: readonly ChangeState[]): Assigned[] {
+  return states.flatMap((s) => (s.priority ? [s.priority] : []));
+}
 
 /** How `canon work status` marks a claim that no longer binds (BR-2192). */
 const STALE: Record<ClaimState, string> = { live: "", expired: "  (expired: lease ended)", "holder-gone": "  (expired: session process exited)" };

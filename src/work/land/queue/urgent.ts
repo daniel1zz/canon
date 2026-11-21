@@ -1,5 +1,6 @@
 import type { CoordDb } from "../../db.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
+import { assignedTiers, tierOf } from "../../priority/store.ts";
 
 /**
  * The owner's priority for a change, kept in the coordination DB so it takes effect at the next turn instead of
@@ -17,14 +18,23 @@ export function marks(db: CoordDb): Mark[] {
   return db.db.query<Mark, []>("SELECT change, words, actor, at FROM urgent ORDER BY at, change").all();
 }
 
-/** Marks `change` urgent; fails loud without the owner's words. Marking again replaces the words. */
+/**
+ * Marks `change` urgent; fails loud without the owner's words. Marking again replaces the words. A mark is the owner's
+ * P1 (BR-2602): it replaces any tier set before, as the owner's latest word.
+ */
 export function mark(db: CoordDb, actor: string, change: string, words: string | undefined): Result<void> {
   if (words === undefined || words.trim() === "") {
     db.event(actor, "urgent.refuse", change, { reason: "no-relayed" });
     return err("invalid", "--relayed \"<the owner's own words>\" is required: use this command only when the owner asked for this priority in the conversation");
   }
-  db.db.query("INSERT INTO urgent(change, words, actor, at) VALUES (?, ?, ?, ?) ON CONFLICT(change) DO UPDATE SET words = excluded.words, actor = excluded.actor, at = excluded.at").run(change, words, actor, new Date().toISOString());
+  const previous = tierOf(assignedTiers(db), change);
+  db.db.transaction(() => {
+    db.db.query("INSERT INTO urgent(change, words, actor, at) VALUES (?, ?, ?, ?) ON CONFLICT(change) DO UPDATE SET words = excluded.words, actor = excluded.actor, at = excluded.at").run(change, words, actor, new Date().toISOString());
+    // reason: one fact per change: the mark is the owner's P1 now, so a tier set before it no longer holds (BR-2602)
+    db.db.query("DELETE FROM priorities WHERE change = ?").run(change);
+  }).immediate();
   db.event(actor, "urgent.set", change, { relayed: words });
+  db.event(actor, "priority.set", change, { tier: "P1", previous, by: "owner", relayed: words, via: "backlog urgent" });
   return ok(undefined);
 }
 
@@ -39,5 +49,6 @@ export function clear(db: CoordDb, actor: string, change: string, words: string 
     return err("not_found", `${change} is not marked urgent`);
   }
   db.event(actor, "urgent.clear", change, { relayed: words });
+  db.event(actor, "priority.set", change, { tier: "P2", previous: "P1", by: "owner", cleared: true, relayed: words, via: "backlog urgent" });
   return ok(undefined);
 }

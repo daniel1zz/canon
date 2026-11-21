@@ -136,6 +136,18 @@ CREATE TABLE IF NOT EXISTS urgent (
   actor  TEXT NOT NULL,                -- who relayed them
   at     TEXT NOT NULL
 );
+-- A change's priority tier set with canon priority set (BR-2602, D-155); no row is the default P2. A canon backlog urgent
+-- mark with no row here is the owner's P1. Read on every use, so a tier set counts at once in every worktree.
+CREATE TABLE IF NOT EXISTS priorities (
+  change      TEXT PRIMARY KEY,
+  tier        TEXT NOT NULL CHECK (tier IN ('P0','P1','P2','P3')),
+  set_by      TEXT NOT NULL CHECK (set_by IN ('owner','main-agent')),
+  words       TEXT NOT NULL,           -- the main agent's reason, or the owner's words as relayed (not checked, D-73)
+  actor       TEXT NOT NULL,
+  at          TEXT NOT NULL,
+  owner_tier  TEXT,                    -- the owner's tier, kept as the floor after the main agent raised it
+  owner_words TEXT
+);
 -- What each test file held when a report was read: one row per path and git blob hash, the last few per path kept (BR-2337, D-64).
 CREATE TABLE IF NOT EXISTS test_reports (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,

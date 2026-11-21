@@ -6,6 +6,7 @@ import type { LandOutcome } from "../outcome.ts";
 import { ownDiffId } from "../worktree-state.ts";
 import type { Priority } from "./queue.ts";
 import { marks } from "./urgent.ts";
+import { assignedTiers } from "../../priority/store.ts";
 
 /** How often a waiting lander tries for its turn, at most. */
 const POLL_MS = 2000;
@@ -17,7 +18,8 @@ const POLL_MS = 2000;
 export const waitPollMs = (staleMs: number) => Math.min(POLL_MS, Math.max(50, staleMs / 3));
 
 /**
- * Who goes first right now (BR-2232, BR-2363): the fix change of a failing main, the changes the owner marked with
+ * Who goes first right now: each change's tier (BR-2605), read from the coordination DB at every try, so a tier set
+ * counts at the next turn; within a tier (BR-2232, BR-2363) the fix change of a failing main, the changes the owner marked with
  * `canon backlog urgent`, and the changes listed under 优先合入 in the backlog committed on main. Read from main, never from a worktree, so no change can promote itself by editing its own copy.
  */
 export function priorityNow(ws: Workspace): Priority {
@@ -25,7 +27,8 @@ export function priorityNow(ws: Workspace): Priority {
   // reason: a main without canon/backlog.md lists nothing urgent; a backlog that cannot be read otherwise is checked by canon check (BR-2148).
   const urgent = text.ok ? parseUrgent(text.value, ws.config.types) : new Set<string>();
   const scoped = new Set(ws.db.db.query<{ id: number }, []>("SELECT id FROM queue WHERE scoped = 1 AND state IN ('waiting','landing')").all().map((r) => r.id));
-  return { fix: redMain(ws.db)?.change ?? undefined, marked: new Set(marks(ws.db).map((m) => m.change)), urgent, scoped };
+  const tiers = new Map([...assignedTiers(ws.db).values()].map((a) => [a.change, a.tier]));
+  return { fix: redMain(ws.db)?.change ?? undefined, marked: new Set(marks(ws.db).map((m) => m.change)), urgent, scoped, tiers };
 }
 
 /** What a conflict refusal tells the lander about the place it keeps in the queue (BR-2177). */
