@@ -40,7 +40,7 @@ function db<T>(root: string, f: (d: CoordDb) => T): T { const w = ws(root); try 
 const events = (root: string, kind: string) => db(root, (d) => d.db.query<{ subject: string; actor: string; detail: string }, [string]>("SELECT subject, actor, detail FROM events WHERE kind = ? ORDER BY id").all(kind)).map((e) => ({ ...e, detail: JSON.parse(e.detail) as Record<string, unknown> }));
 const rows = (root: string) => db(root, (d) => d.db.query<{ change: string; tier: string; set_by: string }, []>("SELECT change, tier, set_by FROM priorities ORDER BY change").all());
 /** C-9 is the fix change of a failing main (BR-2221). */
-const fixMain = (root: string, change = "C-9") => db(root, (d) => { recordFailure(d, { sha: "a".repeat(40), log: "/x.log", tail: "boom", green: null }); d.db.query("UPDATE red_main SET change = ? WHERE id = 1").run(change); });
+const fixMain = (root: string, change = "C-9") => db(root, (d) => { recordFailure(d, { sha: "a".repeat(40), log: "/x.log", tail: "boom", green: null, files: [], reported: true }); d.db.query("UPDATE red_main SET change = ? WHERE id = 1").run(change); });
 
 describe("BR-2602: canon priority set", () => {
   test("BR-2602: the main session sets P1 to P3 with a reason; the owner's words set P0 to P3; each success records priority.set", () => {

@@ -93,7 +93,7 @@ describe("BR-2605: waiting landings by tier first, the old order within a tier",
   test("BR-2605: the fix of a failing main goes before the owner's P0; backlog urgent is the owner's P1 and ranks only within P1", () => {
     const root = changesRepo();
     const w = ws(root);
-    recordFailure(w.db, { sha: "a".repeat(40), log: "/x.log", tail: "boom", green: null });
+    recordFailure(w.db, { sha: "a".repeat(40), log: "/x.log", tail: "boom", green: null, files: [], reported: true });
     w.db.db.query("UPDATE red_main SET change = 'C-9' WHERE id = 1").run();
     const d = w.db;
     const entries = { "C-1": enqueue(d, "/wt/1", "C-1", "x"), "C-2": enqueue(d, "/wt/2", "C-2", "x"), "C-3": enqueue(d, "/wt/3", "C-3", "x"), "C-4": enqueue(d, "/wt/4", "C-4", "x"), "C-9": enqueue(d, "/wt/9", "C-9", "x") };
