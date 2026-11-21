@@ -11,6 +11,7 @@ import { standings, STATE_LABEL as VERDICT_LABEL, type Standing } from "../../kn
 import { criteriaWithDoc, releasesInProgress, releaseViews } from "../../knowledge/releases/current.ts";
 import { uncoveredDecisions } from "../../knowledge/check/commitments.ts";
 import { interruptsStalled } from "./interrupt.ts";
+import { slowItems } from "./slow.ts";
 
 /**
  * The agenda's items (BR-2527, D-151): what the calling session should judge or relay, one item each, with how long it
@@ -174,6 +175,8 @@ export function mainItems(ws: Workspace, now: number, states: readonly ChangeSta
       for (const w of s.waiting.filter((x) => x.state === "dropped")) items.push(item(`dropped-dep:${s.id}`, "dropped-dep", null, `waits on ${w.id}, dropped without done_by`, `write done_by: <C-n> on ${w.id}, or take ${w.id} out of ${s.id}'s depends_on`, "write done_by on the dropped change, or take it out of depends_on", "judge", 1));
     }
   }
+  // reason: a delegated change that has run long or keeps failing its tests is its design owner's to look at (BR-2612, D-157)
+  items.push(...slowItems(ws, states, now));
   for (const r of pendingRequests(ws.db).filter((r) => r.owner === ws.actor)) {
     items.push(item(`design:${r.subject}`, "design", r.asked_at, `design request #${r.id} from ${r.asked_by}: ${clip(r.request)}`, `canon work design-answer ${r.id} "<answer>"`, `canon work design-answer <n> "<answer>"`, "judge", 1));
   }
