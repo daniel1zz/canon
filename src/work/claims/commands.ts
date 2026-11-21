@@ -30,6 +30,10 @@ const takeCmd = defineCommand({
     const back = takeBack(ws.db, change, ws.actor, from, Boolean(args.stopped), ws.config.claimLeaseMs, sessionProcess());
     if (back) {
       if (!back.ok) fail(back.error);
+      if (back.value.worktree === "") {
+        say(`${change}: taken back from worker ${from}, which held no claim; the delegation has ended, epoch ${back.value.epoch}; start it with canon work start ${change}`);
+        return;
+      }
       say(`${change}: taken back from worker ${from}${back.value.asserted ? " (stopped: asserted)" : ""}; the delegation has ended, epoch ${back.value.epoch}; it is now held by ${ws.actor} in ${back.value.worktree}`);
       say(`cd ${back.value.worktree}`);
       return;

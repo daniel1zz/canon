@@ -78,6 +78,7 @@ export function lapsedTakeover(db: CoordDb, subject: string, actor: string, cur:
 }
 
 export interface TakenBack {
+  /** The worktree the owner now holds; empty when no one holds a claim. */
   readonly worktree: string;
   readonly epoch: number;
   readonly asserted: boolean;
@@ -98,7 +99,13 @@ export function takeBack(db: CoordDb, subject: string, actor: string, from: stri
     };
     if (actor !== d.owner) return refuse(`${subject} is delegated by ${d.owner}; only its current design owner can take it back (you are ${actor}); nothing changed`);
     if (d.ended) return refuse(`${subject}: its delegation already ended at ${d.ended}; there is nothing delegated to take back`);
-    if (!cur) return refuse(`${subject} has no claim; there is nothing to take over (delegate it again to change the worker)`);
+    // reason: a worker that released its claim (stop --release) leaves the delegation in force with no claim to hand over;
+    // the owner ends it so the change and its rule proposals come back, keeping a claim the owner already holds (BR-2500)
+    if (!cur || cur.holder === actor) {
+      if (from !== d.worker) return refuse(`${subject} is delegated to ${d.worker}, not to ${from}; nothing changed`);
+      endDelegation(db, d, actor, from, cur?.worktree ?? null, { claim: cur ? "owner" : "none" });
+      return ok({ worktree: cur?.worktree ?? "", epoch: d.epoch + 1, asserted: false });
+    }
     if (cur.worktree?.startsWith("hold:")) return refuse(`${subject}'s worktree is being deleted by \`canon work clean\` or \`canon work drop\` right now; nothing changed`);
     if (!isWorker(cur.holder) || nameOf(cur.holder) !== from) return refuse(`${subject} is claimed by ${cur.holder}, not by a worker named ${from}; nothing changed`);
     const landing = landingInProgress(db, subject, cur.worktree);

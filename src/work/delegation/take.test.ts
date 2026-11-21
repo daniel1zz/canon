@@ -160,3 +160,29 @@ test("BR-2500: a claim whose recorded process is gone is taken over automaticall
   expect(cli(f.root, "agent:s1", "work", "start", f.change).code).toBe(0);
   expect(state(f.root, f.change)).toMatchObject({ claim: { holder: "agent:s1" }, delegation: { epoch: 2 } });
 });
+
+test("BR-2500: a worker that released its claim leaves nothing to hand over; the owner's take still ends the delegation, and keeps a claim the owner holds by then", () => {
+  const f = fixture(); setClaim(f.root, f.change, GONE);
+  expect(cli(f.worktree, "agent:s7:w1", "work", "stop", "--reason", "design", "--next", "proposals to apply", "--release").code).toBe(0);
+  expect(state(f.root, f.change).claim).toBeNull();
+  // a take from a name the change is not delegated to changes nothing
+  expect(cli(f.root, "agent:s1", "work", "take", f.change, "--from", "w2").code).toBe(5);
+  expect(state(f.root, f.change).delegation?.ended).toBeNull();
+  const r = cli(f.root, "agent:s1", "work", "take", f.change, "--from", "w1");
+  expect(r.code).toBe(0); expect(r.text).toContain(`canon work start ${f.change}`);
+  const s = state(f.root, f.change);
+  expect(s.claim).toBeNull(); expect(s.delegation?.epoch).toBe(2); expect(s.delegation?.ended).not.toBeNull();
+  expect(events(f.root, "claim.handover")).toEqual([expect.objectContaining({ actor: "agent:s1", from: "w1", by: "design-owner", epoch: 2, claim: "none" })]);
+  expect(cli(f.root, "agent:s1", "work", "start", f.change).code).toBe(0);
+  expect(state(f.root, f.change).claim?.holder).toBe("agent:s1");
+
+  // the owner already holds the claim again while the delegation is still in force
+  const g = fixture(); setClaim(g.root, g.change, GONE);
+  expect(cli(g.worktree, "agent:s7:w1", "work", "stop", "--reason", "design", "--next", "x", "--release").code).toBe(0);
+  expect(cli(g.root, "agent:s1", "work", "start", g.change).code).toBe(0);
+  expect(state(g.root, g.change).delegation?.ended).toBeNull();
+  expect(cli(g.root, "agent:s1", "work", "take", g.change, "--from", "w1").code).toBe(0);
+  const t = state(g.root, g.change);
+  expect(t.claim?.holder).toBe("agent:s1"); expect(t.delegation?.ended).not.toBeNull();
+  expect(events(g.root, "claim.handover")).toEqual([expect.objectContaining({ claim: "owner", epoch: 2 })]);
+});
