@@ -123,7 +123,7 @@ describe("declared document types", () => {
     expect(readFileSync(join(root, made), "utf8")).toContain("owner: billing-team");
   });
 
-  test("BR-2620: a creating command needs every field stated at creation, checked before an id is allocated; one refusal lists every problem", () => {
+  test("BR-2620 BR-2619: a creating command needs every field stated at creation, checked before an id is allocated; one refusal lists every problem", () => {
     const root = repo(DESIGN);
     const make = (...a: string[]) => canon(root, "doc", "new", "--type", "design", "--title", "D", ...a);
     for (const [args, says] of [
@@ -153,7 +153,7 @@ describe("declared document types", () => {
     expect(make("--set", "reviewer=ann", "--set", "refs=none: new").out.trim()).toBe(`canon/designs/${id("DS", 2)}-d.md`);
   });
 
-  test("BR-2623: the built-in types' fields stated at creation, with their own flags", () => {
+  test("BR-2623 BR-2492 BR-2517 BR-2512 BR-2615: the built-in types' fields stated at creation, with their own flags; none: <reason> is read as no gate and no features", () => {
     const root = repo("");
     const fail2 = (r: { code: number | null; err: string }, says: string) => {
       expect(r.code).toBe(2);

@@ -56,7 +56,7 @@ Run P0 journeys first, each executed and judged before the next tier starts, so 
 T=$(mktemp -d) && E=$(mktemp -d)     # throwaway repo; evidence kept outside it
 git -C "$T" init -q && git -C "$T" commit -q --allow-empty -m init
 # set up only what the persona would have, then run the real command (built binary or entry file):
-(cd "$T" && canon work start --title "x" --owner-gate "none: uat" --advances "none: uat") > "$E/03.out" 2> "$E/03.err"; echo "exit=$?" > "$E/03.exit"
+(cd "$T" && canon work start --title "x") > "$E/03.out" 2> "$E/03.err"; echo "exit=$?" > "$E/03.exit"
 git -C "$T" branch --list > "$E/03.git"; git -C "$T" status --short >> "$E/03.git"
 ```
 
