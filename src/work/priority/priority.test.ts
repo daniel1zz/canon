@@ -92,6 +92,8 @@ describe("BR-2602: canon priority set", () => {
     expect(lower.err).toContain("P1");
     expect(lower.err).toContain("C-6 要快");
     expect(cli(root, MAIN_AGENT, "priority", "set", "C-6", "--clear", "--reason", "x").code).toBe(1);
+    // the same tier as the owner's changes nothing: it stays the owner's
+    expect(cli(root, MAIN_AGENT, "priority", "set", "C-6", "P1", "--reason", "x").code).toBe(0);
     expect(rows(root)).toEqual([{ change: "C-6", tier: "P1", set_by: "owner" }]);
 
     // the owner set P2; the main agent raises it to P1, then cannot go below P2
