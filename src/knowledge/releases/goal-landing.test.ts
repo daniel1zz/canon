@@ -3,7 +3,7 @@ import { mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { ask } from "../../work/humans/questions.ts";
 import { land } from "../../work/land/land.ts";
-import { startChore } from "../../work/session/session.ts";
+import { start, startChore } from "../../work/session/session.ts";
 import { FAST, project, quiet, sh, startNew, ws } from "../../work/testkit.ts";
 
 // reason: every case lands through the real queue, which under load takes seconds (as in ship.test.ts)
@@ -49,7 +49,10 @@ async function attempt(root: string, title: string, files: Record<string, string
   if (answers !== undefined || front !== "") {
     const dir = join(s.worktree, "canon/changes");
     const file = join(dir, readdirSync(dir).find((f) => f.startsWith(`${s.change}`))!);
-    writeFileSync(file, readFileSync(file, "utf8").replace("status: open\n", `status: open\n${answers !== undefined ? `owner_answers: ${answers(s.change)}\n` : ""}${front}`));
+    // reason: a key the test gives replaces the one startNew stated (BR-2620), so the front matter has it once
+    let text = readFileSync(file, "utf8");
+    for (const key of front.split("\n").map((l) => l.split(":")[0]!).filter((k) => k !== "")) text = text.replace(new RegExp(`^${key}: .*\n`, "m"), "");
+    writeFileSync(file, text.replace("status: open\n", `status: open\n${answers !== undefined ? `owner_answers: ${answers(s.change)}\n` : ""}${front}`));
   }
   sh(s.worktree, "add", "-A");
   sh(s.worktree, "commit", "-qm", title);
@@ -125,10 +128,26 @@ describe("the goal: the AI may change it, the owner sees it", () => {
 });
 
 describe("what a landing says about advances", () => {
-  test("BR-2517: a change without advances or with none is said at landing and lands; one naming criteria says nothing; a chore says nothing", async () => {
+  test("BR-2517 BR-2624: an old change on main without advances, or one with none, is said at landing and lands; a new one without it is refused; one naming criteria says nothing; a chore says nothing", async () => {
     const root = fixture();
-    const missing = await attempt(root, "没写", { "notes.txt": "a\n" });
-    expect([reasonOf(missing.outcome), missing.said.includes(`advances: ${missing.change} names no success criterion it advances`)]).toEqual(["landed", true]);
+    // an old change file already on main, written before advances was stated at creation
+    const old = ["C", 40].join("-");
+    write(root, { [`canon/changes/${old}.md`]: `---\nid: ${old}\ntitle: Old\nstatus: open\nrules: []\n---\n## 为什么\n\nOld.\n\n## 要改什么\n\nOld.\n\n## 教训\n\n无。\n` });
+    sh(root, "add", "-A"); sh(root, "commit", "-qm", "old change");
+    const o = start(ws(root), { change: old }, quiet);
+    if (!o.ok) throw new Error(o.error.message);
+    write(o.value.worktree, { "notes.txt": "a\n" });
+    sh(o.value.worktree, "add", "-A"); sh(o.value.worktree, "commit", "-qm", "old");
+    const oldSaid: string[] = [];
+    expect((await land(ws(o.value.worktree), FAST, (l: string) => oldSaid.push(l))).kind).toBe("landed");
+    expect(oldSaid.join("\n")).toContain(`advances: ${old} names no success criterion it advances`);
+    const n = startNew(root, "没写");
+    const dir = join(n.worktree, "canon/changes");
+    const file = join(dir, readdirSync(dir).find((f) => f.startsWith(n.change))!);
+    writeFileSync(file, readFileSync(file, "utf8").replace(/^advances: .*\n/m, ""));
+    write(n.worktree, { "notes.txt": "a2\n" });
+    sh(n.worktree, "add", "-A"); sh(n.worktree, "commit", "-qm", "no advances");
+    expect(reasonOf(await land(ws(n.worktree), FAST, quiet))).toBe("fields");
     const none = await attempt(root, "不推进", { "notes.txt": "b\n" }, undefined, 'advances: "none: 修 YAML 转义"\n');
     expect([reasonOf(none.outcome), none.said.includes(`advances: ${none.change} advances no success criterion: 修 YAML 转义`)]).toEqual(["landed", true]);
     const c = startChore(ws(root), { title: "顺手" }, quiet);

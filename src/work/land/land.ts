@@ -126,7 +126,7 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
   }
   // reason: a document this landing adds states the fields its type wants at creation, whatever made the file (BR-2624, D-159);
   // refused before queueing, since the content alone decides it and canon doc set fixes it in place
-  const stated = missingStatedFields(wt, main);
+  const stated = missingStatedFields(wt, main, ws.config);
   if ("error" in stated) return early("environment", stated.error);
   if (stated.lines.length > 0) {
     return early("fields", `${stated.lines.length} field(s) to state on the documents this landing adds (BR-2624); set each in this worktree, commit, and land again:\n${stated.lines.map((l) => `  ${l}`).join("\n")}`);

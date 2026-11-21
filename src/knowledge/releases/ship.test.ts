@@ -28,7 +28,7 @@ function canon(cwd: string, actor: string, args: string[], opts: { stdin?: strin
 const agent = (cwd: string, ...args: string[]) => canon(cwd, "agent:test", args);
 
 const SECTIONS = ["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"];
-const releaseText = (n: number, front: string) => `---\nid: ${R(n)}\ntitle: 第${n}版\n${front}---\n\n${SECTIONS.map((s) => `## ${s}\n\n${s}的内容\n`).join("\n")}`;
+const releaseText = (n: number, front: string) => `---\nid: ${R(n)}\ntitle: 第${n}版\n${front.includes("features:") ? "" : 'features: "none: t"\n'}${front}---\n\n${SECTIONS.map((s) => `## ${s}\n\n${s}的内容\n`).join("\n")}`;
 const ruleText = (n: number, front: string, status = "active") => `---\nid: ${BR(n)}\ntitle: 规则${n}\nstatus: ${status}\nuntested: fixture\n${front}---\n## 规则\n\n规则${n}的行为。\n\n## 例子\n\n- 输入 → 结果\n`;
 const hashOf = (text: string) => behaviourHash((parseDocFile(text, "x") as { ok: true; value: { body: string } }).value.body);
 

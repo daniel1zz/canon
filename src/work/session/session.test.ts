@@ -500,7 +500,7 @@ describe("same-file overlap", () => {
     commitFile(b.worktree, "shared.txt", "b\n");
     mkdirSync(join(a.worktree, "canon/rules/billing"), { recursive: true });
     const id = ["BR", 1].join("-");
-    commitFile(a.worktree, `canon/rules/billing/${id}.md`, `---\nid: ${id}\ntitle: Refund\nuntested: provider\n---\n## 规则\n\nRefunds go back.\n\n## 例子\n\n- refund → shown\n`);
+    commitFile(a.worktree, `canon/rules/billing/${id}.md`, `---\nid: ${id}\ntitle: Refund\nuntested: provider\nbusiness: x\n---\n## 规则\n\nRefunds go back.\n\n## 例子\n\n- refund → shown\n`);
     commitFile(a.worktree, "shared.txt", "a\n");
     // reason: missing evidence no longer refuses (BR-2241, D-141); the change's empty 教训 section does, before the queue (BR-2161)
     const dir = join(a.worktree, "canon/changes");

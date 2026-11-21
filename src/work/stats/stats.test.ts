@@ -181,7 +181,7 @@ describe("canon stats", () => {
   test("BR-2094: a check refusal records how many findings of each kind and the files involved; other refusals record neither", async () => {
     const root = project();
     const bad = startNew(root, "Bad");
-    const change = (id: string, why: string) => `---\nid: ${id}\ntitle: Bad\n---\n## 为什么\n\n${why}\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] <任务>\n`;
+    const change = (id: string, why: string) => `---\nid: ${id}\ntitle: Bad\nowner_gate: "none: t"\nadvances: "none: t"\n---\n## 为什么\n\n${why}\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] <任务>\n`;
     writeFileSync(join(bad.worktree, "canon/changes/C-1-bad.md"), change("C-1", "See D-98 and D-99."));
     writeFileSync(join(bad.worktree, "canon/changes/C-2-other.md"), change("C-2", "See D-97."));
     sh(bad.worktree, "add", "-A");

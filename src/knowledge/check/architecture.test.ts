@@ -25,7 +25,7 @@ function put(root: string, files: Record<string, string>) {
 
 const readme = (name: string) => `# ${name}\n\n## 术语\n\n- **x**：y\n`;
 const decision = (n: number, status: string, extra = "") =>
-  `---\nid: ${id("D", n)}\ntitle: Decision ${n}\nstatus: ${status}\namends: \"none: t\"\n${extra}---\n## 背景\n\nx.\n\n## 方案\n\n1. A：采用。\n   - 来源：canon/config.yaml “code_root: src”\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nnone.\n`;
+  `---\nid: ${id("D", n)}\ntitle: Decision ${n}\nstatus: ${status}\n${extra.includes("amends:") ? "" : 'amends: "none: t"\n'}${extra}---\n## 背景\n\nx.\n\n## 方案\n\n1. A：采用。\n   - 来源：canon/config.yaml “code_root: src”\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nnone.\n`;
 const overview = (body: string) => `---\ntitle: 架构总览\n---\n# 架构总览\n\n${body}`;
 
 /** A project with `code_root: src`, a billing domain, decisions D-5 (accepted) and D-7, and an overview naming `src/billing` and D-5. */

@@ -251,7 +251,7 @@ describe("rule review after landing", () => {
     const s = startNew(root, "A release");
     mkdirSync(join(s.worktree, "canon/releases"), { recursive: true });
     const r = ["R", 1].join("-");
-    writeFileSync(join(s.worktree, `canon/releases/${r}.md`), `---\nid: ${r}\ntitle: MVP\n---\n\n${["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"].map((h) => `## ${h}\n\n内容\n`).join("\n")}`);
+    writeFileSync(join(s.worktree, `canon/releases/${r}.md`), `---\nid: ${r}\ntitle: MVP\nfeatures: "none: t"\n---\n\n${["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"].map((h) => `## ${h}\n\n内容\n`).join("\n")}`);
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "release");
     const out = await landReviewed(root, s.worktree);
@@ -603,7 +603,7 @@ describe("rule review after landing", () => {
   });
 
   test("BR-2009 BR-2010: a release document changed on its own is reviewed with its new text; a block is a review.block, an ok a review.ok", async () => {
-    const release = (not: string) => `---\nid: ${["R", 1].join("-")}\ntitle: MVP\nstatus: active\n---\n\n${["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"].map((h) => `## ${h}\n\n${h === "不做" ? not : `${h}的内容`}\n`).join("\n")}`;
+    const release = (not: string) => `---\nid: ${["R", 1].join("-")}\ntitle: MVP\nstatus: active\nfeatures: "none: t"\n---\n\n${["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"].map((h) => `## ${h}\n\n${h === "不做" ? not : `${h}的内容`}\n`).join("\n")}`;
     for (const verdict of ["block", "ok"] as const) {
       const p = reviewedProject(verdict);
       const s = startNew(p.root, "A release");

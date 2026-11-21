@@ -279,8 +279,8 @@ describe("when the background floor does not locate or revert", () => {
     const bad = await landing(refs, "Break the value with a rule", {
       "value.txt": "bad\n",
       "src/billing/refund.txt": "r\n",
-      [`${rules}/README.md`]: "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n",
-      [`${rules}/BR-90.md`]: "---\nid: BR-90\ntitle: 退款\nstatus: active\nuntested: fixture\n---\n\n## 规则\n\n退款三十天内通过。\n\n## 例子\n\n- 第 30 天 → 通过\n",
+      [`${rules}/README.md`]: "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **退款**：钱怎么退回去\n",
+      [`${rules}/BR-90.md`]: "---\nid: BR-90\ntitle: 退款\nstatus: active\nuntested: fixture\nbusiness: 退款\n---\n\n## 规则\n\n退款三十天内通过。\n\n## 例子\n\n- 第 30 天 → 通过\n",
     });
     const s = startNew(refs, "Follow BR-90");
     const file = join(s.worktree, "canon/changes", readdirSync(join(s.worktree, "canon/changes")).find((f) => f.startsWith(s.change))!);

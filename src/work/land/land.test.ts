@@ -301,7 +301,7 @@ describe("work land", () => {
     mkdirSync(join(s.worktree, "canon/decisions"), { recursive: true });
     writeFileSync(join(s.worktree, "refund.txt"), "export function refund(order) {}\n");
     const doc = (id: string, status: string, extra: string, quote: string) =>
-      `---\nid: ${id}\ntitle: Pick ${id}\nstatus: ${status}\namends: \"none: t\"\n${extra}---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：refund.txt “${quote}”\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
+      `---\nid: ${id}\ntitle: Pick ${id}\nstatus: ${status}\n${extra.includes("amends:") ? "" : 'amends: "none: t"\n'}${extra}---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：refund.txt “${quote}”\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
     writeFileSync(join(s.worktree, "canon/decisions/D-1.md"), doc("D-1", "superseded", "", "export function refund(order)"));
     writeFileSync(join(s.worktree, "canon/decisions/D-2.md"), doc("D-2", "accepted", "supersedes: D-1\nrevised_because: requirement\n", "(order) {}"));
     sh(s.worktree, "add", "-A");

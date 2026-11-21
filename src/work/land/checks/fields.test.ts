@@ -77,3 +77,15 @@ test("BR-2624: an added rule without business is refused with its domain's busin
   expect(refused).toMatchObject({ kind: "refused", reason: "fields" });
   expect(refused.kind === "refused" && refused.message).toContain(`canon doc set ${id("BR", 1)} business "<value>", the value one of the businesses billing's README lists: 退款`);
 });
+
+test("BR-2624: a field main declares after the branch started is stated before it lands; main's config naming its own scripts is read for its types alone", async () => {
+  const f = started();
+  mkdirSync(join(f.root, "scripts"), { recursive: true });
+  writeFileSync(join(f.root, "scripts/review.sh"), "#!/bin/sh\nexit 0\n");
+  writeFileSync(join(f.root, "canon/config.yaml"), `${readFileSync(join(f.root, "canon/config.yaml"), "utf8")}types:\n  change:\n    fields:\n      risk: { type: enum, values: [low, high], due: create }\nhooks:\n  after_land: scripts/review.sh\n`);
+  sh(f.root, "add", "-A"); sh(f.root, "commit", "-qm", "main declares risk");
+  const refused = await finish(f.worktree);
+  expect(refused).toMatchObject({ kind: "refused", reason: "fields" });
+  expect(refused.kind === "refused" && refused.message).toContain(`canon doc set ${f.change} risk "<value>", the value one of low, high`);
+  expect(refused.kind === "refused" && refused.message).not.toContain("owner_gate");
+});

@@ -144,7 +144,8 @@ export function readTemplates(root: string, types: readonly DocType[]): Result<R
   return ok(templates);
 }
 
-function readTypes(v: unknown): Result<DocType[]> {
+/** `types` as `canon/config.yaml` declares them (built-in types included); also used to read main's declarations alone (BR-2624). */
+export function readTypes(v: unknown): Result<DocType[]> {
   const types: DocType[] = BUILTIN_TYPES.map((t) => ({ ...t }));
   if (v === undefined || v === null) return ok(types);
   if (typeof v !== "object" || Array.isArray(v)) return err("invalid", "`types` must be a mapping of type name → declaration");
