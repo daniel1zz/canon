@@ -16,6 +16,7 @@ import { reminderStats, renderReminderStats } from "./reminders.ts";
 import { agenda, dueList } from "../reminders/agenda.ts";
 import { readFileSync } from "node:fs";
 import { readRuntime } from "../../kernel/agent.ts";
+import { executionStats, renderExecutionStats } from "./execution.ts";
 import { landingsByModel, modelFromHook, recordModel, renderLandingsByModel } from "./model.ts";
 import { eventsSince, lastEventId, parseSince, renderEvents, renderWindow, windowSummary } from "./window.ts";
 
@@ -57,6 +58,9 @@ const stats = defineCommand({
     // reason: text-only like the batch section; the --json fields are fixed (BR-2202, BR-2532)
     const byModel = renderLandingsByModel(landingsByModel(ws.db, since ?? 0, until));
     if (byModel) say(`\n${byModel}`);
+    // reason: text-only like the model section; the --json fields are fixed (BR-2202, BR-2611)
+    const execution = renderExecutionStats(executionStats(ws.db, ws.primary, since ?? 0, until));
+    if (execution) say(`\n${execution}`);
     // reason: text-only like the review counts; whether a class needs a hard gate is read off these numbers (BR-2494, D-124)
     // reason: revisions are counted on main as committed, never on this checkout's HEAD or uncommitted text (BR-2494)
     const mainSha = must(git(ws.primary, "rev-parse", "--verify", `refs/heads/${ws.config.main}^{commit}`)).trim();
