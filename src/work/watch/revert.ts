@@ -120,7 +120,7 @@ async function probe(ws: Workspace, f: Failure, sha: string, what: string): Prom
   return passed;
 }
 
-/** The first landing that makes the probe fail, with the one before it (or green) passing; or why there is none (BR-2535). */
+/** A landing where the probe turns from passing (the one before it, or green) to failing, found by bisection that assumes it keeps failing after; or why there is none (BR-2535). */
 export async function locate(ws: Workspace, f: Failure): Promise<Landing | string> {
   const red = redMain(ws.db);
   const green = red?.green ?? null;
