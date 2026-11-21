@@ -6,7 +6,7 @@ import { corpusOf, entry, fail, json, list, must, say, workspace, type DomainCom
 import type { Doc, Kind } from "./model.ts";
 import { readBacklog } from "./backlog.ts";
 import { changeStates, isClosed, marksOf, stateJson } from "../changes/state.ts";
-import { tierLabel } from "../../work/priority/store.ts";
+import { TIER_WIDTH, tierLabel } from "../../work/priority/store.ts";
 import { DEFAULT_TIER } from "../../work/priority/tiers.ts";
 import type { readCorpus } from "./read.ts";
 import { technicalLayerWord, technicalNameAdvice } from "./domain-names.ts";
@@ -102,9 +102,10 @@ function listCommand(kind: Kind, describe: string) {
           }));
         } else {
           for (const s of listed) {
-            // reason: every open change says its tier, and who set it unless it is the default (BR-2603)
-            const marks = [...(isClosed(s) ? [] : [tierLabel(s.priority)]), ...marksOf(s, true)];
-            say(`${s.id.padEnd(8)} ${(s.change?.status ?? "").padEnd(10)} ${s.change?.title ?? "(no file)"}  (${marks.join("; ")})`);
+            const marks = marksOf(s, true);
+            // reason: every open change says its tier, and who set it when one is set (BR-2603); it is a column of its own, so the parentheses still start with the state (BR-2572)
+            const tier = (isClosed(s) ? "" : tierLabel(s.priority)).padEnd(TIER_WIDTH);
+            say(`${s.id.padEnd(8)} ${(s.change?.status ?? "").padEnd(10)} ${tier}  ${s.change?.title ?? "(no file)"}  (${marks.join("; ")})`);
           }
           if (listed.length === 0 && unreadable.length === 0) say("(no changes)");
         }

@@ -156,10 +156,10 @@ describe("BR-2603: the tier and who set it in canon change list and canon work s
     expect(cli(root, MAIN_AGENT, "priority", "set", "C-5", "P1", "--reason", "阻塞 C-7").code).toBe(0);
     expect(cli(root, MAIN_AGENT, "priority", "set", "C-7", "P3", "--relayed", "以后再说").code).toBe(0);
     const line = (id: string) => cli(root, MAIN_AGENT, "change", "list", "--all").out.split("\n").find((l) => l.startsWith(`${id} `)) ?? "";
-    expect(line("C-5")).toContain("(P1 main agent; ");
-    expect(line("C-6")).toContain("(P2; ");
-    expect(line("C-7")).toContain("(P3 owner; ");
-    expect(line("C-9")).toContain("(P0 fix-main; ");
+    expect(line("C-5")).toMatch(/^C-5 +open +P1 main agent  Change 5  \(/);
+    expect(line("C-6")).toMatch(/^C-6 +open +P2 {13}Change 6  \(/);
+    expect(line("C-7")).toMatch(/^C-7 +open +P3 owner {7}Change 7  \(/);
+    expect(line("C-9")).toMatch(/^C-9 +open +P0 fix-main {4}Change 9  \(/);
     // a landed or dropped change shows no tier
     expect(line("C-3")).not.toMatch(/\bP[0-3]\b/);
     expect(line("C-4")).not.toMatch(/\bP[0-3]\b/);

@@ -88,4 +88,7 @@ export function tierLabel(a: Assigned | undefined): string {
   return `${a.tier} ${BY_LABEL[a.by]}`;
 }
 
+/** The width of the tier column in `canon change list`: the longest label, `P1 main agent`. */
+export const TIER_WIDTH = 13;
+
 export const BY_LABEL: Record<SetBy, string> = { owner: "owner", "main-agent": "main agent", "fix-main": "fix-main" };

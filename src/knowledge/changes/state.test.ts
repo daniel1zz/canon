@@ -171,8 +171,8 @@ describe("BR-2572: canon change list gives each change's state, flags and what i
     delegateRow(root, "C-671");
     const text = cli(root, "agent:a", "change", "list");
     expect(text.code).toBe(0);
-    expect(text.out).toContain("C-1      open       Change 1  (ready-delegatable)");
-    expect(text.out).toContain(`C-3      open       Change 3  (waiting-owner: #${q})`);
+    expect(text.out).toContain("C-1      open       P2             Change 1  (ready-delegatable)"); // the tier column, BR-2603
+    expect(text.out).toContain(`C-3      open       P2             Change 3  (waiting-owner: #${q})`);
     expect(text.out).toContain("(waiting-deps; waiting for C-3)");
     expect(text.out).toContain("(ready-self: ## 要改什么 is empty)");
     expect(text.out).not.toContain("C-671");

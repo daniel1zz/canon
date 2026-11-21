@@ -57,7 +57,8 @@ function backlog(root: string, text: string) {
 }
 
 // reason: the state mark that now leads every line is BR-2572's, tested in state.test.ts; these tests are about BR-2291's marks after it
-const rows = (out: string) => out.split("\n").filter(Boolean).map((l) => l.replace(/  \(([a-z-]+)(?::[^;)]*)?(?:; |\))/, (_m) => (_m.endsWith(")") ? "" : "  (")));
+// reason: the state (BR-2572) and the tier column (BR-2603) have their own tests; these compare the rest of each row
+const rows = (out: string) => out.split("\n").filter(Boolean).map((l) => l.replace(/^(\S+ +\S+ +)(?:P[0-3](?: owner| main agent| fix-main)? +| {15})/, "$1").replace(/  \(([a-z-]+)(?::[^;)]*)?(?:; |\))/, (_m) => (_m.endsWith(")") ? "" : "  (")));
 const ids = (out: string) => rows(out).map((l) => l.split(/\s+/)[0]);
 const PICK = "with no task, take the first unclaimed, not ambiguous one: ";
 
