@@ -78,6 +78,39 @@ export const BUILTIN_FLAGS: Readonly<Record<string, readonly string[]>> = {
   quality: ["aspect", "judge", "covers"],
 };
 
+/**
+ * Whether a decision's `amends` or `supersedes` names another decision that exists (BR-2623, BR-2492): only then is
+ * `revised_because` due. One that names only itself, a missing id or a document that is no decision revises nothing.
+ */
+export function revisesDecision(corpus: Corpus, amends: unknown, supersedes: unknown, self?: string): boolean {
+  const decisions = new Set(corpus.docs.filter((d) => d.kind === "decision").map((d) => d.id));
+  const ids = (v: unknown): string[] => (typeof v === "string" ? (isNone(v) ? [] : v.split(/[,，、]/)) : Array.isArray(v) ? v : []).filter((x): x is string => typeof x === "string").map((x) => x.trim());
+  return [...ids(amends), ...ids(supersedes)].some((id) => id !== self && decisions.has(id));
+}
+
+/** The fields of `type` stated at creation (BR-2620): its `due: create` ones, and `revised_because` when the decision revises another (BR-2623). */
+export function dueFields(type: DocType, revising: boolean): FieldDeclaration[] {
+  return type.fields.filter((f) => f.due === "create" || (type.name === "decision" && f.name === "revised_because" && revising));
+}
+
+/** What the value of `f` may be, said in a refusal without the flag (BR-2624). */
+export function allowedText(type: DocType, f: FieldDeclaration, ctx: StatedContext): string {
+  switch (`${type.name}.${f.name}`) {
+    case "change.owner_gate": return "a text saying what the owner approves, or \"none: <reason>\"";
+    case "change.advances": return `success criteria such as ${prefixOf(ctx.corpus, "release", "R")}-5/S1, comma separated, or "none: <reason>"`;
+    case "rule.business": {
+      const domain = ctx.domain === undefined ? undefined : ctx.corpus.domains.find((d) => d.name === ctx.domain);
+      const names = domain ? businessesOf(domain).map((b) => b.name) : [];
+      return names.length > 0 ? `one of the businesses ${ctx.domain}'s README lists: ${names.join(", ")}` : `a business ${ctx.domain ?? "its domain"}'s README lists (it lists none yet: write it under ## 业务 first)`;
+    }
+    case "decision.amends": return "decision ids, comma separated, or \"none: <reason>\"";
+    case "decision.revised_because": return `one of ${REVISION_REASONS.join(", ")} (BR-2492)`;
+    case "release.features": return `feature ids such as ${prefixOf(ctx.corpus, "feature", "F")}-1, comma separated, or "none: <reason>"`;
+    case "quality.covers": return "domains or repository paths, comma separated";
+    default: return shapeText(f);
+  }
+}
+
 /** What the value of `f` is allowed to be, and how to give it, said in a refusal (BR-2620). */
 function howToGive(type: DocType, f: FieldDeclaration, ctx: StatedContext): string {
   const flag = BUILTIN_FLAGS[type.name]?.includes(f.name) ? flagOf(f.name) : `--set ${f.name}=`;
@@ -184,11 +217,8 @@ export function statedFields(type: DocType, set: readonly string[], flags: Reado
     if (problem) problems.push(`${problem}; give ${howToGive(type, f, ctx)}`);
     else out[name] = value;
   }
-  const revises = type.name === "decision" && ((Array.isArray(out["amends"]) && out["amends"].length > 0) || (supersedes !== undefined && supersedes.trim() !== ""));
-  for (const f of type.fields) {
-    const due = f.due === "create" || (f.name === "revised_because" && revises);
-    if (due && !given.has(f.name)) problems.push(`missing ${f.name}: give ${howToGive(type, f, ctx)}`);
-  }
+  const revising = type.name === "decision" && revisesDecision(ctx.corpus, out["amends"], supersedes);
+  for (const f of dueFields(type, revising)) if (!given.has(f.name)) problems.push(`missing ${f.name}: give ${howToGive(type, f, ctx)}`);
   return problems.length === 0 ? ok(out) : err("invalid", `${type.name} not created, no id allocated (BR-2620):\n${problems.map((p) => `  ${p}`).join("\n")}`);
 }
 

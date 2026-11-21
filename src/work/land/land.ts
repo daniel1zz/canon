@@ -1,4 +1,5 @@
 import { failedOnBranch } from "./checks/tested.ts";
+import { missingStatedFields } from "./checks/fields.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Say, Workspace } from "../workspace.ts";
@@ -122,6 +123,13 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
     const what = [...(left.files.length > 0 ? [`${left.files.length} test file(s) failed: ${left.files.join(", ")}`] : []), ...(left.typecheck !== null ? [`the typecheck exited ${left.typecheck}`] : [])].join("; ");
     const rerun = left.files.length > 0 ? `canon work test ${left.files.join(" ")}` : "canon work test";
     say(`note: canon work test on this branch left failures not run again since: ${what}; the landing goes on and runs the tests this change makes relevant itself (BR-2542, BR-2463); to clear this, run them again: ${rerun}`);
+  }
+  // reason: a document this landing adds states the fields its type wants at creation, whatever made the file (BR-2624, D-159);
+  // refused before queueing, since the content alone decides it and canon doc set fixes it in place
+  const stated = missingStatedFields(wt, main);
+  if ("error" in stated) return early("environment", stated.error);
+  if (stated.lines.length > 0) {
+    return early("fields", `${stated.lines.length} field(s) to state on the documents this landing adds (BR-2624); set each in this worktree, commit, and land again:\n${stated.lines.map((l) => `  ${l}`).join("\n")}`);
   }
   // reason: a refusal its content and main alone decide comes again on the same content and main; said now, without
   // waiting a turn in the queue (BR-2388, #154). Before the close commit, so there is nothing to take back.

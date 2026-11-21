@@ -102,7 +102,8 @@ export function readWorkConfig(root: string): Result<Config> {
   return configFromHistory(root, `refs/heads/${seed.value.main}`);
 }
 
-function configFromHistory(root: string, ref: string): Result<Config> {
+/** `canon/config.yaml` as `ref` has it (or had it last, when a commit there deleted it). */
+export function configFromHistory(root: string, ref: string): Result<Config> {
   let text = git(root, "show", `${ref}:canon/config.yaml`);
   if (!text.ok) {
     const deleted = git(root, "log", "-1", "--format=%H", "--diff-filter=D", ref, "--", "canon/config.yaml");

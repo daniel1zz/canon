@@ -74,7 +74,8 @@ export function startNew(root: string, title: string, actor = "agent:a"): Starte
     if (!claimed.ok) throw new Error(claimed.error.message);
     return claimed.value;
   }
-  const r = start(ws(root, actor), { title }, quiet);
+  // reason: a session states these when it creates a change (BR-2620, BR-2623); the landing refuses a new change without them (BR-2624)
+  const r = start(ws(root, actor), { title, fields: { owner_gate: "none: test fixture", advances: "none: test fixture" } }, quiet);
   if (!r.ok) throw new Error(r.error.message);
   const dir = join(r.value.worktree, "canon/changes");
   const file = readdirSync(dir).find((f) => f.startsWith(`${r.value.change}-`) || f === `${r.value.change}.md`)!;
