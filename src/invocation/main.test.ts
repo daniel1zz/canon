@@ -11,6 +11,12 @@ function canon(cwd: string, ...args: string[]) {
   return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
 }
 
+/** Names business 退款 in a domain README that `canon rule domain` made, so `canon rule new --business 退款` can use it (BR-2620). */
+function business(root: string, domain: string): void {
+  const file = join(root, "canon/rules", domain, "README.md");
+  writeFileSync(file, readFileSync(file, "utf8").replace("- **<业务名>**：<这个业务管什么>", "- **退款**：钱退回"));
+}
+
 function repo(): string {
   const root = mkdtempSync(join(tmpdir(), "canon-next-cli-"));
   for (const args of [["init", "-q", "-b", "main"], ["config", "user.email", "t@t"], ["config", "user.name", "t"]]) Bun.spawnSync(["git", ...args], { cwd: root });
@@ -23,7 +29,8 @@ describe("exit codes", () => {
     expect(canon(root, "init", "--floor", "true").code).toBe(0);
     expect(canon(root, "show", ["BR", 999].join("-")).code).toBe(3);
     expect(canon(root, "rule", "domain", "billing", "--code", "src/billing").code).toBe(0);
-    expect(canon(root, "rule", "new", "--domain", "billing", "--title", "Refund window").code).toBe(0);
+    business(root, "billing");
+    expect(canon(root, "rule", "new", "--domain", "billing", "--title", "Refund window", "--business", "退款").code).toBe(0);
     const c = canon(root, "check");
     expect(c.code).toBe(1); // the new rule has no test and no reason
     expect(c.out).toContain("rule-untested");
@@ -47,20 +54,20 @@ describe("exit codes", () => {
   test("BR-2001 BR-2012 BR-2037: a Chinese title gives a file and branch named by the id alone", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
-    const d = canon(root, "decision", "new", "--title", "知识以文件存放");
+    const d = canon(root, "decision", "new", "--amends", "none: test", "--title", "知识以文件存放");
     expect(d.code).toBe(0);
     expect(d.out.trim()).toMatch(/^canon\/decisions\/D-1\.md$/);
     expect(canon(root, "show", ["D", 1].join("-")).out).toContain("## 背景"); // BR-2037: Chinese template
     Bun.spawnSync(["git", "add", "-A"], { cwd: root });
     Bun.spawnSync(["git", "commit", "-qm", "init"], { cwd: root });
-    const w = canon(root, "work", "start", "--title", "中文变更");
+    const w = canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "中文变更");
     expect(w.code).toBe(0);
     expect(w.out).toContain("(branch change/C-1)");
     // reason: main is now committed and guarded, so documents are created in the change's worktree (BR-2409)
     const wt = /→ (\S+) \(branch/.exec(w.out)![1]!;
     expect(canon(wt, "note", "new", "--title", "调研 API 方案").out.trim()).toBe("canon/notes/N-1.md");
-    expect(canon(wt, "decision", "new", "--title", "Use files").out.trim()).toBe(`canon/decisions/${["D", 2].join("-")}-use-files.md`);
-    const change = canon(wt, "change", "new", "--title", "Template check").out.trim(); // after the C-1 assertions above
+    expect(canon(wt, "decision", "new", "--amends", "none: test", "--title", "Use files").out.trim()).toBe(`canon/decisions/${["D", 2].join("-")}-use-files.md`);
+    const change = canon(wt, "change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Template check").out.trim(); // after the C-1 assertions above
     expect(readFileSync(join(wt, change), "utf8")).toContain("## 陷阱和假设");
     const template = readFileSync(join(wt, change), "utf8");
     expect(template.indexOf("## 教训")).toBeGreaterThan(template.indexOf("## 陷阱和假设")); // BR-2037: lessons before the tasks
@@ -74,7 +81,7 @@ describe("exit codes", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     writeFileSync(join(root, "notes.txt"), "the original sentence quoted here\n");
-    const path = canon(root, "decision", "new", "--title", "Use files").out.trim();
+    const path = canon(root, "decision", "new", "--amends", "none: test", "--title", "Use files").out.trim();
     const template = readFileSync(join(root, path), "utf8");
     const placeholder = "   - 来源：<网址或仓库里的文件路径> “<原文摘录，至少 8 个字符>”";
     expect(template.split(placeholder).length - 1).toBe(2); // one line under each of the two options
@@ -98,8 +105,8 @@ describe("exit codes", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     canon(root, "rule", "domain", "billing", "--code", "src/billing", "--description", "Money.");
-    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n");
-    canon(root, "rule", "new", "--domain", "billing", "--title", "Refunds", "--untested", "fixture");
+    writeFileSync(join(root, "canon/rules/billing/README.md"), "---\ncode: [src/billing]\n---\n# billing\n\nMoney.\n\n## 术语\n\n- **退款**：钱退回\n\n## 业务\n\n- **退款**：钱退回\n");
+    canon(root, "rule", "new", "--domain", "billing", "--title", "Refunds", "--untested", "fixture", "--business", "退款");
     const id = ["BR", 1].join("-");
     const shown = canon(root, "show", id).out;
     expect(shown).toContain("## 规则");
@@ -119,7 +126,7 @@ describe("exit codes", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     committed(root);
-    const wt = canon(root, "work", "start", "--title", "Asking").out.match(/cd (.+)/)![1]!.trim();
+    const wt = canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Asking").out.match(/cd (.+)/)![1]!.trim();
     expect(canon(wt, "human", "ask", "Ship it?").code).toBe(0);
     expect(canon(root, "human", "pending").out).toContain("#1 [C-1] Ship it?");
     expect(canon(root, "human", "ask", "Rename it?").code).toBe(0); // the primary checkout holds no claim
@@ -222,12 +229,13 @@ describe("undeclared arguments", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     canon(root, "rule", "domain", "billing", "--code", "src/billing");
+    business(root, "billing");
     const before = readdirSync(join(root, "canon/rules/billing")).sort();
-    const r = canon(root, "rule", "new", "--domain", "billing", "--title", "X", "--dry-run");
+    const r = canon(root, "rule", "new", "--domain", "billing", "--title", "X", "--business", "退款", "--dry-run");
     expect(r.code).toBe(2);
     expect(r.err).toContain("--dry-run");
     expect(readdirSync(join(root, "canon/rules/billing")).sort()).toEqual(before);
-    expect(canon(root, "rule", "new", "--domain", "billing", "--title", "X").code).toBe(0);
+    expect(canon(root, "rule", "new", "--domain", "billing", "--title", "X", "--business", "退款").code).toBe(0);
     expect(readdirSync(join(root, "canon/rules/billing")).length).toBe(before.length + 1);
   });
 
@@ -312,13 +320,13 @@ describe("project and documents", () => {
   test("BR-2027: accepting a decision supersedes the one it replaces; a non-decision target is not found", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
-    canon(root, "decision", "new", "--title", "Old way");
-    canon(root, "decision", "new", "--title", "New way", "--supersedes", ["D", 1].join("-"));
+    canon(root, "decision", "new", "--amends", "none: test", "--title", "Old way");
+    canon(root, "decision", "new", "--amends", "none: test", "--revised-because", "premise", "--title", "New way", "--supersedes", ["D", 1].join("-"));
     expect(canon(root, "decision", "accept", ["D", 2].join("-")).code).toBe(0);
     const list = canon(root, "decision", "list", "--all").out;
     expect(list).toMatch(/D-1\s+superseded/);
     expect(list).toMatch(/D-2\s+accepted/);
-    canon(root, "decision", "new", "--title", "Bad", "--supersedes", ["C", 9].join("-"));
+    canon(root, "decision", "new", "--amends", "none: test", "--revised-because", "premise", "--title", "Bad", "--supersedes", ["C", 9].join("-"));
     expect(canon(root, "decision", "accept", ["D", 3].join("-")).code).toBe(3);
     expect(canon(root, "show", ["D", 3].join("-")).out).toContain("status: proposed"); // nothing was written
   });
@@ -328,7 +336,7 @@ describe("project and documents", () => {
     canon(root, "init", "--floor", "true");
     const d = (n: number) => ["D", n].join("-");
     const file = (n: number) => join(root, "canon/decisions", readdirSync(join(root, "canon/decisions")).find((f) => f.startsWith(`${d(n)}-`))!);
-    for (const t of ["Old one", "Old two", "New way"]) canon(root, "decision", "new", "--title", t);
+    for (const t of ["Old one", "Old two", "New way"]) canon(root, "decision", "new", "--amends", "none: test", "--title", t);
     for (const n of [1, 2]) expect(canon(root, "decision", "accept", d(n)).code).toBe(0);
     const set = (value: string) => writeFileSync(file(3), readFileSync(file(3), "utf8").replace(/^supersedes:.*\n/m, "").replace("status: proposed", `supersedes: ${value}\nstatus: proposed`));
     for (const bad of ["[]", "5", "{a: 1}", `[${d(1)}, 7]`, `[${d(1)}, nope]`]) {
@@ -358,10 +366,9 @@ describe("project and documents", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     const d = (n: number) => ["D", n].join("-");
-    canon(root, "decision", "new", "--title", "Old way");
-    canon(root, "decision", "new", "--title", "Part change");
+    canon(root, "decision", "new", "--amends", "none: test", "--title", "Old way");
+    canon(root, "decision", "new", "--amends", d(1), "--revised-because", "requirement", "--title", "Part change");
     const path = join(root, "canon/decisions", readdirSync(join(root, "canon/decisions")).find((f) => f.startsWith(`${d(2)}`))!);
-    writeFileSync(path, readFileSync(path, "utf8").replace("status: proposed", `amends: [${d(1)}]\nstatus: proposed`));
     expect(canon(root, "show", d(1)).out).not.toContain("partly amended by");
     expect(canon(root, "decision", "accept", d(2)).code).toBe(0);
     const out = canon(root, "show", d(1)).out.trimEnd().split("\n");
@@ -372,12 +379,13 @@ describe("project and documents", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     canon(root, "rule", "domain", "billing", "--code", "src/billing");
-    canon(root, "rule", "new", "--domain", "billing", "--title", "Refunds", "--untested", "fixture");
+    business(root, "billing");
+    canon(root, "rule", "new", "--domain", "billing", "--title", "Refunds", "--untested", "fixture", "--business", "退款");
     const id = ["BR", 1].join("-");
     expect(canon(root, "rule", "retire", id).code).toBe(0);
     expect(canon(root, "show", id).out).toContain("status: retired");
     expect(canon(root, "context", "billing").out).not.toContain(id);
-    canon(root, "change", "new", "--title", "Maybe");
+    canon(root, "change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Maybe");
     expect(canon(root, "change", "drop", ["C", 1].join("-")).code).toBe(0);
     expect(canon(root, "change", "list", "--all").out).toMatch(/C-1\s+dropped/);
   });
@@ -387,7 +395,7 @@ describe("starting existing changes", () => {
   test("BR-2038: a change that is not open cannot be started", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
-    canon(root, "change", "new", "--title", "Old");
+    canon(root, "change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Old");
     canon(root, "change", "drop", ["C", 1].join("-"));
     committed(root);
     const r = canon(root, "work", "start", ["C", 1].join("-"));
@@ -402,7 +410,7 @@ describe("session continuity", () => {
     canon(root, "init", "--floor", "true");
     committed(root);
     expect(canon(root, "work", "stop", "--reason", "partial", "--next", "x").code).toBe(3);
-    const started = canon(root, "work", "start", "--title", "Refunds");
+    const started = canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Refunds");
     const wt = started.out.match(/cd (.+)/)![1]!.trim();
     expect(canon(wt, "brief").out).toContain("You are in C-1");
     expect(canon(wt, "work", "stop", "--reason", "partial", "--next", "write the refund test", "--note", "half done").code).toBe(0);
@@ -426,7 +434,7 @@ describe("session continuity", () => {
       writeFileSync(join(dir, name), `${text.slice(0, text.indexOf("---\n", 4) + 4)}\n## 为什么\n\nx\n\n## 要改什么\n\nx\n\n## 教训\n\n无。\n\n## 任务\n\n- [x] x\n`);
       Bun.spawnSync(["git", "commit", "-qam", "fill"], { cwd: wt });
     };
-    const one = canon(root, "work", "start", "--title", "One").out.match(/cd (.+)/)![1]!.trim();
+    const one = canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "One").out.match(/cd (.+)/)![1]!.trim();
     const stopped = canon(one, "work", "stop", "--reason", "partial", "--next", "write the test");
     expect(stopped.code).toBe(0);
     expect(last(stopped.out)).toMatch(/^lessons: .*## 教训.*ask the owner.*not lessons/);
@@ -443,7 +451,7 @@ describe("session continuity", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     committed(root);
-    const wt = (title: string) => canon(root, "work", "start", "--title", title).out.match(/cd (.+)/)![1]!.trim();
+    const wt = (title: string) => canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", title).out.match(/cd (.+)/)![1]!.trim();
     const a = wt("A");
     const b = wt("B");
     expect(canon(b, "work", "stop", "--reason", "partial", "--next", "finish B").code).toBe(0);
@@ -472,7 +480,7 @@ describe("session continuity", () => {
     expect(idle.trim()).toBe(guideFor(root)); // init wrote canon/architecture.md, so the guide starts with the overview line (BR-2090)
     for (const cmd of ["canon context", "canon work start", "canon work land --finish", "canon work stop --reason", "--relayed", "canon work drop", "canon work after-land --wait", "canon-product"]) expect(idle).toContain(cmd);
     committed(root);
-    const wt = canon(root, "work", "start", "--title", "Refunds").out.match(/cd (.+)/)![1]!.trim();
+    const wt = canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Refunds").out.match(/cd (.+)/)![1]!.trim();
     const b = canon(wt, "brief").out;
     expect(b.startsWith(guideFor(root))).toBe(true);
     expect(b.slice(guideFor(root).length)).toContain("You are in C-1");
@@ -505,7 +513,7 @@ describe("overlap in brief", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     committed(root);
-    const wt = (title: string) => canon(root, "work", "start", "--title", title).out.match(/cd (.+)/)![1]!.trim();
+    const wt = (title: string) => canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", title).out.match(/cd (.+)/)![1]!.trim();
     const a = wt("A");
     const b = wt("B");
     expect(canon(a, "brief").out).not.toContain("Overlap");
@@ -524,7 +532,7 @@ describe("dropping from the command line", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
     committed(root);
-    const wt = canon(root, "work", "start", "--title", "Risky").out.match(/cd (.+)/)![1]!.trim();
+    const wt = canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Risky").out.match(/cd (.+)/)![1]!.trim();
     writeFileSync(join(wt, "wip.txt"), "wip");
     expect(canon(wt, "work", "stop", "--reason", "partial", "--release", "--next", "drop it").code).toBe(0); // a live claim refuses the drop (BR-2064)
     Bun.spawnSync(["git", "update-ref", "refs/canon/archive/C-1", "HEAD"], { cwd: root });
@@ -564,7 +572,8 @@ describe("subdomains from the CLI", () => {
     expect(noParent.code).toBe(3);
     expect(noParent.out).toContain("domains that already exist");
     expect(existsSync(join(root, "canon/rules/nowhere"))).toBe(false);
-    expect(canon(root, "rule", "new", "--domain", "billing/refunds", "--title", "Refund window", "--untested", "fixture").code).toBe(0);
+    business(root, "billing/refunds");
+    expect(canon(root, "rule", "new", "--domain", "billing/refunds", "--title", "Refund window", "--untested", "fixture", "--business", "退款").code).toBe(0);
     expect(canon(root, "rule", "list", "--domain", "billing").out).toContain("Refund window"); // a domain's list includes its subdomains
     expect(canon(root, "check").out).not.toContain("domain-code-declared");
   });

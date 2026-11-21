@@ -2,13 +2,14 @@ import { defineCommand } from "citty";
 import { corpusOf, entry, fail, json, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import type { Quality } from "../documents/model.ts";
 import { createDoc } from "../documents/write.ts";
+import { JUDGES } from "../documents/types.ts";
+import { statedArgs, statedFor } from "../documents/stated.ts";
 import { refuseOnGuardedMain } from "../documents/guarded.ts";
 import { recordVerdict, standingJson, standings, standingText, type Standing } from "./verdicts.ts";
 import { aspectList, coverage, DECISION_LABEL, overviewQualityLine, qualitySummary, type AspectView } from "./aspects.ts";
 
 /** `canon quality`: quality standards (Q-n) and the product's aspects (D-145, D-146). */
 
-const JUDGES = ["test", "agent", "owner"];
 const byNumber = (a: { id: string }, b: { id: string }) => a.id.localeCompare(b.id, undefined, { numeric: true });
 const UNCONFIRMED = "(负责人未确认)";
 
@@ -34,6 +35,7 @@ const quality = defineCommand({
         aspect: { type: "string", description: "The aspect it belongs to, as canon/quality/README.md lists it" },
         judge: { type: "string", description: "Who judges it: test, agent or owner" },
         covers: { type: "string", description: "Domains or repository paths it covers, comma-separated (. for the whole repository)" },
+        set: statedArgs("quality")["set"]!,
       },
       run({ args }) {
         const aspect = typeof args.aspect === "string" ? args.aspect.trim() : "";
@@ -41,12 +43,14 @@ const quality = defineCommand({
         const covers = typeof args.covers === "string" ? args.covers.split(",").map((c) => c.trim()).filter((c) => c !== "") : [];
         // reason: checked before any id is allocated, so a usage error writes nothing (BR-2553)
         if (aspect === "") fail({ code: "invalid", message: "--aspect is required: the aspect this standard belongs to (BR-2553)" });
-        if (!JUDGES.includes(judge)) fail({ code: "invalid", message: `--judge must be one of ${JUDGES.join(", ")} (BR-2553)` });
+        if (!(JUDGES as readonly string[]).includes(judge)) fail({ code: "invalid", message: `--judge must be one of ${JUDGES.join(", ")} (BR-2553)` });
         if (covers.length === 0) fail({ code: "invalid", message: "--covers is required: the domains or repository paths this standard covers, comma-separated (BR-2553)" });
         const ws = workspace();
         refuseOnGuardedMain(ws, "quality", String(args.title));
         const { corpus } = corpusOf(ws);
-        say(must(createDoc(ws.root, corpus, ws.db, ws.actor, { kind: "quality", title: String(args.title), quality: { aspect, judge, covers } }, ws.config.templates)));
+        // reason: aspect, judge and covers were checked above with their own messages (BR-2553); a project's own fields are checked here, before an id is allocated (BR-2620)
+        const fields = must(statedFor(corpus, "quality", { ...(args as Record<string, unknown>), aspect, judge, covers: covers.join(",") }));
+        say(must(createDoc(ws.root, corpus, ws.db, ws.actor, { kind: "quality", title: String(args.title), quality: { aspect, judge, covers }, fields }, ws.config.templates)));
         const list = aspectList(corpus);
         // reason: a reminder, never a refusal: the aspect can be listed after the standard is written (BR-2553, D-139)
         if (!list.aspects.some((a) => a.name === aspect)) console.error(`canon: aspect ${aspect} is not listed in ${list.path}: add \`- **${aspect}**\` under \`## 方面\` there, or canon check reports it (BR-2555)`);

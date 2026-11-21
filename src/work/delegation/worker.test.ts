@@ -37,13 +37,13 @@ test("BR-2498: only the named worker can claim, binding the first full actor and
 test("BR-2498 BR-2011 BR-2012 BR-2457 BR-2022: workers cannot claim undelegated work or allocate new changes, fixes or chores", () => {
   const f = fixture(false); const before = sh(f.root, "for-each-ref", "--format=%(refname)", "refs/heads");
   const no = cli(f.root, "agent:s7:w1", "work", "start", f.change); expect(no.code).toBe(1); expect(no.text).toContain("未派发");
-  for (const args of [["work", "start", "--title", "x"], ["work", "start", "--fix-main"], ["chore", "start", "tidy"]]) {
+  for (const args of [["work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x"], ["work", "start", "--fix-main"], ["chore", "start", "tidy"]]) {
     const r = cli(f.root, "agent:s7:w1", ...args); expect(r.code).toBe(1); expect(r.text).toContain("delegate");
   }
   expect(sh(f.root, "for-each-ref", "--format=%(refname)", "refs/heads")).toBe(before);
   expect(claim(f.root, f.change)).toMatchObject({ holder: "agent:s1" });
   const w = ws(f.root); expect(w.db.db.query<{ next: number }, []>("SELECT next FROM ids WHERE prefix='C'").get()?.next).toBe(2); w.db.close();
-  expect(cli(f.root, "agent:s2", "work", "start", "--title", "primary change").code).toBe(0);
+  expect(cli(f.root, "agent:s2", "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "primary change").code).toBe(0);
   expect(cli(f.root, "agent:s2", "chore", "start", "primary chore").code).toBe(0);
 });
 

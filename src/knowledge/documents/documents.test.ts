@@ -115,7 +115,7 @@ describe("creating documents", () => {
 
   test("BR-2037: a new decision has all four sections, a new domain README has 术语, and an unfilled 陷阱和假设 is template-unfilled", () => {
     const root = project();
-    const decision = canon(root, "decision", "new", "--title", "知识以文件存放").out.trim();
+    const decision = canon(root, "decision", "new", "--amends", "none: test", "--title", "知识以文件存放").out.trim();
     const text = readFileSync(join(root, decision), "utf8");
     for (const s of ["## 背景", "## 方案", "## 决定", "## 后果"]) expect(text).toContain(s);
     // D-108: the prompts say where the details go, so a decision or rule cites a rule instead of restating it
@@ -126,7 +126,7 @@ describe("creating documents", () => {
     expect(ruleText).not.toContain("一句话写清楚");
     expect(canon(root, "rule", "domain", "billing", "--code", "src/billing").code).toBe(0);
     expect(readFileSync(join(root, "canon/rules/billing/README.md"), "utf8")).toContain("## 术语");
-    const change = canon(root, "change", "new", "--title", "X").out.trim();
+    const change = canon(root, "change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "X").out.trim();
     const full = join(root, change);
     // Every section filled except 陷阱和假设, which keeps its placeholder.
     writeFileSync(
@@ -144,12 +144,12 @@ describe("creating documents", () => {
 describe("statuses and domains from the CLI", () => {
   test("BR-2027: a decision that supersedes itself is refused on accept and stays proposed; new does not check the target", () => {
     const root = project();
-    expect(canon(root, "decision", "new", "--title", "Self", "--supersedes", id("D", 1)).code).toBe(0);
+    expect(canon(root, "decision", "new", "--amends", "none: test", "--revised-because", "premise", "--title", "Self", "--supersedes", id("D", 1)).code).toBe(0);
     const r = canon(root, "decision", "accept", id("D", 1));
     expect(r.code).toBe(2);
     expect(r.err).toContain("supersedes itself");
     expect(canon(root, "show", id("D", 1)).out).toContain("status: proposed");
-    const other = canon(root, "decision", "new", "--title", "Other", "--supersedes", id("C", 9));
+    const other = canon(root, "decision", "new", "--amends", "none: test", "--revised-because", "premise", "--title", "Other", "--supersedes", id("C", 9));
     expect(other.code).toBe(0);
     expect(readFileSync(join(root, other.out.trim()), "utf8")).toContain(`supersedes: ${id("C", 9)}`);
   });
@@ -165,7 +165,7 @@ describe("statuses and domains from the CLI", () => {
   test("BR-2148: change list prints (no changes) when nothing is listed", () => {
     const root = project();
     expect(canon(root, "change", "list").out.trim()).toBe("(no changes)");
-    canon(root, "change", "new", "--title", "Gone");
+    canon(root, "change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Gone");
     canon(root, "change", "drop", id("C", 1));
     expect(canon(root, "change", "list").out.trim()).toBe("(no changes)");
     expect(canon(root, "change", "list", "--all").out).toMatch(/C-1\s+dropped/);
@@ -184,7 +184,7 @@ describe("status changes", () => {
 
   test("BR-2041: dropping an open change records it; dropping a done or dropped change exits 2, names its status and writes nothing", () => {
     const root = project();
-    for (const t of ["Open", "Finished", "Gone"]) expect(canon(root, "change", "new", "--title", t).code).toBe(0);
+    for (const t of ["Open", "Finished", "Gone"]) expect(canon(root, "change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", t).code).toBe(0);
     const path = (n: number) => join(root, "canon/changes", readdirSync(join(root, "canon/changes")).find((f) => f.startsWith(`${id("C", n)}-`))!);
     writeFileSync(path(2), readFileSync(path(2), "utf8").replace("status: open", "status: done"));
     writeFileSync(path(3), readFileSync(path(3), "utf8").replace("status: open", "status: dropped"));
@@ -231,10 +231,10 @@ const status = (root: string) => Bun.spawnSync(["git", "status", "--short"], { c
 describe("creating documents where main is checked out and guarded", () => {
   test("BR-2409: every create command refuses with exit 1 in the guarded primary checkout, allocates no id, writes nothing, and points at canon work start", () => {
     const root = guardedProject();
-    const change = canon(root, "change", "new", "--title", "x");
+    const change = canon(root, "change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x");
     expect(change.code).toBe(1);
     expect(change.err).toContain('canon work start --title "x"');
-    for (const args of [["note", "new", "--title", "x"], ["decision", "new", "--title", "x"], ["rule", "new", "--domain", "billing", "--title", "x"], ["release", "new", "--title", "x"]]) {
+    for (const args of [["note", "new", "--title", "x"], ["decision", "new", "--amends", "none: test", "--title", "x"], ["rule", "new", "--domain", "billing", "--title", "x"], ["release", "new", "--features", "none: test", "--title", "x"]]) {
       const r = canon(root, ...args);
       expect([args[0], r.code]).toEqual([args[0], 1]);
       expect(r.err).toContain("canon work start");
@@ -246,7 +246,7 @@ describe("creating documents where main is checked out and guarded", () => {
     expect(domain.out).not.toContain("domains that already exist");
     expect(status(root)).toBe("");
     // no id was allocated by the refused command: the first change started afterwards is still number 1
-    const started = canon(root, "work", "start", "--title", "y");
+    const started = canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "y");
     expect(started.code).toBe(0);
     expect(started.out).toContain(`${id("C", 1)} →`);
     expect(status(root)).toBe("");
@@ -261,7 +261,7 @@ describe("creating documents where main is checked out and guarded", () => {
     // where main is guarded the location is checked before the name (BR-2115 would say exit 2)
     expect(canon(root, "rule", "domain", "Billing", "--code", "src").code).toBe(1);
     expect(status(root)).toBe("");
-    const started = canon(root, "work", "start", "--title", "y");
+    const started = canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "y");
     const wt = /→ (\S+) \(branch/.exec(started.out)?.[1];
     expect(wt).toBeDefined();
     expect(canon(wt!, "rule", "domain", "shipping", "--code", "src/shipping").code).toBe(0);
@@ -276,10 +276,10 @@ describe("creating documents where main is checked out and guarded", () => {
 
   test("BR-2409: inside a change's worktree the same commands write their file there, exit 0", () => {
     const root = guardedProject();
-    const started = canon(root, "work", "start", "--title", "y");
+    const started = canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "y");
     const worktree = /→ (\S+) \(branch/.exec(started.out)?.[1];
     expect(worktree).toBeDefined();
-    const made = canon(worktree!, "change", "new", "--title", "x");
+    const made = canon(worktree!, "change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x");
     expect(made.code).toBe(0);
     expect(existsSync(join(worktree!, made.out.trim()))).toBe(true);
     expect(canon(worktree!, "note", "new", "--title", "x").code).toBe(0);
@@ -295,7 +295,7 @@ describe("creating documents where main is checked out and guarded", () => {
     writeFileSync(join(hooks.replace(unguarded, foreign), "reference-transaction"), "#!/bin/sh\nexit 0\n");
     expect(canon(foreign, "note", "new", "--title", "x").code).toBe(0);
     const uncommitted = project(); // canon init ran, nothing committed: main has no canon/config.yaml yet
-    expect(canon(uncommitted, "decision", "new", "--title", "x").code).toBe(0);
+    expect(canon(uncommitted, "decision", "new", "--amends", "none: test", "--title", "x").code).toBe(0);
     const detached = guardedProject();
     expect(Bun.spawnSync(["git", "checkout", "-q", "--detach"], { cwd: detached }).exitCode).toBe(0);
     expect(canon(detached, "note", "new", "--title", "x").code).toBe(0);
@@ -311,7 +311,7 @@ describe("creating documents where main is checked out and guarded", () => {
 describe("writing a status", () => {
   test("BR-2041: a status changed on disk after it was read is a conflict, and the file keeps what the other writer put there", () => {
     const root = project();
-    expect(canon(root, "change", "new", "--title", "Racing").code).toBe(0);
+    expect(canon(root, "change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Racing").code).toBe(0);
     const doc = readCorpus(root).corpus.docs.find((d) => d.id === id("C", 1))!;
     const path = join(root, doc.path);
     // a landing closes the change between drop's read and its write

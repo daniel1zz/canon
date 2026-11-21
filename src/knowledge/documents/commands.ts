@@ -13,6 +13,7 @@ import { technicalLayerWord, technicalNameAdvice } from "./domain-names.ts";
 import { contractLines } from "../domains/business.ts";
 import { domainLines } from "../domains/list.ts";
 import { createDoc, createDomain, setField, setMeta } from "./write.ts";
+import { statedArgs, statedFields, statedInput } from "./stated.ts";
 import { refuseOnGuardedMain } from "./guarded.ts";
 import { findDoc } from "../query/query.ts";
 import { waitingJson } from "../changes/deps.ts";
@@ -24,16 +25,25 @@ import { mainCorpus } from "../../work/session/session.ts";
 function newDocCommand(kind: string, extra: Record<string, { type: "string"; description: string; required?: boolean }> = {}, description = `Create a ${kind} (allocates its id; edit the file afterwards)`) {
   return defineCommand({
     meta: { description },
-    args: { title: { type: "string", required: true, description: "Title" }, body: { type: "string", description: "Body text (default: a template)" }, ...extra },
+    args: { title: { type: "string", required: true, description: "Title" }, body: { type: "string", description: "Body text (default: a template)" }, ...extra, ...statedArgs(kind) },
     run({ args }) {
       const ws = workspace();
       const { corpus } = corpusOf(ws);
       const a = args as Record<string, unknown>;
-      refuseOnGuardedMain(ws, kind === "" ? String(a["type"]) : kind, String(a["title"]));
+      const typeName = kind === "" ? String(a["type"]) : kind;
+      refuseOnGuardedMain(ws, typeName, String(a["title"]));
       // reason: the links are checked before an id is allocated, so a refused change leaves no number or file (BR-2562)
       const links = kind === "change" && String(a["title"]).trim() !== "" ? newLinks(ws, a, corpus) : undefined;
       // reason: the domain's whole boundary is read at the moment a new rule would otherwise repeat part of it (BR-2432, D-96)
       if (kind === "rule" && typeof a["domain"] === "string") for (const line of contractLines(corpus, a["domain"])) say(line);
+      // reason: the stated fields are checked before an id is allocated, so a refusal leaves no number or file (BR-2620);
+      // after the domain's businesses are listed, so a rule refused for its business has the list to choose from (BR-2432)
+      // reason: a rule without a domain, or in one that does not exist, is refused by createDoc first: a missing domain is the
+      // bigger mistake, and without it the businesses to choose from are unknown (BR-2620)
+      const homeless = kind === "rule" && !corpus.domains.some((d) => d.name === a["domain"]);
+      const type = homeless ? undefined : corpus.types.find((t) => t.name === typeName);
+      const given = statedInput(typeName, a);
+      const fields = type ? must(statedFields(type, given.set, given.flags, { corpus, ...(typeof a["domain"] === "string" ? { domain: a["domain"] } : {}) }, typeof a["supersedes"] === "string" ? a["supersedes"] : undefined)) : {};
       const path = must(
         createDoc(ws.root, corpus, ws.db, ws.actor, {
           kind: kind === "" ? String(a["type"]) : kind,
@@ -43,6 +53,7 @@ function newDocCommand(kind: string, extra: Record<string, { type: "string"; des
           ...(typeof a["untested"] === "string" ? { untested: a["untested"] } : {}),
           ...(typeof a["supersedes"] === "string" ? { supersedes: a["supersedes"] } : {}),
           ...(kind === "change" ? { rules: list(a["rules"]), ...(links ? { links } : {}) } : {}),
+          fields,
         }, ws.config.templates),
       );
       say(path);

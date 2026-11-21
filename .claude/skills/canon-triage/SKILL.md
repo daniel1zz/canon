@@ -53,7 +53,7 @@ Record one of four results in an issue comment, with the commands and their outp
 
 ## 4. Turn it into a change
 
-Title the change by what will be true afterwards: `canon work start --title "<what will be true afterwards>"`.
+Title the change by what will be true afterwards: `canon work start --title "<what will be true afterwards>" --owner-gate … --advances …` (the command says what each takes).
 
 The change file is the agent brief: the contract a later session works from, possibly weeks later after the code has moved. It describes the behaviour contract, not file paths or line numbers, which go stale.
 
@@ -75,7 +75,7 @@ gh issue close <n> --reason completed --comment "C-n 修复（main <sha>）：<o
 
 When an issue or a goal is too big for one change, split it into **vertical slices**, one change each: a narrow but complete path through every layer (command, storage, output, test), verifiable on its own from the real entry point. Not horizontal layers ("all the schema first"). Prefer many thin slices.
 
-When the slices depend on each other, create them as changes ahead of time, not as prose: one `canon change new --title "<what>"` per slice, with `--depends C-a,C-b` naming the slices that must land first (it is written into the change as `depends_on`). A change whose dependencies have not landed is not offered to start, and `canon change list` and `canon brief` say which change it waits for. A big goal gets a release (`canon release new`) split into features (`canon feature new`); create each slice with `--feature F-n` (or `--release R-n`), so `canon change graph <R-n|F-n>` shows its slices landed, in progress, waiting and ready, and the release's progress is its rules and success criteria, not how many slices landed. Plans (`## 计划` tables, `canon plan`) are gone: never write one.
+When the slices depend on each other, create them as changes ahead of time, not as prose: one `canon change new --title "<what>" --owner-gate … --advances …` per slice, with `--depends C-a,C-b` naming the slices that must land first (it is written into the change as `depends_on`). A change whose dependencies have not landed is not offered to start, and `canon change list` and `canon brief` say which change it waits for. A big goal gets a release (`canon release new`) split into features (`canon feature new`); create each slice with `--feature F-n` (or `--release R-n`), so `canon change graph <R-n|F-n>` shows its slices landed, in progress, waiting and ready, and the release's progress is its rules and success criteria, not how many slices landed. Plans (`## 计划` tables, `canon plan`) are gone: never write one.
 
 Mark each slice as one an agent can finish alone, or one that needs a human (a direction choice, a credential, a manual check only a person can do). Prefer the first kind; for the second, ask the specific question with `canon human ask`. Do not present the breakdown for approval and wait: decide it, write it down, start.
 
@@ -84,7 +84,7 @@ Mark each slice as one an agent can finish alone, or one that needs a human (a d
 A request rejected only in an issue comment will be filed again and argued again. Record it by **concept**, so the next request is recognised even in different words:
 
 1. If the search in section 1 found a decision that covers it, link it (section 3) instead of writing another.
-2. Otherwise `canon decision new --title "不做：<concept>"`: 背景 lists the issues that asked for it; 方案 weighs doing it against not doing it; 决定 states the durable reason (scope, a constraint, an earlier decision), not a temporary one ("busy now" is a deferral, not a rejection; leave that issue open); 后果 says what would make it worth revisiting.
+2. Otherwise `canon decision new --title "不做：<concept>" --amends "none: <why>"`: 背景 lists the issues that asked for it; 方案 weighs doing it against not doing it; 决定 states the durable reason (scope, a constraint, an earlier decision), not a temporary one ("busy now" is a deferral, not a rejection; leave that issue open); 后果 says what would make it worth revisiting.
 3. Comment on the issue linking the decision, then close it with `--reason "not planned"`.
 
 If a later issue makes the case again and it is now right, supersede the decision (`canon decision new --supersedes D-n`) and treat the issue as a normal change.

@@ -27,7 +27,7 @@ function fixture() {
   sh(root, "add", "-A"); sh(root, "commit", "-qm", "product");
   const first = startNew(root, "First", "agent:s1");
   expect(cli(first.worktree, "agent:s1", "work", "land", "--finish").code).toBe(0);
-  expect(cli(root, "agent:s1", "work", "start", "--title", "Step A").code).toBe(0);
+  expect(cli(root, "agent:s1", "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Step A").code).toBe(0);
   const step = ws(root).db.db.query<{ subject: string }, []>("SELECT subject FROM claims WHERE holder = 'agent:s1' ORDER BY subject DESC LIMIT 1").get()!.subject;
   expect(cli(root, "agent:s1", "work", "delegate", step, "--to", "w1").code).toBe(0);
   expect(cli(root, "agent:s7:w1", "work", "start", step).code).toBe(0);

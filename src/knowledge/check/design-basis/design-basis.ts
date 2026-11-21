@@ -3,6 +3,7 @@ import { join } from "node:path";
 import { git } from "../../../kernel/git.ts";
 import type { Corpus, Decision } from "../../documents/model.ts";
 import { inAChange } from "../../domains/business.ts";
+import { REVISION_REASONS } from "../../documents/types.ts";
 
 /**
  * The design basis of a one-way-door change (D-124): a change that touches persisted data, an outside boundary or a
@@ -32,8 +33,7 @@ export const DEFAULT_DESIGN_SIGNALS: Readonly<Record<DesignClass, readonly strin
 /** The section of a change file that holds the basis (BR-2491). */
 export const BASIS_HEADING = "## 方案依据";
 
-/** Why a decision revises another, as its `revised_because` front matter says (BR-2492). */
-export const REVISION_REASONS = ["premise", "requirement", "external", "experience", "implementation", "undetermined"] as const;
+export { REVISION_REASONS };
 
 /** The reason that attributes a revision to none of the others; canon stats lists it apart (BR-2492, BR-2494). */
 export const UNDETERMINED = "undetermined";

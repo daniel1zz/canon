@@ -27,7 +27,7 @@ function withBranchOnly(): { root: string; wt: string; branch: string } {
   changeFile(root, 1);
   sh(root, "add", "-A");
   sh(root, "commit", "-qm", "C-1");
-  const started = canon(root, "work", "start", "--title", "Only on branch");
+  const started = canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Only on branch");
   expect(started.code).toBe(0);
   return { root, wt: started.out.match(/cd (.+)/)![1]!.trim(), branch: `change/${id(2)}-only-on-branch` };
 }
@@ -218,7 +218,7 @@ describe("unusual change branches", () => {
 describe("judged against main, not the current checkout", () => {
   test("BR-2294: in an old worktree, a change landed on main since, whose branch was kept, is not listed as closed on branch, not landed", () => {
     const root = mainWithC1();
-    const old = canon(root, "work", "start", "--title", "Old");
+    const old = canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Old");
     expect(old.code).toBe(0);
     const wt = old.out.match(/cd (.+)/)![1]!.trim();
     onBranch(root, `change/${id(3)}-x`, () => changeFile(root, 3, "done"));
@@ -233,7 +233,7 @@ describe("judged against main, not the current checkout", () => {
 
   test("BR-2292: in an old worktree, a leftover branch of a change main already has, with a broken file, gives no note and is not listed; nor does BR-2293's ambiguous", () => {
     const root = mainWithC1();
-    const old = canon(root, "work", "start", "--title", "Old");
+    const old = canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Old");
     expect(old.code).toBe(0);
     const wt = old.out.match(/cd (.+)/)![1]!.trim();
     onBranch(root, `change/${id(3)}-x`, () => writeFileSync(join(root, `canon/changes/${id(3)}.md`), "no front matter\n"));
@@ -281,7 +281,7 @@ describe("brief's open changes", () => {
   test("BR-2149: with no open change on main, brief still lists a change only on its branch, unclaimed", () => {
     const root = project();
     expect(canon(root, "brief").out).not.toContain("Open changes in the owner's order");
-    expect(canon(root, "work", "start", "--title", "X").code).toBe(0);
+    expect(canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "X").code).toBe(0);
     ws(root).db.db.query("DELETE FROM claims").run();
     expect(canon(root, "brief").out).toContain(`${PICK}${id(1)} (on branch change/${id(1)}-x)\n`);
   });

@@ -1,5 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { fieldProblem } from "./fields.ts";
+import { advancesOf, amendsOf, featuresOf, ownerGateOf } from "./stated.ts";
 import { join, relative } from "node:path";
 import { parseDocFile, parseReadme } from "./docfile.ts";
 import { parseLinks, parsePasses } from "./behaviour.ts";
@@ -61,7 +62,8 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
     // reason: a declared field is checked where it is written; one left out is not reported here, since a new document is
     // given it by the command creating it and the landing that adds it, and old documents are not required to have it (BR-2622, D-159)
     for (const field of type.fields) {
-      if (meta[field.name] === undefined) continue;
+      // reason: a built-in field is checked below by canon's own reader, with its own message (BR-2623)
+      if (field.own || meta[field.name] === undefined) continue;
       const problem = fieldProblem(field, meta[field.name]);
       if (problem) problems.push({ path, message: `front matter ${problem} (BR-2622)` });
     }
@@ -189,9 +191,9 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: "`supersedes` must be a decision id or a list of decision ids" });
           continue;
         }
-        const amends = p.meta["amends"] ?? [];
-        if (!Array.isArray(amends) || amends.some((a) => typeof a !== "string")) {
-          problems.push({ path, message: "`amends` must be a list of decision ids" });
+        const amends = amendsOf(p.meta["amends"]);
+        if (!Array.isArray(amends)) {
+          problems.push({ path, message: amends.problem });
           continue;
         }
         const links = parseLinks(p.meta["links"]);
@@ -234,12 +236,12 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: advances });
           continue;
         }
-        const gate = p.meta["owner_gate"];
-        if (gate !== undefined && (typeof gate !== "string" || gate.trim() === "")) {
-          problems.push({ path, message: "`owner_gate` must be a non-empty text saying what the owner approves, such as \"研究站剧情设计稿\" (BR-2615)" });
+        const gate = ownerGateOf(p.meta["owner_gate"]);
+        if ("problem" in gate) {
+          problems.push({ path, message: gate.problem });
           continue;
         }
-        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...links, ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}), ...(chore !== undefined ? { chore: (chore as string).toLowerCase() } : {}), ...(advances !== undefined ? { advances } : {}), ...(gate !== undefined ? { ownerGate: (gate as string).trim() } : {}) });
+        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...links, ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}), ...(chore !== undefined ? { chore: (chore as string).toLowerCase() } : {}), ...(advances !== undefined ? { advances } : {}), ...(gate.gate !== undefined ? { ownerGate: gate.gate } : {}) });
       } else if (type.name === "release") {
         const shippedAt = p.meta["shipped_at"];
         const shipped = p.status === "shipped";
@@ -252,9 +254,9 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: `\`shipped_at\` is only for a shipped release; ${id} is ${String(p.status)} (D-61)` });
           continue;
         }
-        const features = p.meta["features"] ?? [];
-        if (!Array.isArray(features) || features.some((f) => typeof f !== "string" || !new RegExp(`^${featurePrefix}-\\d+$`).test(f))) {
-          problems.push({ path, message: `\`features\` must be a list of feature ids such as [${featurePrefix}-1] (BR-2512)` });
+        const features = featuresOf(p.meta["features"], featurePrefix);
+        if (!Array.isArray(features)) {
+          problems.push({ path, message: features.problem });
           continue;
         }
         const mergedInto = p.meta["merged_into"];
@@ -336,19 +338,6 @@ function qualityFields(meta: Record<string, unknown>, status: string): { aspect:
   if (status === "retired" && !hasReason) return "a retired standard needs `retired_reason`: why it no longer applies (BR-2552)";
   if (status !== "retired" && reason !== undefined) return `\`retired_reason\` is only for a retired standard; this one is ${status} (BR-2552)`;
   return { aspect: aspect.trim(), judge: judge as QualityJudge, covers: (covers as string[]).map((c) => c.trim()), ...(hasReason ? { retiredReason: (reason as string).trim() } : {}) };
-}
-
-/** A change's `advances` (BR-2517): undefined when absent, the problem with it as a string. */
-function advancesOf(v: unknown, releasePrefix: string, featurePrefix: string): Advances | undefined | string {
-  if (v === undefined) return undefined;
-  const bad = `\`advances\` is a non-empty list of success criteria such as [${releasePrefix}-5/S1, ${featurePrefix}-3/S2], or "none: <reason>" (BR-2517)`;
-  if (typeof v === "string") {
-    const m = /^none:\s*(.*)$/s.exec(v.trim());
-    return m && m[1]!.trim() !== "" ? { kind: "none", reason: m[1]!.trim() } : bad;
-  }
-  const ref = new RegExp(`^(?:${releasePrefix}|${featurePrefix})-\\d+/S\\d+$`);
-  if (!Array.isArray(v) || v.length === 0 || v.some((x) => typeof x !== "string" || !ref.test(x))) return bad;
-  return { kind: "criteria", refs: v as string[] };
 }
 
 /** A rule's `lists` front matter (BR-2180), or the problem with it. */

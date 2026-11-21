@@ -18,6 +18,8 @@ export interface FieldDeclaration {
   readonly none: boolean;
   /** `create`: the command creating the document must be given it (BR-2620); undefined: optional. */
   readonly due?: "create";
+  /** A built-in field canon's own reader checks with its own message, so the generic shape check skips it (BR-2623). */
+  readonly own?: true;
 }
 
 const NAME = /^[a-z_][a-z0-9_]*$/;

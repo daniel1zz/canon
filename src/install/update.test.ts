@@ -96,7 +96,7 @@ describe("finding and applying updates", () => {
     writeFileSync(join(src, "canon-a/SKILL.md"), "a v2\n");
     const b = canon(root, env, "brief").out;
     expect(b.split("\n").filter((l) => l.includes("out of date"))).toEqual([expect.stringContaining("tell the user; when they want it, run `canon update`")]);
-    expect(canon(root, env, "work", "start", "--title", "Other work").out).toContain("canon update");
+    expect(canon(root, env, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Other work").out).toContain("canon update");
     expect(readFileSync(join(root, ".claude/skills/canon-a/SKILL.md"), "utf8")).toBe("a v1\n"); // discovery never updates
   });
 

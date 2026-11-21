@@ -52,14 +52,14 @@ describe("--as makes the actor agent:<session>:<name> (BR-2023)", () => {
     const root = project();
     const noState = () => expect(existsSync(CoordDb.pathFor(root).ok ? (CoordDb.pathFor(root) as { ok: true; value: string }).value : "")).toBe(false);
     for (const bad of ["a b", "", "a:b", "a/b"]) {
-      const r = await canon(root, {}, "work", "start", "--title", "X", "--as", bad);
+      const r = await canon(root, {}, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "X", "--as", bad);
       expect([bad, r.code]).toEqual([bad, 2]);
     }
     noState();
-    const both = await canon(root, { CANON_ACTOR: "agent:x:y" }, "work", "start", "--title", "X", "--as", "abc");
+    const both = await canon(root, { CANON_ACTOR: "agent:x:y" }, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "X", "--as", "abc");
     expect(both.code).toBe(2);
     expect(both.err).toContain("CANON_ACTOR");
-    const outside = await canon(root, { CLAUDECODE: "" }, "work", "start", "--title", "X", "--as", "abc");
+    const outside = await canon(root, { CLAUDECODE: "" }, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "X", "--as", "abc");
     expect(outside.code).toBe(2);
     expect(outside.err).toContain("Claude Code");
     noState();

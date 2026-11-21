@@ -55,7 +55,7 @@ describe("old plan data (D-148)", () => {
     const root = repo({ "changes/C-1.md": change(1, "open", "", TABLE) });
     expect(cli(root, "plan", "status").code).toBe(2);
     const head = sh(root, "rev-parse", "HEAD").trim();
-    const r = cli(root, "work", "start", "--title", "x", "--plan", "C-1", "--step", "1");
+    const r = cli(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x", "--plan", "C-1", "--step", "1");
     expect(r.code).toBe(2);
     expect(sh(root, "rev-parse", "HEAD").trim()).toBe(head);
     expect(sh(root, "branch", "--list", "change/*").trim()).toBe("");

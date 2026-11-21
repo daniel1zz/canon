@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
@@ -116,8 +116,78 @@ describe("declared document types", () => {
     expect(out).not.toContain(`${id("BR", 1)}.md`);
     expect(out).not.toContain(`${id("BR", 2)}.md`);
     expect(out).not.toContain("ref-dangling"); // the rule with a bad field still resolves
-    const made = canon(root, "rule", "new", "--domain", "billing", "--title", "New", "--untested", "fixture").out.trim().split("\n").at(-1)!;
-    expect(readFileSync(join(root, made), "utf8")).toContain('owner: ""');
+    const refused = canon(root, "rule", "new", "--domain", "billing", "--title", "New", "--untested", "fixture", "--business", "x");
+    expect(refused.code).toBe(2);
+    expect(refused.err).toContain("missing owner: give --set owner=\"<value>\"");
+    const made = canon(root, "rule", "new", "--domain", "billing", "--title", "New", "--untested", "fixture", "--business", "x", "--set", "owner=billing-team").out.trim().split("\n").at(-1)!;
+    expect(readFileSync(join(root, made), "utf8")).toContain("owner: billing-team");
+  });
+
+  test("BR-2620: a creating command needs every field stated at creation, checked before an id is allocated; one refusal lists every problem", () => {
+    const root = repo(DESIGN);
+    const make = (...a: string[]) => canon(root, "doc", "new", "--type", "design", "--title", "D", ...a);
+    for (const [args, says] of [
+      [[], "missing reviewer: give --set reviewer=\"<value>\": a non-empty text"],
+      [["--set", "reviewer="], "`reviewer` is \"\", not a non-empty text"],
+      [["--set", "reviewer=ann", "--set", "risk=medium"], "`risk` is \"medium\", not one of low, high"],
+      [["--set", "reviewer=ann", "--set", "colour=red"], "--set colour: design declares no field colour"],
+      [["--set", "reviewer=ann", "--set", "reviewer=bob"], "reviewer is given twice"],
+      [["--set", "reviewer=ann", "--set", "refs=none:"], "\"none:\" needs a reason after it"],
+      [["--set", "reviewer"], "--set reviewer: write --set <field>=<value>"],
+    ] as const) {
+      const r = make(...args);
+      expect(r.code).toBe(2);
+      expect(r.err).toContain("design not created, no id allocated (BR-2620)");
+      expect(r.err).toContain(says);
+    }
+    const both = make("--set", "risk=medium");
+    expect(both.err).toContain("missing reviewer");
+    expect(both.err).toContain("not one of low, high");
+    expect(existsSync(join(root, "canon/designs"))).toBe(false);
+    const made = make("--set", "reviewer=ann", "--set", "refs=BR-1, D-2", "--set", "risk=low");
+    expect(made.code).toBe(0);
+    expect(made.out.trim()).toBe(`canon/designs/${id("DS", 1)}-d.md`);
+    const text = readFileSync(join(root, made.out.trim()), "utf8");
+    expect(text).toContain("reviewer: ann");
+    expect(text).toMatch(/refs:\n {2}- BR-1\n {2}- D-2/);
+    expect(make("--set", "reviewer=ann", "--set", "refs=none: new").out.trim()).toBe(`canon/designs/${id("DS", 2)}-d.md`);
+  });
+
+  test("BR-2623: the built-in types' fields stated at creation, with their own flags", () => {
+    const root = repo("");
+    const fail2 = (r: { code: number | null; err: string }, says: string) => {
+      expect(r.code).toBe(2);
+      expect(r.err).toContain(says);
+    };
+    fail2(canon(root, "rule", "new", "--domain", "billing", "--title", "R", "--untested", "f"), "missing business: give --business \"<business>\", one of the businesses billing's README lists: x");
+    fail2(canon(root, "rule", "new", "--domain", "billing", "--title", "R", "--untested", "f", "--business", "nope"), "`business` is \"nope\", which billing's README does not list");
+    const rule = canon(root, "rule", "new", "--domain", "billing", "--title", "R", "--untested", "f", "--business", "x");
+    expect(rule.code).toBe(0);
+    expect(readFileSync(join(root, rule.out.trim().split("\n").at(-1)!), "utf8")).toContain("business: x");
+
+    fail2(canon(root, "change", "new", "--title", "C"), "missing owner_gate: give --owner-gate \"<what the owner approves>\" or --owner-gate \"none: <reason>\"");
+    fail2(canon(root, "change", "new", "--title", "C", "--owner-gate", "none:", "--advances", "none: x"), "`owner_gate` must be a non-empty text");
+    fail2(canon(root, "change", "new", "--title", "C", "--owner-gate", "none: tool", "--advances", "R-1"), "`advances` is a non-empty list of success criteria");
+    const change = canon(root, "change", "new", "--title", "C", "--owner-gate", "研究站剧情设计稿", "--advances", "none: 修 bug");
+    expect(change.code).toBe(0);
+    const ctext = readFileSync(join(root, change.out.trim()), "utf8");
+    expect(ctext).toContain("owner_gate: 研究站剧情设计稿");
+    expect(ctext).toContain("advances: \"none: 修 bug\"");
+
+    fail2(canon(root, "decision", "new", "--title", "D"), "missing amends: give --amends \"D-<n>, …\"");
+    expect(canon(root, "decision", "new", "--title", "D", "--amends", "none: 新的选择").code).toBe(0);
+    fail2(canon(root, "decision", "new", "--title", "D", "--amends", "D-1"), "missing revised_because: give --revised-because \"<reason>\", one of premise, requirement, external, experience, implementation, undetermined");
+    fail2(canon(root, "decision", "new", "--title", "D", "--amends", "none: x", "--supersedes", "D-1"), "missing revised_because");
+    fail2(canon(root, "decision", "new", "--title", "D", "--amends", "D-1", "--revised-because", "whim"), "`revised_because` is \"whim\", not one of premise");
+    const dec = canon(root, "decision", "new", "--title", "D", "--amends", "D-1", "--revised-because", "experience");
+    expect(dec.code).toBe(0);
+    expect(readFileSync(join(root, dec.out.trim()), "utf8")).toMatch(/amends:\n {2}- D-1\nrevised_because: experience/);
+
+    fail2(canon(root, "release", "new", "--title", "V"), "missing features: give --features \"F-<n>, …\"");
+    expect(canon(root, "release", "new", "--title", "V", "--features", "none: 先列目标").code).toBe(0);
+    expect(canon(root, "feature", "new", "--title", "F").code).toBe(0);
+    expect(canon(root, "note", "new", "--title", "N").code).toBe(0);
+    expect(canon(root, "check").out).not.toContain("file-invalid");
   });
 
   const DESIGN = "types:\n  design:\n    prefix: DS\n    dir: designs\n    fields:\n      reviewer: { type: text, due: create }\n      risk: { type: enum, values: [low, high] }\n      refs: { type: ids, none: true }\n";
@@ -186,10 +256,10 @@ describe("declared document types", () => {
 
   test("BR-2055: a project template replaces the built-in one; a declared type without one starts empty", () => {
     const root = repo(SPEC, { "canon/templates/decision.md": "## 我们的背景\n\nx\n\n## 背景\n\n## 方案\n\n## 决定\n\n## 后果\n", "canon/templates/spec.md": "## 需求\n\ny\n" });
-    expect(readFileSync(join(root, canon(root, "decision", "new", "--title", "A").out.trim()), "utf8")).toContain("## 我们的背景");
+    expect(readFileSync(join(root, canon(root, "decision", "new", "--title", "A", "--amends", "none: t").out.trim()), "utf8")).toContain("## 我们的背景");
     expect(readFileSync(join(root, canon(root, "doc", "new", "--type", "spec", "--title", "B").out.trim()), "utf8")).toContain("## 需求");
     const plain = repo("types:\n  memo:\n    prefix: M\n    dir: memos\n");
-    expect(readFileSync(join(plain, canon(plain, "decision", "new", "--title", "A").out.trim()), "utf8")).toContain("## 背景");
+    expect(readFileSync(join(plain, canon(plain, "decision", "new", "--title", "A", "--amends", "none: t").out.trim()), "utf8")).toContain("## 背景");
     const memo = readFileSync(join(plain, canon(plain, "doc", "new", "--type", "memo", "--title", "B").out.trim()), "utf8");
     expect(memo.split("---\n")[2]?.trim()).toBe("");
   });

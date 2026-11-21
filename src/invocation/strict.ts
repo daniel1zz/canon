@@ -137,7 +137,8 @@ export function unknownArgument(cmd: CommandDef<ArgsDef>, name: string, args: re
     // reason: citty turns a repeated string option into an array, which each command read differently: a title joined
     // with commas, options dropped, a number refused with an odd message (BR-2382, #169)
     const option = owner.get(flag)!;
-    if (seen.has(option)) return `\`${name}\`: --${option} is given more than once; give it once (an option that takes several values takes them in one, separated by commas)`;
+    // reason: `--set <field>=<value>` names one field per use, and the creating command reads the list itself (BR-2620, BR-2382)
+    if (seen.has(option) && option !== "set") return `\`${name}\`: --${option} is given more than once; give it once (an option that takes several values takes them in one, separated by commas)`;
     seen.add(option);
     // reason: a string option always takes the next word, also one starting with "-" (BR-2228; bindValues joins such pairs for citty)
     if (eq < 0 && i + 1 < args.length) i++;

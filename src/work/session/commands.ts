@@ -44,6 +44,7 @@ import { failedReviewNotice } from "../../knowledge/review/landed-queue.ts";
 import { unpushedNotice } from "../remote/remote.ts";
 import { briefSummary, overview } from "../overview/overview.ts";
 import { LINK_ARGS, newLinks } from "../../knowledge/changes/commands.ts";
+import { statedArgs, statedFor, statedInput } from "../../knowledge/documents/stated.ts";
 
 /** `canon brief` and `canon work start`, `stop`, `status`, `clean`: a session and its change's worktree. */
 
@@ -56,18 +57,23 @@ const startCmd = defineCommand({
     "fix-main": { type: "boolean", description: "Open the one change that fixes main's failing background floor (floor_timing: after, BR-2221)" },
     settles: { type: "string", description: "Open review finding numbers this change settles, comma separated (BR-2530)" },
     ...LINK_ARGS,
+    ...statedArgs("change"),
     ...AS_ARG,
   },
   run({ args }) {
     const ws = workspace(args.as);
     const fixMain = Boolean(args["fix-main"]);
+    const stated = statedInput("change", args as Record<string, unknown>);
     if (fixMain && (args.change || args.title || args.rules)) fail({ code: "invalid", message: "--fix-main opens its own change; give no change id, --title or --rules with it" });
     if (!fixMain && !args.change && !args.title) fail({ code: "invalid", message: "give a change id, --title for a new change, or --fix-main" });
     const linked = Object.keys(LINK_ARGS).some((k) => (args as Record<string, unknown>)[k] !== undefined);
     if (linked && (args.change || !args.title || fixMain)) fail({ code: "invalid", message: "--release, --feature, --issue and --depends go with --title for a new change; an existing change's links are edited with canon change link (BR-2562)" });
+    if ((args.change || fixMain) && (stated.set.length > 0 || Object.keys(stated.flags).length > 0)) fail({ code: "invalid", message: "--set, --owner-gate and --advances go with --title for a new change; an existing change's fields are set with canon doc set (BR-2620, BR-2621)" });
     // reason: checked on main, which the new branch starts from, before an id is allocated (BR-2562)
     const links = linked ? newLinks(ws, args as Record<string, unknown>, must(mainCorpus(ws))) : undefined;
-    const target = typeof args.change === "string" && args.change ? { change: args.change } : { title: String(args.title), rules: list(args.rules), ...(links ? { links } : {}) };
+    // reason: checked on main, before an id is allocated or a branch made (BR-2620)
+    const fields = !args.change && !fixMain ? must(statedFor(must(mainCorpus(ws)), "change", args as Record<string, unknown>)) : undefined;
+    const target = typeof args.change === "string" && args.change ? { change: args.change } : { title: String(args.title), rules: list(args.rules), ...(links ? { links } : {}), ...(fields ? { fields } : {}) };
     const settles = list(args.settles).map((v) => v.replace(/^#/, ""));
     if (settles.some((v) => !/^[1-9]\d*$/.test(v))) fail({ code: "invalid", message: `--settles takes review finding numbers, comma separated (got ${String(args.settles)})` });
     if (fixMain && settles.length > 0) fail({ code: "invalid", message: "--fix-main opens its own change; give no --settles with it" });

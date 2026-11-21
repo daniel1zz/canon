@@ -217,7 +217,8 @@ export function startFixMain(ws: Workspace, say: Say): Result<Started> {
   }
   const r = reserved.value;
   const release = () => ws.db.db.query("UPDATE red_main SET fix_pid = NULL, fix_start = NULL WHERE fix_pid = ? AND fix_start = ?").run(self.pid, self.start);
-  const s = start(ws, { title: fixTitle(r.sha) }, say, { fixMain: true });
+  // reason: canon opens this change itself, so it states the fields for the session: fixing main needs no owner approval and advances no success criterion (BR-2623, D-155)
+  const s = start(ws, { title: fixTitle(r.sha), fields: { owner_gate: "none: fixing main's failing floor (D-155)", advances: "none: fixing main's failing floor (D-155)" } }, say, { fixMain: true });
   if (!s.ok) {
     release();
     return s;

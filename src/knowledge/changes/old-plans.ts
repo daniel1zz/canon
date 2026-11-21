@@ -57,7 +57,7 @@ export function oldPlanNotes(root: string, corpus: Corpus): string[] {
   for (const { change, steps } of holders) {
     const open = steps.filter((s) => !landed.some((l) => l.plan === change.id && l.steps.includes(s)));
     if (open.length === 0) continue;
-    out.push(`note: ${change.path}: ${change.id} ${OLD_PLAN_SECTION} has step(s) no landed change names: ${open.join(", ")}; plans are gone (D-148): for each step still to do, run canon change new --title "<its 内容>" --depends <the changes made for its 依赖 steps> (BR-2562), then delete its row; a step already done: delete its row too (BR-2595)`);
+    out.push(`note: ${change.path}: ${change.id} ${OLD_PLAN_SECTION} has step(s) no landed change names: ${open.join(", ")}; plans are gone (D-148): for each step still to do, run canon change new --title "<its 内容>" --owner-gate … --advances … --depends <the changes made for its 依赖 steps> (BR-2562), then delete its row; a step already done: delete its row too (BR-2595)`);
   }
   return out;
 }

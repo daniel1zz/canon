@@ -64,22 +64,22 @@ const commit = (root: string, message = "edit") => {
 describe("canon release new and list", () => {
   test("BR-2319: new allocates the next number, writes status planned and the six sections; a Chinese title has no slug; numbers are not reused", () => {
     const root = fixture();
-    const first = canon(root, "release", "new", "--title", "MVP");
+    const first = canon(root, "release", "new", "--features", "none: test", "--title", "MVP");
     expect([first.code, first.out.trim()]).toEqual([0, `canon/releases/${R(1)}-mvp.md`]);
     const text = readFileSync(join(root, `canon/releases/${R(1)}-mvp.md`), "utf8");
     expect(text).toContain(`id: ${R(1)}`);
     expect(text).toContain("status: planned");
     for (const s of SECTIONS) expect(text).toContain(`## ${s}\n`);
-    expect(canon(root, "release", "new", "--title", "第一版").out.trim()).toBe(`canon/releases/${R(2)}.md`);
+    expect(canon(root, "release", "new", "--features", "none: test", "--title", "第一版").out.trim()).toBe(`canon/releases/${R(2)}.md`);
     rmSync(join(root, `canon/releases/${R(2)}.md`));
-    expect(canon(root, "release", "new", "--title", "第三版").out.trim()).toBe(`canon/releases/${R(3)}.md`);
+    expect(canon(root, "release", "new", "--features", "none: test", "--title", "第三版").out.trim()).toBe(`canon/releases/${R(3)}.md`);
   });
 
   test("BR-2319: a release that is still the template is template-unfilled; an empty title is exit 2 and writes nothing", () => {
     const root = fixture();
-    canon(root, "release", "new", "--title", "MVP");
+    canon(root, "release", "new", "--features", "none: test", "--title", "MVP");
     expect(findings(root).map((f) => f.rule)).toContain("template-unfilled");
-    const empty = canon(root, "release", "new", "--title", "  ");
+    const empty = canon(root, "release", "new", "--features", "none: test", "--title", "  ");
     expect(empty.code).toBe(2);
     expect(existsSync(join(root, `canon/releases/${R(2)}.md`))).toBe(false);
   });

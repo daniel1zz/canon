@@ -70,9 +70,9 @@ describe("a string option takes the next word as its value", () => {
     expect(twice.code).toBe(2);
     expect(twice.err).toContain("--option is given more than once");
     expect(canon(root, "human", "pending").out).not.toContain("Q?");
-    expect(canon(root, "decision", "new", "--title", "A", "--title", "B").code).toBe(2);
+    expect(canon(root, "decision", "new", "--amends", "none: test", "--title", "A", "--title", "B").code).toBe(2);
     expect(readdirSync(join(root, "canon/decisions"))).toEqual([]);
-    const help = canon(root, "decision", "new", "--title", "A", "--title", "B", "--help");
+    const help = canon(root, "decision", "new", "--amends", "none: test", "--title", "A", "--title", "B", "--help");
     expect([help.code, help.out.includes("USAGE")]).toEqual([0, true]);
     expect(readdirSync(join(root, "canon/decisions"))).toEqual([]);
     expect(canon(root, "human", "ask", "Q?", "--option", "yes,no").code).toBe(0);
@@ -81,24 +81,24 @@ describe("a string option takes the next word as its value", () => {
 
   test("BR-2228: canon decision new --title \"-x\" creates a decision titled -x; --title=-x gives the same title", () => {
     const spaced = project();
-    expect(canon(spaced, "decision", "new", "--title", "-x").code).toBe(0);
+    expect(canon(spaced, "decision", "new", "--amends", "none: test", "--title", "-x").code).toBe(0);
     expect(decisionTitle(spaced)).toBe("-x");
     const joined = project();
-    expect(canon(joined, "decision", "new", "--title=-x").code).toBe(0);
+    expect(canon(joined, "decision", "new", "--amends", "none: test", "--title=-x").code).toBe(0);
     expect(decisionTitle(joined)).toBe("-x");
   });
 
   test("BR-2228 BR-2194: --json and --help after a string option are its value; a plain title is unchanged", () => {
     const json = project();
-    expect(canon(json, "decision", "new", "--title", "--json").code).toBe(0);
+    expect(canon(json, "decision", "new", "--amends", "none: test", "--title", "--json").code).toBe(0);
     expect(decisionTitle(json)).toBe("--json");
     const help = project();
-    const r = canon(help, "decision", "new", "--title", "--help");
+    const r = canon(help, "decision", "new", "--amends", "none: test", "--title", "--help");
     expect(r.code).toBe(0);
     expect(r.out).not.toContain("USAGE");
     expect(decisionTitle(help)).toBe("--help");
     const plain = project();
-    expect(canon(plain, "decision", "new", "--title", "普通标题").code).toBe(0);
+    expect(canon(plain, "decision", "new", "--amends", "none: test", "--title", "普通标题").code).toBe(0);
     expect(decisionTitle(plain)).toBe("普通标题");
   });
 

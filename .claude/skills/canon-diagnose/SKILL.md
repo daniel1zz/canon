@@ -60,4 +60,4 @@ Before calling it done:
 - [ ] every `[DEBUG-...]` line is gone (grep the prefix) and throwaway harnesses are deleted
 - [ ] the hypothesis that turned out right is in the commit message
 
-Then ask what would have prevented the bug. A fix that needs a design change (no good test seam, tangled callers, hidden coupling) becomes a change of its own (`canon work start --title ...`, with a decision if there are real options); a problem you are not fixing now becomes a GitHub issue (`gh issue create`), written as the brief says.
+Then ask what would have prevented the bug. A fix that needs a design change (no good test seam, tangled callers, hidden coupling) becomes a change of its own (`canon work start --title ... --owner-gate … --advances …`, with a decision if there are real options); a problem you are not fixing now becomes a GitHub issue (`gh issue create`), written as the brief says.

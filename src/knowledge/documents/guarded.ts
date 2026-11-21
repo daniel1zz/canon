@@ -15,7 +15,7 @@ export function refuseOnGuardedMain(ws: Workspace, kind: string, title: string):
   const quoted = `"${title.trim().replace(/["\\$`]/g, (c) => `\\${c}`)}"`;
   const next =
     kind === "change"
-      ? `Start the change with \`canon work start --title ${quoted}\`; it writes the change file in the change's own worktree.`
+      ? `Start the change with \`canon work start --title ${quoted} --owner-gate … --advances …\`; it writes the change file in the change's own worktree.`
       : `Create it inside a change's worktree: \`canon work start <C-n>\` (or \`--title "<what>"\` for a new change), cd into the path it prints, and run this command there.`;
   fail({ code: "refused", message: `${why} ${next}` });
 }

@@ -79,7 +79,7 @@ describe("canon uninstall", () => {
 
   test("BR-2277, BR-2022: a change still in flight refuses with exit 5 and lists it, changing nothing", () => {
     const { root, env } = project();
-    expect(canon(root, env, "work", "start", "--title", "wip").code).toBe(0);
+    expect(canon(root, env, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "wip").code).toBe(0);
     const head = git(root, "rev-parse", "main");
     const r = canon(root, env, "uninstall");
     expect(r.code).toBe(5);
@@ -154,7 +154,7 @@ describe("canon uninstall", () => {
     const other = mkdtempSync(join(tmpdir(), "canon-uninstall-clone-"));
     run(other, "clone", "-q", remote, ".");
     expect(canon(other, env, "install").code).toBe(0);
-    expect(canon(other, env, "work", "start", "--title", "wip").code).toBe(0);
+    expect(canon(other, env, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "wip").code).toBe(0);
     expect(canon(root, env, "uninstall").code).toBe(0);
     expect(canon(other, env, "sync").code).toBe(0);
     const r = canon(other, env, "uninstall");
@@ -169,7 +169,7 @@ describe("canon uninstall", () => {
     const other = mkdtempSync(join(tmpdir(), "canon-uninstall-clone-"));
     run(other, "clone", "-q", remote, ".");
     expect(canon(other, env, "install").code).toBe(0);
-    expect(canon(other, env, "work", "start", "--title", "wip").code).toBe(0);
+    expect(canon(other, env, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "wip").code).toBe(0);
     const wt = `${other}.worktrees/C-1`;
     writeFileSync(join(wt, "wip.txt"), "wip\n");
     git(wt, "add", "wip.txt");

@@ -86,7 +86,7 @@ function startedBefore(ws: Workspace, id: string): boolean {
   return refs.ok && refs.value.trim() !== "";
 }
 
-export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; links?: ChangeLinks }, say: Say, opts: { fixMain?: boolean; settles?: readonly number[] } = {}): Result<Started> {
+export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; links?: ChangeLinks; fields?: Readonly<Record<string, unknown>> }, say: Say, opts: { fixMain?: boolean; settles?: readonly number[] } = {}): Result<Started> {
   if (isWorker(ws.actor) && "title" in target) return workerNewWorkError();
   // reason: a main session's own subagent may start an undelegated change; it is delegated for its session below, once the change is known to be open (BR-2610, D-156)
   const implicit = "change" in target && implicitEligible(ws, target.change.toUpperCase());
@@ -187,7 +187,7 @@ export function startChore(ws: Workspace, target: { title: string } | { subject:
   return out;
 }
 
-function startWorkspace(ws: Workspace, input: { subject: string; branch: string; path: string; existing: boolean; document?: { title: string; rules?: readonly string[]; links?: ChangeLinks } }, say: Say): Result<Started> {
+function startWorkspace(ws: Workspace, input: { subject: string; branch: string; path: string; existing: boolean; document?: { title: string; rules?: readonly string[]; links?: ChangeLinks; fields?: Readonly<Record<string, unknown>> } }, say: Say): Result<Started> {
   const { subject: changeId, branch, path, document: target } = input;
   const main = ws.config.main;
   if (isChore(changeId)) {
@@ -255,7 +255,7 @@ function startWorkspace(ws: Workspace, input: { subject: string; branch: string;
 
   if (target !== undefined) {
     const corpus = readCorpus(path, ws.config.types, ws.config).corpus;
-    const made = createDoc(path, corpus, ws.db, ws.actor, { kind: "change", title: target.title, rules: target.rules ?? [], ...(target.links ? { links: target.links } : {}), id: changeId }, ws.config.templates);
+    const made = createDoc(path, corpus, ws.db, ws.actor, { kind: "change", title: target.title, rules: target.rules ?? [], ...(target.links ? { links: target.links } : {}), ...(target.fields ? { fields: target.fields } : {}), id: changeId }, ws.config.templates);
     const commit = (file: string): Result<unknown> => {
       const a = git(path, "add", file);
       return a.ok ? git(path, "commit", "-q", "-m", `canon: open ${changeId} ${target.title}`) : a;

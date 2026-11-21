@@ -63,7 +63,7 @@ describe("Codex coordination identity", () => {
       [{ CODEX_SESSION_ID: "session-a", CODEX_THREAD_ID: "child-1" }, ["--as", "child-2"]],
     ] as const) {
       const root = project();
-      const r = cli(root, envFor(values), "work", "start", "--title", "Refused", ...extra);
+      const r = cli(root, envFor(values), "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Refused", ...extra);
       expect(r.code).toBe(2);
       expect(existsSync(join(root, ".git/canon/state.db"))).toBe(false);
     }
@@ -163,10 +163,10 @@ test("BR-2023: corrupt recorded native relationships fail loudly before a new cl
   expect(startup.exitCode).toBe(0);
   const db = new Database(join(root, ".git/canon/state.db"));
   db.query("UPDATE events SET detail='not-json' WHERE kind='session.codex'").run();
-  const broken = cli(root, envFor({ CODEX_THREAD_ID: "broken-root" }), "work", "start", "--title", "Refused");
+  const broken = cli(root, envFor({ CODEX_THREAD_ID: "broken-root" }), "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Refused");
   expect(broken.code).toBe(4);
   expect(broken.err).toContain("cannot read the Codex session relationship");
   expect(db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM claims").get()!.n).toBe(0);
-  expect(cli(root, envFor({ CODEX_THREAD_ID: "independent" }), "work", "start", "--title", "Independent").code).toBe(0);
+  expect(cli(root, envFor({ CODEX_THREAD_ID: "independent" }), "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Independent").code).toBe(0);
   db.close();
 });

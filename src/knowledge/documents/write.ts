@@ -7,7 +7,8 @@ import { slugify, type Corpus, type Doc } from "./model.ts";
 import { CANON_DIR } from "./read.ts";
 import { domainReadme, templateFor } from "./templates.ts";
 import { RESERVED_FIELDS, typeNamed } from "./types.ts";
-import { cliValue, fieldProblem, shapeText } from "./fields.ts";
+import { shapeText } from "./fields.ts";
+import { statedProblem, valueOf } from "./stated.ts";
 import { linkMeta, type ChangeLinks } from "../changes/links.ts";
 
 /**
@@ -31,6 +32,8 @@ export interface NewDoc {
   readonly quality?: { readonly aspect: string; readonly judge: string; readonly covers: readonly string[] };
   /** change only: its release or feature, issues and dependencies, written by the command that creates it (BR-2562) */
   readonly links?: ChangeLinks;
+  /** Declared fields the creating command was given and checked (BR-2620): written into the front matter as they are. */
+  readonly fields?: Readonly<Record<string, unknown>>;
   /** An id already allocated by the caller (work start allocates the change id before the worktree exists). */
   readonly id?: string;
 }
@@ -55,8 +58,8 @@ export function createDoc(root: string, corpus: Corpus, db: CoordDb, actor: stri
   const type = typeNamed(corpus.types, input.kind);
   if (!type) return err("not_found", `no document type ${input.kind}; declared types: ${corpus.types.map((t) => t.name).join(", ")}`);
   const prefix = type.prefix;
-  // reason: a field stated at creation that was not given is written empty, so canon check reports it until it is filled (BR-2622, BR-2054)
-  const extra = Object.fromEntries(type.fields.filter((f) => f.due === "create").map((f) => [f.name, ""]));
+  // reason: the creating command checked these before allocating the id (BR-2620); a field it was not given is not written (BR-2054)
+  const extra = { ...(input.fields ?? {}) };
   let path: string;
   let meta: Record<string, unknown>;
   if (type.name === "rule") {
@@ -158,9 +161,9 @@ export function setField(root: string, corpus: Corpus, id: string, field: string
   }
   if (value === null) return err("invalid", `give the value of \`${field}\` (${shapeText(decl)}), or --clear to remove an optional field`);
   if (value === undefined && decl.due === "create") return err("invalid", `\`${field}\` is stated when a ${type.name} is created (due: create), so it cannot be removed; set another value instead`);
-  const after = value === undefined ? undefined : cliValue(decl, value);
+  const after = value === undefined ? undefined : valueOf(decl, value);
   if (after !== undefined) {
-    const problem = fieldProblem(decl, after);
+    const problem = statedProblem(type, decl, after, { corpus, ...(doc.kind === "rule" ? { domain: doc.domain } : {}) });
     if (problem) return err("invalid", `${problem} (BR-2621)`);
   }
   const full = join(root, doc.path);

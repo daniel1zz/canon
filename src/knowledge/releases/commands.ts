@@ -15,6 +15,7 @@ import { migrated, migrationSteps } from "./migrate.ts";
 import { detailLines, featureStatuses, releaseStatuses, statusJson, summaryLine, type Workload } from "./status.ts";
 import { changeGraph, graphInputs, memberOf, workload } from "../changes/graph.ts";
 import type { Corpus } from "../documents/model.ts";
+import { statedArgs, statedFor } from "../documents/stated.ts";
 
 /** `canon release`: a version's PRD document and what hangs on it (D-61). */
 
@@ -25,12 +26,14 @@ const release = defineCommand({
   subCommands: {
     new: defineCommand({
       meta: { description: "Create a release (allocates its id, status planned; edit the file afterwards)" },
-      args: { title: { type: "string", required: true, description: "Title, e.g. the version name" } },
+      args: { title: { type: "string", required: true, description: "Title, e.g. the version name" }, ...statedArgs("release") },
       run({ args }) {
         const ws = workspace();
         refuseOnGuardedMain(ws, "release", String(args.title));
         const { corpus } = corpusOf(ws);
-        say(must(createDoc(ws.root, corpus, ws.db, ws.actor, { kind: "release", title: String(args.title) }, ws.config.templates)));
+        // reason: checked before an id is allocated (BR-2620)
+        const fields = must(statedFor(corpus, "release", args as Record<string, unknown>));
+        say(must(createDoc(ws.root, corpus, ws.db, ws.actor, { kind: "release", title: String(args.title), fields }, ws.config.templates)));
       },
     }),
     list: defineCommand({
@@ -200,12 +203,14 @@ const feature = defineCommand({
   subCommands: {
     new: defineCommand({
       meta: { description: "Create a feature (allocates its id, status active; edit the file afterwards)" },
-      args: { title: { type: "string", required: true, description: "Title" } },
+      args: { title: { type: "string", required: true, description: "Title" }, ...statedArgs("feature") },
       run({ args }) {
         const ws = workspace();
         refuseOnGuardedMain(ws, "feature", String(args.title));
         const { corpus } = corpusOf(ws);
-        say(must(createDoc(ws.root, corpus, ws.db, ws.actor, { kind: "feature", title: String(args.title) }, ws.config.templates)));
+        // reason: checked before an id is allocated (BR-2620)
+        const fields = must(statedFor(corpus, "feature", args as Record<string, unknown>));
+        say(must(createDoc(ws.root, corpus, ws.db, ws.actor, { kind: "feature", title: String(args.title), fields }, ws.config.templates)));
       },
     }),
     list: defineCommand({

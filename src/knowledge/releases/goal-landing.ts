@@ -76,7 +76,7 @@ export function landingGoal(i: { readonly db: CoordDb; readonly wt: string; read
   if (owner.length > 0) {
     const lines = owner.map((c) => `  ${c}`).join("\n");
     if (i.subject === null || light) {
-      return { ok: false, message: `${id} marks success criteria the owner was to accept, without the owner's answer:\n${lines}\nA chore's change file is written by its landing and names no owner_answers: do this in a change (canon work start --title "<what>"), ask the owner (canon human ask --change <C-n>), then write the answered question's number in its owner_answers (BR-2510)` };
+      return { ok: false, message: `${id} marks success criteria the owner was to accept, without the owner's answer:\n${lines}\nA chore's change file is written by its landing and names no owner_answers: do this in a change (canon work start --title "<what>" --owner-gate … --advances …), ask the owner (canon human ask --change <C-n>), then write the answered question's number in its owner_answers (BR-2510)` };
     }
     if (ownerAnswered(i.db, i.corpus, i.subject).length === 0) {
       return { ok: false, message: `${i.subject} marks success criteria the owner was to accept, without the owner's answer:\n${lines}\nAsk the owner (canon human ask --change ${i.subject}), then write the answered question's number in owner_answers (BR-2510)` };

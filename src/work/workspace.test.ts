@@ -36,7 +36,7 @@ describe("actor through the CLI", () => {
   test("BR-2023: inside Claude Code, CANON_ACTOR=human:alice exits 2 and writes nothing", () => {
     const root = project();
     const env = { ...process.env, CLAUDECODE: "1", CLAUDE_CODE_SESSION_ID: "89d45e3f-b9c5", CANON_ACTOR: "human:alice" };
-    const r = Bun.spawnSync([process.execPath, MAIN, "work", "start", "--title", "X"], { cwd: root, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
+    const r = Bun.spawnSync([process.execPath, MAIN, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "X"], { cwd: root, env, stdout: "pipe", stderr: "pipe", stdin: "ignore" });
     expect(r.exitCode).toBe(2);
     expect(r.stderr.toString()).toContain("agent:<name>");
     expect(existsSync(join(root, "canon/changes"))).toBe(false);

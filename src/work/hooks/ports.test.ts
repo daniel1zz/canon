@@ -83,7 +83,7 @@ describe("CANON_PORT", () => {
     const p = base(100);
     const root = configured(`ports: ${p}-${p + 99}\nsetup: 'echo "$CANON_PORT" > port.txt'\n`);
     const procs = Array.from({ length: 8 }, (_, i) =>
-      Bun.spawn(["bun", MAIN, "work", "start", "--title", `Parallel ${i}`], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: `agent:p${i}` } }),
+      Bun.spawn(["bun", MAIN, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", `Parallel ${i}`], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: `agent:p${i}` } }),
     );
     const codes = await Promise.all(procs.map((x) => x.exited));
     expect(codes).toEqual(Array(8).fill(0));
@@ -107,7 +107,7 @@ describe("CANON_PORT", () => {
   test("BR-2267: without ports, CANON_PORT is empty and an inherited CANON_PORT is not passed on", () => {
     const root = configured(`setup: 'echo "[$CANON_PORT]" > port.txt'\nhooks:\n  after_start: 'echo "[$CANON_PORT]" > hook.txt'\n`);
     // reason: Bun.spawn passes the environment the process started with, so only a canon started with CANON_PORT set can show it is not passed on
-    const cli = Bun.spawnSync(["bun", MAIN, "work", "start", "--title", "No ports"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a", CANON_PORT: "9999" } });
+    const cli = Bun.spawnSync(["bun", MAIN, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "No ports"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a", CANON_PORT: "9999" } });
     expect(cli.exitCode).toBe(0);
     const wt = claims(ws(root).db)[0]!.holder;
     expect(portFile(wt)).toBe("[]");
@@ -218,7 +218,7 @@ describe("no free port", () => {
     const a = start(ws(root), { title: "A" }, quiet);
     const b = start(ws(root), { title: "B" }, quiet);
     if (!a.ok || !b.ok) throw new Error("start failed");
-    const cli = Bun.spawnSync(["bun", MAIN, "work", "start", "--title", "C"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:c" } });
+    const cli = Bun.spawnSync(["bun", MAIN, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "C"], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:c" } });
     expect(cli.exitCode).toBe(0);
     const out = cli.stdout.toString() + cli.stderr.toString();
     expect(out).toContain("start: CANON_PORT is empty: no free port");

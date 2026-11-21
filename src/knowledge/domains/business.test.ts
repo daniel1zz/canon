@@ -149,14 +149,14 @@ describe("what canon rule new shows before it creates the file", () => {
   test("BR-2432: canon rule new shows the domain's businesses first and the path last; canon decision new shows none", () => {
     const root = fixture();
     const change = startNew(root, "写新规则");
-    const r = canon(change.worktree, "rule", "new", "--domain", "billing", "--title", "新的一条");
+    const r = canon(change.worktree, "rule", "new", "--domain", "billing", "--title", "新的一条", "--business", "退款");
     expect(r.code).toBe(0);
     const lines = r.out.trim().split("\n");
     expect(lines[0]).toStartWith("businesses of billing");
     expect(r.out).toContain("business: 退款 — 钱怎么退回去\n- BR-9 Rule 9");
     expect(r.out).toContain("in no business (1)\n- BR-10 Rule 10");
     expect(lines.at(-1)).toMatch(/^canon\/rules\/billing\/BR-\d+\.md$/);
-    expect(canon(change.worktree, "decision", "new", "--title", "一个决策").out).not.toContain("businesses of");
+    expect(canon(change.worktree, "decision", "new", "--amends", "none: test", "--title", "一个决策").out).not.toContain("businesses of");
     // BR-2432: the listing comes before the file is created, so a refusal at creation has already printed it; an unknown domain prints nothing
     const before = readdirSync(join(change.worktree, "canon/rules/billing")).length;
     const empty = canon(change.worktree, "rule", "new", "--domain", "billing", "--title", "");

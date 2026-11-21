@@ -42,7 +42,7 @@ canon init --agent codex --floor "bun run typecheck && bun test"
 Codex gets skills in `.agents/skills`, hooks in `.codex/hooks.json`, and a small managed block in `AGENTS.md` (or an existing nonempty `AGENTS.override.md`). Your other instructions and settings stay intact. Review and trust the hooks with Codex's `/hooks` before expecting them to run. The session-start hook runs `canon brief`, which prints this workflow:
 
 ```sh
-canon work start --title "what this change does"   # a new change in its own worktree
+canon work start --title "what this change does" --owner-gate "none: <why>" --advances "none: <why>"   # a new change in its own worktree
 canon work test                                     # run the tests related to the change
 canon work land --finish                            # land it on main through the queue
 ```

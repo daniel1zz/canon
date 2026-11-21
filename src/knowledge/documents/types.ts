@@ -7,6 +7,14 @@ import type { ItemDeclaration } from "./items/model.ts";
 import { BUILTIN_ITEM_DECLARATIONS } from "./items/builtin.ts";
 import type { FieldDeclaration } from "./fields.ts";
 
+/** Why a decision revises another, as its `revised_because` front matter says (BR-2492). */
+export const REVISION_REASONS = ["premise", "requirement", "external", "experience", "implementation", "undetermined"] as const;
+/** Who judges a quality standard (BR-2553). */
+export const JUDGES = ["test", "agent", "owner"] as const;
+
+/** A built-in field the session states when the document is created (BR-2623); its value is checked by canon's own reader. */
+const stated = (name: string, type: FieldDeclaration["type"], none: boolean): FieldDeclaration => ({ name, type, none, due: "create", own: true });
+
 export interface DocType {
   /** Type name used in config, templates (`canon/templates/<name>.md`) and `canon doc --type`. */
   readonly name: string;
@@ -30,16 +38,16 @@ export interface DocType {
 }
 
 export const BUILTIN_TYPES: readonly DocType[] = [
-  { name: "rule", prefix: "BR", dir: "rules", statuses: ["active", "retired", "planned"], defaultStatus: "active", fields: [], sections: [], items: {}, builtin: true },
-  { name: "decision", prefix: "D", dir: "decisions", statuses: ["proposed", "accepted", "superseded"], defaultStatus: "proposed", fields: [], sections: ["背景", "方案", "决定", "后果"], items: {}, builtin: true },
-  { name: "change", prefix: "C", dir: "changes", statuses: ["open", "done", "dropped"], defaultStatus: "open", fields: [], sections: ["为什么", "要改什么"], items: BUILTIN_ITEM_DECLARATIONS["change"] ?? {}, builtin: true },
+  { name: "rule", prefix: "BR", dir: "rules", statuses: ["active", "retired", "planned"], defaultStatus: "active", fields: [stated("business", "text", false)], sections: [], items: {}, builtin: true },
+  { name: "decision", prefix: "D", dir: "decisions", statuses: ["proposed", "accepted", "superseded"], defaultStatus: "proposed", fields: [stated("amends", "ids", true), { name: "revised_because", type: "enum", values: REVISION_REASONS, none: false, own: true }], sections: ["背景", "方案", "决定", "后果"], items: {}, builtin: true },
+  { name: "change", prefix: "C", dir: "changes", statuses: ["open", "done", "dropped"], defaultStatus: "open", fields: [stated("owner_gate", "text", true), stated("advances", "ids", true)], sections: ["为什么", "要改什么"], items: BUILTIN_ITEM_DECLARATIONS["change"] ?? {}, builtin: true },
   { name: "note", prefix: "N", dir: "notes", statuses: undefined, defaultStatus: undefined, fields: [], sections: [], items: {}, builtin: true },
   // reason: built in, not declared, because only canon's code can write `shipped_at`, run `canon release` and freeze a shipped release (D-61)
-  { name: "release", prefix: "R", dir: "releases", statuses: ["planned", "active", "shipped", "dropped"], defaultStatus: "planned", fields: [], sections: ["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"], items: {}, builtin: true },
+  { name: "release", prefix: "R", dir: "releases", statuses: ["planned", "active", "shipped", "dropped"], defaultStatus: "planned", fields: [stated("features", "ids", true)], sections: ["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"], items: {}, builtin: true },
   // reason: built in beside release, because a release lists its features and the release checks read both (D-130)
   { name: "feature", prefix: "F", dir: "features", statuses: ["active", "dropped"], defaultStatus: "active", fields: [], sections: ["目标", "范围", "不做", "成功标准"], items: {}, builtin: true },
   // reason: built in, not declared, because only canon's code checks the aspect list, reminds when none exists and reviews it (D-145, D-146)
-  { name: "quality", prefix: "Q", dir: "quality", statuses: ["draft", "active", "retired"], defaultStatus: "draft", fields: [], sections: ["门槛", "来源"], items: {}, builtin: true },
+  { name: "quality", prefix: "Q", dir: "quality", statuses: ["draft", "active", "retired"], defaultStatus: "draft", fields: [stated("aspect", "text", false), { name: "judge", type: "enum", values: JUDGES, none: false, due: "create", own: true }, stated("covers", "ids", false)], sections: ["门槛", "来源"], items: {}, builtin: true },
 ];
 
 /**

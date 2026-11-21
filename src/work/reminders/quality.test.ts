@@ -81,7 +81,7 @@ describe("quality standards in the agenda and at start and landing", () => {
   test("BR-2592: the first start of a change lists the related standards with their state, a later start does not; one covering . is related to every change", () => {
     const root = fixture({ "canon/quality/Q-1.md": standard(1, "[.]"), "canon/quality/Q-2.md": standard(2, "[src]") });
     verdict(root, "Q-1", "pass");
-    const first = cli(root, "agent:s1", "work", "start", "--title", "A change");
+    const first = cli(root, "agent:s1", "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "A change");
     expect(first.code).toBe(0);
     const change = /C-\d+/.exec(first.out)![0];
     const lines = first.out.split("\n").filter((l) => l.startsWith("quality:"));

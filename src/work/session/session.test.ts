@@ -34,7 +34,7 @@ describe("work start", () => {
       return { code: r.exitCode, out: r.stdout.toString(), err: r.stderr.toString() };
     };
     expect(cli("init", "--floor", "true").code).toBe(0);
-    for (const args of [["work", "start", "--title", "x"], ["work", "start", "C-1"]]) {
+    for (const args of [["work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x"], ["work", "start", "C-1"]]) {
       const r = cli(...args);
       expect(r.code).toBe(4);
       expect(r.err).toContain("main has no commit yet");
@@ -47,7 +47,7 @@ describe("work start", () => {
     expect(existsSync(`${root}.worktrees`)).toBe(false);
     sh(root, "add", "canon", ".claude");
     sh(root, "commit", "-qm", "canon init");
-    const ok = cli("work", "start", "--title", "x");
+    const ok = cli("work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x");
     expect(ok.code).toBe(0);
     expect(ok.out).toContain("C-1 →");
     rmSync(`${root}.worktrees`, { recursive: true, force: true });
@@ -546,7 +546,7 @@ describe("concurrent starts", () => {
     sh(root, "fetch", "-q", "origin");
     expect(sh(root, "rev-parse", "--verify", "refs/remotes/origin/main")).not.toBe("");
     const procs = Array.from({ length: 8 }, (_, i) =>
-      Bun.spawn(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", "--title", `Parallel ${i}`], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: `agent:p${i}` } }),
+      Bun.spawn(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", `Parallel ${i}`], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: `agent:p${i}` } }),
     );
     const results = await Promise.all(procs.map(async (p) => ({ code: await p.exited, err: await new Response(p.stderr).text() })));
     expect(results.filter((r) => r.code !== 0)).toEqual([]);
@@ -561,7 +561,7 @@ describe("concurrent starts", () => {
     const root = project();
     sh(root, "config", "branch.autoSetupMerge", "always"); // git then tracks even a local start point
     const procs = Array.from({ length: 8 }, (_, i) =>
-      Bun.spawn(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", "--title", `Always ${i}`], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: `agent:a${i}` } }),
+      Bun.spawn(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", `Always ${i}`], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: `agent:a${i}` } }),
     );
     const results = await Promise.all(procs.map(async (p) => ({ code: await p.exited, err: await new Response(p.stderr).text() })));
     expect(results.filter((r) => r.code !== 0)).toEqual([]);
@@ -599,7 +599,7 @@ describe("concurrent starts", () => {
     expect(readFileSync(h.mark, "utf8")).toBe("in");
   };
   const cliStart = (root: string, title: string) =>
-    Bun.spawn(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", "--title", title], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:w" } });
+    Bun.spawn(["bun", join(import.meta.dir, "../../invocation/main.ts"), "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", title], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:w" } });
 
   test("BR-2223: a start while another canon process is midway through creating a worktree waits for it and succeeds", async () => {
     const root = project();
@@ -942,15 +942,15 @@ describe("open review findings remind at a start and never hold it back", () => 
     expect(bad.ok ? "" : bad.error.message).toContain("--settles #2, #9: not an open review finding");
     expect(changesIn(root)).toBe(before);
     expect(db.db.query<{ d: string }, []>("SELECT json_extract(detail, '$.reason') AS d FROM events WHERE kind = 'start.refuse'").all().map((x) => x.d)).toEqual(["settles"]);
-    expect(cli(root, "work", "start", "--title", "x", "--settles", "abc").exitCode).toBe(2);
-    expect(cli(root, "work", "start", "--title", "x", "--settles", "0").exitCode).toBe(2);
+    expect(cli(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x", "--settles", "abc").exitCode).toBe(2);
+    expect(cli(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x", "--settles", "0").exitCode).toBe(2);
     expect(cli(root, "work", "start", "--fix-main", "--settles", "1").exitCode).toBe(2);
     expect(changesIn(root)).toBe(before);
   });
 
   test("BR-2530: --urgent and --relayed are gone (usage error, exit 2); debt_max_findings in the config fails every command with exit 2 and says to delete the line", () => {
     const root = project();
-    const urgent = cli(root, "work", "start", "--title", "X", "--urgent", "--relayed", "now");
+    const urgent = cli(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "X", "--urgent", "--relayed", "now");
     expect(urgent.exitCode).toBe(2);
     expect(changesIn(root).trim()).toBe("");
     writeFileSync(join(root, "canon/config.yaml"), `${readFileSync(join(root, "canon/config.yaml"), "utf8")}debt_max_findings: 5\n`);

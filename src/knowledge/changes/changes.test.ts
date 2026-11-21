@@ -98,7 +98,7 @@ describe("a change's links in canon check", () => {
 describe("links written by the commands that create a change", () => {
   test("BR-2562: canon change new writes release or feature, issues and depends_on, makes no worktree; started later the links stay", () => {
     const root = repo({ "releases/R-1.md": release(1, "[F-2]"), "features/F-2.md": feature(2), "changes/C-3.md": change(3, "open") });
-    const r = cli(root, "change", "new", "--title", "导出", "--feature", "f-2", "--issue", "12,#40", "--depends", "C-3");
+    const r = cli(root, "change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "导出", "--feature", "f-2", "--issue", "12,#40", "--depends", "C-3");
     expect(r.code).toBe(0);
     const id = newId(r.out);
     expect(metaIn(root, id)).toMatchObject({ status: "open", feature: "F-2", issues: [12, 40], depends_on: ["C-3"] });
@@ -116,14 +116,14 @@ describe("links written by the commands that create a change", () => {
   test("BR-2562: canon work start --title writes the links into the commit that opens it; a dependency only on a branch is accepted", () => {
     const root = repo({ "releases/R-1.md": release(1) });
     const first = startNew(root, "On a branch");
-    const r = cli(root, "work", "start", "--title", "Export", "--release", "R-1", "--depends", first.change);
+    const r = cli(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Export", "--release", "R-1", "--depends", first.change);
     expect(r.code).toBe(0);
     const id = newId(r.out);
     const wt = r.out.match(/cd (.+)/)![1]!.trim();
     const file = sh(wt, "show", "--name-only", "--format=", "HEAD").split("\n").find((f) => f.includes(id))!;
     const meta = parseDocFile(sh(wt, "show", `HEAD:${file}`), file);
     expect(meta.ok && meta.value.meta).toMatchObject({ release: "R-1", depends_on: [first.change] });
-    const plain = cli(root, "work", "start", "--title", "Plain");
+    const plain = cli(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Plain");
     const pid = newId(plain.out);
     const meta2 = metaIn(plain.out.match(/cd (.+)/)![1]!.trim(), pid);
     for (const k of ["release", "feature", "issues", "depends_on"]) expect([k, meta2[k]]).toEqual([k, undefined]);
@@ -133,14 +133,14 @@ describe("links written by the commands that create a change", () => {
     const root = repo({ "releases/R-1.md": release(1), "changes/C-7.md": change(7, "open") });
     const before = readdirSync(join(root, "canon/changes")).length;
     for (const [args, code] of [
-      [["change", "new", "--title", "x", "--release", "R-1", "--feature", "F-2"], 2],
-      [["change", "new", "--title", "x", "--issue", "abc"], 2],
-      [["change", "new", "--title", "x", "--depends", "X-1"], 2],
+      [["change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x", "--release", "R-1", "--feature", "F-2"], 2],
+      [["change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x", "--issue", "abc"], 2],
+      [["change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x", "--depends", "X-1"], 2],
       [["work", "start", "C-7", "--release", "R-1"], 2],
       [["work", "start", "--fix-main", "--issue", "3"], 2],
-      [["work", "start", "--title", "x", "--depends", "C-99"], 3],
-      [["work", "start", "--title", "x", "--release", "R-9"], 3],
-      [["change", "new", "--title", "x", "--feature", "F-2"], 3],
+      [["work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x", "--depends", "C-99"], 3],
+      [["work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x", "--release", "R-9"], 3],
+      [["change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x", "--feature", "F-2"], 3],
     ] as const) {
       const r = cli(root, ...args);
       expect([args.join(" "), r.code]).toEqual([args.join(" "), code]);
@@ -149,11 +149,11 @@ describe("links written by the commands that create a change", () => {
     expect(readdirSync(join(root, "canon/changes")).length).toBe(before);
     expect(sh(root, "branch", "--list", "change/*")).toBe("");
     // no number was taken: the next change is C-8
-    expect(newId(cli(root, "change", "new", "--title", "next").out)).toBe("C-8");
+    expect(newId(cli(root, "change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "next").out)).toBe("C-8");
   });
 });
 
-const r99 = (root: string) => cli(root, "work", "start", "--title", "x", "--depends", "C-99").err;
+const r99 = (root: string) => cli(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x", "--depends", "C-99").err;
 
 describe("canon change link", () => {
   test("BR-2563: replaces the given links, keeps one of release and feature, removes one with none, and records change.link", () => {
@@ -333,13 +333,13 @@ describe("a dependency on a success criterion", () => {
 
   test("BR-2562: --depends takes a criterion that exists and refuses one that does not with exit 3", () => {
     const root = repo({ "releases/R-2.md": withCriteria(OWNER) });
-    const r = cli(root, "change", "new", "--title", "跟进", "--depends", "r-2/s3");
+    const r = cli(root, "change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "跟进", "--depends", "r-2/s3");
     expect(r.code).toBe(0);
     expect(metaIn(root, newId(r.out))["depends_on"]).toEqual(["R-2/S3"]);
-    const missing = cli(root, "change", "new", "--title", "x", "--depends", "R-2/S8");
+    const missing = cli(root, "change", "new", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x", "--depends", "R-2/S8");
     expect(missing.code).toBe(3);
     expect(missing.err).toContain("R-2/S8");
-    expect(cli(root, "work", "start", "--title", "x", "--depends", "R-2/S8").code).toBe(3);
+    expect(cli(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "x", "--depends", "R-2/S8").code).toBe(3);
   });
 
   test("BR-2564: a criterion waiting for the owner keeps the change waiting with its text even after the checklist lands; met on main it is ready", () => {
