@@ -27,7 +27,8 @@ function gated(front = 'owner_gate: "设计稿"\n') {
   const s = startNew(root, "Design draft", "agent:s1");
   const dir = join(s.worktree, "canon/changes");
   const path = join(dir, readdirSync(dir).find((p) => p.startsWith(`${s.change}-`) || p === `${s.change}.md`)!);
-  writeFileSync(path, readFileSync(path, "utf8").replace("status: open\n", `status: open\n${front}`));
+  // reason: startNew states owner_gate as none (BR-2620); this fixture replaces it with the gate under test
+  writeFileSync(path, readFileSync(path, "utf8").replace(/owner_gate: .*\n/, "").replace("status: open\n", `status: open\n${front}`));
   writeFileSync(join(s.worktree, "draft.md"), "draft\n");
   sh(s.worktree, "add", "-A"); sh(s.worktree, "commit", "-qm", "draft");
   return { root, ...s };
