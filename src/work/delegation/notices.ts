@@ -4,6 +4,7 @@ import { liveClaims } from "../claims/claims.ts";
 import type { CoordDb } from "../db.ts";
 import type { Workspace } from "../workspace.ts";
 import { mainCorpus } from "../session/session.ts";
+import { approvalOf } from "../land/owner-gate.ts";
 
 /**
  * The reminders canon prints when a change is started or delegated (D-156), and the facts the agenda lists under a change
@@ -19,12 +20,14 @@ export interface NoticeContext {
   readonly states: readonly ChangeState[];
   /** Change → the actor holding its live claim. */
   readonly holders: ReadonlyMap<string, string>;
+  /** The coordination database, for the owner's answers (BR-2618). */
+  readonly db?: CoordDb;
 }
 
 /** The context from main's corpus and change states already read (the agenda has both). */
 export function contextOf(corpus: Corpus, states: readonly ChangeState[], db: CoordDb): NoticeContext {
   const docs = new Map(corpus.docs.map((d) => [d.id, d]));
-  return { docOf: (id) => docs.get(id), states, holders: new Map(liveClaims(db).map((c) => [c.subject, c.actor])) };
+  return { docOf: (id) => docs.get(id), states, holders: new Map(liveClaims(db).map((c) => [c.subject, c.actor])), db };
 }
 
 /** A change's contract rules (BR-2608): the rules its `rules:` lists, plus the `will_amend` targets of those that are planned. */
@@ -93,8 +96,14 @@ export function sharedLines(ctx: NoticeContext, subject: string, own: Pick<Chang
 }
 
 /** The facts for one change: its BR-2608 lines, and its BR-2609 and BR-2614 lines when it is to be delegated. */
-export function changeFacts(ctx: NoticeContext, subject: string, own: Pick<Change, "rules" | "body">, delegating: boolean): string[] {
-  return delegating ? [...sharedLines(ctx, subject, own), ...unsettledLines(ctx.docOf, own), ...unlistedPlannedLines(ctx.docOf, subject, own)] : sharedLines(ctx, subject, own);
+export function changeFacts(ctx: NoticeContext, subject: string, own: Pick<Change, "rules" | "body" | "ownerGate">, delegating: boolean): string[] {
+  return delegating ? [...sharedLines(ctx, subject, own), ...unsettledLines(ctx.docOf, own), ...unlistedPlannedLines(ctx.docOf, subject, own), ...gateLines(ctx, subject, own)] : sharedLines(ctx, subject, own);
+}
+
+/** BR-2618: a change the owner must approve, not approved yet, cannot be finished by the worker it goes to. */
+function gateLines(ctx: NoticeContext, subject: string, own: Pick<Change, "ownerGate">): string[] {
+  if (own.ownerGate === undefined || !ctx.db || approvalOf(ctx.db, subject).approved) return [];
+  return [`owner gate: ${subject} needs the owner's approval of "${own.ownerGate}" before it can finish (BR-2616); the worker cannot ask the owner, so it lands without --finish or hands back, and you ask`];
 }
 
 /**

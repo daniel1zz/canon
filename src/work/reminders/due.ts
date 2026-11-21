@@ -12,6 +12,7 @@ import { criteriaWithDoc, releasesInProgress, releaseViews } from "../../knowled
 import { uncoveredDecisions } from "../../knowledge/check/commitments.ts";
 import { interruptsStalled } from "./interrupt.ts";
 import { slowItems } from "./slow.ts";
+import { approvalOf, askLine } from "../land/owner-gate.ts";
 
 /**
  * The agenda's items (BR-2527, D-151): what the calling session should judge or relay, one item each, with how long it
@@ -177,6 +178,16 @@ export function mainItems(ws: Workspace, now: number, states: readonly ChangeSta
   }
   // reason: a delegated change that has run long or keeps failing its tests is its design owner's to look at (BR-2612, D-157)
   items.push(...slowItems(ws, states, now));
+  // reason: a change the owner must approve is said from the moment it is open until they do, so asking is never forgotten (BR-2617, D-158)
+  for (const s of states) {
+    const gate = s.change?.ownerGate;
+    if (gate === undefined || s.state === "landed" || s.state === "dropped") continue;
+    const a = approvalOf(ws.db, s.id);
+    if (a.approved) continue;
+    const before = a.latest ? `; question #${a.latest.id} was answered ${JSON.stringify(a.latest.answer)}${a.latest.owners ? "" : " (not the owner's own answer)"}` : "";
+    if (a.pending !== undefined) items.push(item(`owner-gate:${s.id}`, "owner-gate", null, `${s.id} needs the owner's approval of: ${clip(gate, 60)}; waiting for the answer to question #${a.pending}`, `ask the owner question #${a.pending} in the conversation, word for word, with the question tool`, "ask the owner the approve question in the conversation", "judge", 2));
+    else items.push(item(`owner-gate:${s.id}`, "owner-gate", null, `${s.id} needs the owner's approval of: ${clip(gate, 60)}; ask when it is ready to show${before}`, askLine(s.id, gate), `canon human ask "approve <n>: <owner_gate>?" --option 批准,不批准 --change <n>`, "judge", 2));
+  }
   for (const r of pendingRequests(ws.db).filter((r) => r.owner === ws.actor)) {
     items.push(item(`design:${r.subject}`, "design", r.asked_at, `design request #${r.id} from ${r.asked_by}: ${clip(r.request)}`, `canon work design-answer ${r.id} "<answer>"`, `canon work design-answer <n> "<answer>"`, "judge", 1));
   }

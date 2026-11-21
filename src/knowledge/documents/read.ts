@@ -232,7 +232,12 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: advances });
           continue;
         }
-        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...links, ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}), ...(chore !== undefined ? { chore: (chore as string).toLowerCase() } : {}), ...(advances !== undefined ? { advances } : {}) });
+        const gate = p.meta["owner_gate"];
+        if (gate !== undefined && (typeof gate !== "string" || gate.trim() === "")) {
+          problems.push({ path, message: "`owner_gate` must be a non-empty text saying what the owner approves, such as \"研究站剧情设计稿\" (BR-2615)" });
+          continue;
+        }
+        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...links, ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}), ...(chore !== undefined ? { chore: (chore as string).toLowerCase() } : {}), ...(advances !== undefined ? { advances } : {}), ...(gate !== undefined ? { ownerGate: (gate as string).trim() } : {}) });
       } else if (type.name === "release") {
         const shippedAt = p.meta["shipped_at"];
         const shipped = p.status === "shipped";

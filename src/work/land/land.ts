@@ -12,6 +12,8 @@ import { choreIn, isChore } from "../session/subject.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { setMeta } from "../../knowledge/documents/write.ts";
+import { approvalOf, gateRefusal } from "./owner-gate.ts";
+import { isWorker } from "../delegation/worker.ts";
 import { duplicateHeadings, hasLessons, LESSONS_SECTION, linesSaid } from "../../knowledge/documents/templates.ts";
 import { git, isClean, removeWorktree } from "../../kernel/git.ts";
 import { ensureWatcher, pathCanonReads, timingOf } from "../watch/watch.ts";
@@ -208,6 +210,11 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
         const twice = duplicateHeadings(readFileSync(join(wt, doc.path), "utf8")).find((h) => h.heading === LESSONS_SECTION);
         if (twice) return early("lessons", `${subject}: ${LESSONS_SECTION} appears on lines ${linesSaid(twice.lines)} of ${doc.path}; canon reads only the first, so merge them into one section; commit, then land --finish again`);
         if (!hasLessons(doc.body)) return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
+        // reason: the owner asked to see it before it is done; only this change's finishing waits, a landing without --finish goes on (BR-2616, D-158)
+        if (doc.ownerGate !== undefined) {
+          const approval = approvalOf(ws.db, subject);
+          if (!approval.approved) return early("owner-gate", gateRefusal(subject, doc.ownerGate, approval, isWorker(ws.actor)));
+        }
         // reason: a rule without evidence lands with no pass record, so it shows as 待重新执行; said here and listed by
         // canon work due until it is executed, never refused (BR-2241, D-141, D-139)
         const planned = planClose(ws.db, ws.config, wt, ws.config.main, corpus, doc);

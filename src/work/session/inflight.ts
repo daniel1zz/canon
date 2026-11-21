@@ -217,7 +217,10 @@ export function changeOnBranch(ws: Workspace, id: string, ref: BranchRef): Resul
   const prefixOf = (name: string, fallback: string) => ws.config.types.find((t) => t.name === name)?.prefix ?? fallback;
   const links = changeLinks(meta, { change: type.prefix, release: prefixOf("release", "R"), feature: prefixOf("feature", "F") });
   if (typeof links === "string") return ok({ unreadable: `${where}: ${links}` });
-  return ok({ change: { kind: "change", id, title: meta["title"], path: path.value, body, status: status as ChangeStatus, rules, passes: {}, ...links } });
+  // reason: a change the owner must approve says so on its branch too, before it reaches main (BR-2617, BR-2618)
+  const gate = meta["owner_gate"];
+  if (gate !== undefined && (typeof gate !== "string" || gate.trim() === "")) return ok({ unreadable: `${where}: \`owner_gate\` must be a non-empty text saying what the owner approves (BR-2615)` });
+  return ok({ change: { kind: "change", id, title: meta["title"], path: path.value, body, status: status as ChangeStatus, rules, passes: {}, ...links, ...(gate !== undefined ? { ownerGate: (gate as string).trim() } : {}) } });
 }
 
 function changeType(ws: Workspace) {
