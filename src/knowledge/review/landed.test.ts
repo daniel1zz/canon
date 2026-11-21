@@ -226,7 +226,7 @@ describe("rule review after landing", () => {
       const root = billingProject(`floor: "true"\ntests: []\nreview: ${blank}\n`);
       const d = ["D", 1].join("-");
       mkdirSync(join(root, "canon/decisions"), { recursive: true });
-      writeFileSync(join(root, `canon/decisions/${d}.md`), `---\nid: ${d}\ntitle: Old\nstatus: proposed\n---\n\n## 背景\n\nx\n`);
+      writeFileSync(join(root, `canon/decisions/${d}.md`), `---\nid: ${d}\ntitle: Old\nstatus: proposed\namends: \"none: t\"\n---\n\n## 背景\n\nx\n`);
       sh(root, "add", "-A");
       sh(root, "commit", "-qm", "decision");
       const s = startNew(root, "Drop decision");

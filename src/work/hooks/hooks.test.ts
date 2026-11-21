@@ -87,7 +87,7 @@ describe("lifecycle hooks", () => {
     rmSync(join(s.worktree, "..", "before-land-ran"));
 
     const t = startNew(root, "Dangling");
-    writeFileSync(join(t.worktree, "canon/changes/C-90-bad-ref.md"), "---\nid: C-90\ntitle: Bad ref\n---\n## 为什么\n\nSee D-99.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n");
+    writeFileSync(join(t.worktree, "canon/changes/C-90-bad-ref.md"), "---\nid: C-90\ntitle: Bad ref\nowner_gate: \"none: t\"\nadvances: \"none: t\"\n---\n## 为什么\n\nSee D-99.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n");
     sh(t.worktree, "add", "-A");
     sh(t.worktree, "commit", "-qm", "dangling");
     const refused = await land(ws(t.worktree), FAST, quiet);

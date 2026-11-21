@@ -17,7 +17,7 @@ async function canonIn(cwd: string, ...args: string[]) {
 const rid = (n: number) => ["BR", n].join("-");
 const did = (n: number) => ["D", n].join("-");
 const rule = (n: number, text = "Rule text.") => `---\nid: ${rid(n)}\ntitle: Rule ${n}\nstatus: active\nuntested: fixture\nbusiness: x\n---\n\n## 规则\n\n${text}\n\n## 例子\n\n- a → b\n`;
-const decision = (n: number) => `---\nid: ${did(n)}\ntitle: Pick ${n}\nstatus: proposed\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：refund.txt “export function refund(order)”\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
+const decision = (n: number) => `---\nid: ${did(n)}\ntitle: Pick ${n}\nstatus: proposed\namends: \"none: t\"\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：refund.txt “export function refund(order)”\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
 
 const write = (wt: string, path: string, text: string) => {
   mkdirSync(join(wt, path, ".."), { recursive: true });
@@ -29,7 +29,7 @@ const commit = (wt: string) => {
 };
 // reason: a domain a change adds needs a decision naming it, or the landing is refused (BR-2446)
 const domainDecision = (n: number, name: string) =>
-  `---\nid: ${did(n)}\ntitle: Why ${name}\nstatus: accepted\n---\n## 背景\n\n领域 \`${name}\` 只管这一件事。\n\n## 方案\n\n1. A：采用。\n   - 来源：canon/config.yaml “floor: test ! -e FAIL”\n2. B：否决。\n\n## 决定\n\nA。\n\n## 后果\n\n无。\n`;
+  `---\nid: ${did(n)}\ntitle: Why ${name}\nstatus: accepted\namends: \"none: t\"\n---\n## 背景\n\n领域 \`${name}\` 只管这一件事。\n\n## 方案\n\n1. A：采用。\n   - 来源：canon/config.yaml “floor: test ! -e FAIL”\n2. B：否决。\n\n## 决定\n\nA。\n\n## 后果\n\n无。\n`;
 const readme = (name: string) => `---\nname: ${name}\ncode: [refund.txt]\n---\n# ${name}\n\nOne domain.\n\n## 术语\n\n- **x**：y。\n\n## 业务\n\n- **x**：y\n`;
 const withDomain = (wt: string) => {
   write(wt, "refund.txt", "export function refund(order) {}\n");

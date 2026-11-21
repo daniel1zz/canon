@@ -155,7 +155,7 @@ describe("work land", () => {
   test("BR-2016: refuses when canon check finds a broken corpus", async () => {
     const root = project();
     const s = startNew(root, "Bad ref");
-    writeFileSync(join(s.worktree, "canon/changes/C-1-bad-ref.md"), "---\nid: C-1\ntitle: Bad ref\n---\n## 为什么\n\nSee D-99.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n");
+    writeFileSync(join(s.worktree, "canon/changes/C-1-bad-ref.md"), "---\nid: C-1\ntitle: Bad ref\nowner_gate: \"none: t\"\nadvances: \"none: t\"\n---\n## 为什么\n\nSee D-99.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n");
     sh(s.worktree, "commit", "-qam", "dangling");
     const out = await land(ws(s.worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("check");
@@ -165,7 +165,7 @@ describe("work land", () => {
   test("BR-2388: a content refusal is repeated at once on the same content and main; a new commit, main moving, or a floor refusal queue as usual", async () => {
     const root = project();
     const s = startNew(root, "Bad ref");
-    writeFileSync(join(s.worktree, "canon/changes/C-1-bad-ref.md"), "---\nid: C-1\ntitle: Bad ref\n---\n## 为什么\n\nSee D-99.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n");
+    writeFileSync(join(s.worktree, "canon/changes/C-1-bad-ref.md"), "---\nid: C-1\ntitle: Bad ref\nowner_gate: \"none: t\"\nadvances: \"none: t\"\n---\n## 为什么\n\nSee D-99.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n");
     sh(s.worktree, "commit", "-qam", "dangling");
     const first = await land(ws(s.worktree), FAST, quiet);
     expect(first.kind === "refused" && first.reason).toBe("check");
@@ -232,7 +232,7 @@ describe("work land", () => {
 
   describe("BR-2111: a new decision with no source at all is a note; each source new to main is verified against its file or page and a quote that does not hold refuses the landing", () => {
     const decision = (options: string) =>
-      `---\nid: D-1\ntitle: Pick\nstatus: accepted\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n${options}\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
+      `---\nid: D-1\ntitle: Pick\nstatus: accepted\namends: \"none: t\"\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n${options}\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
     const pages: Record<string, string> = { "https://ok.example/a": "<html><body><p>refunds are&nbsp;allowed\n  within 30 days</p></body></html>" };
     const fetcher = async (url: string) => {
       if (url === "https://down.example/") throw new Error("getaddrinfo ENOTFOUND down.example");
@@ -280,7 +280,7 @@ describe("work land", () => {
     const s = startNew(root, "First");
     mkdirSync(join(s.worktree, "canon/decisions"), { recursive: true });
     const body = (extra: string) =>
-      `---\nid: D-1\ntitle: Pick\nstatus: accepted\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：https://ok.example/a “refunds are allowed within 30 days”\n2. B：否决${extra}。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
+      `---\nid: D-1\ntitle: Pick\nstatus: accepted\namends: \"none: t\"\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：https://ok.example/a “refunds are allowed within 30 days”\n2. B：否决${extra}。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
     writeFileSync(join(s.worktree, "canon/decisions/D-1.md"), body(""));
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "decision");
@@ -301,7 +301,7 @@ describe("work land", () => {
     mkdirSync(join(s.worktree, "canon/decisions"), { recursive: true });
     writeFileSync(join(s.worktree, "refund.txt"), "export function refund(order) {}\n");
     const doc = (id: string, status: string, extra: string, quote: string) =>
-      `---\nid: ${id}\ntitle: Pick ${id}\nstatus: ${status}\n${extra}---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：refund.txt “${quote}”\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
+      `---\nid: ${id}\ntitle: Pick ${id}\nstatus: ${status}\namends: \"none: t\"\n${extra}---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：refund.txt “${quote}”\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
     writeFileSync(join(s.worktree, "canon/decisions/D-1.md"), doc("D-1", "superseded", "", "export function refund(order)"));
     writeFileSync(join(s.worktree, "canon/decisions/D-2.md"), doc("D-2", "accepted", "supersedes: D-1\nrevised_because: requirement\n", "(order) {}"));
     sh(s.worktree, "add", "-A");

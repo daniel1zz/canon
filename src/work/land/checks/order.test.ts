@@ -65,7 +65,7 @@ describe("a single landing runs its own steps before the floor", () => {
   test("BR-2014 BR-2016: a canon check finding refuses with reason check and the floor never runs", async () => {
     const { root, marker } = fixture();
     const s = startNew(root, "Dangling");
-    writeFileSync(join(s.worktree, "canon/changes/C-90-bad-ref.md"), "---\nid: C-90\ntitle: Bad ref\n---\n## 为什么\n\nSee D-99.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n");
+    writeFileSync(join(s.worktree, "canon/changes/C-90-bad-ref.md"), "---\nid: C-90\ntitle: Bad ref\nowner_gate: \"none: t\"\nadvances: \"none: t\"\n---\n## 为什么\n\nSee D-99.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n");
     sh(s.worktree, "add", "-A");
     sh(s.worktree, "commit", "-qm", "dangling ref");
     const out = await land(ws(s.worktree), FAST, quiet);

@@ -111,7 +111,7 @@ describe("landing with floor_timing: after", () => {
     const root = configured("floor: exit 1\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
     const before = sh(root, "rev-parse", "main");
     const s = startNew(root, "Bad ref");
-    writeFileSync(join(s.worktree, "canon/changes/C-1-bad-ref.md"), "---\nid: C-1\ntitle: Bad ref\n---\n## 为什么\n\nSee D-99.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n");
+    writeFileSync(join(s.worktree, "canon/changes/C-1-bad-ref.md"), "---\nid: C-1\ntitle: Bad ref\nowner_gate: \"none: t\"\nadvances: \"none: t\"\n---\n## 为什么\n\nSee D-99.\n\n## 要改什么\n\nX.\n\n## 任务\n\n- [ ] X\n");
     sh(s.worktree, "commit", "-qam", "dangling");
     const out = await land(ws(s.worktree), FAST, quiet);
     expect(out.kind === "refused" && out.reason).toBe("check");

@@ -159,7 +159,7 @@ describe("a landing that adds a decision still proposed says so", () => {
   // Fixture ids are assembled at runtime so this file does not itself name decisions when canon check scans the repo.
   const d = (n: number) => ["D", n].join("-");
   const decision = (n: number, status: string) =>
-    `---\nid: ${d(n)}\ntitle: Pick ${n}\nstatus: ${status}\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：refund.txt “export function refund(order)”\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
+    `---\nid: ${d(n)}\ntitle: Pick ${n}\nstatus: ${status}\namends: \"none: t\"\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n   - 来源：refund.txt “export function refund(order)”\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
   const add = (wt: string, ...files: [number, string][]) => {
     mkdirSync(join(wt, "canon/decisions"), { recursive: true });
     writeFileSync(join(wt, "refund.txt"), "export function refund(order) {}\n");
