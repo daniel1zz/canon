@@ -58,7 +58,7 @@ test("BR-2615 BR-2623 BR-2616 BR-2617: owner_gate none: <reason> is no gate: no 
   expect(await finish(f.worktree)).toMatchObject({ kind: "landed", finished: true });
 });
 
-test("BR-2616: land --finish waits for the owner's latest approve answer; a later no revokes; an agent's own answer does not count; without --finish it lands", async () => {
+test("BR-2616: land --finish waits for the owner's latest approve answer; the refusal names the gate, the latest question and answer (or not asked yet) and how to ask; a later no revokes; an agent's own answer does not count; without --finish it lands", async () => {
   const f = gated();
   const none = await finish(f.worktree);
   expect(none).toMatchObject({ kind: "refused", reason: "owner-gate" });
