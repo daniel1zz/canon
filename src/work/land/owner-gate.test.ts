@@ -42,12 +42,17 @@ function answered(root: string, question: string, answer: string, opts: { by?: s
 }
 const finish = (wt: string, actor = "agent:s1") => land(ws(wt, actor), { ...FAST, finish: true }, quiet);
 
-test("BR-2615: owner_gate is a non-empty text; empty or not text is file-invalid", () => {
-  for (const [front, bad] of [['owner_gate: "设计稿"\n', false], ['owner_gate: "  "\n', true], ["owner_gate: true\n", true]] as const) {
+test("BR-2615: owner_gate is a non-empty text or none: <reason>; empty, not text or a none without reason is file-invalid", () => {
+  for (const [front, bad] of [['owner_gate: "设计稿"\n', false], ['owner_gate: "none: 内部工具"\n', false], ['owner_gate: "  "\n', true], ["owner_gate: true\n", true], ['owner_gate: "none:"\n', true]] as const) {
     const f = gated(front);
     const r = cli(f.worktree, "agent:s1", ["check"]);
     expect(r.text.includes("`owner_gate` must be a non-empty text")).toBe(bad);
   }
+});
+
+test("BR-2615 BR-2623: owner_gate none: <reason> is no gate: land --finish does not wait for the owner", async () => {
+  const f = gated('owner_gate: "none: 内部工具"\n');
+  expect(await finish(f.worktree)).toMatchObject({ kind: "landed", finished: true });
 });
 
 test("BR-2616: land --finish waits for the owner's latest approve answer; a later no revokes; an agent's own answer does not count; without --finish it lands", async () => {
