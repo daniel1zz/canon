@@ -6,7 +6,8 @@ import { parseDocFile, renderDocFile } from "./docfile.ts";
 import { slugify, type Corpus, type Doc } from "./model.ts";
 import { CANON_DIR } from "./read.ts";
 import { domainReadme, templateFor } from "./templates.ts";
-import { typeNamed } from "./types.ts";
+import { RESERVED_FIELDS, typeNamed } from "./types.ts";
+import { cliValue, fieldProblem, shapeText } from "./fields.ts";
 import { linkMeta, type ChangeLinks } from "../changes/links.ts";
 
 /**
@@ -54,7 +55,8 @@ export function createDoc(root: string, corpus: Corpus, db: CoordDb, actor: stri
   const type = typeNamed(corpus.types, input.kind);
   if (!type) return err("not_found", `no document type ${input.kind}; declared types: ${corpus.types.map((t) => t.name).join(", ")}`);
   const prefix = type.prefix;
-  const extra = Object.fromEntries(type.fields.map((f) => [f, ""]));
+  // reason: a field stated at creation that was not given is written empty, so canon check reports it until it is filled (BR-2622, BR-2054)
+  const extra = Object.fromEntries(type.fields.filter((f) => f.due === "create").map((f) => [f.name, ""]));
   let path: string;
   let meta: Record<string, unknown>;
   if (type.name === "rule") {
@@ -124,4 +126,51 @@ export function setMeta(root: string, doc: Doc, patch: Record<string, unknown>, 
   if (expectStatus !== undefined && now !== undefined && now !== expectStatus) return err("conflict", `${doc.id} is now ${String(now)}, not ${expectStatus} as read; nothing written, run the command again`);
   writeFileSync(full, renderDocFile({ ...parsed.value.meta, ...patch }, parsed.value.body));
   return ok(undefined);
+}
+
+/** The command that writes each front-matter field canon owns, said when `canon doc set` is asked for one (BR-2621). */
+const OWNED_BY: Readonly<Record<string, string>> = {
+  status: "the type's own status command (canon decision accept, canon rule retire, canon change drop, canon work land --finish, canon doc status)",
+  passes: "canon work land --finish",
+  links: "canon links confirm",
+  landed_in: "canon change close",
+  shipped_at: "canon release ship",
+  merged_into: "canon release drop --into",
+  chore: "canon chore land",
+  release: "canon change link", feature: "canon change link", issues: "canon change link", depends_on: "canon change link", done_by: "canon change link --done-by",
+};
+
+/**
+ * BR-2621: sets one declared field of document `id` in the worktree at `root` to `value` (`undefined` removes an optional
+ * one), checked against its type's declaration; nothing is written on any refusal or when the value is already that.
+ */
+export function setField(root: string, corpus: Corpus, id: string, field: string, value: string | null | undefined): Result<{ id: string; path: string; field: string; before?: unknown; after?: unknown; changed: boolean }> {
+  const doc = corpus.docs.find((d) => d.id === id.toUpperCase());
+  if (!doc) return err("not_found", `${id} is not a document here`);
+  const typeName = doc.kind === "extra" ? doc.type : doc.kind;
+  const type = typeNamed(corpus.types, typeName);
+  if (!type) return err("not_found", `${doc.id}'s type ${typeName} is not declared`);
+  const decl = type.fields.find((f) => f.name === field);
+  if (!decl) {
+    const owner = OWNED_BY[field];
+    if (owner || RESERVED_FIELDS.has(field)) return err("invalid", `\`${field}\` is written by canon, not by canon doc set: use ${owner ?? "the command that manages it"}`);
+    return err("invalid", `${type.name} declares no field \`${field}\`; its declared fields: ${type.fields.map((f) => f.name).join(", ") || "(none)"} (BR-2619)`);
+  }
+  if (value === null) return err("invalid", `give the value of \`${field}\` (${shapeText(decl)}), or --clear to remove an optional field`);
+  if (value === undefined && decl.due === "create") return err("invalid", `\`${field}\` is stated when a ${type.name} is created (due: create), so it cannot be removed; set another value instead`);
+  const after = value === undefined ? undefined : cliValue(decl, value);
+  if (after !== undefined) {
+    const problem = fieldProblem(decl, after);
+    if (problem) return err("invalid", `${problem} (BR-2621)`);
+  }
+  const full = join(root, doc.path);
+  const parsed = parseDocFile(readFileSync(full, "utf8"), doc.path);
+  if (!parsed.ok) return parsed;
+  const before = parsed.value.meta[field];
+  if (JSON.stringify(before) === JSON.stringify(after)) return ok({ id: doc.id, path: doc.path, field, before, after, changed: false });
+  const meta = { ...parsed.value.meta };
+  if (after === undefined) delete meta[field];
+  else meta[field] = after;
+  writeFileSync(full, renderDocFile(meta, parsed.value.body));
+  return ok({ id: doc.id, path: doc.path, field, before, after, changed: true });
 }

@@ -103,19 +103,85 @@ describe("declared document types", () => {
     expect(canon(root, "context", id("SP", 1)).out).toContain("# Domain: billing");
   });
 
-  test("BR-2054: declared fields must be filled; new documents get them empty until then", () => {
+  test("BR-2054 BR-2622: the old list of field names reads as text fields; an empty one is reported, an older document without it is not", () => {
     const rule = (n: number, extra: string) => `---\nid: ${id("BR", n)}\ntitle: R${n}\nuntested: fixture\n${extra}business: x\n---\n## 规则\n\nS.\n`;
     const root = repo("types:\n  rule:\n    fields: [owner]\n", {
       [`canon/rules/billing/${id("BR", 1)}.md`]: rule(1, ""),
       [`canon/rules/billing/${id("BR", 2)}.md`]: rule(2, "owner: billing-team\n"),
-      "canon/changes/C-1.md": doc("C", 1, "", `## 为什么\n\nTouches ${id("BR", 1)}.`),
+      [`canon/rules/billing/${id("BR", 3)}.md`]: rule(3, 'owner: ""\n'),
+      "canon/changes/C-1.md": doc("C", 1, "", `## 为什么\n\nTouches ${id("BR", 3)}.`),
     });
     const out = canon(root, "check").out;
-    expect(out).toContain(`file-invalid       canon/rules/billing/${id("BR", 1)}.md: front matter \`owner\` is required`);
+    expect(out).toContain(`file-invalid       canon/rules/billing/${id("BR", 3)}.md: front matter \`owner\` is "", not a non-empty text`);
+    expect(out).not.toContain(`${id("BR", 1)}.md`);
     expect(out).not.toContain(`${id("BR", 2)}.md`);
-    expect(out).not.toContain("ref-dangling"); // the rule missing a field still resolves
+    expect(out).not.toContain("ref-dangling"); // the rule with a bad field still resolves
     const made = canon(root, "rule", "new", "--domain", "billing", "--title", "New", "--untested", "fixture").out.trim().split("\n").at(-1)!;
     expect(readFileSync(join(root, made), "utf8")).toContain('owner: ""');
+  });
+
+  const DESIGN = "types:\n  design:\n    prefix: DS\n    dir: designs\n    fields:\n      reviewer: { type: text, due: create }\n      risk: { type: enum, values: [low, high] }\n      refs: { type: ids, none: true }\n";
+
+  test("BR-2619: fields declare a shape and due; a wrong declaration is a config error naming type, field and why", () => {
+    expect(canon(repo(DESIGN), "check").code).not.toBe(2);
+    for (const [fields, says] of [
+      ["      risk: { type: enum }\n", "an enum needs `values`"],
+      ["      x: { type: colour }\n", "`types.design.fields.x.type` must be one of"],
+      ["      x: { type: text, due: land }\n", "`types.design.fields.x.due` can only be create"],
+      ["      x: { type: pattern, pattern: \"(?=a)\" }\n", "not a valid regular expression in RE2 syntax"],
+      ["      x: { type: text, none: maybe }\n", "`types.design.fields.x.none` must be true or false"],
+      ["      status: { type: text }\n", "`status` is a field canon owns"],
+    ] as const) {
+      const r = canon(repo(`types:\n  design:\n    prefix: DS\n    dir: designs\n    fields:\n${fields}`), "check");
+      expect(r.code).toBe(2);
+      expect(r.err + r.out).toContain(says);
+    }
+  });
+
+  test("BR-2622: canon check reports a declared field whose value does not fit, and not one left out", () => {
+    const root = repo(DESIGN, {
+      [`canon/designs/${id("DS", 1)}.md`]: doc("DS", 1, 'reviewer: ""\n', "x"),
+      [`canon/designs/${id("DS", 2)}.md`]: doc("DS", 2, 'reviewer: ann\nrefs: "none:"\n', "x"),
+      [`canon/designs/${id("DS", 3)}.md`]: doc("DS", 3, "reviewer: ann\nrisk: medium\n", "x"),
+      [`canon/designs/${id("DS", 4)}.md`]: doc("DS", 4, "", "x"),
+      [`canon/designs/${id("DS", 5)}.md`]: doc("DS", 5, 'reviewer: ann\nrisk: low\nrefs: "none: new design"\n', "x"),
+    });
+    const out = canon(root, "check").out;
+    expect(out).toContain(`${id("DS", 1)}.md: front matter \`reviewer\` is "", not a non-empty text`);
+    expect(out).toContain(`${id("DS", 2)}.md: front matter \`refs\`: "none:" needs a reason after it`);
+    expect(out).toContain(`${id("DS", 3)}.md: front matter \`risk\` is "medium", not one of low, high`);
+    expect(out).not.toContain(`${id("DS", 4)}.md`);
+    expect(out).not.toContain(`${id("DS", 5)}.md`);
+  });
+
+  test("BR-2621: canon doc set writes one declared field after checking it, records doc.set, and refuses everything else", () => {
+    const root = repo(DESIGN, { [`canon/designs/${id("DS", 1)}.md`]: doc("DS", 1, "reviewer: ann\n", "x") });
+    const file = join(root, `canon/designs/${id("DS", 1)}.md`);
+    const set = (...a: string[]) => canon(root, "doc", "set", id("DS", 1), ...a);
+    expect(set("risk", "high")).toMatchObject({ code: 0 });
+    expect(readFileSync(file, "utf8")).toContain("risk: high");
+    expect(set("risk", "high").out).toContain("no change");
+    const before = readFileSync(file, "utf8");
+    for (const [args, code, says] of [
+      [["risk", "medium"], 2, "not one of low, high"],
+      [["refs", "none:"], 2, "needs a reason"],
+      [["status", "done"], 2, "written by canon"],
+      [["owner", "x"], 2, "declares no field `owner`"],
+      [["reviewer", "--clear"], 2, "cannot be removed"],
+    ] as const) {
+      const r = set(...args);
+      expect(r.code).toBe(code);
+      expect(r.err + r.out).toContain(says);
+    }
+    expect(readFileSync(file, "utf8")).toBe(before);
+    expect(set("refs", "BR-1, D-2").code).toBe(0);
+    expect(readFileSync(file, "utf8")).toMatch(/refs:\n {2}- BR-1\n {2}- D-2/);
+    expect(set("refs", "none: new design").code).toBe(0);
+    expect(set("risk", "--clear").code).toBe(0);
+    expect(readFileSync(file, "utf8")).not.toContain("risk:");
+    expect(canon(root, "doc", "set", id("DS", 9), "risk", "high").code).toBe(3);
+    const events = Bun.spawnSync(["bun", MAIN, "events", "--kind", "doc.set", "--json"], { cwd: root, stdout: "pipe", env: { ...process.env, CANON_ACTOR: "agent:test" } }).stdout.toString();
+    expect(JSON.parse(events).length).toBe(4);
   });
 
   test("BR-2055: a project template replaces the built-in one; a declared type without one starts empty", () => {

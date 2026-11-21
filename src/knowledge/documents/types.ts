@@ -5,6 +5,7 @@
  */
 import type { ItemDeclaration } from "./items/model.ts";
 import { BUILTIN_ITEM_DECLARATIONS } from "./items/builtin.ts";
+import type { FieldDeclaration } from "./fields.ts";
 
 export interface DocType {
   /** Type name used in config, templates (`canon/templates/<name>.md`) and `canon doc --type`. */
@@ -16,8 +17,8 @@ export interface DocType {
   /** Allowed statuses; undefined for a type without status (notes). */
   readonly statuses: readonly string[] | undefined;
   readonly defaultStatus: string | undefined;
-  /** Extra front-matter fields every document of this type must fill (BR-2054). */
-  readonly fields: readonly string[];
+  /** Declared front-matter fields: their shape and whether they are stated at creation (BR-2619, D-159). */
+  readonly fields: readonly FieldDeclaration[];
   /**
    * `## ` sections every document of this type must have, each with content (BR-2091). Extra sections are
    * allowed. Rules keep their own fixed shape (BR-2033, BR-2034), so the rule type declares none here.

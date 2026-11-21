@@ -12,7 +12,7 @@ import type { readCorpus } from "./read.ts";
 import { technicalLayerWord, technicalNameAdvice } from "./domain-names.ts";
 import { contractLines } from "../domains/business.ts";
 import { domainLines } from "../domains/list.ts";
-import { createDoc, createDomain, setMeta } from "./write.ts";
+import { createDoc, createDomain, setField, setMeta } from "./write.ts";
 import { refuseOnGuardedMain } from "./guarded.ts";
 import { findDoc } from "../query/query.ts";
 import { waitingJson } from "../changes/deps.ts";
@@ -259,6 +259,17 @@ const doc = defineCommand({
         const type = ws.config.types.find((t) => t.name === d.type)!;
         if (!type.statuses?.includes(String(args.status))) fail({ code: "invalid", message: `${d.type} statuses are: ${type.statuses?.join(", ") ?? "(none)"}` });
         setStatus(d.id, "extra", String(args.status));
+      },
+    }),
+    set: defineCommand({
+      meta: { description: "Set one declared front-matter field of a document to a value its type's declaration allows (--clear removes an optional one); in this worktree, not committed" },
+      args: { id: { type: "positional", required: true }, field: { type: "positional", required: true }, value: { type: "positional", required: false }, clear: { type: "boolean", description: "Remove an optional field" } },
+      run({ args }) {
+        const ws = workspace();
+        const r = setField(ws.root, corpusOf(ws).corpus, String(args.id), String(args.field), args.clear ? undefined : args.value === undefined ? null : String(args.value));
+        if (!r.ok) fail(r.error);
+        if (r.value.changed) ws.db.event(ws.actor, "doc.set", r.value.id, { field: r.value.field, before: r.value.before ?? null, after: r.value.after ?? null });
+        say(r.value.changed ? `${r.value.id}: ${r.value.field} set${r.value.after === undefined ? " (removed)" : ` to ${JSON.stringify(r.value.after)}`} in ${r.value.path}; commit it with your work` : `${r.value.id}: ${r.value.field} is already that; no change`);
       },
     }),
   },

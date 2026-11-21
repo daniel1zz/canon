@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
+import { fieldProblem } from "./fields.ts";
 import { join, relative } from "node:path";
 import { parseDocFile, parseReadme } from "./docfile.ts";
 import { parseLinks, parsePasses } from "./behaviour.ts";
@@ -57,11 +58,12 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
       problems.push({ path, message: bad });
       return undefined;
     }
+    // reason: a declared field is checked where it is written; one left out is not reported here, since a new document is
+    // given it by the command creating it and the landing that adds it, and old documents are not required to have it (BR-2622, D-159)
     for (const field of type.fields) {
-      const v = meta[field];
-      if (v === undefined || v === null || (typeof v === "string" && v.trim() === "") || (Array.isArray(v) && v.length === 0)) {
-        problems.push({ path, message: `front matter \`${field}\` is required for a ${type.name} (canon/config.yaml types.${type.name}.fields)` });
-      }
+      if (meta[field.name] === undefined) continue;
+      const problem = fieldProblem(field, meta[field.name]);
+      if (problem) problems.push({ path, message: `front matter ${problem} (BR-2622)` });
     }
     return { meta, body, status };
   };

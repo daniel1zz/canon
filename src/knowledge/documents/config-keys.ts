@@ -1,4 +1,5 @@
 import { existsSync, readdirSync, readFileSync } from "node:fs";
+import { parseFieldDeclarations } from "./fields.ts";
 import { join } from "node:path";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { configKey, type JsonSchema, TUNABLE } from "../../invocation/key.ts";
@@ -72,7 +73,8 @@ const TYPES_SCHEMA: JsonSchema = {
       dir: { type: "string", pattern: "^[a-z0-9][a-z0-9-]*$" },
       statuses: { type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
       default: { type: "string" },
-      fields: { type: ["array", "null"], items: { type: "string", pattern: "^[a-z_][a-z0-9_]*$", not: { enum: [...RESERVED_FIELDS] } } },
+      // reason: the old list of names or a mapping of name → declaration (BR-2054, BR-2619); readTypes checks the rest
+      fields: { type: ["array", "object", "null"] },
       sections: { type: "array", items: { type: "string", pattern: "^[^#\\n]*\\S[^#\\n]*$" } },
       items: { type: ["object", "null"], additionalProperties: ITEM_DECLARATION_SCHEMA },
     },
@@ -131,10 +133,10 @@ function readTypes(v: unknown): Result<DocType[]> {
     if (typeof declRaw !== "object" || declRaw === null || Array.isArray(declRaw)) return err("invalid", `\`${at}\` must be a mapping`);
     const decl = declRaw as Record<string, unknown>;
     for (const key of Object.keys(decl)) if (!TYPE_KEYS.has(key)) return err("invalid", `unknown key \`${at}.${key}\` (known: ${[...TYPE_KEYS].join(", ")})`);
-    const fields = decl["fields"] ?? [];
-    if (!Array.isArray(fields) || fields.some((f) => typeof f !== "string" || !/^[a-z_][a-z0-9_]*$/.test(f))) return err("invalid", `\`${at}.fields\` must be a list of lowercase field names`);
-    const reserved = (fields as string[]).find((f) => RESERVED_FIELDS.has(f));
-    if (reserved) return err("invalid", `\`${at}.fields\`: \`${reserved}\` is a field canon owns`);
+    const builtinType = types.find((t) => t.builtin && t.name === name);
+    const parsedFields = parseFieldDeclarations(`${at}.fields`, decl["fields"], RESERVED_FIELDS, new Set(builtinType?.fields.map((f) => f.name) ?? []));
+    if (!parsedFields.ok) return parsedFields;
+    const fields = parsedFields.value;
 
     const sectionsRaw = decl["sections"];
     if (sectionsRaw !== undefined && (!Array.isArray(sectionsRaw) || sectionsRaw.some((x) => typeof x !== "string" || x.trim() === "" || /[#\n]/.test(x)))) {
@@ -154,7 +156,7 @@ function readTypes(v: unknown): Result<DocType[]> {
       }
       types[types.indexOf(builtin)] = {
         ...builtin,
-        fields: fields as string[],
+        fields: [...builtin.fields, ...fields],
         ...(sectionsRaw !== undefined ? { sections: sectionsRaw as string[] } : {}),
         items: { ...builtin.items, ...items.value },
       };
@@ -181,7 +183,7 @@ function readTypes(v: unknown): Result<DocType[]> {
     }
     const list = statuses as string[] | undefined;
     if (dflt !== undefined && (list === undefined || typeof dflt !== "string" || !list.includes(dflt))) return err("invalid", `\`${at}.default\` must be one of \`${at}.statuses\``);
-    types.push({ name, prefix, dir, statuses: list, defaultStatus: list ? ((dflt as string | undefined) ?? list[0]) : undefined, fields: fields as string[], sections: (sectionsRaw as string[] | undefined) ?? [], items: items.value, builtin: false });
+    types.push({ name, prefix, dir, statuses: list, defaultStatus: list ? ((dflt as string | undefined) ?? list[0]) : undefined, fields, sections: (sectionsRaw as string[] | undefined) ?? [], items: items.value, builtin: false });
   }
   return ok(types);
 }
