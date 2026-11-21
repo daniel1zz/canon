@@ -114,19 +114,49 @@ function itemsOf(lines: readonly string[], section: ReadonlySet<number>): number
  * one BR-2469 cannot follow. A decision committing to no product behaviour has such items too, so this never fails the check.
  */
 export function unnamedCommitmentNotes(root: string, corpus: Corpus, base: string, docs: readonly Doc[]): string[] {
-  const rulePrefix = `${corpus.types.find((t) => t.name === "rule")!.prefix}-`;
   const out: string[] = [];
   for (const doc of docs) {
     if (doc.kind !== "decision" || !isCurrent(doc) || !existsSync(join(root, doc.path))) continue;
     const now = readFileSync(join(root, doc.path), "utf8");
-    const lines = now.split("\n");
     const added = addedLines(now, textAt(root, base, doc.path));
-    for (const item of itemsOf(lines, sectionLines(now, DECISION_SECTION))) {
+    for (const item of unnamedItems(corpus, now)) {
       if (!item.some((n) => added.has(n))) continue;
-      const text = stripCode(item.map((n) => lines[n - 1]!).join("\n"));
-      if ([...idsIn(corpus.types, text)].some((id) => id.startsWith(rulePrefix))) continue;
       out.push(`note: ${doc.path}:${item[0]} an item of ${doc.id}'s 决定 this work wrote names no rule: a behaviour it commits the product to needs a rule (active, or planned if not built yet) that names ${doc.id}, named here; skip this when the item commits to no product behaviour (BR-2471)`);
     }
   }
   return out;
+}
+
+/** The items of the 决定 section in `text` that name no rule (BR-2471), as 1-based line numbers of `text`. */
+function unnamedItems(corpus: Corpus, text: string): number[][] {
+  const rulePrefix = `${corpus.types.find((t) => t.name === "rule")!.prefix}-`;
+  const lines = text.split("\n");
+  return itemsOf(lines, sectionLines(text, DECISION_SECTION)).filter((item) => {
+    const prose = stripCode(item.map((n) => lines[n - 1]!).join("\n"));
+    return ![...idsIn(corpus.types, prose)].some((id) => id.startsWith(rulePrefix));
+  });
+}
+
+/** An accepted decision no current rule names, whose 决定 has items naming no rule (BR-2597, D-154). */
+export interface Uncovered {
+  readonly id: string;
+  /** The first line of each item naming no rule, in order. */
+  readonly items: readonly string[];
+}
+
+/**
+ * The accepted decisions no active or planned rule names in its prose, with the 决定 items that name no rule (BR-2597,
+ * D-154): a commitment nothing holds after the work that wrote it. A decision with no such item is left out.
+ */
+export function uncoveredDecisions(corpus: Corpus): Uncovered[] {
+  const named = new Set<string>();
+  for (const d of corpus.docs) if (d.kind === "rule" && isCurrent(d)) for (const id of proseIds(corpus.types, d.id, d.body)) named.add(id);
+  const out: Uncovered[] = [];
+  for (const d of corpus.docs) {
+    if (d.kind !== "decision" || d.status !== "accepted" || named.has(d.id)) continue;
+    const lines = d.body.split("\n");
+    const items = unnamedItems(corpus, d.body).map((item) => lines[item[0]! - 1]!.trim());
+    if (items.length > 0) out.push({ id: d.id, items });
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id, "en", { numeric: true }));
 }

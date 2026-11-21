@@ -9,6 +9,7 @@ import type { Change, Corpus } from "../../knowledge/documents/model.ts";
 import { executionStates } from "../execution/state.ts";
 import { standings, STATE_LABEL as VERDICT_LABEL, type Standing } from "../../knowledge/quality/verdicts.ts";
 import { criteriaWithDoc, releasesInProgress, releaseViews } from "../../knowledge/releases/current.ts";
+import { uncoveredDecisions } from "../../knowledge/check/commitments.ts";
 
 /**
  * The agenda's items (BR-2527, D-151): what the calling session should judge or relay, one item each, with how long it
@@ -176,6 +177,11 @@ export function mainItems(ws: Workspace, now: number, states: readonly ChangeSta
   // reason: a flaky test is a reminder for a week, not a hold (BR-2534)
   for (const f of flakyFiles(ws, now)) items.push(item(`flaky:${f.file}`, "flaky", f.since, "failed in the background floor and passed when run again unchanged", "open an issue for this flaky test (one per file), then fix or quarantine it", "open an issue for each flaky test, then fix or quarantine it", "judge", 2));
   items.push(...qualityItems(ws, corpus));
+  // reason: a commitment no rule holds is said until a rule names its decision or the main agent records why not, never a hold (BR-2597, D-154)
+  for (const u of uncoveredDecisions(corpus)) {
+    const said = `${u.items.length} item(s) of its 决定 name no rule and no active or planned rule names it; first: ${clip(u.items[0]!, 60)}`;
+    items.push(item(`commitments:${u.id}`, "commitments", null, `${u.id} ${said}`, `write the rules it commits to (status: planned if not built) naming ${u.id}, or canon work handled commitments:${u.id} --not-doing "<why it commits to no product behaviour>"`, "write rules naming the decision, or canon work handled commitments:<D-n> --not-doing \"<why>\"", "judge", 2));
+  }
   for (const q of questions(ws.db, "pending")) {
     items.push(item(`question:${q.id}`, "question", q.asked_at, clip(q.question), `ask the owner in the conversation, then canon human answer ${q.id} "<answer>" --relayed "<their words>"`, `ask the owner, then canon human answer <n> "<answer>" --relayed "<their words>"`, "owner", 2));
   }
