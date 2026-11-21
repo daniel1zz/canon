@@ -128,6 +128,7 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
   const cap = measure(ws, main.value);
   if (!cap.ok) return cap;
   let added = false;
+  let busy: string[] = [];
   const result = ws.db.db.transaction((): Result<Delegation> => {
     const previous = delegation(ws.db, subject);
     const adds = !previous || previous.ended !== null;
@@ -136,10 +137,11 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
       ws.db.event(ws.actor, "delegation.refuse", subject, { reason: "conflict", worker: previous.worker, owner: previous.owner });
       return err("conflict", `${subject} is already delegated to ${previous.worker} by ${previous.owner}; it is not stalled. Delegate another change, or leave it to ${previous.owner}`);
     }
-    // reason: the subagent of an implicit delegation already runs; capacity guards starting new workers (BR-2610, BR-2526)
-    if (adds && !implicit) {
+    // reason: the subagent of an implicit delegation already runs, so a busy machine is said, not refused (BR-2610, D-156 amending D-136)
+    if (adds) {
       const no = refusal(ws, cap.value);
-      if (no) {
+      if (no && implicit) busy = no.reasons;
+      else if (no) {
         ws.db.event(ws.actor, "delegation.refuse", subject, no.detail);
         return err("refused", refusalMessage(subject, no.reasons));
       }
@@ -160,6 +162,7 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
   }).immediate();
   if (!result.ok) return result;
   if (added) for (const line of unmeasuredLines(cap.value)) say(line);
+  if (busy.length > 0) say(`machine busy: ${busy.join("; ")}; ${subject} was started anyway because subagent ${worker} already runs (BR-2610); start no more subagents until it falls (canon work due)`);
   for (const line of delegationNotice(ws.db, subject)) say(line);
   for (const line of startNotices(ws, subject, true)) say(line);
   say(`contract: ${manifest.map((i) => `${i.id ?? i.path} ${i.hash}`).join(", ")}; task ${taskHash}`);

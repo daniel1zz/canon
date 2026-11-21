@@ -1,5 +1,6 @@
 import { afterEach, expect, test } from "bun:test";
-import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { project, sh, startNew, ws } from "../testkit.ts";
 
@@ -10,8 +11,9 @@ function put(root: string, path: string, text: string) { mkdirSync(join(root, pa
 function commit(root: string) { sh(root, "add", "-A"); sh(root, "commit", "-qm", "fixture"); }
 function cli(root: string, actor: string, args: string[], env: Record<string, string> = {}) {
   const base = { ...process.env } as Record<string, string | undefined>;
+  // reason: fixed machine readings, so a busy machine running this test does not decide what it sees (BR-2526)
   delete base["CLAUDE_DELEGATE_CHILD"]; delete base["CANON_SUBAGENT"];
-  const p = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), ...args], { cwd: root, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...base, CANON_ACTOR: actor, ...env } });
+  const p = Bun.spawnSync(["bun", join(import.meta.dir, "../../invocation/main.ts"), ...args], { cwd: root, stdin: "ignore", stdout: "pipe", stderr: "pipe", env: { ...base, CANON_ACTOR: actor, CANON_MACHINE: "normal,1,8", CANON_MACHINE_DIR: mkdtempSync(join(tmpdir(), "canon-machine-")), ...env } });
   return { code: p.exitCode, text: p.stdout.toString() + p.stderr.toString() };
 }
 function repo(config = "") {
@@ -80,6 +82,7 @@ test("BR-2610 BR-2498: a main session's own subagent starts an undelegated chang
   const r = cli(root, "agent:s1:sub1", ["work", "start", a.change]);
   expect(r.code).toBe(0);
   expect(r.text).toContain("implicit");
+  expect(r.text).not.toContain("machine busy");
   const e = delegationEvent(root, a.change)!;
   expect(e.actor).toBe("agent:s1");
   expect(JSON.parse(e.detail)).toMatchObject({ owner: "agent:s1", worker: "sub1", implicit: true, by: "agent:s1:sub1", epoch: 1 });
@@ -108,5 +111,7 @@ test("BR-2610 BR-2526: the implicit delegation is not refused for machine capaci
   expect(cli(root, "agent:s1", ["work", "delegate", a.change, "--to", "w2"]).code).toBe(1);
   const r = cli(root, "agent:s1:sub1", ["work", "start", a.change]);
   expect(r.code).toBe(0);
+  expect(r.text).toContain("machine busy: ");
+  expect(r.text).toContain("delegate_max_workers");
   expect(claimOf(root, a.change)).toBe("agent:s1:sub1");
 });
