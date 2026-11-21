@@ -30,7 +30,7 @@ function repo(config = "") {
 function change(root: string, title: string, owner: string, rules: string[], keep = false) {
   const s = startNew(root, title, owner);
   const path = join(s.worktree, "canon/changes", readdirSync(join(s.worktree, "canon/changes")).find((p) => p.startsWith(`${s.change}-`) || p === `${s.change}.md`)!);
-  writeFileSync(path, readFileSync(path, "utf8").replace(/rules: \[\]/, `rules: [${rules.join(", ")}]`)); commit(s.worktree);
+  if (rules.length > 0) { writeFileSync(path, readFileSync(path, "utf8").replace(/rules: \[\]/, `rules: [${rules.join(", ")}]`)); commit(s.worktree); }
   if (!keep) expect(cli(s.worktree, owner, ["work", "stop", "--reason", "partial", "--next", "later", "--release"]).code).toBe(0);
   return s;
 }
@@ -114,4 +114,20 @@ test("BR-2610 BR-2526: the implicit delegation is not refused for machine capaci
   expect(r.text).toContain("machine busy: ");
   expect(r.text).toContain("delegate_max_workers");
   expect(claimOf(root, a.change)).toBe("agent:s1:sub1");
+});
+
+test("BR-2614: delegating a change whose text names a planned rule missing from rules: says to add it; a listed or active one is not said", () => {
+  const root = repo();
+  put(root, "canon/rules/task/BR-53.md", rule("BR-53", "Already built.").replace("status: planned", "status: active")); commit(root);
+  const a = change(root, "Names a planned rule", "agent:s1", []);
+  const path = join(a.worktree, "canon/changes", readdirSync(join(a.worktree, "canon/changes")).find((p) => p.startsWith(`${a.change}-`) || p === `${a.change}.md`)!);
+  writeFileSync(path, readFileSync(path, "utf8").replace("## 要改什么\n", "## 要改什么\n\n- BR-51 的加载检查，按 `BR-53` 的写法。\n")); commit(a.worktree);
+  const r = cli(root, "agent:s1", ["work", "delegate", a.change, "--to", "w1"]);
+  expect(r.code).toBe(0);
+  expect(r.text).toContain(`not in rules: BR-51 is planned and named in ${a.change}'s text`);
+  expect(r.text).not.toContain("not in rules: BR-53");
+  const b = change(root, "Lists it", "agent:s2", ["BR-51"]);
+  const listed = cli(root, "agent:s2", ["work", "delegate", b.change, "--to", "w2"]);
+  expect(listed.code).toBe(0);
+  expect(listed.text).not.toContain("not in rules:");
 });

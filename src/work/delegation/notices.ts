@@ -60,6 +60,18 @@ export function unsettledLines(docOf: DocOf, change: Pick<Change, "rules">): str
 }
 
 /**
+ * BR-2614: each rule id the change file's text names that is planned on main but not in its `rules:`: a worker could not
+ * activate it (BR-2501 takes the contract from `rules:`), so it is said before the worker starts.
+ */
+export function unlistedPlannedLines(docOf: DocOf, subject: string, change: Pick<Change, "rules" | "body">): string[] {
+  const listed = new Set(change.rules);
+  const named = [...new Set(change.body.match(/\bBR-\d+\b/g) ?? [])].sort((a, b) => a.localeCompare(b, undefined, { numeric: true }));
+  return named
+    .filter((id) => { const d = docOf(id); return !listed.has(id) && d?.kind === "rule" && d.status === "planned"; })
+    .map((id) => `not in rules: ${id} is planned and named in ${subject}'s text; if ${subject} activates it, add it to rules: and publish that on main, then delegate again, or BR-2501 refuses the worker's activation`);
+}
+
+/**
  * BR-2608: for every other change in progress (a live claim or a live delegation, not closed) whose contract rules meet
  * `subject`'s, one line naming the shared rules and who works on it.
  */
@@ -80,9 +92,9 @@ export function sharedLines(ctx: NoticeContext, subject: string, own: Pick<Chang
   return out;
 }
 
-/** The facts for one change: its BR-2608 lines, and its BR-2609 lines when it is to be delegated. */
-export function changeFacts(ctx: NoticeContext, subject: string, own: Pick<Change, "rules">, delegating: boolean): string[] {
-  return delegating ? [...sharedLines(ctx, subject, own), ...unsettledLines(ctx.docOf, own)] : sharedLines(ctx, subject, own);
+/** The facts for one change: its BR-2608 lines, and its BR-2609 and BR-2614 lines when it is to be delegated. */
+export function changeFacts(ctx: NoticeContext, subject: string, own: Pick<Change, "rules" | "body">, delegating: boolean): string[] {
+  return delegating ? [...sharedLines(ctx, subject, own), ...unsettledLines(ctx.docOf, own), ...unlistedPlannedLines(ctx.docOf, subject, own)] : sharedLines(ctx, subject, own);
 }
 
 /**
