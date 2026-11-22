@@ -8,12 +8,13 @@ import { claimOfWorktree } from "../claims/claims.ts";
 
 const delegateCmd = defineCommand({
   meta: { description: "Delegate a change with a published design contract" },
-  args: { change: { type: "positional", required: true }, to: { type: "string", required: true }, contract: { type: "string", description: "Additional contract ids or paths, separated by commas" } },
+  args: { change: { type: "positional", required: true }, to: { type: "string", required: true }, contract: { type: "string", description: "Additional contract ids or paths, separated by commas" }, light: { type: "string", description: "Declare the delegation light and say why: its worker runs no tests or builds, so the machine's load does not stop it (BR-2632)" } },
   run({ args }) {
     const value: unknown = args.contract;
     const contracts = value === undefined ? [] : String(value).split(",").map((s) => s.trim());
     if (contracts.some((s) => s === "") || new Set(contracts).size !== contracts.length) fail({ code: "invalid", message: "--contract takes a comma-separated list with no empty or duplicate items" });
-    must(delegate(workspace(), String(args.change).toUpperCase(), String(args.to), contracts, say));
+    const light: unknown = args.light;
+    must(delegate(workspace(), String(args.change).toUpperCase(), String(args.to), contracts, say, undefined, light === undefined ? undefined : String(light)));
   },
 });
 

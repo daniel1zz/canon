@@ -2,6 +2,7 @@ import { defineCommand } from "citty";
 import { entry, EXIT, fail, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { takesMany } from "../../invocation/strict.ts";
 import { workTest, workTestFailed } from "./verify.ts";
+import { heavyRun } from "./heavy-run.ts";
 import { backgroundRun, recordExit } from "../land/detach.ts";
 import { stopTest, testInBackground, TEST_RUN } from "./background.ts";
 import { failingOnMainToo, redMainTestLines } from "../watch/redmain.ts";
@@ -56,4 +57,15 @@ const test = takesMany(defineCommand({
   },
 }));
 
-export const verifyCommands: DomainCommands = { commands: [entry("test", 30, test, "work")] };
+/** `canon heavy run [--] <command> [args…]` (BR-2631). */
+const heavyRunCmd = takesMany(defineCommand({
+  meta: { description: "Run a heavy command (recording, export, build) after waiting for the machine load like canon work test does; a compound command goes in sh -c '…'" },
+  args: { command: { type: "positional", required: false, description: "The command and its arguments; put -- before them when they hold options" } },
+  async run({ rawArgs }) {
+    const ws = workspace();
+    const argv = rawArgs[0] === "--" ? rawArgs.slice(1) : [...rawArgs];
+    process.exit(must(await heavyRun(ws, argv, say)));
+  },
+}));
+
+export const verifyCommands: DomainCommands = { commands: [entry("test", 30, test, "work"), entry("run", 1, heavyRunCmd, "heavy")] };

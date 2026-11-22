@@ -106,7 +106,7 @@ function writeEntry(dir: string, e: Entry): void {
 }
 
 /** Takes the mutex, runs `fn`, gives it back; waits while another process holds it, and clears one whose holder is gone. */
-async function withMutex<T>(d: SlotDeps, fn: () => T): Promise<T> {
+export async function withMutex<T>(d: Pick<SlotDeps, "dir" | "now" | "self" | "gone" | "sleep">, fn: () => T): Promise<T> {
   const mutex = join(d.dir, MUTEX);
   for (;;) {
     try {

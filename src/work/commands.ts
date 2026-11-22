@@ -4,6 +4,7 @@ import type { DomainCommands } from "../invocation/command.ts";
 export const workCommands: DomainCommands = {
   groups: [
     { name: "work", rank: 120, meta: { description: "Work lifecycle: start → commit → land" } },
+    { name: "heavy", rank: 122, meta: { description: "Heavy commands: run a project's recording, export or build once the machine load allows" } },
     { name: "chore", rank: 121, meta: { description: "Light changes: a title only; the change file is written when they land through the shared queue" } },
   ],
 };

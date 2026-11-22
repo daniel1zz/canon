@@ -19,7 +19,9 @@ export interface Room {
   readonly held: number;
   readonly max: number;
   readonly fullRuns: number;
-  /** No room only because of the load: a cpu_light change may still be delegated, `fits` of them ignoring the load (BR-2627). */
+  /** The changes whose delegation in force holds a slot and is light (BR-2632), in order. */
+  readonly light: readonly string[];
+  /** No room only because of the load: a light delegation may still be made, `fits` of them ignoring the load (BR-2632). */
   readonly loadOnly: boolean;
   readonly fitsIgnoringLoad: number;
 }
@@ -35,7 +37,7 @@ const short = (n: number): string => String(Math.round(n * 10) / 10);
  * `held` is the slots in use (BR-2526's count), `fullRuns` the full test runs running (BR-2582). With `wasBusy` (watch,
  * BR-2528) the load must fall below HYSTERESIS of the limit before there is room again.
  */
-export function roomOf(ws: Workspace, read: { memory: Memory | undefined; machine: Machine | undefined }, held: number, fullRuns: number, wasBusy = false): Room {
+export function roomOf(ws: Workspace, read: { memory: Memory | undefined; machine: Machine | undefined }, held: number, fullRuns: number, wasBusy = false, light: readonly string[] = []): Room {
   const max = ws.config.delegateMaxWorkers;
   const reasons: string[] = [];
   if (read.memory?.tight) reasons.push(read.memory.text);
@@ -50,13 +52,16 @@ export function roomOf(ws: Workspace, read: { memory: Memory | undefined; machin
     if (m.load5 >= line) reasons.push(`5-minute load ${m.load5.toFixed(1)} on ${m.cpus} CPUs (limit ${short(limit)}${fullRuns > 0 ? " while a full test run is running" : ""})`);
   }
   const fits = Math.max(0, max - held - fullRuns);
-  if (fits === 0) reasons.push(held >= max ? `${held} of delegate_max_workers (${max}) in use` : `${held} of delegate_max_workers (${max}) in use; ${fullRuns} full test run(s) take the last slot(s)`);
+  if (fits === 0) reasons.push(held >= max ? `${held} of delegate_max_workers (${max}) in use${lightNote(light)}` : `${held} of delegate_max_workers (${max}) in use${lightNote(light)}; ${fullRuns} full test run(s) take the last slot(s)`);
   const loadOnly = byLoad && reasons.length === 1;
-  return { room: reasons.length === 0, fits: reasons.length === 0 ? fits : 0, reasons, load: m?.load5, limit, cpus: m?.cpus, held, max, fullRuns, loadOnly, fitsIgnoringLoad: loadOnly ? fits : reasons.length === 0 ? fits : 0 };
+  return { room: reasons.length === 0, fits: reasons.length === 0 ? fits : 0, reasons, load: m?.load5, limit, cpus: m?.cpus, held, max, fullRuns, light, loadOnly, fitsIgnoringLoad: loadOnly ? fits : reasons.length === 0 ? fits : 0 };
 }
 
-/** `load 4.2 of 16 on 8 CPUs, 2/10 slots[, 1 full test run(s) running]` (BR-2581). */
+/** ` (2 light: C-9, C-12)`, at most 5 named, or nothing when no held delegation is light (BR-2581, BR-2632). */
+export const lightNote = (light: readonly string[]): string => (light.length === 0 ? "" : ` (${light.length} light: ${light.slice(0, 5).join(", ")}${light.length > 5 ? `, … +${light.length - 5}` : ""})`);
+
+/** `load 4.2 of 16 on 8 CPUs, 2/10 slots[ (1 light: C-9)][, 1 full test run(s) running]` (BR-2581). */
 export function roomDetail(r: Room): string {
   const load = r.load !== undefined && r.limit !== undefined ? `load ${r.load.toFixed(1)} of ${short(r.limit)} on ${r.cpus} CPUs, ` : "";
-  return `${load}${r.held}/${r.max} slots${r.fullRuns > 0 ? `, ${r.fullRuns} full test run(s) running` : ""}`;
+  return `${load}${r.held}/${r.max} slots${lightNote(r.light)}${r.fullRuns > 0 ? `, ${r.fullRuns} full test run(s) running` : ""}`;
 }

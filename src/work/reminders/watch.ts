@@ -175,7 +175,7 @@ export async function watchDue(ws: Workspace, since: number | undefined, io: Wat
       if (!worker && prev.delegate) {
         const heavy = runningFullRuns(deps.slots);
         if (!heavy.ok) return stop(heavy.error.message, heavy.error.code);
-        const room = roomOf(ws, read(), prev.delegate.room.held, heavy.value.running.length, busy);
+        const room = roomOf(ws, read(), prev.delegate.room.held, heavy.value.running.length, busy, prev.delegate.room.light);
         if (busy && room.room) {
           busy = false;
           const ready = prev.delegate.changes.slice(0, DELEGATE_SHOWN).map((c) => c.id);

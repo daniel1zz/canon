@@ -10,6 +10,8 @@ export interface Delegation {
   readonly acceptor: string | null;
   readonly manifest: readonly ContractItem[];
   readonly taskHash: string;
+  /** Why this delegation is light (BR-2632): its worker runs no tests or builds; null for a heavy delegation. */
+  readonly light: string | null;
   /** When the design owner took the change back (BR-2500); null while the delegation is in force. */
   readonly ended: string | null;
 }
@@ -28,7 +30,7 @@ export function delegationNotice(db: CoordDb, subject: string): string[] {
   const c = db.db.query<{ holder: string; delegation_epoch: number | null }, [string]>("SELECT holder, delegation_epoch FROM claims WHERE subject = ?").get(subject);
   const pending = c?.holder === d.acceptor && c?.delegation_epoch !== d.epoch;
   if (d.ended) return [`${subject}: delegation to ${d.worker} ended at ${d.ended}, taken back by design owner ${d.owner}; epoch ${d.epoch}; delegate it again to hand it to a worker`];
-  return [`${subject}: delegated to ${d.worker}; design owner ${d.owner}; revision ${d.revision}; epoch ${d.epoch}; acceptor ${d.acceptor ?? "none"}${pending ? `; new design pending: canon work accept-design ${subject}` : ""}`];
+  return [`${subject}: delegated to ${d.worker}; design owner ${d.owner}; revision ${d.revision}; epoch ${d.epoch}; acceptor ${d.acceptor ?? "none"}${d.light !== null ? `; light: ${d.light}` : ""}${pending ? `; new design pending: canon work accept-design ${subject}` : ""}`];
 }
 
 /**

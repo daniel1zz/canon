@@ -113,4 +113,28 @@ export const verifyKeys = {
     listed: 223,
     checked: 223,
   }),
+  heavyCommands: configKey<readonly string[]>({
+    key: "heavy_commands",
+    doc: "Regular expressions (JavaScript syntax) that recognise this project's heavy commands (recording, export, build): while the 5-minute load is at the limit, the Bash hook refuses a matching command that does not run as `canon heavy run -- <command>`, which waits for the load like `canon work test` does (BR-2631, D-161). Default none.",
+    default: [],
+    schema: { type: ["array", "null"], items: { type: "string", minLength: 1 }, default: [] },
+    read: (v) => {
+      if (v === null) return ok([]);
+      if (!Array.isArray(v) || v.some((p) => typeof p !== "string")) return err("invalid", "`heavy_commands` must be a list of regular expressions, each a string");
+      for (const [i, p] of v.entries()) {
+        try {
+          new RegExp(p as string);
+        } catch (e) {
+          return err("invalid", `\`heavy_commands\` item ${i + 1} (${JSON.stringify(p)}) is not a valid regular expression: ${(e as Error).message}`);
+        }
+      }
+      return ok(v as string[]);
+    },
+    flow: {
+      steps: ["test.run"],
+      role: optional("[]（默认）：Bash 前的 hook 不拦任何命令"),
+    },
+    listed: 232,
+    checked: 232,
+  }),
 };

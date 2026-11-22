@@ -64,14 +64,20 @@ export function pressure(ws: Workspace, c: Pick<Capacity, "memory" | "machine">)
   return reasons;
 }
 
-export function refusal(ws: Workspace, c: Capacity, cpuLight = false): { reasons: string[]; detail: Record<string, unknown> } | undefined {
+/**
+ * What is checked: `all` for a heavy delegation that adds a worker; `light` (BR-2632) for a light one, which does not look at
+ * the load; `load` for a re-delegation that turns a light delegation heavy, which adds the load check and nothing else.
+ */
+export type Checked = "all" | "light" | "load";
+
+export function refusal(ws: Workspace, c: Capacity, checked: Checked = "all"): { reasons: string[]; detail: Record<string, unknown> } | undefined {
   const rows = ws.db.db.query<{ subject: string }, []>("SELECT subject FROM delegations WHERE ended IS NULL").all();
   const held = rows.filter((r) => !c.free.has(r.subject)).length;
   const max = ws.config.delegateMaxWorkers;
   const perCpu = ws.config.delegateMaxLoadPerCpu;
-  // reason: a worker that runs no tests or builds adds no load; its memory and its slot still count (BR-2627)
-  const reasons = cpuLight ? pressure(ws, { memory: c.memory, machine: undefined }) : pressure(ws, c);
-  if (held >= max) reasons.push(`${held} of delegate_max_workers (${max}) in use`);
+  // reason: a light worker runs no tests or builds, so the load is not its to wait for; its memory and its slot still count, and the heavy steps it runs wait on their own (BR-2632, BR-2630)
+  const reasons = checked === "light" ? pressure(ws, { memory: c.memory, machine: undefined }) : checked === "load" ? pressure(ws, { memory: undefined, machine: c.machine }) : pressure(ws, c);
+  if (checked !== "load" && held >= max) reasons.push(`${held} of delegate_max_workers (${max}) in use`);
   if (reasons.length === 0) return undefined;
   return {
     reasons,
@@ -79,7 +85,7 @@ export function refusal(ws: Workspace, c: Capacity, cpuLight = false): { reasons
   };
 }
 
-/** The load condition alone (BR-2526 condition 2), when it holds: what a cpu_light delegation went past (BR-2627). */
+/** The load condition alone (BR-2526 condition 2), when it holds: what a light delegation went past (BR-2632). */
 export const loadOver = (ws: Workspace, c: Pick<Capacity, "machine">): string | undefined => pressure(ws, { memory: undefined, machine: c.machine })[0];
 
 /** The refusal message (BR-2526). */

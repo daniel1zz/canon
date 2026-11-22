@@ -54,4 +54,21 @@ export const delegationKeys = {
     listed: 222,
     checked: 222,
   }),
+  designProfiles: configKey<readonly string[]>({
+    key: "design_profiles",
+    doc: "The worker profiles (CANON_WORKER_PROFILE, recorded when the worker's session starts) whose workers may open changes and chores and land design documents, read from main (BR-2633, D-162). Default none: every worker only implements.",
+    default: [],
+    schema: { type: ["array", "null"], items: { type: "string", minLength: 1 }, default: [] },
+    read: (v) => {
+      if (v === null) return ok([]);
+      if (!Array.isArray(v) || v.some((p) => typeof p !== "string" || p.trim() === "")) return err("invalid", "`design_profiles` must be a list of worker profile names, each a non-empty string");
+      return ok((v as string[]).map((p) => p.trim()));
+    },
+    flow: {
+      steps: ["start.delegate"],
+      role: optional("[]（默认）：worker 都只实现，不能开变更、不能合入设计"),
+    },
+    listed: 233,
+    checked: 233,
+  }),
 };

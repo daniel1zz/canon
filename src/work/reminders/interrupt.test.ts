@@ -56,7 +56,7 @@ test("BR-2607: with the machine busy the head says why and both ways are still l
   const root = fresh();
   onMain(root, { "canon/changes/C-1.md": changeDoc(1) });
   const busy = agendaLines(must(agenda(ws(root, "agent:s1"), { read: machine(16), slots: slots() })));
-  expect(busy[0]).toBe("delegate: busy (5-minute load 16.0 on 8 CPUs (limit 16)); start or delegate: your call (D-156)");
+  expect(busy[0]).toBe("delegate: busy (5-minute load 16.0 on 8 CPUs (limit 16)); 0/10 slots; light delegations still fit 10: canon work delegate <C-n> --to <name> --light \"<why>\"; start or delegate: your call (D-156)");
   expect(busy[1]).toBe("  ready:C-1 P2 - Work 1 → canon work start C-1 | canon work delegate C-1 --to <name>");
   expect(cli(root, "agent:s1", ["work", "start", "C-1"]).code).toBe(0);
   expect(agendaLines(must(agenda(ws(root, "agent:s1"), { read: machine(16), slots: slots() }))).some((l) => l.startsWith("delegate:"))).toBe(false);

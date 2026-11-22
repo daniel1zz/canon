@@ -12,6 +12,9 @@ import { testFilesFor } from "../../../knowledge/check/tests.ts";
 import { git } from "../../../kernel/git.ts";
 import { landingGroups, type Running } from "../outcome.ts";
 import { forgetEnded } from "../../verify/stop-groups.ts";
+import { heavyEnv } from "../../verify/heavy-step.ts";
+import type { Passed } from "../../verify/load-gate.ts";
+import type { Result } from "../../../kernel/result.ts";
 
 /** Runs the floor in `cwd`, its whole output in the log `name`; `running` lets a signal stop it (BR-2014, BR-2099). */
 export async function runFloor(ws: Workspace, say: Say, cwd: string, name: string, running: Running, command: string = ws.config.floor!): Promise<{ code: number; log: string; tail: string }> {
@@ -20,15 +23,26 @@ export async function runFloor(ws: Workspace, say: Say, cwd: string, name: strin
   mkdirSync(dirname(log), { recursive: true });
   const fd = openSync(log, "w");
   const notes: string[] = [];
+  const gate = running.gate;
+  const full = command === ws.config.floor;
+  // reason: a scoped floor takes no slot but is a heavy step all the same, so it passes the gate here (BR-2630)
+  if (!full && gate) {
+    const g = await gate();
+    if (!g.ok) {
+      closeSync(fd);
+      return { code: 4, log, tail: `canon: ${g.error.message}` };
+    }
+  }
   const code = await floorWithReport(ws.db, ws.config, cwd, command, async (command) => {
     // reason: in a process group of its own, so a signal to the landing stops the floor's children too (BR-2099, #262)
-    const proc = Bun.spawn(["sh", "-c", command], { cwd, stdout: fd, stderr: fd, detached: true });
+    // reason: the floor is a heavy step, so a heavy step it starts does not wait on it again (BR-2630)
+    const proc = Bun.spawn(["sh", "-c", command], { cwd, stdout: fd, stderr: fd, detached: true, env: heavyEnv() });
     const groups = landingGroups(running);
     groups.add(proc.pid);
     const exit = await proc.exited;
     forgetEnded(groups);
     return exit;
-  }, (line) => notes.push(line), undefined, command === ws.config.floor ? { actor: ws.actor, worktree: cwd, say } : undefined);
+  }, (line) => notes.push(line), undefined, full ? { actor: ws.actor, worktree: cwd, say, ...(gate ? { gate } : {}) } : undefined);
   closeSync(fd);
   if (notes.length) appendFileSync(log, notes.map((n) => `${n}\n`).join(""));
   return { code, log, tail: code === 0 ? "" : readFileSync(log, "utf8").split("\n").slice(-40).join("\n") };
@@ -157,6 +171,13 @@ export async function floorWithReport(
   const release = taken.value.release;
   let code = 1;
   try {
+    // reason: the slot is held while the step waits for the load, so another full run does not queue its own wait ahead (BR-2630)
+    const passed = await fullRun.gate?.();
+    if (passed && !passed.ok) {
+      note(`canon: ${passed.error.message}`);
+      return (code = 4);
+    }
+    if (passed?.value === "aborted") return 1;
     code = await reportedFloor(db, config, cwd, command, run, note, failed);
     return code;
   } finally {
@@ -170,6 +191,8 @@ export interface FullRun {
   readonly worktree: string;
   readonly say: (line: string) => void;
   readonly slots?: SlotDeps;
+  /** Passes the load gate once the slot is taken: a full run takes its slot first, then waits for the load (BR-2630). */
+  readonly gate?: () => Promise<Result<Passed>>;
 }
 
 async function reportedFloor(

@@ -89,9 +89,11 @@ export function contractWanted(docOf: (id: string) => Doc | undefined, types: Co
  * (BR-2610); `ws.actor` is then that session, the design owner. It is not refused for machine capacity: the subagent is
  * already running, and refusing its claim frees nothing.
  */
-export function delegate(ws: Workspace, subject: string, worker: string, contracts: readonly string[], say: Say, implicit?: { readonly by: string }): Result<Delegation> {
+export function delegate(ws: Workspace, subject: string, worker: string, contracts: readonly string[], say: Say, implicit?: { readonly by: string }, light?: string): Result<Delegation> {
   if (isWorker(ws.actor) || ws.actor === "agent:unknown") return err("invalid", "only a recognized primary session can delegate work");
   if (!/^[A-Za-z0-9_-]+$/.test(worker)) return err("invalid", "--to is letters, digits, - and _ only");
+  if (light !== undefined && light.trim() === "") return err("invalid", "--light needs the reason this delegation is light: a worker that runs no tests or builds (BR-2632)");
+  const why = light?.trim() ?? null;
   const revision = git(ws.primary, "rev-parse", "--verify", `${ws.config.main}^{commit}`);
   if (!revision.ok) return revision;
   const branches = git(ws.primary, "for-each-ref", "--format=%(refname:short)", "refs/heads/change/");
@@ -139,8 +141,10 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
       return err("conflict", `${subject} is already delegated to ${previous.worker} by ${previous.owner}; it is not stalled. Delegate another change, or leave it to ${previous.owner}`);
     }
     // reason: the subagent of an implicit delegation already runs, so a busy machine is said, not refused (BR-2610, D-156 amending D-136)
-    if (adds) {
-      const no = refusal(ws, cap.value, task.value.change.cpuLight !== undefined);
+    // reason: re-delegating a light delegation as heavy adds only the load check; memory and slots stay unchecked for a re-delegation (BR-2632, BR-2526)
+    const toHeavy = !adds && why === null && previous?.light != null;
+    if (adds || toHeavy) {
+      const no = refusal(ws, cap.value, toHeavy ? "load" : why !== null ? "light" : "all");
       if (no && implicit) busy = no.reasons;
       else if (no) {
         ws.db.event(ws.actor, "delegation.refuse", subject, no.detail);
@@ -159,9 +163,9 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
     if (claim && claim.holder !== ws.actor && !isWorker(claim.holder) && !implicit) return err("conflict", `${subject} is claimed by ${claim.holder}`);
     const accepted = claim && claim.holder === previous?.acceptor;
     if (accepted && worker !== previous!.worker) return err("conflict", `${subject} is held by ${claim.holder}; canon work take it before changing the worker`);
-    const d: Delegation = { subject, worker, owner: ws.actor, revision: revision.value, epoch: (previous?.epoch ?? 0) + 1, acceptor: accepted ? previous!.acceptor : null, manifest, taskHash, ended: null };
-    ws.db.db.query("INSERT INTO delegations(subject,worker,owner,revision,epoch,acceptor,manifest,task_hash) VALUES (?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET worker=excluded.worker,owner=excluded.owner,revision=excluded.revision,epoch=excluded.epoch,acceptor=excluded.acceptor,manifest=excluded.manifest,task_hash=excluded.task_hash,ended=NULL")
-      .run(subject, worker, d.owner, d.revision, d.epoch, d.acceptor, JSON.stringify(manifest), taskHash);
+    const d: Delegation = { subject, worker, owner: ws.actor, revision: revision.value, epoch: (previous?.epoch ?? 0) + 1, acceptor: accepted ? previous!.acceptor : null, manifest, taskHash, light: why, ended: null };
+    ws.db.db.query("INSERT INTO delegations(subject,worker,owner,revision,epoch,acceptor,manifest,task_hash,light) VALUES (?,?,?,?,?,?,?,?,?) ON CONFLICT(subject) DO UPDATE SET worker=excluded.worker,owner=excluded.owner,revision=excluded.revision,epoch=excluded.epoch,acceptor=excluded.acceptor,manifest=excluded.manifest,task_hash=excluded.task_hash,light=excluded.light,ended=NULL")
+      .run(subject, worker, d.owner, d.revision, d.epoch, d.acceptor, JSON.stringify(manifest), taskHash, why);
     if (claim?.holder === ws.actor) ws.db.db.query("DELETE FROM claims WHERE subject = ? AND holder = ?").run(subject, ws.actor);
     added = adds;
     const missing = adds ? unmeasured(cap.value) : [];
@@ -170,9 +174,8 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
   }).immediate();
   if (!result.ok) return result;
   if (added) for (const line of unmeasuredLines(cap.value)) say(line);
-  const light = task.value.change.cpuLight;
-  const over = added && light !== undefined ? loadOver(ws, cap.value) : undefined;
-  if (over) say(`cpu_light: ${over}, not checked for ${subject}: ${light} (BR-2627); if its worker runs tests or builds after all, it adds to that load`);
+  const over = added && why !== null ? loadOver(ws, cap.value) : undefined;
+  if (over) say(`light: ${over}, not checked for ${subject}: ${why}; canon work test and the other heavy steps still wait for the load (BR-2632)`);
   if (busy.length > 0) say(`machine busy: ${busy.join("; ")}; ${subject} was started anyway because subagent ${worker} already runs (BR-2610); start no more subagents until it falls (canon work due)`);
   for (const line of delegationNotice(ws.db, subject)) say(line);
   for (const line of startNotices(ws, subject, true)) say(line);

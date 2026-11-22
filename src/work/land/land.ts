@@ -15,6 +15,8 @@ import { readCorpus } from "../../knowledge/documents/read.ts";
 import { setMeta } from "../../knowledge/documents/write.ts";
 import { approvalOf, gateRefusal } from "./owner-gate.ts";
 import { isWorker } from "../delegation/worker.ts";
+import { delegation } from "../delegation/records.ts";
+import { passHeavyStep } from "../verify/heavy-step.ts";
 import { duplicateHeadings, hasLessons, LESSONS_SECTION, linesSaid } from "../../knowledge/documents/templates.ts";
 import { git, isClean, removeWorktree } from "../../kernel/git.ts";
 import { ensureWatcher, pathCanonReads, timingOf } from "../watch/watch.ts";
@@ -150,6 +152,9 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
   let entry: number | undefined;
   let bound: ReturnType<typeof bindToLander> | undefined;
   const running: Running = { groups: new Set() };
+  // reason: the turn waits for the machine load once, before its first heavy step: the test files it runs itself or the floor, and not at all when it runs neither (BR-2630)
+  let gated: ReturnType<NonNullable<Running["gate"]>> | undefined;
+  running.gate = () => (gated ??= passHeavyStep(ws, { kind: "land", subject: subject ?? ws.actor, worktree: wt, say }));
   // A lander killed by a signal (a tool timeout, Ctrl-C) gives its turn up at once and leaves no rebase half done (BR-2099).
   // reason: registered before the close commit, so a signal while it is made or before the landing queues still takes it back (BR-2018).
   const onSignal = (signal: NodeJS.Signals) => {
@@ -217,10 +222,13 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
         const twice = duplicateHeadings(readFileSync(join(wt, doc.path), "utf8")).find((h) => h.heading === LESSONS_SECTION);
         if (twice) return early("lessons", `${subject}: ${LESSONS_SECTION} appears on lines ${linesSaid(twice.lines)} of ${doc.path}; canon reads only the first, so merge them into one section; commit, then land --finish again`);
         if (!hasLessons(doc.body)) return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
-        // reason: a cpu_light change that changed what tests cover was delegated past the load; said, never refused (BR-2627)
-        if (doc.cpuLight !== undefined) {
-          const heavy = outsideSkipPaths(wt, main, "HEAD");
-          if (heavy.length > 0) say(`note: ${subject} is cpu_light (${doc.cpuLight}) but changes ${heavy.length} path(s) outside floor_skip_paths, which tests cover (${heavy.slice(0, 5).join(", ")}${heavy.length > 5 ? ", …" : ""}); its worker ran tests and added load: mark such work cpu_light no more (BR-2627)`);
+        // reason: a light delegation whose branch changed what tests cover was delegated past the load; said, never refused (BR-2632)
+        const delegated = delegation(ws.db, subject);
+        if (delegated && delegated.ended === null && delegated.light !== null) {
+          // reason: the branch's own changes, not what main gained since it branched (BR-2632)
+          const fork = git(wt, "merge-base", main, "HEAD");
+          const heavy = outsideSkipPaths(wt, fork.ok ? fork.value : main, "HEAD");
+          if (heavy.length > 0) say(`note: ${subject} was delegated light (${delegated.light}) but changes ${heavy.length} path(s) outside floor_skip_paths, which tests cover (${heavy.slice(0, 5).join(", ")}${heavy.length > 5 ? ", …" : ""}); delegate implementation work without --light`);
         }
         // reason: the owner asked to see it before it is done; only this change's finishing waits, a landing without --finish goes on (BR-2616, D-158)
         if (doc.ownerGate !== undefined) {

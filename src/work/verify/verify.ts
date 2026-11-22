@@ -27,6 +27,8 @@ import { groupAlive, stopGroups } from "./stop-groups.ts";
 import { availableParallelism } from "node:os";
 import { jobCap, readCpu, startPool, type CpuSample, type CpuState, type FileResult, type Outcome } from "./pool.ts";
 import { acquireSlot, machineSlots, type Slot, type SlotDeps } from "./slot.ts";
+import { heavyEnv, passHeavyStep } from "./heavy-step.ts";
+import { machineLoad, type LoadDeps } from "./load-gate.ts";
 import type { Workspace } from "../workspace.ts";
 
 /**
@@ -155,7 +157,8 @@ export async function runTestFile(ws: Pick<Workspace, "root" | "db">, template: 
  */
 async function runShell(root: string, command: string, groups: Set<number>): Promise<Outcome> {
   const t0 = performance.now();
-  const proc = Bun.spawn(["sh", "-c", command], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", detached: true });
+  // reason: a heavy step the command starts does not wait on this one again (BR-2630)
+  const proc = Bun.spawn(["sh", "-c", command], { cwd: root, stdout: "pipe", stderr: "pipe", stdin: "ignore", detached: true, env: heavyEnv() });
   groups.add(proc.pid);
   const [stdout, stderr, exitCode] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
   // reason: a group that still has members (a background process the file left) stays, so a stop signal reaches it; dead ones are dropped, so a reused pid is never signalled (BR-2304)
@@ -235,6 +238,8 @@ export interface WorkTestDeps {
   readonly exit: (code: number) => void;
   /** The machine-wide queue of full runs (BR-2576). */
   readonly slots: SlotDeps;
+  /** The machine-wide queue of heavy steps waiting for the load (BR-2630). */
+  readonly load: LoadDeps;
 }
 
 export const machineDeps: WorkTestDeps = {
@@ -246,6 +251,7 @@ export const machineDeps: WorkTestDeps = {
   stop: (groups, hurried) => stopGroups(groups, hurried),
   exit: (code) => process.exit(code),
   slots: machineSlots,
+  load: machineLoad,
 };
 
 const STOP_SIGNALS: readonly NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
@@ -256,38 +262,52 @@ const STOP_SIGNALS: readonly NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
  * so one run reports every problem the floor or the landing check would refuse.
  */
 export async function workTest(ws: Workspace, all: boolean, say: (line: string) => void, deps: WorkTestDeps = machineDeps, only: readonly string[] = []): Promise<Result<WorkTestResult>> {
-  // reason: named files are not a full run and take no slot; a missing test_command fails before anything waits (BR-2576)
-  if (only.length > 0 || !ws.config.testCommand) return runWorkTest(ws, all, say, deps, only);
+  // reason: a missing test_command fails before anything waits (BR-2576, BR-2630)
+  if (!ws.config.testCommand) return runWorkTest(ws, all, say, deps, only);
   const subject = claimOfWorktree(ws.db, ws.root)?.subject ?? null;
   let stoppedWhileWaiting: NodeJS.Signals | undefined;
   const onWaitSignal = (sig: NodeJS.Signals) => {
     stoppedWhileWaiting = sig;
   };
   for (const s of STOP_SIGNALS) deps.signals.on(s, onWaitSignal);
-  let taken: Awaited<ReturnType<typeof acquireSlot>>;
+  let slot: Slot | undefined;
+  const stopped = (what: string): Result<WorkTestResult> => {
+    const sig = stoppedWhileWaiting!;
+    say(`stopped by ${sig} while waiting for ${what}: no test ran`);
+    deps.exit(EXIT_OF_SIGNAL[sig]!);
+    return ok({ files: 0, failed: 0, typecheck: null, check: 0, unmatched: 0, evidence: 0, signal: sig });
+  };
   try {
-    taken = await acquireSlot(deps.slots, {
-      subject, worktree: ws.root, kind: "work-test", max: ws.config.fullTestSlots, say,
-      aborted: () => stoppedWhileWaiting !== undefined,
-      record: (kind, detail) => void ws.db.event(ws.actor, kind, subject, detail),
-    });
+    // reason: named files are not a full run and take no slot (BR-2576)
+    if (only.length === 0) {
+      const taken = await acquireSlot(deps.slots, {
+        subject, worktree: ws.root, kind: "work-test", max: ws.config.fullTestSlots, say,
+        aborted: () => stoppedWhileWaiting !== undefined,
+        record: (kind, detail) => void ws.db.event(ws.actor, kind, subject, detail),
+      });
+      if (!taken.ok) return taken;
+      if (taken.value === "aborted") return stopped("a full test run slot");
+      slot = taken.value;
+    }
+    // reason: every `canon work test`, named files too, waits for the machine load once it has its slot; the wait is over before the time limit starts (BR-2630, BR-2466)
+    const passed = await passHeavyStep(ws, { kind: "test", subject: subject ?? ws.actor, worktree: ws.root, say, aborted: () => stoppedWhileWaiting !== undefined, deps: deps.load });
+    if (!passed.ok) {
+      slot?.release("failed");
+      return passed;
+    }
+    if (passed.value === "aborted") {
+      slot?.release("stopped");
+      return stopped("the machine load");
+    }
   } finally {
     for (const s of STOP_SIGNALS) deps.signals.off(s, onWaitSignal);
   }
-  if (!taken.ok) return taken;
-  if (taken.value === "aborted") {
-    const sig = stoppedWhileWaiting!;
-    say(`stopped by ${sig} while waiting for a full test run slot: no test ran`);
-    deps.exit(EXIT_OF_SIGNAL[sig]!);
-    return ok({ files: 0, failed: 0, typecheck: null, check: 0, unmatched: 0, evidence: 0, signal: sig });
-  }
-  const slot = taken.value;
   let result: Result<WorkTestResult> | undefined;
   try {
     result = await runWorkTest(ws, all, say, deps, only, slot);
     return result;
   } finally {
-    slot.release(result?.ok && !workTestFailed(result.value) ? "passed" : result?.ok && result.value.signal !== undefined ? "stopped" : "failed");
+    slot?.release(result?.ok && !workTestFailed(result.value) ? "passed" : result?.ok && result.value.signal !== undefined ? "stopped" : "failed");
   }
 }
 

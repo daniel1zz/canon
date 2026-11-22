@@ -204,11 +204,11 @@ test("BR-2581 BR-2607: busy says why and still lists both ways; a full test run 
   const w = ws(root);
   const q = queue();
   expect(agendaLines(must(agenda(w, { read: machine(15), slots: q.slots })))[0]).toStartWith("delegate: room for 10 more");
-  expect(agendaLines(must(agenda(w, { read: machine(16), slots: q.slots })))[0]).toBe("delegate: busy (5-minute load 16.0 on 8 CPUs (limit 16)); start or delegate: your call (D-156)");
+  expect(agendaLines(must(agenda(w, { read: machine(16), slots: q.slots })))[0]).toBe("delegate: busy (5-minute load 16.0 on 8 CPUs (limit 16)); 0/10 slots; light delegations still fit 10: canon work delegate <C-n> --to <name> --light \"<why>\"; start or delegate: your call (D-156)");
   q.add(null, 4242, 0);
   const busy = agendaLines(must(agenda(w, { read: machine(15), slots: q.slots })));
-  expect(busy).toEqual(["delegate: busy (5-minute load 15.0 on 8 CPUs (limit 14.4 while a full test run is running)); start or delegate: your call (D-156)", "  ready:C-9 P2 - Work 9 → canon work start C-9 | canon work delegate C-9 --to <name>", "  ready:C-10 P2 - Work 10 → canon work start C-10 | canon work delegate C-10 --to <name>", "heavy: main full test run 0m"]);
-  expect(summary(must(agenda(w, { read: machine(15), slots: q.slots })))[1]).toBe("  delegate: busy (5-minute load 15.0 on 8 CPUs (limit 14.4 while a full test run is running)); delegatable once it falls: C-9, C-10");
+  expect(busy).toEqual(["delegate: busy (5-minute load 15.0 on 8 CPUs (limit 14.4 while a full test run is running)); 0/10 slots; light delegations still fit 9: canon work delegate <C-n> --to <name> --light \"<why>\"; start or delegate: your call (D-156)", "  ready:C-9 P2 - Work 9 → canon work start C-9 | canon work delegate C-9 --to <name>", "  ready:C-10 P2 - Work 10 → canon work start C-10 | canon work delegate C-10 --to <name>", "heavy: main full test run 0m"]);
+  expect(summary(must(agenda(w, { read: machine(15), slots: q.slots })))[1]).toBe("  delegate: busy (5-minute load 15.0 on 8 CPUs (limit 14.4 while a full test run is running)); 0/10 slots; light delegations still fit 9: canon work delegate <C-n> --to <name> --light \"<why>\"; delegatable once it falls: C-9, C-10");
   const slots = roomOf({ ...w, config: { ...w.config, delegateMaxWorkers: 10 } } as Workspace, CALM(), 9, 1);
   expect([slots.room, slots.reasons]).toEqual([false, ["9 of delegate_max_workers (10) in use; 1 full test run(s) take the last slot(s)"]]);
   expect(roomOf(w, machine(1, true)(), 0, 0).reasons).toEqual(["memory pressure warn"]);

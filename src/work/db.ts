@@ -270,6 +270,8 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ["red_main", "files_unknown TEXT"],
   // Why a question was taken back unanswered, superseded or no longer needed; null while it stands (BR-2628, #299).
   ["questions", "withdrawn TEXT"],
+  // Why a delegation is light: its worker runs no tests or builds, so the machine's load does not stop delegating it; null for a heavy one (BR-2632, D-161).
+  ["delegations", "light TEXT"],
 ];
 
 /**

@@ -88,6 +88,9 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   if (!reports.ok) return refuse("environment", reports.error.message);
   const unreported = [...reports.value.relevant].sort();
   if (unreported.length > 0 && landing.value.testCommand) {
+    // reason: the test files the landing runs itself are a heavy step: the turn waits for the load before the first of them (BR-2630)
+    const gated = await v.running.gate?.();
+    if (gated && !gated.ok) return refuse("environment", gated.error.message);
     const runs = await runLandingTests(ws, wt, landing.value.testCommand, unreported, landingGroups(v.running));
     for (const r of runs) say(`tested ${r.file} after the rebase, as its content there had no report: ${r.exitCode === 0 ? "pass" : "fail"}`);
     const broken = runs.find((r) => r.exitCode !== 0);

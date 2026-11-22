@@ -1,4 +1,6 @@
 import type { Finding } from "../../knowledge/check/check.ts";
+import type { Result } from "../../kernel/result.ts";
+import type { Passed } from "../verify/load-gate.ts";
 import type { Fetcher } from "../../knowledge/check/sources.ts";
 
 export interface LandOptions {
@@ -33,6 +35,11 @@ export interface Running {
   groups?: Set<number> | undefined;
   /** The rule or duplicate review command's process group (BR-2296). */
   review?: { kill(): void } | undefined;
+  /**
+   * The landing's pass through the load gate, made once at the first heavy step of the turn: the floor or the test files
+   * it runs itself (BR-2630). Later steps and the batch's members get the same answer.
+   */
+  gate?: (() => Promise<Result<Passed>>) | undefined;
   /** The temporary worktree the review commands run in, while it exists (BR-2216). */
   reviewTree?: string | undefined;
   /** The temporary worktree at the landed commit the review after landing reads the documents from, while it exists (BR-2441). */

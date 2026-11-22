@@ -1,3 +1,4 @@
+import { heavyRefusal } from "../verify/heavy-hook.ts";
 import { effectiveAgentSession } from "../agent-session.ts";
 import { agentSession, type AgentRuntime } from "../../kernel/agent.ts";
 import { launcherSubagent, openWorkspace } from "../workspace.ts";
@@ -22,6 +23,9 @@ export function runAsCheck(raw: string, fallbackCwd: string, runtime: AgentRunti
   const command = typeof toolInput === "object" && toolInput !== null ? (toolInput as Record<string, unknown>)["command"] : undefined;
   const cwd = typeof input?.["cwd"] === "string" && input["cwd"] !== "" ? input["cwd"] : fallbackCwd;
   if (typeof command !== "string") return skip("bad-input", "", cwd, undefined);
+  // reason: before the `canon` shortcut below, since a heavy command is no canon command; it reads only the project's configuration, and only the commands it matches go on to read the load (BR-2631)
+  const heavy = heavyRefusal(command, cwd);
+  if (heavy !== undefined) return `${JSON.stringify({ hookSpecificOutput: { hookEventName: "PreToolUse", permissionDecision: "deny", permissionDecisionReason: heavy } })}\n`;
   // reason: almost every Bash call has no `canon` in it; those pass without reading anything else, so the hook costs one process start (D-62)
   if (!command.includes("canon")) return "";
   const context = runtime === "codex" ? effectiveAgentSession(process.env, cwd) : undefined;

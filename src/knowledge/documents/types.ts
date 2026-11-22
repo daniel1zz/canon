@@ -40,7 +40,7 @@ export interface DocType {
 export const BUILTIN_TYPES: readonly DocType[] = [
   { name: "rule", prefix: "BR", dir: "rules", statuses: ["active", "retired", "planned"], defaultStatus: "active", fields: [stated("business", "text", false)], sections: [], items: {}, builtin: true },
   { name: "decision", prefix: "D", dir: "decisions", statuses: ["proposed", "accepted", "superseded"], defaultStatus: "proposed", fields: [stated("amends", "ids", true), { name: "revised_because", type: "enum", values: REVISION_REASONS, none: false, own: true }], sections: ["背景", "方案", "决定", "后果"], items: {}, builtin: true },
-  { name: "change", prefix: "C", dir: "changes", statuses: ["open", "done", "dropped"], defaultStatus: "open", fields: [stated("owner_gate", "text", true), stated("advances", "ids", true), { name: "cpu_light", type: "text", none: false }], sections: ["为什么", "要改什么"], items: BUILTIN_ITEM_DECLARATIONS["change"] ?? {}, builtin: true },
+  { name: "change", prefix: "C", dir: "changes", statuses: ["open", "done", "dropped"], defaultStatus: "open", fields: [stated("owner_gate", "text", true), stated("advances", "ids", true)], sections: ["为什么", "要改什么"], items: BUILTIN_ITEM_DECLARATIONS["change"] ?? {}, builtin: true },
   { name: "note", prefix: "N", dir: "notes", statuses: undefined, defaultStatus: undefined, fields: [], sections: [], items: {}, builtin: true },
   // reason: built in, not declared, because only canon's code can write `shipped_at`, run `canon release` and freeze a shipped release (D-61)
   { name: "release", prefix: "R", dir: "releases", statuses: ["planned", "active", "shipped", "dropped"], defaultStatus: "planned", fields: [stated("features", "ids", true)], sections: ["目标", "用户", "范围", "不做", "成功标准", "故事地图切片"], items: {}, builtin: true },

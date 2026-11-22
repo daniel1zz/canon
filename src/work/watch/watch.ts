@@ -18,6 +18,7 @@ import { floorWithReport } from "../land/checks/floor.ts";
 import { REPORT_PLACEHOLDER } from "../verify/report.ts";
 import { publishedCanonReads } from "./published.ts";
 import { runLogged } from "./run.ts";
+import { gateOnce, HEAVY_ENV, passHeavyStep } from "../verify/heavy-step.ts";
 import { acceptAfterFloor } from "../../knowledge/accept/accept.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { finishInterrupted, revertBad, runFiles } from "./revert.ts";
@@ -340,7 +341,7 @@ async function testCommit(ws: Workspace, say: Say, sha: string): Promise<Result<
           code = setup;
           why = `setup exited ${setup}`;
         } else {
-          code = await floorWithReport(ws.db, config.value, dir, config.value.floor, (command) => runLogged(command, dir, fd), (line) => writeSync(fd, `${line}\n`), (f) => { failing = f; }, { actor: ws.actor, worktree: dir, say: (line) => writeSync(fd, `${line}\n`) });
+          code = await floorWithReport(ws.db, config.value, dir, config.value.floor, (command) => runLogged(command, dir, fd, HEAVY_ENV), (line) => writeSync(fd, `${line}\n`), (f) => { failing = f; }, { actor: ws.actor, worktree: dir, say: (line) => writeSync(fd, `${line}\n`), gate: gateOnce(() => passHeavyStep(ws, { kind: "floor", subject: "main", worktree: dir, say: (line) => writeSync(fd, `${line}\n`) })) });
           why = `floor exited ${code}`;
           // reason: a failure whose failing files all pass when run again unchanged is a flaky test, not a broken main (BR-2534)
           if (code !== 0 && failing.length > 0 && config.value.testCommand) {

@@ -7,7 +7,7 @@ import type { Workspace } from "../workspace.ts";
 import { age, ageOf, mainItems, renderDue, workerItems, type DueItem } from "./due.ts";
 import { holds, outcomes } from "./handled.ts";
 import { runningFullRuns, type HeavyRuns, type Slots } from "./heavy.ts";
-import { roomDetail, roomOf, type Room } from "./room.ts";
+import { lightNote, roomDetail, roomOf, type Room } from "./room.ts";
 import { interruptItems } from "./interrupt.ts";
 import { changeFacts, contextOf } from "../delegation/notices.ts";
 import { DEFAULT_TIER, type Tier } from "../priority/tiers.ts";
@@ -25,8 +25,6 @@ export type Readings = () => ReturnType<typeof readings>;
 export interface Ready {
   readonly id: string;
   readonly title: string;
-  /** Its `cpu_light` reason (BR-2627). */
-  readonly cpuLight?: string;
 }
 
 /** A change that can start now, as the agenda's first group lists it (BR-2607): both ways, and the facts to weigh. */
@@ -91,8 +89,10 @@ export function agenda(ws: Workspace, opts: AgendaOptions = {}): Result<Agenda> 
   }
   const closed = new Set(states.filter(isClosed).map((s) => s.id));
   // reason: a slot is held by a delegation in force on a change not closed and not stalled, as BR-2526 counts it
-  const held = states.filter((s) => s.delegation !== undefined && !isClosed(s) && s.stalled === undefined).length;
-  const room = roomOf(ws, machine, held, heavy.running.length, opts.wasBusy);
+  const holding = states.filter((s) => s.delegation !== undefined && !isClosed(s) && s.stalled === undefined).map((s) => s.id);
+  const held = holding.length;
+  const lightIds = new Set(ws.db.db.query<{ subject: string }, []>("SELECT subject FROM delegations WHERE ended IS NULL AND light IS NOT NULL").all().map((r) => r.subject));
+  const room = roomOf(ws, machine, held, heavy.running.length, opts.wasBusy, holding.filter((id) => lightIds.has(id)).sort((a, b) => Number(a.replace(/\D/g, "")) - Number(b.replace(/\D/g, ""))));
   const done = outcomes(ws);
   const keep = (key: string, since: string | null): boolean => {
     const o = done.get(key);
@@ -104,13 +104,10 @@ export function agenda(ws: Workspace, opts: AgendaOptions = {}): Result<Agenda> 
   const startable = states.filter((s): s is ChangeState & { change: NonNullable<ChangeState["change"]> } => (s.state === "ready-delegatable" || s.state === "ready-self") && s.change !== undefined && keep(`ready:${s.id}`, null));
   const ready: ReadyItem[] = startable.map((s) => {
     const delegatable = s.state === "ready-delegatable";
-    const light = s.change.cpuLight;
-    // reason: only the load stops delegating now, and this one adds none: said where the main agent chooses (BR-2627)
-    const lightFact = light !== undefined && delegatable && room.loadOnly && room.fitsIgnoringLoad > 0 ? [`cpu_light: ${light}; the load does not stop delegating it (BR-2627)`] : [];
-    return { id: s.id, title: s.change.title, ...(light !== undefined ? { cpuLight: light } : {}), tier: s.priority?.tier ?? DEFAULT_TIER, delegatable, notDelegatable: s.notDelegatable, facts: [...changeFacts(ctx, s.id, s.change, delegatable), ...lightFact] };
+    return { id: s.id, title: s.change.title, tier: s.priority?.tier ?? DEFAULT_TIER, delegatable, notDelegatable: s.notDelegatable, facts: changeFacts(ctx, s.id, s.change, delegatable) };
   });
   return ok({
-    delegate: { room, changes: ready.filter((r) => r.delegatable).map((r) => ({ id: r.id, title: r.title, ...(r.cpuLight !== undefined ? { cpuLight: r.cpuLight } : {}) })), ready },
+    delegate: { room, changes: ready.filter((r) => r.delegatable).map((r) => ({ id: r.id, title: r.title })), ready },
     judge: items.filter((it) => it.group === "judge").sort(byOrder),
     owner: items.filter((it) => it.group === "owner").sort(byOrder),
     yours: [],
@@ -155,26 +152,24 @@ export function heavyLine(h: HeavyRuns, now: number): string | undefined {
   return `heavy: ${running || "none running"}${h.waiting > 0 ? `; ${h.waiting} waiting` : ""}`;
 }
 
+/** With only the load in the way a light delegation may still be made, up to the slots that fit (BR-2581, BR-2632). */
+const lightFits = (d: NonNullable<Agenda["delegate"]>): boolean => d.room.loadOnly && d.room.fitsIgnoringLoad > 0;
+
+/** The busy head's reasons, and when only the load is in the way, the slots and the light delegation that still fits (BR-2581). */
+function busyHead(d: NonNullable<Agenda["delegate"]>): string {
+  const light = lightFits(d) ? `; ${d.room.held}/${d.room.max} slots${lightNote(d.room.light)}; light delegations still fit ${d.room.fitsIgnoringLoad}: canon work delegate <C-n> --to <name> --light "<why>"` : "";
+  return `delegate: busy (${d.room.reasons.join("; ")})${light}`;
+}
+
 /** The delegate group's head (BR-2581). */
 export function delegateHead(d: NonNullable<Agenda["delegate"]>): string {
   if (d.room.room) return `delegate: room for ${d.room.fits} more (${roomDetail(d.room)})`;
-  const { light, rest } = lightNow(d);
-  const now = light.length > 0 ? `; cpu_light, delegatable now: ${light.slice(0, DELEGATE_SHOWN).map((c) => c.id).join(", ")}` : "";
-  return `delegate: busy (${d.room.reasons.join("; ")})${now}; delegatable once it falls: ${rest.slice(0, DELEGATE_SHOWN).map((c) => c.id).join(", ") || "none"}`;
-}
-
-/** BR-2627: with only the load in the way, the cpu_light changes can be delegated now, up to the slots that fit. */
-function lightNow(d: NonNullable<Agenda["delegate"]>): { light: readonly Ready[]; rest: readonly Ready[] } {
-  if (!d.room.loadOnly || d.room.fitsIgnoringLoad === 0) return { light: [], rest: d.changes };
-  const light = d.changes.filter((c) => c.cpuLight !== undefined).slice(0, d.room.fitsIgnoringLoad);
-  return { light, rest: d.changes.filter((c) => !light.includes(c)) };
+  return `${busyHead(d)}; delegatable once it falls: ${d.changes.slice(0, DELEGATE_SHOWN).map((c) => c.id).join(", ") || "none"}`;
 }
 
 /** The first group's head in `canon work due` (BR-2607): the machine's room, and that the choice is the main agent's. */
 export function startHead(d: NonNullable<Agenda["delegate"]>): string {
-  const light = lightNow(d).light;
-  const room = d.room.room ? `delegate: room for ${d.room.fits} more (${roomDetail(d.room)})` : `delegate: busy (${d.room.reasons.join("; ")})${light.length > 0 ? `; cpu_light, delegatable now: ${light.map((c) => c.id).join(", ")}` : ""}`;
-  return `${room}; start or delegate: your call (D-156)`;
+  return `${d.room.room ? `delegate: room for ${d.room.fits} more (${roomDetail(d.room)})` : busyHead(d)}; start or delegate: your call (D-156)`;
 }
 
 /** One change that can start (BR-2607): `ready:C-5 P2 - <title> → canon work start C-5 | canon work delegate C-5 --to <name>`. */
@@ -233,7 +228,7 @@ const itemJson = (it: DueItem) => ({ key: it.key, kind: it.kind, since: it.since
 export function agendaJson(a: Agenda): Record<string, unknown> {
   const d = a.delegate;
   return {
-    delegate: d ? { room: d.room.room, fits: d.room.fits, reasons: d.room.reasons, load: d.room.load ?? null, limit: d.room.limit ?? null, cpus: d.room.cpus ?? null, held: d.room.held, max: d.room.max, full_runs: d.room.fullRuns, changes: d.changes.map((c) => c.id), cpu_light_now: lightNow(d).light.map((c) => c.id), ready: d.ready.map((r) => ({ id: r.id, tier: r.tier, delegatable: r.delegatable, not_delegatable: r.notDelegatable, facts: r.facts })) } : null,
+    delegate: d ? { room: d.room.room, fits: d.room.fits, reasons: d.room.reasons, load: d.room.load ?? null, limit: d.room.limit ?? null, cpus: d.room.cpus ?? null, held: d.room.held, max: d.room.max, full_runs: d.room.fullRuns, changes: d.changes.map((c) => c.id), light: d.room.light, light_fits: lightFits(d), ready: d.ready.map((r) => ({ id: r.id, tier: r.tier, delegatable: r.delegatable, not_delegatable: r.notDelegatable, facts: r.facts })) } : null,
     judge: a.judge.map(itemJson),
     owner: a.owner.map(itemJson),
     yours: a.yours.map(itemJson),
