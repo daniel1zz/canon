@@ -10,7 +10,7 @@ advances: "none: 修工具缺口"
 
 ## 为什么
 
-GitHub #299：`canon human` 没法撤回一个没回答、已经被后来的问题取代或不再需要的问题。旧问题一直列在 `canon human pending` 和变更的 `waiting-owner` 里，会话照列表又去问负责人一次（zhushenkongjian 的 C-1076：#63、#66 早已由别的问题处理，仍显示在等）。
+GitHub #299：`canon human` 没法撤回一个没回答、已经被后来的问题取代或不再需要的问题。旧问题一直列在 `canon human pending` 和变更的 `waiting-owner` 里，会话照列表又去问负责人一次（zhushenkongjian 的 `C-1076`：#63、#66 早已由别的问题处理，仍显示在等）。
 
 ## 要改什么
 
