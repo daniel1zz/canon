@@ -32,6 +32,8 @@ export function missingStatedFields(wt: string, main: string, layout: Parameters
   const lines: string[] = [];
   for (const doc of corpus.docs) {
     if (!paths.has(doc.path)) continue;
+    // reason: a chore's light change file is written by its own landing's close commit, which the check in the turn sees (BR-2624, BR-2458)
+    if (doc.kind === "change" && doc.chore !== undefined) continue;
     const typeName = doc.kind === "extra" ? doc.type : doc.kind;
     const type = corpus.types.find((t) => t.name === typeName);
     if (!type) continue;
