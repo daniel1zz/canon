@@ -2,10 +2,15 @@
 id: C-688
 title: a change marked light is delegated while the machine's load is high
   (memory and slots still checked)
-status: open
-rules: [BR-2627]
+status: done
+rules:
+  - BR-2627
 owner_gate: "none: 负责人在对话里已定方向（标记轻任务），无需再批准"
 advances: "none: 调度改进，不属于当前版本的成功标准"
+passes:
+  BR-2526: c5c1cd2e5d2a1001 test
+  BR-2581: 72ca709b826a7ccf test
+  BR-2627: ff0d83c86849e496 test
 ---
 
 ## 为什么
