@@ -47,3 +47,7 @@ export function missingStatedFields(wt: string, main: string, layout: Parameters
   }
   return { lines };
 }
+
+/** The refusal for the lines `missingStatedFields` gave (BR-2624). */
+export const statedFieldsMessage = (lines: readonly string[]): string =>
+  `${lines.length} field(s) to state on the documents this landing adds (BR-2624); set each in this worktree, commit, and land again:\n${lines.map((l) => `  ${l}`).join("\n")}`;

@@ -1,7 +1,8 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
 import { mkdirSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { FAST, project, quiet, sh, startNew, ws } from "../../testkit.ts";
+import { FAST, project, quiet, sh, startNew, waitFor, ws } from "../../testkit.ts";
+import { enqueue, finishEntry, tryTurn } from "../queue/queue.ts";
 import { land } from "../land.ts";
 
 // reason: each case lands once or twice; a loaded machine took longer than bun's 5 s default
@@ -88,4 +89,20 @@ test("BR-2624: a field main declares after the branch started is stated before i
   expect(refused).toMatchObject({ kind: "refused", reason: "fields" });
   expect(refused.kind === "refused" && refused.message).toContain(`canon doc set ${f.change} risk "<value>", the value one of low, high`);
   expect(refused.kind === "refused" && refused.message).not.toContain("owner_gate");
+});
+
+test("BR-2624: a field main declares while the landing waits in the queue is checked again in its turn, after the rebase, and refuses it", async () => {
+  const f = started();
+  const other = ws(f.root, "agent:b");
+  const ahead = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
+  expect(tryTurn(other.db, ahead).mine).toBe(true); // someone else is landing right now
+  const landing = finish(f.worktree);
+  // the check before queueing passed: main declared nothing new yet
+  await waitFor("the landing to queue", () => ws(f.root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM queue WHERE state = 'waiting'").get()!.n === 1);
+  writeFileSync(join(f.root, "canon/config.yaml"), `${readFileSync(join(f.root, "canon/config.yaml"), "utf8")}types:\n  change:\n    fields:\n      risk: { type: enum, values: [low, high], due: create }\n`);
+  sh(f.root, "add", "-A"); sh(f.root, "commit", "-qm", "main declares risk");
+  finishEntry(other.db, ahead, "landed", "ok");
+  const refused = await landing;
+  expect(refused).toMatchObject({ kind: "refused", reason: "fields" });
+  expect(refused.kind === "refused" && refused.message).toContain(`canon doc set ${f.change} risk "<value>", the value one of low, high`);
 });

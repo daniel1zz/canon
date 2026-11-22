@@ -1,3 +1,4 @@
+import { missingStatedFields, statedFieldsMessage } from "./fields.ts";
 import { git } from "../../../kernel/git.ts";
 import type { Say, Workspace } from "../../workspace.ts";
 import { changeIdsOnBranches } from "../../session/inflight.ts";
@@ -65,6 +66,10 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   // reason: the same check as a new config key, since an older canon rejects both alike; one reason, one message per kind (BR-2248)
   const unknown = [...(added.value.length > 0 ? [keysAddedAndUsedMessage(added.value, v.main)] : []), ...(dated.value.length > 0 ? [checksAddedAndReviewedMessage(dated.value, v.main)] : [])];
   if (unknown.length > 0) return refuse("config-key", unknown.join("\n"));
+  // reason: checked before queueing too, but main may have declared a field while this landing waited; main as it is now decides (BR-2624, #297)
+  const stated = missingStatedFields(wt, v.main, ws.config);
+  if ("error" in stated) return refuse("environment", stated.error);
+  if (stated.lines.length > 0) return refuse("fields", statedFieldsMessage(stated.lines));
   const read = readCorpus(wt, ws.config.types, ws.config);
   const testsFound = testFilesFor(wt, ws.config);
   if (!testsFound.ok) return refuse("check", testsFound.error.message);
