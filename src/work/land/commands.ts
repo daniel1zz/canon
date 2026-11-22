@@ -12,6 +12,9 @@ import { STALL_LIMIT, unstall } from "./stall.ts";
 import { choreIn, isChore } from "../session/subject.ts";
 import { isWorker } from "../delegation/worker.ts";
 import { afterLandLines } from "../reminders/related.ts";
+import { changeStates } from "../../knowledge/changes/state.ts";
+import { normalizeSubject } from "../session/subject.ts";
+import { keepApproval } from "./owner-gate.ts";
 
 /** `canon work land`. */
 
@@ -93,4 +96,29 @@ const unstallCmd = defineCommand({
   },
 });
 
-export const landCommands: DomainCommands = { commands: [entry("land", 20, landCmd, "work"), entry("land", 20, choreLandCmd, "chore"), entry("unstall", 21, unstallCmd, "work")] };
+/** `canon work keep-approval`: the main session keeps the owner's approval of an earlier owner_gate text for the current one (BR-2626). */
+const keepApprovalCmd = defineCommand({
+  meta: { description: "Keep the owner's approval of an earlier owner_gate text after a wording fix (main session or a person only)" },
+  args: {
+    change: { type: "positional", required: true, description: "The gated change (C-n)" },
+    question: { type: "string", required: true, description: "The approve question the owner answered about the earlier text" },
+    reason: { type: "string", required: true, description: "Why the new text asks nothing the owner did not approve" },
+  },
+  run({ args }) {
+    const ws = workspace();
+    const id = normalizeSubject(String(args.change));
+    const question = Number(String(args.question).replace(/^#/, ""));
+    if (!Number.isInteger(question) || question <= 0) fail({ code: "invalid", message: `--question must be a question number, got ${JSON.stringify(args.question)}` });
+    const states = changeStates(ws, { delegatable: false });
+    if (!states.ok) fail(states.error);
+    const state = states.value.states.find((s) => s.id === id);
+    if (!state?.change) fail({ code: "not_found", message: `${id}: no such change` });
+    const gate = state.change.ownerGate;
+    if (gate === undefined) fail({ code: "refused", message: `${id} has no owner_gate to approve` });
+    const r = keepApproval(ws.db, ws.actor, id, gate, question, String(args.reason));
+    if (!r.ok) fail({ code: r.code, message: r.message });
+    say(`${id}: the owner's approval in question #${question} of ${JSON.stringify(r.from)} now covers ${JSON.stringify(gate)}; canon overview lists it for the owner to check`);
+  },
+});
+
+export const landCommands: DomainCommands = { commands: [entry("land", 20, landCmd, "work"), entry("land", 20, choreLandCmd, "chore"), entry("unstall", 21, unstallCmd, "work"), entry("keep-approval", 22, keepApprovalCmd, "work")] };

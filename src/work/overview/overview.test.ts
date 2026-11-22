@@ -144,6 +144,18 @@ describe("canon overview", () => {
     expect(json.ungated.find((u) => u.id === C(20))?.landed_at).toBeNull();
   });
 
+  test("BR-2625 BR-2626: an approval the main session kept for a reworded owner_gate in the last 7 days is listed after the none changes with the old and new text and the reason; an older one is not", () => {
+    const root = ungatedFixture(0);
+    const keep = ws(root).db.db.query("INSERT INTO events(ts, actor, kind, subject, detail) VALUES (?, 'agent:a', 'owner-gate.keep', ?, ?)");
+    keep.run(new Date(Date.now() - 86_400_000).toISOString(), C(7), JSON.stringify({ question: 12, from: "设计稿", gate: "设计稿（含封面）", reason: "封面原本就在稿里" }));
+    keep.run(new Date(Date.now() - 10 * 86_400_000).toISOString(), C(8), JSON.stringify({ question: 3, from: "a", gate: "b", reason: "太久" }));
+    const lines = section(canon(root, "overview").out);
+    expect(lines.slice(1)).toEqual([expect.stringMatching(new RegExp(`^${C(5)} 变更5  合入 `)), expect.stringMatching(new RegExp(`^${C(7)} 变更7  沿用旧批准 \\d{4}-\\d{2}-\\d{2} \\d{2}:\\d{2} UTC：#12 批准的「设计稿」沿用到「设计稿（含封面）」，封面原本就在稿里$`))]);
+    const json = JSON.parse(canon(root, "overview", "--json").out) as { ungated: { id: string; kept_at: string | null }[] };
+    expect(json.ungated.find((u) => u.id === C(7))?.kept_at).not.toBeNull();
+    expect(json.ungated.find((u) => u.id === C(5))?.kept_at).toBeNull();
+  });
+
   test("BR-2505: with no active release the lowest planned one stands in with a hint; with none at all the section says so and the rest still comes", () => {
     const root = fixture();
     write(root, { [`canon/releases/${R(3)}.md`]: release(3, "planned", CRITERIA), [`canon/releases/${R(10)}.md`]: release(10, "planned") });

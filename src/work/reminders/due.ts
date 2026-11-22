@@ -12,7 +12,7 @@ import { criteriaWithDoc, releasesInProgress, releaseViews } from "../../knowled
 import { uncoveredDecisions } from "../../knowledge/check/commitments.ts";
 import { interruptsStalled } from "./interrupt.ts";
 import { slowItems } from "./slow.ts";
-import { approvalOf, askLine } from "../land/owner-gate.ts";
+import { approvalOf, askLine, keepLine } from "../land/owner-gate.ts";
 
 /**
  * The agenda's items (BR-2527, D-151): what the calling session should judge or relay, one item each, with how long it
@@ -184,7 +184,7 @@ export function mainItems(ws: Workspace, now: number, states: readonly ChangeSta
     if (gate === undefined || s.state === "landed" || s.state === "dropped") continue;
     const a = approvalOf(ws.db, s.id, gate);
     if (a.approved) continue;
-    const before = a.latest ? `; question #${a.latest.id} was answered ${JSON.stringify(a.latest.answer)}${a.latest.owners ? "" : " (not the owner's own answer)"}` : a.stale ? `; question #${a.stale.id} was about an earlier owner_gate text, ${JSON.stringify(clip(a.stale.gate, 40))}, so ask again` : "";
+    const before = a.latest ? `; question #${a.latest.id} was answered ${JSON.stringify(a.latest.answer)}${a.latest.owners ? "" : " (not the owner's own answer)"}` : a.stale ? `; question #${a.stale.id} was about an earlier owner_gate text, ${JSON.stringify(clip(a.stale.gate, 40))}, so ask again${a.stale.approved ? `, or keep its approval if the new text asks nothing more: ${keepLine(s.id, a.stale.id)}` : ""}` : "";
     if (a.pending !== undefined) items.push(item(`owner-gate:${s.id}`, "owner-gate", null, `${s.id} needs the owner's approval of: ${clip(gate, 60)}; waiting for the answer to question #${a.pending}`, `ask the owner question #${a.pending} in the conversation, word for word, with the question tool`, "ask the owner the approve question in the conversation", "judge", 2));
     else items.push(item(`owner-gate:${s.id}`, "owner-gate", null, `${s.id} needs the owner's approval of: ${clip(gate, 60)}; ask when it is ready to show${before}`, askLine(s.id, gate), `canon human ask "approve <n>: <owner_gate>?" --option 批准,不批准 --change <n>`, "judge", 2));
   }

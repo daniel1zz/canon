@@ -108,11 +108,49 @@ test("BR-2616: an approval counts only for the owner_gate text its question aske
   expect(approvalOf(ws(f.root).db, f.change, "上线到生产").approved).toBe(true);
 });
 
+test("BR-2626: the main session keeps an approval for a reworded owner_gate with a reason and land --finish closes; a worker, an empty reason, a question about the current text, an unapproved or unknown question are refused and record nothing", async () => {
+  const f = gated('owner_gate: "设计稿（含封面）"\n');
+  answered(f.root, `approve ${f.change}: 设计稿?`, "不批准");
+  const id = () => Number(ws(f.root).db.db.query<{ id: number }, []>("SELECT MAX(id) AS id FROM questions").get()!.id);
+  const keep = (actor: string, q: number, reason = "封面原本就在稿里") => cli(f.root, actor, ["work", "keep-approval", f.change, "--question", String(q), "--reason", reason]);
+  const kept = () => ws(f.root).db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'owner-gate.keep'").get()!.n;
+  expect(keep("agent:s2", id()).code).toBe(1); // the owner said no to the earlier text
+  answered(f.root, `approve ${f.change}: 设计稿?`, "批准");
+  const old = id();
+  const refused = await finish(f.worktree);
+  expect(refused.kind === "refused" && refused.message).toContain(`canon work keep-approval ${f.change} --question ${old} --reason`);
+  expect(gateRefusal(f.change, "设计稿（含封面）", approvalOf(ws(f.root).db, f.change, "设计稿（含封面）"), true)).not.toContain("keep-approval");
+  expect(keep("agent:s1:w1", old).code).toBe(1);
+  expect(keep("agent:s2", old, " ").code).toBe(2);
+  expect(keep("agent:s2", 999).code).toBe(3);
+  answered(f.root, `approve ${f.change}: 设计稿（含封面）?`, "不批准");
+  expect(keep("agent:s2", id()).code).toBe(1); // it asks about the current text: nothing to keep
+  expect(kept()).toBe(0);
+  const ok = keep("agent:s2", old);
+  expect(ok.code).toBe(0);
+  expect(ok.text).toContain(`the owner's approval in question #${old} of "设计稿" now covers "设计稿（含封面）"`);
+  // the owner's later no about the new text still decides
+  expect(approvalOf(ws(f.root).db, f.change, "设计稿（含封面）").approved).toBe(false);
+  ws(f.root).db.db.query("DELETE FROM questions WHERE question LIKE '%含封面%'").run();
+  expect(approvalOf(ws(f.root).db, f.change, "设计稿（含封面）")).toMatchObject({ approved: true, kept: { question: old, from: "设计稿" } });
+  expect(await finish(f.worktree)).toMatchObject({ kind: "landed", finished: true });
+});
+
+test("BR-2626: a kept approval lapses once the owner's latest answer about the earlier text is no", () => {
+  const f = gated('owner_gate: "设计稿（含封面）"\n');
+  answered(f.root, `approve ${f.change}: 设计稿?`, "批准");
+  const old = Number(ws(f.root).db.db.query<{ id: number }, []>("SELECT MAX(id) AS id FROM questions").get()!.id);
+  expect(cli(f.root, "agent:s2", ["work", "keep-approval", f.change, "--question", String(old), "--reason", "措辞"]).code).toBe(0);
+  expect(approvalOf(ws(f.root).db, f.change, "设计稿（含封面）").approved).toBe(true);
+  answered(f.root, `approve ${f.change}: 设计稿?`, "不批准");
+  expect(approvalOf(ws(f.root).db, f.change, "设计稿（含封面）").approved).toBe(false);
+});
+
 test("BR-2617: the agenda item of a gate whose text changed after an approval names the old question and says to ask again", () => {
   const f = gated('owner_gate: "上线到生产"\n');
   answered(f.root, `approve ${f.change}: 设计稿?`, "批准");
   const item = dueList(must(agenda(ws(f.root, "agent:s2"), { read: CALM }))).find((i) => i.key === `owner-gate:${f.change}`);
-  expect(item!.summary).toMatch(/question #\d+ was about an earlier owner_gate text, "设计稿", so ask again$/);
+  expect(item!.summary).toMatch(/question #\d+ was about an earlier owner_gate text, "设计稿", so ask again, or keep its approval if the new text asks nothing more: canon work keep-approval /);
   expect(item!.next).toBe(`canon human ask "approve ${f.change}: 上线到生产?" --option 批准,不批准 --change ${f.change}`);
 });
 

@@ -49,6 +49,8 @@ export interface Ungated {
   readonly reason: string;
   /** The `land.ok` time, ISO; undefined while it is not closed. */
   readonly landedAt: string | undefined;
+  /** For an approval the main session kept after the owner_gate text changed (BR-2626): when, ISO. */
+  readonly keptAt?: string;
 }
 
 /** The most lines the ungated section shows (BR-2625). */
@@ -154,7 +156,8 @@ export function overview(ws: Workspace, opts: { readonly ruleCounts: boolean; re
 
 /**
  * BR-2625: the changes whose `owner_gate` says no approval is needed: the ones not closed (in `states` order), then the
- * ones landed in the last GOAL_DAYS days, newest first, each once.
+ * ones landed in the last GOAL_DAYS days, newest first, each once; then the approvals kept for a reworded owner_gate in
+ * those days, newest first (BR-2626).
  */
 function ungated(ws: Workspace, corpus: Corpus, states: readonly ChangeState[]): Ungated[] {
   const out: Ungated[] = [];
@@ -172,6 +175,12 @@ function ungated(ws: Workspace, corpus: Corpus, states: readonly ChangeState[]):
     if (!doc?.ownerGateNone || seen.has(doc.id)) continue;
     seen.add(doc.id);
     out.push({ id: doc.id, title: doc.title, reason: doc.ownerGateNone, landedAt: r.ts });
+  }
+  // reason: an approval the main session kept for a reworded owner_gate is its judgment, listed for the owner to spot-check (BR-2626)
+  const keeps = ws.db.db.query<{ ts: string; subject: string; detail: string }, [string]>("SELECT ts, subject, detail FROM events WHERE kind = 'owner-gate.keep' AND ts >= ? ORDER BY id DESC").all(since);
+  for (const k of keeps) {
+    const d = JSON.parse(k.detail) as { question: number; from: string; gate: string; reason: string };
+    out.push({ id: k.subject, title: changes.get(k.subject)?.title ?? states.find((s) => s.id === k.subject)?.change?.title ?? "", reason: `#${d.question} 批准的「${d.from}」沿用到「${d.gate}」，${d.reason}`, landedAt: undefined, keptAt: k.ts });
   }
   return out;
 }
@@ -255,7 +264,7 @@ export function overviewLines(o: Overview): string[] {
   out.push(batchLine(o.batch));
   out.push("", "## 不需负责人批准");
   if (o.ungated.length === 0) out.push("(none)");
-  for (const u of o.ungated.slice(0, UNGATED_SHOWN)) out.push(`${u.id} ${u.title}  ${u.landedAt === undefined ? "正在做" : `合入 ${minute(u.landedAt)}`}：${u.reason}`);
+  for (const u of o.ungated.slice(0, UNGATED_SHOWN)) out.push(`${u.id} ${u.title}  ${u.keptAt !== undefined ? `沿用旧批准 ${minute(u.keptAt)}` : u.landedAt === undefined ? "正在做" : `合入 ${minute(u.landedAt)}`}：${u.reason}`);
   if (o.ungated.length > UNGATED_SHOWN) out.push(`… 还有 ${o.ungated.length - UNGATED_SHOWN} 个（canon overview --json）`);
   out.push("", "## 历史");
   const counts = goalCounts(o.goalCommits);
@@ -295,7 +304,7 @@ export function overviewJson(o: Overview): Record<string, unknown> {
     current_batch: o.batch.map((s) => ({ id: s.id, title: s.change.title })),
     goal_changes: goalCounts(o.goalCommits),
     landed: o.landed.map((l) => ({ id: l.id, title: l.title ?? null, at: l.at })),
-    ungated: o.ungated.map((u) => ({ id: u.id, title: u.title, reason: u.reason, landed_at: u.landedAt ?? null })),
+    ungated: o.ungated.map((u) => ({ id: u.id, title: u.title, reason: u.reason, landed_at: u.landedAt ?? null, kept_at: u.keptAt ?? null })),
   };
 }
 
