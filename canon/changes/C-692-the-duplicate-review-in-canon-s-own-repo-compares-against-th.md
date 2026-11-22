@@ -2,10 +2,13 @@
 id: C-692
 title: the duplicate review in canon's own repo compares against the guide of
   the reviewed tree, not the reviewer binary's (#290)
-status: open
-rules: [BR-2143]
+status: done
+rules:
+  - BR-2143
 owner_gate: "none: 修 bug"
 advances: "none: 修 bug"
+passes:
+  BR-2143: 28bffc55305c8480 test
 ---
 
 ## 为什么
