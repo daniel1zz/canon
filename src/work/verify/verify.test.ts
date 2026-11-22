@@ -8,6 +8,7 @@ import { recordReport } from "./ledger.ts";
 import { commandFor, machineDeps, selectTests, timeoutReport, waitingReport, workTest, type WorkTestDeps, type WorkTestResult } from "./verify.ts";
 import type { CpuSample } from "./pool.ts";
 import { acquireSlot, machineSlots } from "./slot.ts";
+import { machineLoad, type LoadDeps } from "./load-gate.ts";
 
 const MAIN = join(import.meta.dir, "..", "..", "invocation", "main.ts");
 const rule = ["BR", 7].join("-");
@@ -695,6 +696,8 @@ function fakeDeps(over: Partial<WorkTestDeps> = {}) {
     // reason: a test never queues in the real machine-wide directory (BR-2577)
     // reason: the fake holders' pids are not in the real process table, so no process counts as gone here (BR-2577)
     slots: { ...machineSlots, dir: mkdtempSync(join(tmpdir(), "canon-slots-")), pollMs: 30, gone: () => false },
+    // reason: nor does a test wait on the real machine's load or queue (BR-2630); an idle machine unless the test says otherwise
+    load: { ...machineLoad, dir: mkdtempSync(join(tmpdir(), "canon-load-")), pollMs: 30, gone: () => false, read: () => ({ load5: 1, cpus: 8 }) },
     ...over,
   };
   return { d, signals, exits };
@@ -1418,5 +1421,82 @@ describe("full_test_slots", () => {
     }
     write(wt, { "canon/config.yaml": 'floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\nfull_test_slots: 2\n' });
     expect(canon(wt, "check").code).not.toBe(2);
+  });
+});
+
+describe("canon work test waits for the machine load", () => {
+  const busy = (w: { load: number }): LoadDeps => ({ ...machineLoad, dir: mkdtempSync(join(tmpdir(), "canon-load-")), pollMs: 30, gone: () => false, read: () => ({ load5: w.load, cpus: 8 }) });
+  const waitingLine = (lines: string[]) => lines.some((l) => l.includes("canon: waiting for the machine load"));
+  const entries = (dir: string) => readdirSync(dir).filter((n) => n.endsWith(".json"));
+  const config = (extra = "") => `floor: "true"\ntests: ["src/**/*.test.ts"]\ntest_command: "sh wrap.sh {file} {report}"\ntest_select_command: "sh select.sh"\ntest_jobs: 1\n${extra}`;
+
+  test("BR-2630 BR-2466: over the limit canon work test waits holding its slot, runs no file, and the wait does not count toward test_timeout_minutes", async () => {
+    const { wt } = fixture(undefined, { "canon/config.yaml": config("test_timeout_minutes: 0.03\n") });
+    write(wt, { "src/a.ts": "export const a = 2;\n" });
+    const w = { load: 17 };
+    const { d } = fakeDeps({ load: busy(w) });
+    const lines: string[] = [];
+    const run = workTest(ws(wt), false, (l) => lines.push(l), d);
+    await waitFor("the waiting line", () => waitingLine(lines));
+    expect(lines.find((l) => l.includes("waiting for the machine load"))).toContain("5-minute load 17.0 on 8 CPUs (limit 16); 0 step(s) ahead on this machine; the wait does not count toward test_timeout_minutes");
+    expect(runs(wt)).toEqual([]);
+    expect(entries(d.slots.dir)).toHaveLength(1); // the full-run slot is held while it waits (BR-2630)
+    expect(entries(d.load.dir)).toHaveLength(1);
+    // reason: the limit is 1.8 s; the wait is longer
+    await Bun.sleep(2500);
+    w.load = 15;
+    const r = await run;
+    expect(r.ok && r.value.timedOut).toBeUndefined();
+    expect(runs(wt).length).toBeGreaterThan(0);
+    const kinds = ws(wt).db.db.query<{ kind: string }, []>("SELECT kind FROM events WHERE kind LIKE 'load.%' ORDER BY id").all().map((k) => k.kind);
+    expect(kinds).toEqual(["load.wait", "load.start"]);
+    expect(entries(d.load.dir)).toEqual([]);
+    expect(entries(d.slots.dir)).toEqual([]);
+  });
+
+  test("BR-2630: named files wait for the load too, though they take no slot", async () => {
+    const { wt } = fixture(undefined, { "canon/config.yaml": config() });
+    const w = { load: 17 };
+    const { d } = fakeDeps({ load: busy(w) });
+    const lines: string[] = [];
+    const run = workTest(ws(wt), false, (l) => lines.push(l), d, ["src/d.test.ts"]);
+    await waitFor("the waiting line", () => waitingLine(lines));
+    expect(runs(wt)).toEqual([]);
+    expect(entries(d.slots.dir)).toEqual([]);
+    w.load = 10;
+    await run;
+    expect(runs(wt)).toEqual(["src/d.test.ts"]);
+  });
+
+  test("BR-2630: under the limit nothing is said and nothing is recorded", async () => {
+    const { wt } = fixture(undefined, { "canon/config.yaml": config() });
+    const { d } = fakeDeps({ load: busy({ load: 5 }) });
+    const lines: string[] = [];
+    await workTest(ws(wt), false, (l) => lines.push(l), d, ["src/d.test.ts"]);
+    expect(waitingLine(lines)).toBe(false);
+    expect(ws(wt).db.db.query("SELECT 1 FROM events WHERE kind LIKE 'load.%'").get()).toBeNull();
+  });
+
+  test("BR-2630: a signal while waiting leaves the queues, runs no file and exits with the signal's code", async () => {
+    const { wt } = fixture(undefined, { "canon/config.yaml": config() });
+    const { d, signals, exits } = fakeDeps({ load: busy({ load: 17 }) });
+    const lines: string[] = [];
+    const run = workTest(ws(wt), false, (l) => lines.push(l), d);
+    await waitFor("the waiting line", () => waitingLine(lines));
+    signals.emit("SIGTERM", "SIGTERM");
+    const r = await run;
+    expect(exits).toEqual([143]);
+    expect(lines).toContain("stopped by SIGTERM while waiting for the machine load: no test ran");
+    expect(r.ok && r.value.signal).toBe("SIGTERM");
+    expect(runs(wt)).toEqual([]);
+    expect(entries(d.load.dir)).toEqual([]);
+    expect(entries(d.slots.dir)).toEqual([]);
+  });
+
+  test("BR-2630 BR-2631: the test command runs with CANON_HEAVY_STEP=1, so a heavy step it starts does not wait again", async () => {
+    const { wt } = fixture(undefined, { "canon/config.yaml": config(), "run.sh": 'echo "$CANON_HEAVY_STEP" > heavy-env.txt\n' });
+    const { d } = fakeDeps();
+    await workTest(ws(wt), false, () => {}, d, ["src/d.test.ts"]);
+    expect(readFileSync(join(wt, "heavy-env.txt"), "utf8").trim()).toBe("1");
   });
 });

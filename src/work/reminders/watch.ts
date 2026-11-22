@@ -86,7 +86,7 @@ function itemLines(a: Agenda, now: number): Map<string, string> {
 }
 
 /** What the heavy line is about, without how long each has run: a change in it is said, a longer run is not (BR-2528). */
-const heavyKey = (a: Agenda): string => `${a.heavy.running.map((r) => `${r.subject ?? "main"}@${r.since}`).sort().join(",")};${a.heavy.waiting}`;
+const heavyKey = (a: Agenda): string => `${a.heavy.running.map((r) => `${r.subject ?? "main"}@${r.since}`).sort().join(",")};${a.heavy.waiting};${a.heavy.loadWaiting.map((w) => `${w.subject}:${w.kind}`).join(",")}`;
 
 export interface WatchDeps {
   readonly read?: Readings;

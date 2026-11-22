@@ -75,6 +75,11 @@ export interface SlotRequest {
 export interface Slot {
   /** Gives the slot back and records `test.full.end`; once. */
   readonly release: (outcome: Outcome) => void;
+  /**
+   * The run passed the load gate (BR-2630) and starts now: its start time becomes this moment, so the agenda counts it as
+   * running from here and not while it waited for the load (BR-2582).
+   */
+  readonly began: () => void;
 }
 
 const MUTEX = ".mutex";
@@ -240,11 +245,17 @@ export async function acquireSlot(d: SlotDeps, req: SlotRequest): Promise<Result
         return { go: false as const, ahead: live.slice(0, index) };
       });
       if (step.go) {
-        const started = entry!.startedAt!;
+        let started = entry!.startedAt!;
         req.record("test.full.start", base);
         let released = false;
-        const mine = entry!;
+        let mine = entry!;
         return ok({
+          began: () => {
+            if (released) return;
+            started = d.now();
+            mine = { ...mine, startedAt: started };
+            writeEntry(d.dir, mine);
+          },
           release: (outcome) => {
             if (released) return;
             released = true;

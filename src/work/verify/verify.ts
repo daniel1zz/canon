@@ -299,6 +299,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
       slot?.release("stopped");
       return stopped("the machine load");
     }
+    slot?.began();
   } finally {
     for (const s of STOP_SIGNALS) deps.signals.off(s, onWaitSignal);
   }

@@ -6,7 +6,7 @@ import { mainCorpus } from "../session/session.ts";
 import type { Workspace } from "../workspace.ts";
 import { age, ageOf, mainItems, renderDue, workerItems, type DueItem } from "./due.ts";
 import { holds, outcomes } from "./handled.ts";
-import { runningFullRuns, type HeavyRuns, type Slots } from "./heavy.ts";
+import { runningFullRuns, type HeavyRuns, type Loads, type Slots } from "./heavy.ts";
 import { lightNote, roomDetail, roomOf, type Room } from "./room.ts";
 import { interruptItems } from "./interrupt.ts";
 import { changeFacts, contextOf } from "../delegation/notices.ts";
@@ -57,6 +57,8 @@ export interface AgendaOptions {
   readonly wasBusy?: boolean;
   /** The machine-wide queue of full test runs; tests pass a directory of their own. */
   readonly slots?: Slots;
+  /** The machine-wide queue of heavy steps waiting for the load; tests pass a directory of their own (BR-2630). */
+  readonly load?: Loads;
 }
 
 /** How many delegatable changes are named (BR-2581) and how many items a summary group shows (BR-2529). */
@@ -70,7 +72,7 @@ const byOrder = (a: DueItem, b: DueItem): number => a.tier - b.tier || (a.since 
 /** The calling session's agenda (BR-2527). */
 export function agenda(ws: Workspace, opts: AgendaOptions = {}): Result<Agenda> {
   const now = opts.now ?? Date.now();
-  const runs = runningFullRuns(opts.slots);
+  const runs = runningFullRuns(opts.slots, opts.load, { primary: ws.primary });
   if (!runs.ok) return runs;
   const heavy = runs.value;
   if (isWorker(ws.actor)) return ok({ delegate: null, judge: [], owner: [], yours: workerItems(ws), heavy, startable: [], states: [] });
@@ -121,7 +123,7 @@ export function agenda(ws: Workspace, opts: AgendaOptions = {}): Result<Agenda> 
 export const dueList = (a: Agenda): DueItem[] => [...a.judge, ...a.owner, ...a.yours];
 
 /** Whether nothing would be printed (BR-2527, BR-2529). */
-export const isEmpty = (a: Agenda): boolean => (a.delegate === null || a.delegate.ready.length === 0) && dueList(a).length === 0 && a.heavy.running.length === 0 && a.heavy.waiting === 0;
+export const isEmpty = (a: Agenda): boolean => (a.delegate === null || a.delegate.ready.length === 0) && dueList(a).length === 0 && a.heavy.running.length === 0 && a.heavy.waiting === 0 && a.heavy.loadWaiting.length === 0;
 
 /** One group's items with the same kind folded together where there are two or more, in the order of each kind's first item (BR-2527). */
 export function folded(items: readonly DueItem[]): DueItem[][] {
@@ -145,11 +147,14 @@ function foldLine(g: readonly DueItem[], now: number): string {
 
 const entryLine = (g: readonly DueItem[], now: number): string => (g.length === 1 ? renderDue(g[0]!, now) : foldLine(g, now));
 
-/** `heavy: C-637 full test run 12m; 2 waiting` (BR-2582), or undefined when nothing runs or waits. */
+/** `heavy: C-637 full test run 12m; 2 waiting; 1 waiting for the load (C-9 test 4m)` (BR-2582), or undefined when nothing runs or waits. */
 export function heavyLine(h: HeavyRuns, now: number): string | undefined {
-  if (h.running.length === 0 && h.waiting === 0) return undefined;
+  if (h.running.length === 0 && h.waiting === 0 && h.loadWaiting.length === 0) return undefined;
   const running = h.running.map((r) => `${r.subject ?? "main"} full test run ${age(now - Date.parse(r.since))}`).join(", ");
-  return `heavy: ${running || "none running"}${h.waiting > 0 ? `; ${h.waiting} waiting` : ""}`;
+  const shown = h.loadWaiting.slice(0, DELEGATE_SHOWN).map((w) => `${w.subject} ${w.kind} ${age(now - Date.parse(w.since))}`).join(", ");
+  const more = h.loadWaiting.length > DELEGATE_SHOWN ? `, … +${h.loadWaiting.length - DELEGATE_SHOWN}` : "";
+  const load = h.loadWaiting.length > 0 ? `; ${h.loadWaiting.length} waiting for the load (${shown}${more})` : "";
+  return `heavy: ${running || "none running"}${h.waiting > 0 ? `; ${h.waiting} waiting` : ""}${load}`;
 }
 
 /** With only the load in the way a light delegation may still be made, up to the slots that fit (BR-2581, BR-2632). */
@@ -232,7 +237,7 @@ export function agendaJson(a: Agenda): Record<string, unknown> {
     judge: a.judge.map(itemJson),
     owner: a.owner.map(itemJson),
     yours: a.yours.map(itemJson),
-    heavy: { running: a.heavy.running, waiting: a.heavy.waiting },
+    heavy: { running: a.heavy.running, waiting: a.heavy.waiting, load_waiting: a.heavy.loadWaiting },
   };
 }
 

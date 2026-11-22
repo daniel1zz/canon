@@ -178,6 +178,7 @@ export async function floorWithReport(
       return (code = 4);
     }
     if (passed?.value === "aborted") return 1;
+    taken.value.began();
     code = await reportedFloor(db, config, cwd, command, run, note, failed);
     return code;
   } finally {

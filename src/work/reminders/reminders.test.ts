@@ -6,7 +6,7 @@ import { project, sh, startNew, ws } from "../testkit.ts";
 import type { Workspace } from "../workspace.ts";
 import { age, renderDue } from "./due.ts";
 import { agenda, agendaLines, dueItems, summary, type Readings } from "./agenda.ts";
-import { runningFullRuns, type Slots } from "./heavy.ts";
+import { runningFullRuns, type Loads, type Slots } from "./heavy.ts";
 import { roomOf } from "./room.ts";
 import { holds } from "./handled.ts";
 import { watchDue, RECOMPUTE_MS } from "./watch.ts";
@@ -67,6 +67,19 @@ function queue(gone: (pid: number) => boolean = () => false) {
   return { slots, add, end };
 }
 const NONE = (): Slots => queue().slots;
+/** A machine-wide load queue of its own (BR-2630): a heavy step of `subject` in `worktree` by process `pid`, queued `minutes` ago. */
+function loadQueue(primary: string) {
+  const machineDir = emptyQueue();
+  const dir = join(machineDir, "load-waits");
+  mkdirSync(dir);
+  let seq = 0;
+  const load: Loads = { dir, gone: () => false };
+  const add = (subject: string, pid: number, kind: string, minutes: number, worktree = `${primary}.worktrees/${subject}`) => {
+    seq++;
+    writeFileSync(join(dir, `${String(seq).padStart(12, "0")}-${pid}.json`), JSON.stringify({ seq, pid, pidStart: `start-${pid}`, subject, worktree, kind, limit: 16, queuedAt: Date.now() - minutes * 60_000 }));
+  };
+  return { load, add, machineDir };
+}
 
 test("BR-2527: ages read 12m, 3h05m and 2d4h", () => {
   expect(age(12 * 60_000)).toBe("12m");
@@ -131,7 +144,7 @@ test("BR-2527: canon work due prints nothing due, or an object with empty groups
   expect(text.out.trim()).toBe("nothing due");
   const j = cli(root, "agent:s1", ["work", "due", "--json"]);
   expect(j.code).toBe(0);
-  expect(JSON.parse(j.out)).toMatchObject({ judge: [], owner: [], yours: [], heavy: { running: [], waiting: 0 } });
+  expect(JSON.parse(j.out)).toMatchObject({ judge: [], owner: [], yours: [], heavy: { running: [], waiting: 0, loadWaiting: [] } });
   finding(ws(root), 3, "A");
   const one = JSON.parse(cli(root, "agent:s1", ["work", "due", "--json"]).out) as { judge: { key: string; next: string }[] };
   expect(one.judge.map((i) => Object.keys(i).sort())).toEqual([["key", "kind", "next", "since", "summary"]]);
@@ -229,8 +242,8 @@ test("BR-2582: the full test runs running and waiting come from the machine-wide
   expect(agendaLines(must(agenda(w, { read: CALM, slots: q.slots })))).toEqual(["heavy: C-637 full test run 12m, main full test run 2m; 2 waiting"]);
   q.end(1); q.end(7);
   expect(agendaLines(must(agenda(w, { read: CALM, slots: q.slots })))).toEqual(["heavy: none running; 2 waiting"]);
-  expect(must(runningFullRuns(NONE()))).toEqual({ running: [], waiting: 0 });
-  expect(must(runningFullRuns({ dir: join(emptyQueue(), "missing"), gone: () => false }))).toEqual({ running: [], waiting: 0 });
+  expect(must(runningFullRuns(NONE()))).toEqual({ running: [], waiting: 0, loadWaiting: [] });
+  expect(must(runningFullRuns({ dir: join(emptyQueue(), "missing"), gone: () => false }))).toEqual({ running: [], waiting: 0, loadWaiting: [] });
 });
 
 test("BR-2583: canon work handled records each key's outcome as a reminder.handled event and the agenda leaves them out while it holds", () => {
@@ -484,4 +497,36 @@ test("BR-2529 BR-2024: a Claude Code main session's brief has the agenda summary
   const worker = cli(root, "agent:s7:w1", ["brief"], { CLAUDECODE: "1" });
   expect(worker.out).not.toContain("Agenda (canon work due)");
   expect(worker.out).not.toContain("Monitor");
+});
+
+test("BR-2582 BR-2630: steps waiting for the load are listed in the heavy line with their kind and wait; a full run that holds a slot but waits for the load is not running; other repositories' steps carry their worktree", () => {
+  const root = fresh();
+  const w = ws(root);
+  const q = queue();
+  const l = loadQueue(w.primary);
+  l.add("C-9", 1, "test", 4);
+  l.add("C-10", 2, "land", 1);
+  const read = (slots: Slots) => must(agenda(w, { read: CALM, slots, load: l.load }));
+  expect(agendaLines(read(q.slots))).toEqual(["heavy: none running; 2 waiting for the load (C-9 test 4m, C-10 land 1m)"]);
+  // C-9 holds the only slot and waits for the load: it is only in the load group, never "full test run"
+  q.add("C-9", 1, 4);
+  expect(agendaLines(read(q.slots))).toEqual(["heavy: none running; 2 waiting for the load (C-9 test 4m, C-10 land 1m)"]);
+  expect(must(runningFullRuns(q.slots, l.load)).running).toEqual([]);
+  // another full run that passed the load gate runs; another repository's step is named with its worktree
+  q.add("C-5", 3, 7);
+  l.add("C-1", 4, "heavy-run", 0, "/elsewhere/C-1");
+  const line = agendaLines(read(q.slots))[0]!;
+  expect(line).toStartWith("heavy: C-5 full test run 7m; 3 waiting for the load (C-9 test 4m, C-10 land 1m, C-1（/elsewhere/C-1） heavy-run 0m)");
+  const json = JSON.parse(cli(root, "agent:s2", ["work", "due", "--json"], { CANON_MACHINE_DIR: l.machineDir }).out) as { heavy: { load_waiting: { subject: string; kind: string }[] } };
+  expect(json.heavy.load_waiting.map((x) => [x.subject, x.kind])).toEqual([["C-9", "test"], ["C-10", "land"], ["C-1（/elsewhere/C-1）", "heavy-run"]]);
+});
+
+test("BR-2582: with six steps waiting for the load the line names five and counts the rest; nothing waiting and nothing running prints no heavy line", () => {
+  const root = fresh();
+  const w = ws(root);
+  const l = loadQueue(w.primary);
+  const line = (slots: Slots) => agendaLines(must(agenda(w, { read: CALM, slots, load: l.load })));
+  expect(line(NONE())).toEqual([]);
+  for (let i = 1; i <= 6; i++) l.add(`C-${i}`, i, "test", i);
+  expect(line(NONE())[0]).toBe("heavy: none running; 6 waiting for the load (C-1 test 1m, C-2 test 2m, C-3 test 3m, C-4 test 4m, C-5 test 5m, … +1)");
 });
