@@ -1,6 +1,7 @@
 import { defineCommand } from "citty";
 import { entry, json, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { historyJson, historyLines, LANDED_DETAIL, overview, overviewJson, overviewLines } from "./overview.ts";
+import { remaining, remainingLines } from "./remaining.ts";
 
 /** `canon overview`: the current state only (BR-2505, D-129, D-151); `--history` for the detail. */
 const command = defineCommand({
@@ -20,4 +21,15 @@ const command = defineCommand({
   },
 });
 
-export const overviewCommands: DomainCommands = { commands: [entry("overview", 25, command)] };
+/** `canon work remaining`: every unfinished item by source (BR-2629, #298). */
+const remainingCmd = defineCommand({
+  meta: { description: "Everything unfinished, by source: open changes, rules not passed, open review findings, unanswered questions, accepted decisions no rule or change names" },
+  args: { json: { type: "boolean" } },
+  run({ args }) {
+    const r = must(remaining(workspace()));
+    if (args.json) return json(r);
+    for (const line of remainingLines(r)) say(line);
+  },
+});
+
+export const overviewCommands: DomainCommands = { commands: [entry("overview", 25, command), entry("remaining", 52, remainingCmd, "work")] };
