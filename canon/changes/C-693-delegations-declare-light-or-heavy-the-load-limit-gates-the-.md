@@ -29,8 +29,8 @@ advances: "none: R-1 的成功标准没有覆盖按负载管重活"
 - 实现时：BR-2627 用 `canon rule retire` 退役；变更类型去掉内置字段 `cpu_light`（`src/knowledge/documents/`）；BR-2497（派发记录多轻重）、BR-2466 和 BR-2580（等负载不算时限）、BR-2045（新配置 `heavy_commands`、`design_profiles`）按新规则补文字；architecture.md 写上负载队列、`canon heavy run`、轻派发和能设计的 worker。
 
 第二部分（D-162）：
-- 新规则 BR-2633（work/delegation）：启动方设 `CANON_WORKER_PROFILE`、档案在 main 的 `design_profiles` 里的 worker 可以开变更和杂务，合入时不查 BR-2501 第 1 项；hook 拒绝命令里自己设这个变量。
-- 提议改写 BR-2498、BR-2501 各加一句例外；BR-2495 的 hook 部分按 BR-2633 补。
+- 新规则 BR-2633（work/delegation）：启动方设 `CANON_WORKER_PROFILE`，会话开始 hook 把它记进协调数据库（每个会话只记一次，之后不信命令环境）；档案在 main 的 `design_profiles` 里的 worker 可以开变更和杂务、接回没人做的变更、合入决策和规则（配置、待办、产品承诺、发布范围仍查）。
+- 提议改写 BR-2498、BR-2501 各加一句例外；BR-2024（会话开始的 brief 记下档案）按 BR-2633 补。
 - canon 之外：启动 worker 的工具（delegate）要设 `CANON_WORKER_PROFILE`。
 
 总览不受影响：这次只写 planned 的规则和 proposed 的决定，系统还没变；architecture.md 由实现的合入一起改（见上一条）。
@@ -40,7 +40,9 @@ advances: "none: R-1 的成功标准没有覆盖按负载管重活"
 - 规则都是 planned；BR-2526、BR-2581、BR-2582、BR-2498、BR-2501 的新文字在提议里，实现的人合入代码时由设计负责人 `canon rule apply C-693`，不要在实现前应用（会让生效的规则说没做的事）。
 - 负载队列放在用户状态目录下，和整组测试的 `full-runs/` 一样整机共用（BR-2576、BR-2577 的做法），不能放在某个仓库的协调数据库里。
 - 整组测试先拿名额再等负载（BR-2630），顺序反了会在负载降下来后又等名额。
-- 第二部分的防冒充只靠 hook 看命令文字，是已知限制（D-162 后果）。
+- 第二部分只信会话开始 hook 记下的档案；本机上有意改协调数据库的不防（D-162 后果）。
+- 嵌套的重步骤（`test_command` 里再调 `canon heavy run`）靠 `CANON_HEAVY_STEP=1` 直接放行，漏了会死等（BR-2630）。
+- 合入在轮次里等负载时后面的合入一起等，这是有意的（BR-2630）。
 - #304 里“只在分支上的设计也能派给能设计的 worker”不在本变更里。
 
 ## 教训
