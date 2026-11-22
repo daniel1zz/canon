@@ -6,7 +6,7 @@ import { isGone } from "../../claims/liveness.ts";
 import { runFloor, floorSkip } from "../checks/floor.ts";
 import { verifyChange, type StepFailure, type Steps } from "../checks/steps.ts";
 import { afterLand, closeSubject, finishLanding, idOfChangeFile, reopen } from "../finish/finish.ts";
-import { moveMainGuarded, snapshotDetail, staleEpoch, workerLandingRefusal, type WorkerLanding } from "../checks/delegation.ts";
+import { moveMainGuarded, snapshotDetail, staleEpoch, withDesigner, workerLandingRefusal, type WorkerLanding } from "../checks/delegation.ts";
 import { landingGroups, type LandOptions, type LandOutcome, type Running } from "../outcome.ts";
 import { forgetEnded } from "../../verify/stop-groups.ts";
 import { batchCandidates, finishEntry, holdsTurn, inBatch, joinBatch, landBatched, landerOf, leaveBatch, lockBatch, refuseInBatch, unlockBatch } from "../queue/queue.ts";
@@ -135,8 +135,12 @@ export async function landBatch(ws: Workspace, opts: LandOptions, say: Say, t: {
     }
 
     // Who queued each entry and at which delegation epoch (BR-2501); the leader is this lander.
-    const lander = (l: { entry: number; subject: string | null }): WorkerLanding =>
-      l.entry === t.entry ? { subject: l.subject, actor: ws.actor, epoch: landerOf(ws.db, l.entry)?.epoch ?? null } : { subject: l.subject, actor: landerOf(ws.db, l.entry)?.actor ?? "", epoch: landerOf(ws.db, l.entry)?.epoch ?? null };
+    // reason: each member is judged by its own lander's recorded profile and main's design_profiles as they are now (BR-2633); a list main cannot read already refused the leader
+    const lander = (l: { entry: number; subject: string | null }): WorkerLanding => {
+      const plain: WorkerLanding = l.entry === t.entry ? { subject: l.subject, actor: ws.actor, epoch: landerOf(ws.db, l.entry)?.epoch ?? null } : { subject: l.subject, actor: landerOf(ws.db, l.entry)?.actor ?? "", epoch: landerOf(ws.db, l.entry)?.epoch ?? null };
+      const judged = withDesigner(ws, plain);
+      return judged.ok ? judged.value : plain;
+    };
     const notes = new Map<number, Steps>();
     const check = async (l: Link): Promise<Steps> => {
       const co = git(dir, "checkout", "-q", "--detach", l.head);

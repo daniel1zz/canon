@@ -5,6 +5,8 @@ import type { CoordDb } from "../../db.ts";
 import { activationOnly, blob, configAt, designPathsOf, hash, taskHashOf } from "../../delegation/delegate.ts";
 import { delegation, type ContractItem, type Delegation } from "../../delegation/records.ts";
 import { isWorker } from "../../delegation/worker.ts";
+import { mayDesign } from "../../delegation/designer.ts";
+import { ok, type Result } from "../../../kernel/result.ts";
 import { isChore } from "../../session/subject.ts";
 import type { Workspace } from "../../workspace.ts";
 import { moveMain } from "../finish/finish.ts";
@@ -20,6 +22,14 @@ export interface WorkerLanding {
   readonly subject: string | null;
   readonly actor: string;
   readonly epoch: number | null;
+  /** The lander is a worker that may design (BR-2633): its session's profile is in main's `design_profiles` now. */
+  readonly designer?: boolean;
+}
+
+/** `l` with whether its lander may design, by the profile its session recorded and the list on main as it is now (BR-2633). */
+export function withDesigner(ws: Workspace, l: WorkerLanding): Result<WorkerLanding> {
+  const may = mayDesign({ ...ws, actor: l.actor });
+  return may.ok ? ok({ ...l, designer: may.value }) : may;
 }
 
 /** The delegation a worker landing was checked against when main moved: what `land.ok` records (BR-2501, BR-2503). */
@@ -36,10 +46,13 @@ export const HAND_BACK = "交回设计负责人：canon work need-design（BR-24
 const CHANGES = "canon/changes/";
 const FIXED_DESIGN = ["canon/decisions/", "canon/rules/", "canon/releases/"];
 const FIXED_FILES = ["canon/product.md", "canon/config.yaml", "canon/backlog.md"];
+/** What a worker that may design still cannot land (BR-2633): the config (it could add itself to the list), the owner's backlog, the product and the releases; `design_paths` too. */
+const OWNER_FILES = ["canon/config.yaml", "canon/backlog.md", "canon/product.md"];
+const OWNER_DIRS = ["canon/releases/"];
 
 /** A design document's path per the work/delegation glossary, `design_paths` read from main (BR-2501). */
-function isDesign(path: string, designPaths: readonly string[]): boolean {
-  if (FIXED_FILES.includes(path) || FIXED_DESIGN.some((d) => path.startsWith(d))) return true;
+function isDesign(path: string, designPaths: readonly string[], designer = false): boolean {
+  if (designer ? OWNER_FILES.includes(path) || OWNER_DIRS.some((d) => path.startsWith(d)) : FIXED_FILES.includes(path) || FIXED_DESIGN.some((d) => path.startsWith(d))) return true;
   return designPaths.some((p) => path === p || path.startsWith(`${p.replace(/\/$/, "")}/`));
 }
 
@@ -58,7 +71,7 @@ function taskOf(text: string | undefined, path: string): { id: unknown; chore: u
  * activating a planned rule of the contract list; the change file's two sections are compared with the delegation's
  * task hash, not with base. The scope and `design_paths` are read from main, not from the candidate.
  */
-function changedDesign(ws: Workspace, subject: string | null, d: Delegation | undefined, t: { base: string; head: string; main: string }): string[] | { error: string } {
+function changedDesign(ws: Workspace, subject: string | null, d: Delegation | undefined, t: { base: string; head: string; main: string }, designer = false): string[] | { error: string } {
   const paths = designPathsOf(ws, configAt(ws, t.main));
   if (!paths.ok) return { error: paths.error.message };
   const diff = git(ws.primary, "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", t.base, t.head);
@@ -67,6 +80,8 @@ function changedDesign(ws: Workspace, subject: string | null, d: Delegation | un
   const found: string[] = [];
   for (const path of diff.value.split("\n").filter((p) => p !== "")) {
     if (path.startsWith(CHANGES) && path.endsWith(".md")) {
+      // reason: a worker that may design writes change files, decisions and rules; only the owner's files are checked (BR-2633)
+      if (designer) continue;
       const before = blob(ws, t.base, path)?.toString(), after = blob(ws, t.head, path)?.toString();
       const a = taskOf(before, path), b = taskOf(after, path);
       // reason: the worker's own change file is compared with the task the delegation fixed, below (BR-2501)
@@ -76,12 +91,12 @@ function changedDesign(ws: Workspace, subject: string | null, d: Delegation | un
       if (a?.task !== b?.task) found.push(path);
       continue;
     }
-    if (!isDesign(path, paths.value)) continue;
+    if (!isDesign(path, paths.value, designer)) continue;
     // reason: activating a planned contract rule changes only its status and will_amend; that is not a design edit (BR-2501, BR-2497)
     if (contract.has(path) && activationOnly(blob(ws, t.base, path)?.toString(), blob(ws, t.head, path)?.toString())) continue;
     found.push(named(path));
   }
-  if (d && subject !== null) {
+  if (d && subject !== null && !designer) {
     const file = git(ws.primary, "grep", "-l", `^id: ${subject}$`, t.head, "--", "canon/changes");
     const path = file.ok ? file.value.split("\n")[0]?.replace(/^[^:]+:/, "") : undefined;
     const own = path ? taskOf(blob(ws, t.head, path)?.toString(), path) : undefined;
@@ -94,6 +109,8 @@ function changedDesign(ws: Workspace, subject: string | null, d: Delegation | un
 export function staleEpoch(db: CoordDb, l: WorkerLanding): string | undefined {
   if (!isWorker(l.actor) || l.subject === null || isChore(l.subject)) return undefined;
   const d = delegation(db, l.subject);
+  // reason: a change a worker that may design opened or took up has no delegation; items 2 and 4 read the delegation record and do not apply (BR-2633)
+  if (!d && l.designer) return undefined;
   if (!d) return `4. epoch void: ${l.subject} is not delegated (未派发), so ${l.actor} is no acceptor of it`;
   if (d.ended) return `4. epoch void: the delegation ended when design owner ${d.owner} took ${l.subject} back at ${d.ended} (epoch now ${d.epoch})`;
   if (d.acceptor !== l.actor) return `4. epoch void: ${l.actor} is not the delegation's acceptor (${d.acceptor ?? "none"})`;
@@ -111,7 +128,7 @@ export function workerLandingRefusal(ws: Workspace, l: WorkerLanding, t: { base:
   const chore = isChore(l.subject);
   const d = l.subject !== null && !chore ? delegation(ws.db, l.subject) : undefined;
   const failed: string[] = [];
-  const design = changedDesign(ws, l.subject, d, t);
+  const design = changedDesign(ws, l.subject, d, t, l.designer === true);
   if ("error" in design) failed.push(`1. changed design: could not be checked (${design.error})`);
   else if (design.length > 0) failed.push(`1. changed design: ${design.join(", ")}; rule text that must change with the implementation goes back to the design owner`);
   if (!chore && l.subject !== null) {

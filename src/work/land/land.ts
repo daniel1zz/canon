@@ -6,7 +6,7 @@ import type { Say, Workspace } from "../workspace.ts";
 import { type Finding } from "../../knowledge/check/check.ts";
 import { bindToLander, claimOfWorktree, keepClaim, renewClaim, unbindFromLander } from "../claims/claims.ts";
 import { batchRefusal, enter, failKeepingPlace, failIfActive, finishEntry, heartbeat, holdsTurn, keptUntil, landerOf, settleLocked, tryTurn } from "./queue/queue.ts";
-import { moveMainGuarded, snapshotDetail, workerLandingRefusal, type WorkerLanding } from "./checks/delegation.ts";
+import { moveMainGuarded, snapshotDetail, withDesigner, workerLandingRefusal } from "./checks/delegation.ts";
 import { selfProcess, sessionProcess } from "../claims/liveness.ts";
 import { noticeOverlaps } from "../session/overlap.ts";
 import { choreIn, isChore } from "../session/subject.ts";
@@ -450,7 +450,9 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   if (!tested.ok) return refuse("environment", tested.error.message);
   // A worker's landing changed no design, the design is as delegated, no design request is pending and its epoch is
   // current (BR-2501, D-128); before the batch, so a leader refused here takes no members with it.
-  const me: WorkerLanding = { subject, actor: ws.actor, epoch: landerOf(ws.db, entry)?.epoch ?? null };
+  const mine = withDesigner(ws, { subject, actor: ws.actor, epoch: landerOf(ws.db, entry)?.epoch ?? null });
+  if (!mine.ok) return refuse("config", mine.error.message);
+  const me = mine.value;
   const delegated = workerLandingRefusal(ws, me, { base: base.value, head: tested.value, main: base.value });
   if (delegated) return refuse("delegation", delegated);
 

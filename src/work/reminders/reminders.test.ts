@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { project, sh, startNew, ws } from "../testkit.ts";
 import type { Workspace } from "../workspace.ts";
 import { age, renderDue } from "./due.ts";
-import { agenda, agendaLines, dueItems, summary, type Readings } from "./agenda.ts";
+import { agenda, agendaJson, agendaLines, dueItems, summary, type Readings } from "./agenda.ts";
 import { runningFullRuns, type Loads, type Slots } from "./heavy.ts";
 import { roomOf } from "./room.ts";
 import { holds } from "./handled.ts";
@@ -517,7 +517,7 @@ test("BR-2582 BR-2630: steps waiting for the load are listed in the heavy line w
   l.add("C-1", 4, "heavy-run", 0, "/elsewhere/C-1");
   const line = agendaLines(read(q.slots))[0]!;
   expect(line).toStartWith("heavy: C-5 full test run 7m; 3 waiting for the load (C-9 test 4m, C-10 land 1m, C-1（/elsewhere/C-1） heavy-run 0m)");
-  const json = JSON.parse(cli(root, "agent:s2", ["work", "due", "--json"], { CANON_MACHINE_DIR: l.machineDir }).out) as { heavy: { load_waiting: { subject: string; kind: string }[] } };
+  const json = agendaJson(read(q.slots)) as { heavy: { load_waiting: { subject: string; kind: string }[] } };
   expect(json.heavy.load_waiting.map((x) => [x.subject, x.kind])).toEqual([["C-9", "test"], ["C-10", "land"], ["C-1（/elsewhere/C-1）", "heavy-run"]]);
 });
 

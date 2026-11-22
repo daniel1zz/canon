@@ -27,6 +27,7 @@ import { GENERATED_DIR } from "../../invocation/reference/reference.ts";
 import { processesIn, type Occupant } from "../../kernel/process.ts";
 import { isWorker } from "../delegation/worker.ts";
 import { workerMayStart, workerNewWorkError } from "../delegation/access.ts";
+import { mayDesign, recordedProfile } from "../delegation/designer.ts";
 import { delegationNotice } from "../delegation/records.ts";
 import { delegateImplicitly, implicitEligible } from "../delegation/implicit.ts";
 import { startNotices } from "../delegation/notices.ts";
@@ -87,10 +88,13 @@ function startedBefore(ws: Workspace, id: string): boolean {
 }
 
 export function start(ws: Workspace, target: { change: string } | { title: string; rules?: readonly string[]; links?: ChangeLinks; fields?: Readonly<Record<string, unknown>> }, say: Say, opts: { fixMain?: boolean; settles?: readonly number[] } = {}): Result<Started> {
-  if (isWorker(ws.actor) && "title" in target) return workerNewWorkError();
+  // reason: a worker the launcher marked as able to design may open changes; any other worker may not (BR-2498, BR-2633)
+  const designer = mayDesign(ws);
+  if (!designer.ok) return designer;
+  if (isWorker(ws.actor) && "title" in target && !designer.value) return workerNewWorkError();
   // reason: a main session's own subagent may start an undelegated change; it is delegated for its session below, once the change is known to be open (BR-2610, D-156)
   const implicit = "change" in target && implicitEligible(ws, target.change.toUpperCase());
-  if ("change" in target && !implicit) { const allowed = workerMayStart(ws.db, target.change.toUpperCase(), ws.actor); if (!allowed.ok) return allowed; }
+  if ("change" in target && !implicit) { const allowed = workerMayStart(ws.db, target.change.toUpperCase(), ws.actor, designer.value); if (!allowed.ok) return allowed; }
   const main = ws.config.main;
   // reason: --settles names the open findings a change settles; every number must be an open finding, so a stale or made-up one opens nothing (BR-2530, #209)
   if (opts.settles && opts.settles.length > 0) {
@@ -165,7 +169,9 @@ export function start(ws: Workspace, target: { change: string } | { title: strin
 
 /** Start or resume document-free work, sharing the same ownership and setup path (BR-2457). */
 export function startChore(ws: Workspace, target: { title: string } | { subject: string }, say: Say): Result<Started> {
-  if (isWorker(ws.actor)) return workerNewWorkError();
+  const designer = mayDesign(ws);
+  if (!designer.ok) return designer;
+  if (isWorker(ws.actor) && !designer.value) return workerNewWorkError();
   if (mainIsUnborn(ws.primary, ws.config.main)) return err("io", `${ws.config.main} has no commit yet: ${firstCommitStep(ws.config.main)}`);
   if ("title" in target && target.title.trim() === "") return err("invalid", "a chore needs a non-empty title");
   const subject = "subject" in target ? normalizeSubject(target.subject) : `chore-${randomUUID()}`;
@@ -178,7 +184,7 @@ export function startChore(ws: Workspace, target: { title: string } | { subject:
   const path = existing.value?.worktree ?? join(worktreesDir(ws), subject);
   const out = startWorkspace(ws, { subject, branch, path, existing: existing.value !== undefined }, say);
   if (out.ok) {
-    if (title) ws.db.event(ws.actor, "chore.start", subject, { title, branch });
+    if (title) ws.db.event(ws.actor, "chore.start", subject, { title, branch, ...(designer.value ? { worker_profile: recordedProfile(ws.db, ws.actor) } : {}) });
     else {
       const recorded = ws.db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = 'chore.start' AND subject = ? ORDER BY id LIMIT 1").get(subject);
       if (!recorded) say(`${subject}: full title unavailable; branch slug: ${existing.value!.slug}`);
@@ -200,8 +206,10 @@ function startWorkspace(ws: Workspace, input: { subject: string; branch: string;
   }
   // reason: binding the first full worker actor and taking its claim must be one write transaction (BR-2498).
   const owner = sessionProcess();
+  const designer = mayDesign(ws);
+  if (!designer.ok) return designer;
   const claim = ws.db.db.transaction(() => {
-    const allowed = workerMayStart(ws.db, changeId, ws.actor);
+    const allowed = workerMayStart(ws.db, changeId, ws.actor, designer.value);
     if (!allowed.ok) return allowed;
     const taken = takeClaim(ws.db, changeId, path, ws.actor, ws.config.claimLeaseMs, owner);
     if (taken.ok && allowed.value) {
@@ -269,7 +277,7 @@ function startWorkspace(ws: Workspace, input: { subject: string; branch: string;
       return err(committed.error.code, `${committed.error.message}; the new worktree was removed and ${changeId} released, so a retry starts clean`);
     }
   }
-  ws.db.event(ws.actor, "start.ok", changeId, { created, setup: created && ws.config.setup !== undefined });
+  ws.db.event(ws.actor, "start.ok", changeId, { created, setup: created && ws.config.setup !== undefined, ...(designer.value ? { worker_profile: recordedProfile(ws.db, ws.actor) } : {}) });
   say(`${changeId} → ${path} (branch ${branch})`);
   noticeOverlaps(ws, path, changeId, "start", say);
   // Where the other changes in flight work, so the session sees it before it has changed anything to compare (BR-2394).

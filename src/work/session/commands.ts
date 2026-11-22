@@ -1,7 +1,7 @@
 import { proposedNotice } from "./proposed.ts";
 import { stalledLine } from "../delegation/stall.ts";
 import { changeStates, hasFile, isClosed, marksOf, type ChangeState } from "../../knowledge/changes/state.ts";
-import { readFileSync } from "node:fs";
+import { fstatSync, readFileSync } from "node:fs";
 import { readRuntime } from "../../kernel/agent.ts";
 import { recordCodexStartup } from "../agent-session.ts";
 import { machineNow, startHint } from "./load.ts";
@@ -10,6 +10,7 @@ import { writeSchemaFile } from "../../invocation/reference/reference.ts";
 import { AS_ARG, RUNTIME_ARG, corpusOf, entry, fail, json, list, must, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { takesMany } from "../../invocation/strict.ts";
 import { delegationNotice } from "../delegation/records.ts";
+import { recordWorkerProfile } from "../delegation/designer.ts";
 import { changeRequestLines, ownerRequestLines, pendingRequests, statusRequestLines } from "../delegation/requests.ts";
 import { guideFor, WORKFLOW_GUIDE } from "../../invocation/guide.ts";
 import { noticeUpdates } from "../../install/commands.ts";
@@ -213,10 +214,35 @@ const cleanCmd = takesMany(defineCommand({
   },
 }));
 
+/**
+ * The session id of the session-start event the host gave `canon brief` on standard input (BR-2633), or undefined when
+ * there is none: input from a terminal, nothing readable within a second, or an event that is not `SessionStart`.
+ */
+async function hostStartInput(): Promise<{ readonly session?: string; readonly open: boolean }> {
+  try {
+    if (process.stdin.isTTY) return { open: false };
+    const kind = fstatSync(0);
+    // reason: a hook's input is a pipe, a socket (Node's stdio pipes are socket pairs) or a file; a terminal or other device is never read (BR-2633)
+    if (!kind.isFIFO() && !kind.isFile() && !kind.isSocket()) return { open: false };
+  } catch {
+    return { open: false };
+  }
+  const text = await Promise.race([Bun.stdin.text(), Bun.sleep(1000).then(() => undefined)]);
+  // reason: a read that lost the race would keep the process alive; the brief then ends by exiting (BR-2633)
+  if (text === undefined) return { open: true };
+  try {
+    const input: unknown = JSON.parse(text);
+    if (input === null || typeof input !== "object" || !("hook_event_name" in input) || input.hook_event_name !== "SessionStart" || !("session_id" in input) || typeof input.session_id !== "string" || input.session_id.trim() === "") return { open: false };
+    return { session: input.session_id.trim(), open: false };
+  } catch {
+    return { open: false };
+  }
+}
+
 const brief = defineCommand({
   args: { ...RUNTIME_ARG, hook: { type: "boolean", description: "Read Codex startup JSON and record its session relationship" } },
   meta: { description: "Session start: how to work in a canon project, in a change's worktree that change and its handoff, elsewhere what is in flight (printed by the session-start hook)" },
-  run({ args }) {
+  async run({ args }) {
     // reason: the guide comes before anything that can fail, and failures are also said on stdout, which is what a
     // session-start hook shows the model; without it a session would know nothing about canon (BR-2090)
     // reason: the overview line needs the project root, found before anything that can fail; outside a repository the plain guide is printed and the failure follows (BR-2090)
@@ -225,6 +251,9 @@ const brief = defineCommand({
     const failed = (what: string) =>
       say(`canon brief failed: ${what}\nFix this, then run canon brief again. Until then work as the guide above says; do not edit the main branch directly.`);
     let env = process.env;
+    let codexStart: { id: string; child?: string } | undefined;
+    // reason: Claude Code's session-start hook gives the start event on standard input; read before anything else, only from a pipe or a file, and never waited on for long (BR-2633)
+    const started = args.hook ? { open: false } : await hostStartInput();
     if (args.hook) {
       const runtime = readRuntime(args.runtime);
       if (!runtime.ok || runtime.value !== "codex") {
@@ -234,12 +263,19 @@ const brief = defineCommand({
       }
       const registered = recordCodexStartup(process.cwd(), readFileSync(0, "utf8"), process.env["CANON_ACTOR"]);
       if (!registered.ok) { failed(registered.error.message); fail(registered.error); }
+      codexStart = registered.value;
       env = { ...process.env, CODEX_SESSION_ID: registered.value.id, CODEX_THREAD_ID: registered.value.child ?? registered.value.id };
     }
     const opened = openWorkspace(process.cwd(), undefined, env);
     if (!opened.ok) {
       failed(opened.error.message);
       fail(opened.error);
+    }
+    // reason: the profile of a worker session is written by the host's session-start event and by nothing else (BR-2633, D-162)
+    const profiled = args.hook && codexStart ? recordWorkerProfile(opened.value.db, "codex", codexStart.id, env, undefined) : started.session !== undefined ? recordWorkerProfile(opened.value.db, "claude", started.session, env) : ok(false);
+    if (!profiled.ok) {
+      failed(profiled.error.message);
+      fail(profiled.error);
     }
     let state: Result<void>;
     try {
@@ -253,6 +289,7 @@ const brief = defineCommand({
       failed(state.error.message);
       fail(state.error);
     }
+    if (started.open) process.exit(0);
   },
 });
 

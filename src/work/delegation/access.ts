@@ -3,9 +3,14 @@ import type { CoordDb } from "../db.ts";
 import { delegation, type Delegation } from "./records.ts";
 import { isWorker } from "./worker.ts";
 
-export function workerMayStart(db: CoordDb, subject: string, actor: string): Result<Delegation | undefined> {
+/**
+ * `designer`: the worker may design (BR-2633). It may also take up a change that has no delegation in force and no live claim
+ * (the claim itself is checked by whoever takes it), where a plain worker may start only the change delegated to its name.
+ */
+export function workerMayStart(db: CoordDb, subject: string, actor: string, designer = false): Result<Delegation | undefined> {
   if (!isWorker(actor)) return ok(undefined);
   const d = delegation(db, subject);
+  if (designer && (!d || d.ended)) return ok(undefined);
   const name = actor.split(":").slice(2).join(":");
   if (d?.ended) return err("refused", `${subject}: its delegation to ${d.worker} ended when design owner ${d.owner} took it back at ${d.ended}; ask the design owner to canon work delegate it again`);
   if (!d || d.worker !== name || (d.acceptor !== null && d.acceptor !== actor)) {

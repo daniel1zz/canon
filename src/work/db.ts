@@ -49,6 +49,11 @@ CREATE TABLE IF NOT EXISTS delegations (
   manifest   TEXT NOT NULL,
   task_hash  TEXT NOT NULL
 );
+-- The worker profile each worker session started with, written once by the session-start hook (BR-2633, D-162); profile is NULL when the launcher set none.
+CREATE TABLE IF NOT EXISTS worker_profiles (
+  session TEXT PRIMARY KEY,           -- agent:<session>, the session part of a worker's actor (BR-2023)
+  profile TEXT
+);
 CREATE TABLE IF NOT EXISTS queue (
   id          INTEGER PRIMARY KEY AUTOINCREMENT,
   worktree    TEXT NOT NULL,
