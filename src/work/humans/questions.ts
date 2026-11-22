@@ -107,11 +107,12 @@ export function answer(db: CoordDb, id: number, text: string, by: string, relaye
   } else if (!quote) {
     return refuse("not-human-no-relay", "invalid", `${by} is not a human; an agent records a human's answer only with --relayed "<the human's own words>" (BR-2021)`);
   }
+  let conflictReason = "answered";
   const tx = db.db.transaction((): Result<void> => {
     const q = db.db.query<{ answer: string | null; question: string; options: string; multi: number; withdrawn: string | null }, [number]>("SELECT answer, question, options, multi, withdrawn FROM questions WHERE id = ?").get(id);
     if (!q) return err("not_found", `no question #${id}`);
     // reason: a withdrawn question is not shown to anyone as waiting; an answer to it would back nothing the asker still needs (BR-2628)
-    if (q.withdrawn !== null && q.answer === null) return err("conflict", `question #${id} was withdrawn (${q.withdrawn}); ask again with canon human ask if it still needs an answer`);
+    if (q.withdrawn !== null && q.answer === null) return (conflictReason = "withdrawn"), err("conflict", `question #${id} was withdrawn (${q.withdrawn}); ask again with canon human ask if it still needs an answer`);
     // reason: the answer an agent types is its own claim; with options it must be the option the human's words name, or a relayed no could be stored as yes (BR-2021)
     const options = JSON.parse(q.options) as string[];
     if (quote && !by.startsWith("human:") && q.answer === null && options.length > 0) {
@@ -144,7 +145,7 @@ export function answer(db: CoordDb, id: number, text: string, by: string, relaye
   const done = tx.immediate();
   if (!done.ok) {
     const { code } = done.error;
-    return code === "refused" ? refuse("option-mismatch", "refused", done.error.message) : refuse(code === "not_found" ? "not-found" : "answered", code === "not_found" ? "not_found" : "conflict", done.error.message);
+    return code === "refused" ? refuse("option-mismatch", "refused", done.error.message) : refuse(code === "not_found" ? "not-found" : conflictReason, code === "not_found" ? "not_found" : "conflict", done.error.message);
   }
   return done;
 }

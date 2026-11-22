@@ -30,7 +30,7 @@ const askOn = (root: string, change: string, text: string): number => {
 };
 const events = (root: string) => { const w = ws(root); try { return w.db.db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM events WHERE kind = 'human.withdraw'").get()!.n; } finally { w.db.close(); } };
 
-test("BR-2628: canon human withdraw takes a superseded question out of pending and waiting-owner, keeps it in pending --all with its reason, and refuses a later answer", () => {
+test("BR-2628: canon human withdraw takes a superseded question out of pending and waiting-owner, keeps it in pending --all with its reason, and refuses a later answer with a human.answer.refuse event, reason withdrawn", () => {
   const root = fixture();
   const s = startNew(root, "Checks", "agent:s1");
   const old = askOn(root, s.change, "A7.2 看到了吗?");
@@ -51,6 +51,8 @@ test("BR-2628: canon human withdraw takes a superseded question out of pending a
   expect(late.code).toBe(5);
   expect(late.out).toContain(`question #${old} was withdrawn (superseded by #${later}: A7.2 改由新问题问)`);
   expect(events(root)).toBe(1);
+  const w = ws(root);
+  try { expect(JSON.parse(w.db.db.query<{ detail: string }, []>("SELECT detail FROM events WHERE kind = 'human.answer.refuse' ORDER BY id DESC LIMIT 1").get()!.detail)).toEqual({ reason: "withdrawn" }); } finally { w.db.close(); }
 });
 
 test("BR-2628: withdraw refuses an empty reason (2), a bad number (2), itself as its successor (2), an unknown question (3), an answered or withdrawn one (5) and a worker (1), recording nothing", () => {
