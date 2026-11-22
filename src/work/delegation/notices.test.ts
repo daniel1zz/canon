@@ -2,7 +2,8 @@ import { afterEach, expect, test } from "bun:test";
 import { mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { project, sh, startNew, ws } from "../testkit.ts";
+import { project, quiet, sh, startNew, ws } from "../testkit.ts";
+import { delegateImplicitly } from "./implicit.ts";
 
 const roots: string[] = [];
 afterEach(() => { for (const root of roots.splice(0)) { rmSync(root, { recursive: true, force: true }); rmSync(`${root}.worktrees`, { recursive: true, force: true }); } });
@@ -101,6 +102,21 @@ test("BR-2610 BR-2498: a worker another session started, or a change with a live
   expect(held.code).toBe(1);
   expect(held.text).toContain("未派发");
   expect(claimOf(root, b.change)).toBe("agent:s2");
+});
+
+test("BR-2610: a change the main session claims after its subagent was found eligible is not delegated implicitly; the claim stays the session's and the refusal is recorded (#294)", () => {
+  const root = repo();
+  // the main session starts the change between the subagent's eligibility check and its delegation
+  const a = change(root, "Raced", "agent:s1", ["BR-51"], true);
+  const w = ws(root, "agent:s1:sub1");
+  const r = delegateImplicitly(w, a.change, quiet);
+  w.db.close();
+  expect(r).toMatchObject({ ok: false, error: { code: "conflict" } });
+  expect(!r.ok && r.error.message).toContain(`${a.change} was claimed by agent:s1 while agent:s1:sub1 was starting it; it is not delegated`);
+  expect(delegationEvent(root, a.change)).toBeNull();
+  expect(claimOf(root, a.change)).toBe("agent:s1");
+  const v = ws(root);
+  try { expect(JSON.parse(v.db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE subject = ? AND kind = 'delegation.refuse'").get(a.change)!.detail)).toMatchObject({ reason: "conflict", implicit: true, by: "agent:s1:sub1", holder: "agent:s1" }); } finally { v.db.close(); }
 });
 
 test("BR-2610 BR-2526: the implicit delegation is not refused for machine capacity", () => {

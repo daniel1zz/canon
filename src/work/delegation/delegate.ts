@@ -1,3 +1,4 @@
+import { liveClaim } from "../claims/claims.ts";
 import { createHash } from "node:crypto";
 import { parse } from "yaml";
 import { git } from "../../kernel/git.ts";
@@ -145,6 +146,13 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
         ws.db.event(ws.actor, "delegation.refuse", subject, no.detail);
         return err("refused", refusalMessage(subject, no.reasons));
       }
+    }
+    // reason: eligibility was read before this transaction; a claim taken since (the main session starting the change) binds it,
+    // and an implicit delegation would hand that session's work to its subagent and drop its claim (BR-2610, #294)
+    const bound = implicit ? liveClaim(ws.db, subject) : undefined;
+    if (bound) {
+      ws.db.event(ws.actor, "delegation.refuse", subject, { reason: "conflict", implicit: true, by: implicit!.by, holder: bound.actor });
+      return err("conflict", `${subject} was claimed by ${bound.actor} while ${implicit!.by} was starting it; it is not delegated. Start another change, or ask ${bound.actor} to delegate it`);
     }
     const claim = ws.db.db.query<{ holder: string }, [string]>("SELECT holder FROM claims WHERE subject = ?").get(subject);
     // reason: an implicit delegation is made only when no live claim binds the change; a lapsed row is taken over by the start that follows (BR-2610, BR-2011)
