@@ -2,11 +2,15 @@
 id: C-690
 title: canon work remaining lists every unfinished item by source in one command
   (#298)
-status: open
-depends_on: [C-689]
-rules: [BR-2629]
+status: done
+depends_on:
+  - C-689
+rules:
+  - BR-2629
 owner_gate: "none: 负责人在对话里已选方向"
 advances: "none: 汇报工具，不属于当前版本的成功标准"
+passes:
+  BR-2629: b203e7b0798218ac test
 ---
 
 ## 为什么
