@@ -38,11 +38,12 @@ function fixture(): string {
     const ask = w.db.db.query("INSERT INTO questions(subject, asked_by, question, options, asked_at, answer, answered_by, answered_at) VALUES (?, 'agent:a', ?, '[]', ?, ?, ?, ?)");
     ask.run(id("C", 9), "要不要做?", now, null, null, null);
     ask.run(id("C", 9), "答过的问题?", now, "要", "human:o", now);
+    w.db.db.query("INSERT INTO questions(subject, asked_by, question, options, asked_at, withdrawn) VALUES (?, 'agent:a', '撤回的问题?', '[]', ?, '不需要了')").run(id("C", 9), now);
   } finally { w.db.close(); }
   return root;
 }
 
-test("BR-2629: canon work remaining lists open changes, rules not passed, open findings, unanswered questions and accepted decisions nothing names, each section counted; closed, retired, proposed and answered items are left out", () => {
+test("BR-2629: canon work remaining lists open changes, rules not passed, open findings, unanswered questions and accepted decisions nothing names, each section counted; closed, retired, proposed, answered and withdrawn items are left out", () => {
   const root = fixture();
   const r = canon(root, "work", "remaining");
   expect(r.code).toBe(0);
