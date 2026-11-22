@@ -29,7 +29,7 @@ advances: "none: R-1 的成功标准没有覆盖按负载管重活"
 - 实现时：BR-2627 用 `canon rule retire` 退役；变更类型去掉内置字段 `cpu_light`（`src/knowledge/documents/`）；BR-2497（派发记录多轻重）、BR-2466 和 BR-2580（等负载不算时限）、BR-2045（新配置 `heavy_commands`、`design_profiles`）按新规则补文字；architecture.md 写上负载队列、`canon heavy run`、轻派发和能设计的 worker。
 
 第二部分（D-162）：
-- 新规则 BR-2633（work/delegation）：启动方设 `CANON_WORKER_PROFILE`，会话开始 hook 把它记进协调数据库（每个会话只记一次，之后不信命令环境）；档案在 main 的 `design_profiles` 里的 worker 可以开变更和杂务、接回没人做的变更、合入决策和规则（配置、待办、产品承诺、发布范围仍查）。
+- 新规则 BR-2633（work/delegation）：启动方设 `CANON_WORKER_PROFILE`，会话开始 hook 把它记进协调数据库（每个会话只记一次，之后不信命令环境）；档案在 main 的 `design_profiles` 里的 worker 可以开变更和杂务、接回没人做的变更、合入决策和规则（配置、待办、产品承诺、发布范围和 `design_paths` 仍查）。
 - 提议改写 BR-2498、BR-2501 各加一句例外；BR-2024（会话开始的 brief 记下档案）按 BR-2633 补。
 - canon 之外：启动 worker 的工具（delegate）要设 `CANON_WORKER_PROFILE`。
 
