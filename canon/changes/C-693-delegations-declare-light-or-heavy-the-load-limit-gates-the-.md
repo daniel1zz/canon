@@ -2,7 +2,7 @@
 id: C-693
 title: delegations declare light or heavy; the load limit gates the heavy steps,
   whoever runs them (#305)
-status: open
+status: done
 rules:
   - BR-2630
   - BR-2631
@@ -12,6 +12,20 @@ issues:
   - 305
 owner_gate: "none: 负责人在 #305 写明了期望的行为"
 advances: "none: R-1 的成功标准没有覆盖按负载管重活"
+passes:
+  BR-2024: ea943693a8949000 test
+  BR-2045: c97baf6985366c3b test
+  BR-2466: b2f5053788f19893 test
+  BR-2498: 0b7460453419cffc test
+  BR-2501: b17bbbf5c804fe40 test
+  BR-2526: ebdc46d96ea54ed5 test
+  BR-2576: 98db66482e183e54 test wording
+  BR-2581: d1f4c42e1b5d5586 test
+  BR-2582: 9f063f283beee440 test
+  BR-2630: f0cc88ae32302417 test
+  BR-2631: e36e56386ee57668 test
+  BR-2632: 56fb2b2fd89e770a test
+  BR-2633: dab5b1b97341191a test
 ---
 
 ## 为什么
