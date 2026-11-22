@@ -1,10 +1,16 @@
 ---
 id: C-685
 title: owner approval binds to the owner_gate text it approved (#296)
-status: open
-rules: [BR-2626]
+status: done
+rules:
+  - BR-2626
 owner_gate: "none: 修安全漏洞，行为由 BR-2616 规定"
 advances: "none: 修 bug"
+passes:
+  BR-2616: ebc3f27ac05710dc test
+  BR-2617: ea80c22760fdf916 test
+  BR-2625: 855d5933a1da8fbc test
+  BR-2626: a21f19f72fed001c test
 ---
 
 ## 为什么
