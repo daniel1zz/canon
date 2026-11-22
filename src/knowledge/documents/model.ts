@@ -116,6 +116,8 @@ export interface Change extends Base {
   readonly ownerGate?: string;
   /** The reason when `owner_gate` is `none: <reason>`: the session stated no approval is needed (BR-2623, BR-2625). */
   readonly ownerGateNone?: string;
+  /** Why the work runs no tests or builds, so the machine's load does not stop delegating it (`cpu_light`, BR-2627). */
+  readonly cpuLight?: string;
 }
 
 /** A change's `advances` (BR-2517): references `<R-n|F-n>/S<k>`, or none with the reason. */

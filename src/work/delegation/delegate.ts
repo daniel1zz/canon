@@ -11,7 +11,7 @@ import { branchSubject } from "../session/subject.ts";
 import type { Say, Workspace } from "../workspace.ts";
 import { isWorker } from "./worker.ts";
 import { delegationKeys } from "./config-keys.ts";
-import { measure, refusal, refusalMessage, unmeasured, unmeasuredLines } from "./capacity.ts";
+import { loadOver, measure, refusal, refusalMessage, unmeasured, unmeasuredLines } from "./capacity.ts";
 import { delegation, delegationNotice, type ContractItem, type Delegation } from "./records.ts";
 import { startNotices } from "./notices.ts";
 import { parseDocFile } from "../../knowledge/documents/docfile.ts";
@@ -140,7 +140,7 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
     }
     // reason: the subagent of an implicit delegation already runs, so a busy machine is said, not refused (BR-2610, D-156 amending D-136)
     if (adds) {
-      const no = refusal(ws, cap.value);
+      const no = refusal(ws, cap.value, task.value.change.cpuLight !== undefined);
       if (no && implicit) busy = no.reasons;
       else if (no) {
         ws.db.event(ws.actor, "delegation.refuse", subject, no.detail);
@@ -170,6 +170,9 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
   }).immediate();
   if (!result.ok) return result;
   if (added) for (const line of unmeasuredLines(cap.value)) say(line);
+  const light = task.value.change.cpuLight;
+  const over = added && light !== undefined ? loadOver(ws, cap.value) : undefined;
+  if (over) say(`cpu_light: ${over}, not checked for ${subject}: ${light} (BR-2627); if its worker runs tests or builds after all, it adds to that load`);
   if (busy.length > 0) say(`machine busy: ${busy.join("; ")}; ${subject} was started anyway because subagent ${worker} already runs (BR-2610); start no more subagents until it falls (canon work due)`);
   for (const line of delegationNotice(ws.db, subject)) say(line);
   for (const line of startNotices(ws, subject, true)) say(line);

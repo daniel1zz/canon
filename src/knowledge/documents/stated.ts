@@ -265,3 +265,6 @@ export function statedFor(corpus: Corpus, typeName: string, args: Readonly<Recor
   const given = statedInput(typeName, args);
   return statedFields(type, given.set, given.flags, { corpus, ...(domain !== undefined ? { domain } : {}) }, supersedes);
 }
+
+/** A change's `cpu_light` (BR-2627): the reason, when it is a non-empty text; anything else is canon check's finding. */
+export const cpuLightOf = (v: unknown): { cpuLight?: string } => (typeof v === "string" && v.trim() !== "" ? { cpuLight: v.trim() } : {});

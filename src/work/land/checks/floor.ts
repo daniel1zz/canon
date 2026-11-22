@@ -39,6 +39,15 @@ export async function runFloor(ws: Workspace, say: Say, cwd: string, name: strin
  * project's `test_select_command` selects no test file for them (BR-2164); undefined when the floor must run, and then
  * `why` is told when that is the command's doing. Renames count on both sides (`--no-renames`).
  */
+/** The paths changed between `base` and `head` that are not under the landing tree's floor_skip_paths (BR-2627). */
+export function outsideSkipPaths(wt: string, base: string, head: string): string[] {
+  const read = readConfig(wt);
+  const skip = read.ok ? read.value.floorSkipPaths : [];
+  const d = git(wt, "-c", "core.quotePath=false", "diff", "--name-only", "--no-renames", base, head);
+  if (!d.ok || d.value === "") return [];
+  return d.value.split("\n").filter((p) => !skip.some((e) => p === e || p.startsWith(`${e}/`)));
+}
+
 export function floorSkip(wt: string, base: string, head: string, why: (line: string) => void = () => {}): { paths: string[]; under: string[] } | undefined {
   // reason: the config of the tree that is landing decides, not the one read when the workspace opened, before
   // the rebase onto a main that may have changed floor_skip_paths or tests (BR-2164, issue #40).

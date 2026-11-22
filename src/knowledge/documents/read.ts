@@ -1,6 +1,6 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { fieldProblem } from "./fields.ts";
-import { advancesOf, amendsOf, featuresOf, ownerGateOf } from "./stated.ts";
+import { advancesOf, amendsOf, cpuLightOf, featuresOf, ownerGateOf } from "./stated.ts";
 import { join, relative } from "node:path";
 import { parseDocFile, parseReadme } from "./docfile.ts";
 import { parseLinks, parsePasses } from "./behaviour.ts";
@@ -241,7 +241,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
           problems.push({ path, message: gate.problem });
           continue;
         }
-        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...links, ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}), ...(chore !== undefined ? { chore: (chore as string).toLowerCase() } : {}), ...(advances !== undefined ? { advances } : {}), ...(gate.gate !== undefined ? { ownerGate: gate.gate } : {}), ...(gate.none !== undefined ? { ownerGateNone: gate.none } : {}) });
+        docs.push({ kind: "change", ...common, status: p.status as ChangeStatus, rules: rules as string[], passes, ...links, ...(answers !== undefined ? { ownerAnswers: answers as number[] } : {}), ...(chore !== undefined ? { chore: (chore as string).toLowerCase() } : {}), ...(advances !== undefined ? { advances } : {}), ...(gate.gate !== undefined ? { ownerGate: gate.gate } : {}), ...(gate.none !== undefined ? { ownerGateNone: gate.none } : {}), ...cpuLightOf(p.meta["cpu_light"]) });
       } else if (type.name === "release") {
         const shippedAt = p.meta["shipped_at"];
         const shipped = p.status === "shipped";

@@ -19,6 +19,9 @@ export interface Room {
   readonly held: number;
   readonly max: number;
   readonly fullRuns: number;
+  /** No room only because of the load: a cpu_light change may still be delegated, `fits` of them ignoring the load (BR-2627). */
+  readonly loadOnly: boolean;
+  readonly fitsIgnoringLoad: number;
 }
 
 /** The share of the load limit in force while a full test run is running (BR-2581), and the share watch falls below before it says room again (BR-2528). */
@@ -36,17 +39,20 @@ export function roomOf(ws: Workspace, read: { memory: Memory | undefined; machin
   const max = ws.config.delegateMaxWorkers;
   const reasons: string[] = [];
   if (read.memory?.tight) reasons.push(read.memory.text);
+  let byLoad = false;
   const m = read.machine;
   const base = m ? ws.config.delegateMaxLoadPerCpu * m.cpus : undefined;
   const limit = base === undefined ? undefined : fullRuns > 0 ? base * HEAVY_SHARE : base;
   if (m && limit !== undefined) {
     // reason: compared unrounded, as BR-2526 and BR-2400 do; once busy, watch says room only below HYSTERESIS of the limit (BR-2528)
     const line = wasBusy ? limit * HYSTERESIS : limit;
+    if (m.load5 >= line) byLoad = true;
     if (m.load5 >= line) reasons.push(`5-minute load ${m.load5.toFixed(1)} on ${m.cpus} CPUs (limit ${short(limit)}${fullRuns > 0 ? " while a full test run is running" : ""})`);
   }
   const fits = Math.max(0, max - held - fullRuns);
   if (fits === 0) reasons.push(held >= max ? `${held} of delegate_max_workers (${max}) in use` : `${held} of delegate_max_workers (${max}) in use; ${fullRuns} full test run(s) take the last slot(s)`);
-  return { room: reasons.length === 0, fits: reasons.length === 0 ? fits : 0, reasons, load: m?.load5, limit, cpus: m?.cpus, held, max, fullRuns };
+  const loadOnly = byLoad && reasons.length === 1;
+  return { room: reasons.length === 0, fits: reasons.length === 0 ? fits : 0, reasons, load: m?.load5, limit, cpus: m?.cpus, held, max, fullRuns, loadOnly, fitsIgnoringLoad: loadOnly ? fits : reasons.length === 0 ? fits : 0 };
 }
 
 /** `load 4.2 of 16 on 8 CPUs, 2/10 slots[, 1 full test run(s) running]` (BR-2581). */

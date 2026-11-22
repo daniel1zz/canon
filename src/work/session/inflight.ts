@@ -5,7 +5,7 @@ import { parseDocFile } from "../../knowledge/documents/docfile.ts";
 import { changeLinks } from "../../knowledge/changes/links.ts";
 import { waitingFor, type Waiting } from "../../knowledge/changes/deps.ts";
 import { criteriaByDoc } from "../../knowledge/releases/features.ts";
-import { ownerGateOf } from "../../knowledge/documents/stated.ts";
+import { cpuLightOf, ownerGateOf } from "../../knowledge/documents/stated.ts";
 import type { Change, ChangeStatus, Corpus } from "../../knowledge/documents/model.ts";
 import { CANON_DIR } from "../../knowledge/documents/read.ts";
 import type { ArchitectureBase } from "../../knowledge/check/architecture.ts";
@@ -221,7 +221,7 @@ export function changeOnBranch(ws: Workspace, id: string, ref: BranchRef): Resul
   // reason: a change the owner must approve says so on its branch too, before it reaches main (BR-2617, BR-2618)
   const gate = ownerGateOf(meta["owner_gate"]);
   if ("problem" in gate) return ok({ unreadable: `${where}: ${gate.problem}` });
-  return ok({ change: { kind: "change", id, title: meta["title"], path: path.value, body, status: status as ChangeStatus, rules, passes: {}, ...links, ...(gate.gate !== undefined ? { ownerGate: gate.gate } : {}), ...(gate.none !== undefined ? { ownerGateNone: gate.none } : {}) } });
+  return ok({ change: { kind: "change", id, title: meta["title"], path: path.value, body, status: status as ChangeStatus, rules, passes: {}, ...links, ...(gate.gate !== undefined ? { ownerGate: gate.gate } : {}), ...(gate.none !== undefined ? { ownerGateNone: gate.none } : {}), ...cpuLightOf(meta["cpu_light"]) } });
 }
 
 function changeType(ws: Workspace) {
