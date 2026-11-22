@@ -73,6 +73,32 @@ test("BR-2629: with nothing unfinished every section says (none) and the exit co
   const root = project(); roots.push(root);
   const r = canon(root, "work", "remaining");
   expect(r.code).toBe(0);
-  expect(r.out.split("\n").filter((l) => l.startsWith("## ")).map((l) => l.replace(/（.*/, ""))).toEqual(["## 没关闭的变更", "## 没通过的规则", "## 没关的评审意见", "## 待回答的问题", "## 没有规则或变更引用的已接受决定"]);
-  expect(r.out.split("\n").filter((l) => l === "(none)").length).toBe(5);
+  expect(r.out.split("\n").filter((l) => l.startsWith("## ")).map((l) => l.replace(/（.*/, ""))).toEqual(["## 没关闭的变更", "## 没通过的规则", "## 没关的评审意见", "## 待回答的问题", "## 没有规则或变更引用的已接受决定", "## 决定里没写到规则或变更的条目"]);
+  expect(r.out.split("\n").filter((l) => l === "(none)").length).toBe(6);
+});
+
+test("BR-2629: each 决定 item of a recently added accepted decision that names no rule or change is listed; an item naming one is not; an older decision only with --all; past 30 lines the rest is counted", () => {
+  const root = project(); roots.push(root);
+  put(root, `canon/decisions/${id("D", 3)}.md`, decision(3, "accepted", "- 很久以前的一条"));
+  // reason: committed 40 days ago, so its items are listed only with --all
+  const old = new Date(Date.now() - 40 * 86_400_000).toISOString();
+  sh(root, "add", "-A");
+  Bun.spawnSync(["git", "commit", "-qm", "old decision"], { cwd: root, env: { ...process.env, GIT_COMMITTER_DATE: old, GIT_AUTHOR_DATE: old } });
+  put(root, `canon/decisions/${id("D", 7)}.md`, decision(7, "accepted", `- ${id("BR", 5)}：按这个做\n- 另外要做 Y，\n  续行也算这一条\n\n第二段没有列表`));
+  put(root, `canon/decisions/${id("D", 8)}.md`, decision(8, "accepted", Array.from({ length: 31 }, (_, i) => `- 第 ${i + 1} 条`).join("\n")));
+  put(root, `canon/decisions/${id("D", 9)}.md`, decision(9, "proposed", "- 没接受的"));
+  sh(root, "add", "-A"); sh(root, "commit", "-qm", "recent decisions");
+  const items = (r: string) => { const ls = r.split("\n"); const at = ls.findIndex((l) => l.startsWith("## 决定里没写到")); return { head: ls[at]!, lines: ls.slice(at + 1, ls.indexOf("", at + 1)) }; };
+  const recent = items(canon(root, "work", "remaining").out);
+  expect(recent.head).toBe("## 决定里没写到规则或变更的条目（最近 30 天加入的已接受决定，--all 看全部）（33）");
+  expect(recent.lines.slice(0, 2)).toEqual([`${id("D", 7)}：- 另外要做 Y， 续行也算这一条`, `${id("D", 7)}：第二段没有列表`]);
+  expect(recent.lines.some((l) => l.includes("按这个做") || l.includes("很久以前") || l.includes("没接受"))).toBe(false);
+  expect(recent.lines.length).toBe(31);
+  expect(recent.lines.at(-1)).toBe("… 还有 3 条（canon work remaining --json）");
+  const all = canon(root, "work", "remaining", "--all", "--json");
+  const json = JSON.parse(all.out) as { items: { id: string; item: string }[]; allItems: boolean };
+  expect(json.allItems).toBe(true);
+  expect(json.items.length).toBe(34);
+  expect(json.items[0]).toEqual({ id: id("D", 3), item: "- 很久以前的一条" });
+  expect(items(canon(root, "work", "remaining", "--all").out).head).toBe("## 决定里没写到规则或变更的条目（全部已接受的决定）（34）");
 });

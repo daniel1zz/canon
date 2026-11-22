@@ -24,9 +24,9 @@ const command = defineCommand({
 /** `canon work remaining`: every unfinished item by source (BR-2629, #298). */
 const remainingCmd = defineCommand({
   meta: { description: "Everything unfinished, by source: open changes, rules not passed, open review findings, unanswered questions, accepted decisions no rule or change names" },
-  args: { json: { type: "boolean" } },
+  args: { json: { type: "boolean" }, all: { type: "boolean", description: "Check the 决定 items of every accepted decision, not only those added in the last 30 days" } },
   run({ args }) {
-    const r = must(remaining(workspace()));
+    const r = must(remaining(workspace(), args.all === true));
     if (args.json) return json(r);
     for (const line of remainingLines(r)) say(line);
   },
