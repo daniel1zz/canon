@@ -104,7 +104,7 @@ test("BR-2610 BR-2498: a worker another session started, or a change with a live
   expect(claimOf(root, b.change)).toBe("agent:s2");
 });
 
-test("BR-2610: a change the main session claims after its subagent was found eligible is not delegated implicitly; the claim stays the session's and the refusal is recorded (#294)", () => {
+test("BR-2610: a change the main session claims after its subagent was found eligible, inside the delegation's transaction, is not delegated implicitly: a conflict (exit 5), a delegation.refuse event with reason conflict, the claim stays the session's (#294)", () => {
   const root = repo();
   // the main session starts the change between the subagent's eligibility check and its delegation
   const a = change(root, "Raced", "agent:s1", ["BR-51"], true);
