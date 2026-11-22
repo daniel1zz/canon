@@ -7,7 +7,7 @@ import type { CoordDb } from "../../../work/db.ts";
 import { FAST, project, reviewLandings, sh, startNew, ws } from "../../../work/testkit.ts";
 import { amendFinding, closeFinding, renderClosed } from "./close.ts";
 import { APPROVE, REJECT, advise, askOwner, callerOf, isWorker, setTier, type Caller } from "./tier.ts";
-import { ask } from "../../../work/humans/questions.ts";
+import { ask, withdraw } from "../../../work/humans/questions.ts";
 import { closeRetired, findingOf, identityOf, namedIds, openFindings, quotedSpans, recordFindings, renderFinding, type Finding } from "./findings.ts";
 
 // Ids are built at run time so this file names no real document (canon check reads ids in test files).
@@ -517,6 +517,17 @@ describe("finding tiers (BR-2477, BR-2478, BR-2479, BR-2480, D-118)", () => {
     expect((raced as { ok: boolean }).ok).toBe(true);
     expect(why(second)).toContain("already waits on owner question");
     expect(four.db.db.query<{ n: number }, []>("SELECT count(*) AS n FROM questions WHERE answer IS NULL").get()!.n).toBe(1);
+  });
+
+  test("BR-2628 BR-2480: once the owner question a finding waits on is withdrawn, canon finding ask may ask again", () => {
+    const f = fixture();
+    tier(f.db, f.n, "C");
+    const first = askOwner(f.db, { cwd: f.root, main: "main", actor: "agent:a", id: String(f.n), fixed: f.fix, reason: "first" });
+    expect(first.ok).toBe(true);
+    expect(why(askOwner(f.db, { cwd: f.root, main: "main", actor: "agent:a", id: String(f.n), fixed: f.fix, reason: "again" }))).toContain("already waits on owner question");
+    const q = f.db.db.query<{ id: number }, []>("SELECT MAX(id) AS id FROM questions").get()!.id;
+    expect(withdraw(f.db, "agent:a", q, "问法不对，重问", undefined, false).ok).toBe(true);
+    expect(askOwner(f.db, { cwd: f.root, main: "main", actor: "agent:a", id: String(f.n), fixed: f.fix, reason: "again" }).ok).toBe(true);
   });
 
   test("BR-2478: support from the closer's own session does not count: a subagent closing on its parent's support is refused, a sibling's too; a subagent or worker may still close on the owner's approval (#225)", () => {

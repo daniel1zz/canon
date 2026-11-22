@@ -2,7 +2,7 @@ import { agentSession } from "../../../kernel/agent.ts";
 import { git } from "../../../kernel/git.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import type { CoordDb } from "../../../work/db.ts";
-import { ask } from "../../../work/humans/questions.ts";
+import { ask, awaiting } from "../../../work/humans/questions.ts";
 import { isWorker } from "../../../work/delegation/worker.ts";
 export { isWorker };
 import { attachedDocs, docsAt } from "./docs.ts";
@@ -177,8 +177,7 @@ export function askOwner(db: CoordDb, input: { readonly cwd: string; readonly ma
       if (!row.ok) return row;
       const f = row.value;
       if (f.question !== null) {
-        const q = db.db.query<{ answer: string | null }, [number]>("SELECT answer FROM questions WHERE id = ?").get(f.question);
-        if (q && q.answer === null) return err("conflict", `#${f.id} already waits on owner question #${f.question} (canon human pending)`);
+        if (awaiting(db, f.question)) return err("conflict", `#${f.id} already waits on owner question #${f.question} (canon human pending)`);
       }
       const ids = JSON.parse(f.ids) as string[];
       const text = `Close review finding #${f.id} ([${f.criterion}] ${ids.length > 0 ? ids.join(", ") : "-"}: ${f.text}) as ${describe(t.value)}? ${reason}`;

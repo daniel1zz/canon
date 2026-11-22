@@ -1,3 +1,4 @@
+import { isWorker } from "../delegation/worker.ts";
 import { effectiveAgentSession } from "../agent-session.ts";
 import { agentSession, readRuntime } from "../../kernel/agent.ts";
 import { codexHookStatus } from "../../install/codex.ts";
@@ -9,7 +10,7 @@ import { claimOfWorktree } from "../claims/claims.ts";
 import { changeOffMain, mainCorpus } from "../session/session.ts";
 import type { Workspace } from "../workspace.ts";
 import { hookStatus } from "../../install/hook.ts";
-import { answer, answeredBy, ask, isFreeAnswer, parseAsked, questions, recordActor, recordAsked, refuseRecord, witnessMark } from "./questions.ts";
+import { answer, answeredBy, ask, isFreeAnswer, parseAsked, questions, recordActor, recordAsked, refuseRecord, withdraw, witnessMark } from "./questions.ts";
 
 /**
  * The change `--change` names, as its id: a change on main or on its own change branch, matched in any case as
@@ -53,7 +54,7 @@ const human = defineCommand({
         const ws = workspace();
         const qs = questions(ws.db, args.all ? "all" : "pending");
         if (args.json) return json(qs);
-        for (const q of qs) say(`#${q.id} [${q.subject ?? "-"}] ${q.question}${q.options.length ? `  (${q.options.join(" | ")}${q.multi ? "; multi-select: ask with multiSelect: true" : ""})` : ""}${q.answer ? `\n    → ${q.answer} (${answeredBy(q)})${q.options.length && isFreeAnswer(q.options, q.answer) ? " [not one of the options]" : ""}${witnessMark(q)}` : ""}`);
+        for (const q of qs) say(`#${q.id} [${q.subject ?? "-"}] ${q.question}${q.options.length ? `  (${q.options.join(" | ")}${q.multi ? "; multi-select: ask with multiSelect: true" : ""})` : ""}${q.answer ? `\n    → ${q.answer} (${answeredBy(q)})${q.options.length && isFreeAnswer(q.options, q.answer) ? " [not one of the options]" : ""}${witnessMark(q)}` : q.withdrawn ? `\n    → withdrawn: ${q.withdrawn}` : ""}`);
         if (qs.length === 0) say("(nothing waiting)");
       },
     }),
@@ -69,6 +70,22 @@ const human = defineCommand({
         // reason: a failed record is kept with its session, so a later relay can say the record failed instead of "no record" (BR-2275, BR-2276, D-47)
         refuseRecord(ws.db, actor, parsed.failure);
         fail({ code: "invalid", message: parsed.failure.message });
+      },
+    }),
+    withdraw: defineCommand({
+      meta: { description: "Take back an unanswered question that a later one superseded or that no longer needs an answer (main session or a person)" },
+      args: {
+        id: { type: "positional", required: true },
+        reason: { type: "string", required: true, description: "Why it no longer needs an answer" },
+        "superseded-by": { type: "string", description: "The question that replaced it (#<n>)" },
+      },
+      run({ args }) {
+        const num = (v: string, what: string) => { const t = v.replace(/^#/, ""); if (!/^\d+$/.test(t)) fail({ code: "invalid", message: `${what} must be a question number (#<n>), got ${JSON.stringify(v)}` }); return Number(t); };
+        const id = num(String(args.id), "the question");
+        const by = typeof args["superseded-by"] === "string" ? num(args["superseded-by"], "--superseded-by") : undefined;
+        const ws = workspace();
+        const text = must(withdraw(ws.db, ws.actor, id, String(args.reason), by, isWorker(ws.actor)));
+        say(`#${id} withdrawn (${text}); it no longer shows in canon human pending or as waiting-owner`);
       },
     }),
     answer: defineCommand({

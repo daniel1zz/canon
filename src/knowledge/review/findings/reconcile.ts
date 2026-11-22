@@ -2,7 +2,7 @@ import { git } from "../../../kernel/git.ts";
 import { err, ok, type Result } from "../../../kernel/result.ts";
 import type { CoordDb } from "../../../work/db.ts";
 import { reviewSettingsOn } from "../../../work/land/checks/review-scope.ts";
-import { ask } from "../../../work/humans/questions.ts";
+import { ask, awaiting } from "../../../work/humans/questions.ts";
 import { REVIEW_NONE } from "../config-keys.ts";
 import { runJsonCommand } from "../review.ts";
 import { pathOn } from "./close.ts";
@@ -81,8 +81,7 @@ export async function reconcileFindings(db: CoordDb, input: ReconcileInput): Pro
   if (!docsA.some((d) => docsB.includes(d))) return err("invalid", `#${a} (${docsA.join(", ")}) and #${b} (${docsB.join(", ")}) share no document; reconcile is for findings on the same documents`);
   for (const r of [ra, rb]) {
     if (r.question === null) continue;
-    const q = db.db.query<{ answer: string | null }, [number]>("SELECT answer FROM questions WHERE id = ?").get(r.question);
-    if (q && q.answer === null) return err("conflict", `finding #${r.id} already awaits the owner's verdict: question #${r.question} is unanswered (canon human pending)`);
+    if (awaiting(db, r.question)) return err("conflict", `finding #${r.id} already awaits the owner's verdict: question #${r.question} is unanswered (canon human pending)`);
   }
   const settings = reviewSettingsOn(input.cwd, input.main);
   if (!settings.ok) return err("io", `cannot read main's review settings: ${settings.error.message}`);
@@ -116,7 +115,7 @@ export async function reconcileFindings(db: CoordDb, input: ReconcileInput): Pro
       const now = db.db.query<{ question: number | null; closed_at: string | null }, [number]>("SELECT question, closed_at FROM review_findings WHERE id = ?").get(r.id);
       if (!now) return err("not_found", `review finding #${r.id} disappeared while the review ran`);
       if (now.closed_at !== r.closed_at) return err("conflict", `finding #${r.id} was closed while the review ran; nothing recorded`);
-      if (now.question !== null && now.question !== r.question && db.db.query<{ answer: string | null }, [number]>("SELECT answer FROM questions WHERE id = ?").get(now.question)?.answer === null)
+      if (now.question !== null && now.question !== r.question && awaiting(db, now.question))
         return err("conflict", `finding #${r.id} already awaits the owner's verdict: question #${now.question} was recorded while the review ran`);
     }
     const question = ask(

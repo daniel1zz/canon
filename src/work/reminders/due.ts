@@ -73,7 +73,7 @@ function findingNext(tier: string | null, id: string): string {
 
 /** The open findings waiting on the owner's answer to their question: those show as the question instead (BR-2461). */
 export function findingsAwaitingOwner(ws: Workspace): Set<number> {
-  return new Set(ws.db.db.query<{ id: number }, []>("SELECT f.id FROM review_findings f JOIN questions q ON q.id = f.question WHERE f.closed_at IS NULL AND q.answer IS NULL").all().map((r) => r.id));
+  return new Set(ws.db.db.query<{ id: number }, []>("SELECT f.id FROM review_findings f JOIN questions q ON q.id = f.question WHERE f.closed_at IS NULL AND q.answer IS NULL AND q.withdrawn IS NULL").all().map((r) => r.id));
 }
 
 /** One open finding as an item: a contradiction judges first, a tier-C one is the owner's to answer (BR-2527). */

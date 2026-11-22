@@ -1,3 +1,4 @@
+import { awaiting } from "../../work/humans/questions.ts";
 import { git } from "../../kernel/git.ts";
 import { REVIEWED_DIRS } from "../../work/land/checks/review-scope.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
@@ -187,7 +188,7 @@ async function conditions(ws: Workspace, read: ReadResult, commit: string, teste
   const debts = acceptDocs(ws, ws.root, read.corpus, commit, tested, { links: links.value, findings: open });
   if (!debts.ok) return debts;
   const verdicts: { finding: number; question: number; text: string }[] = [];
-  const unanswered = (f: FindingRow) => f.question !== null && ws.db.db.query<{ answer: string | null }, [number]>("SELECT answer FROM questions WHERE id = ?").get(f.question)?.answer === null;
+  const unanswered = (f: FindingRow) => f.question !== null && awaiting(ws.db, f.question);
   for (const id of [...changed.value].sort()) {
     const debt = debts.value.get(id);
     if (!debt) continue;

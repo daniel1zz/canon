@@ -21,7 +21,7 @@ export function askedGate(id: string, question: string): string | undefined {
 const APPROVE = /^(批准|同意|可以|是|yes)$/i;
 const said = (text: string): string => text.trim().replace(/[。.!！,，;；]+$/u, "").trim();
 
-interface Row { readonly id: number; readonly answer: string | null; readonly answered_by: string | null; readonly relayed: string | null; readonly witness: string | null }
+interface Row { readonly id: number; readonly answer: string | null; readonly answered_by: string | null; readonly relayed: string | null; readonly witness: string | null; readonly withdrawn?: string | null }
 
 export interface Approval {
   readonly approved: boolean;
@@ -37,14 +37,14 @@ export interface Approval {
 
 type QRow = Row & { question: string };
 const approveRows = (db: CoordDb, id: string): QRow[] =>
-  db.db.query<QRow, []>("SELECT id, question, answer, answered_by, relayed, witness FROM questions ORDER BY answered_at DESC, id DESC").all().filter((r) => approveQuestion(id).test(r.question));
+  db.db.query<QRow, []>("SELECT id, question, answer, answered_by, relayed, witness, withdrawn FROM questions ORDER BY answered_at DESC, id DESC").all().filter((r) => approveQuestion(id).test(r.question));
 const isYes = (r: Row): boolean => APPROVE.test(said(r.answer!)) && (r.relayed === null || APPROVE.test(said(r.relayed)));
 
 /** Only the questions about `gate` decide: the latest answered one, and an unanswered one if any. */
 function direct(rows: readonly QRow[], id: string, gate: string): { latest?: QRow; pending?: number } {
   // reason: an approval is of the text the owner was shown; once owner_gate changes, the old answers no longer apply (BR-2616, #296)
   const own = rows.filter((r) => askedGate(id, r.question) === gate.trim());
-  const pending = own.filter((r) => r.answer === null).map((r) => r.id).sort((a, b) => b - a)[0];
+  const pending = own.filter((r) => r.answer === null && !r.withdrawn).map((r) => r.id).sort((a, b) => b - a)[0];
   const latest = own.find((r) => r.answer !== null);
   return { ...(latest ? { latest } : {}), ...(pending !== undefined ? { pending } : {}) };
 }

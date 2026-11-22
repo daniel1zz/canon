@@ -28,6 +28,8 @@ export interface Question {
   /** For a relayed answer: how the words compare with the session's question-tool records of this question (BR-2276); null when not checked. */
   readonly witness: Witness | null;
   readonly asked_at: string;
+  /** Why it was withdrawn unanswered (BR-2628); null while it stands. */
+  readonly withdrawn: string | null;
 }
 
 export function ask(db: CoordDb, actor: string, subject: string | null, question: string, options: readonly string[], multi = false): number {
@@ -38,9 +40,40 @@ export function ask(db: CoordDb, actor: string, subject: string | null, question
   return id;
 }
 
+/** The SQL condition of a question still waiting for the human: not answered and not withdrawn (BR-2628). */
+export const PENDING = "answer IS NULL AND withdrawn IS NULL";
+
+/** Whether question `id` still waits for the human's answer (BR-2628): it exists, unanswered and not withdrawn. */
+export function awaiting(db: CoordDb, id: number): boolean {
+  return db.db.query<{ n: number }, [number]>(`SELECT COUNT(*) AS n FROM questions WHERE id = ? AND ${PENDING}`).get(id)!.n > 0;
+}
+
+/**
+ * BR-2628: takes back a question nobody needs answered any more (a later question superseded it, or another one
+ * answered it), so it leaves `canon human pending` and the change's waiting-owner. The reason is kept on the question
+ * and in a `human.withdraw` event. A worker cannot, as it cannot ask the owner either.
+ */
+export function withdraw(db: CoordDb, actor: string, id: number, reason: string, supersededBy: number | undefined, worker: boolean): Result<string> {
+  const why = reason.trim();
+  if (why === "") return err("invalid", "--reason is required: say why the question no longer needs an answer");
+  if (worker) return err("refused", `${actor} is a worker: only the main session or a person withdraws a question to the owner (BR-2628)`);
+  if (supersededBy === id) return err("invalid", `question #${id} cannot supersede itself`);
+  return db.db.transaction((): Result<string> => {
+    const q = db.db.query<{ answer: string | null; withdrawn: string | null }, [number]>("SELECT answer, withdrawn FROM questions WHERE id = ?").get(id);
+    if (!q) return err("not_found", `no question #${id}`);
+    if (q.answer !== null) return err("conflict", `question #${id} is already answered (${JSON.stringify(q.answer)}); an answer is not withdrawn`);
+    if (q.withdrawn !== null) return err("conflict", `question #${id} is already withdrawn: ${q.withdrawn}`);
+    if (supersededBy !== undefined && !db.db.query("SELECT 1 FROM questions WHERE id = ?").get(supersededBy)) return err("not_found", `--superseded-by #${supersededBy}: no such question`);
+    const text = supersededBy !== undefined ? `superseded by #${supersededBy}: ${why}` : why;
+    db.db.query("UPDATE questions SET withdrawn = ? WHERE id = ?").run(text, id);
+    db.event(actor, "human.withdraw", String(id), { reason: why, ...(supersededBy !== undefined ? { superseded_by: supersededBy } : {}) });
+    return ok(text);
+  }).immediate();
+}
+
 export function questions(db: CoordDb, which: "pending" | "all"): Question[] {
   const rows = db.db
-    .query<Omit<Question, "options" | "multi"> & { options: string; multi: number }, []>(`SELECT id, subject, asked_by, question, options, multi, answer, answered_by, relayed, witness, asked_at FROM questions ${which === "pending" ? "WHERE answer IS NULL" : ""} ORDER BY id`)
+    .query<Omit<Question, "options" | "multi"> & { options: string; multi: number }, []>(`SELECT id, subject, asked_by, question, options, multi, answer, answered_by, relayed, witness, asked_at, withdrawn FROM questions ${which === "pending" ? `WHERE ${PENDING}` : ""} ORDER BY id`)
     .all();
   return rows.map((r) => ({ ...r, options: JSON.parse(r.options) as string[], multi: r.multi === 1 }));
 }
@@ -75,8 +108,10 @@ export function answer(db: CoordDb, id: number, text: string, by: string, relaye
     return refuse("not-human-no-relay", "invalid", `${by} is not a human; an agent records a human's answer only with --relayed "<the human's own words>" (BR-2021)`);
   }
   const tx = db.db.transaction((): Result<void> => {
-    const q = db.db.query<{ answer: string | null; question: string; options: string; multi: number }, [number]>("SELECT answer, question, options, multi FROM questions WHERE id = ?").get(id);
+    const q = db.db.query<{ answer: string | null; question: string; options: string; multi: number; withdrawn: string | null }, [number]>("SELECT answer, question, options, multi, withdrawn FROM questions WHERE id = ?").get(id);
     if (!q) return err("not_found", `no question #${id}`);
+    // reason: a withdrawn question is not shown to anyone as waiting; an answer to it would back nothing the asker still needs (BR-2628)
+    if (q.withdrawn !== null && q.answer === null) return err("conflict", `question #${id} was withdrawn (${q.withdrawn}); ask again with canon human ask if it still needs an answer`);
     // reason: the answer an agent types is its own claim; with options it must be the option the human's words name, or a relayed no could be stored as yes (BR-2021)
     const options = JSON.parse(q.options) as string[];
     if (quote && !by.startsWith("human:") && q.answer === null && options.length > 0) {
