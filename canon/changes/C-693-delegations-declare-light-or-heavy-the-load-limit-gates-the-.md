@@ -1,4 +1,5 @@
 ---
+cpu_light: "这一段只写设计稿（规则、决定），由 Opus 设计 worker 做，不跑测试和构建"
 id: C-693
 title: delegations declare light or heavy; the load limit gates the heavy steps,
   whoever runs them (#305)
