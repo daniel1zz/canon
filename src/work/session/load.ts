@@ -15,7 +15,13 @@ export interface Machine {
 
 /** The machine now; undefined where the platform reports no load average (all zeros, as on Windows). */
 export function machineNow(): Machine | undefined {
-  const avg = loadavg();
+  let avg: readonly number[];
+  try {
+    avg = loadavg();
+  } catch {
+    // reason: a load reading that fails counts as not measured, which is not an error: BR-2630 lets a heavy step go then
+    return undefined;
+  }
   // reason: a platform without load averages reports zeros; the hint is then not given, never guessed (BR-2400)
   if (avg.every((x) => x === 0)) return undefined;
   return { load5: avg[1]!, cpus: availableParallelism() };

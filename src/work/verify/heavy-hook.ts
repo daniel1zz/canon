@@ -30,9 +30,11 @@ export function heavyRefusal(command: string, cwd: string, load: LoadDeps = mach
   if (throughCanon(command)) return undefined;
   const matched = config.value.heavyCommands.find((p) => new RegExp(p).test(command));
   if (matched === undefined) return undefined;
+  let machine: ReturnType<typeof readings>["machine"];
   let wait;
   try {
-    wait = wouldWait({ ...load, read: () => readings().machine, now }, config.value.delegateMaxLoadPerCpu);
+    machine = readings().machine;
+    wait = wouldWait({ ...load, read: () => machine, now }, config.value.delegateMaxLoadPerCpu);
   } catch {
     return undefined;
   }
@@ -44,7 +46,9 @@ export function heavyRefusal(command: string, cwd: string, load: LoadDeps = mach
     : "heavy command while the last heavy step left the load queue less than 60 seconds ago";
   const opened = openWorkspace(cwd);
   if (opened.ok) {
-    opened.value.db.event(opened.value.actor, "heavy.refuse", null, { matched, ...(w.reason === "load" ? { load: Math.round(w.machine.load5 * 10) / 10, limit: w.limit, cpus: w.machine.cpus } : w.reason === "queue" ? { ahead: w.ahead } : { spacing: true }) });
+    // reason: the event carries the matched item and, when the load can be read, the load and the limit (BR-2631)
+    const measured = machine ? { load: Math.round(machine.load5 * 10) / 10, limit: config.value.delegateMaxLoadPerCpu * machine.cpus, cpus: machine.cpus } : {};
+    opened.value.db.event(opened.value.actor, "heavy.refuse", null, { matched, ...measured, ...(w.reason === "load" ? {} : w.reason === "queue" ? { ahead: w.ahead } : { spacing: true }) });
   }
   return `${why}; ${HOW(command)}`;
 }

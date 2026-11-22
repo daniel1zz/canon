@@ -53,7 +53,7 @@ export async function runFloor(ws: Workspace, say: Say, cwd: string, name: strin
  * project's `test_select_command` selects no test file for them (BR-2164); undefined when the floor must run, and then
  * `why` is told when that is the command's doing. Renames count on both sides (`--no-renames`).
  */
-/** The paths changed between `base` and `head` that are not under the landing tree's floor_skip_paths (BR-2627). */
+/** The paths changed between `base` and `head` that are not under the landing tree's floor_skip_paths (BR-2632's landing note). */
 export function outsideSkipPaths(wt: string, base: string, head: string): string[] {
   const read = readConfig(wt);
   const skip = read.ok ? read.value.floorSkipPaths : [];

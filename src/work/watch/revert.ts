@@ -6,7 +6,7 @@ import { addWorktree, git, pruneWorktrees, removeWorktree } from "../../kernel/g
 import { touchedClasses } from "../../knowledge/check/design-basis/design-basis.ts";
 import { floorWithReport } from "../land/checks/floor.ts";
 import { REPORT_PLACEHOLDER } from "../verify/report.ts";
-import { commandFor } from "../verify/verify.ts";
+import { commandFor } from "../verify/command-for.ts";
 import { moveMain } from "../land/finish/finish.ts";
 import { pushMain } from "../remote/remote.ts";
 import type { Say, Workspace } from "../workspace.ts";

@@ -1,4 +1,5 @@
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from "node:fs";
+import { commandFor } from "./command-for.ts";
 import { overlapLines } from "../session/overlap.ts";
 import { loadDetail } from "../session/load.ts";
 import { tmpdir } from "node:os";
@@ -116,14 +117,6 @@ export function selectTests(ws: Workspace, all: boolean, only: readonly string[]
     if (reasons.length) selected.push({ file, reasons });
   }
   return ok({ base, changed, rules, decisions, unmatched, selected, notes: asked?.value.notes ?? [], command: asked !== undefined });
-}
-
-const quoted = (s: string) => `'${s.replaceAll("'", `'\\''`)}'`;
-
-/** `test_command` with `{file}` replaced by the path and `{report}` by the report path, quoted for sh. */
-export function commandFor(template: string, file: string, report?: string): string {
-  const withFile = template.replaceAll(FILE_PLACEHOLDER, quoted(file));
-  return report === undefined ? withFile : withFile.replaceAll(REPORT_PLACEHOLDER, quoted(report));
 }
 
 /**

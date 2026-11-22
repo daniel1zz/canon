@@ -3,6 +3,7 @@ import { mkdirSync, readFileSync, rmSync, writeFileSync, existsSync, readdirSync
 import { join } from "node:path";
 import { waitFor, FAST, project, sh, startNew, ws } from "../testkit.ts";
 import { land } from "./land.ts";
+import { enqueue, finishEntry } from "./queue/queue.ts";
 
 // reason: each case lands through the real queue and waits for the machine load; a loaded machine took longer than bun's 5 s default
 setDefaultTimeout(60_000);
@@ -72,4 +73,39 @@ test("BR-2630: under the limit a landing says nothing about the load", async () 
   expect(await land(ws(s.worktree, "agent:s1"), FAST, (l) => said.push(l))).toMatchObject({ kind: "landed" });
   expect(said.some((l) => l.includes("waiting for the machine load"))).toBe(false);
   expect(readFileSync(join(root, "canon/config.yaml"), "utf8")).toContain("floor:");
+});
+
+test("BR-2630: a batch landing passes the load gate once for the whole batch and lands every member behind it", async () => {
+  const { root, marker } = fixture("land_batch_max: 2\n");
+  const a = startNew(root, "A", "agent:s1");
+  writeFileSync(join(a.worktree, "a.txt"), "a\n");
+  sh(a.worktree, "add", "a.txt"); sh(a.worktree, "commit", "-qm", "a");
+  const b = startNew(root, "B", "agent:s1");
+  writeFileSync(join(b.worktree, "b.txt"), "b\n");
+  sh(b.worktree, "add", "b.txt"); sh(b.worktree, "commit", "-qm", "b");
+  // reason: both landings queue behind a silent entry of another session, so the first one is the batch's leader (BR-2172)
+  const other = ws(root, "agent:b");
+  const blocker = enqueue(other.db, "/elsewhere", "C-99", "agent:b");
+  process.env["CANON_MACHINE"] = "normal,17,8";
+  const said: string[][] = [[], []];
+  const runs = [
+    land(ws(a.worktree, "agent:s1"), FAST, (l) => said[0]!.push(l)),
+    land(ws(b.worktree, "agent:s1"), FAST, (l) => said[1]!.push(l)),
+  ];
+  for (const wt of [a.worktree, b.worktree]) {
+    await waitFor(`the queue entry of ${wt}`, () => other.db.db.query("SELECT 1 FROM queue WHERE worktree = ? AND state = 'waiting'").get(wt) !== null);
+  }
+  finishEntry(other.db, blocker, "landed", "x");
+  await waitFor("the batch's waiting line", () => [...said[0]!, ...said[1]!].some((l) => l.includes("canon: waiting for the machine load")));
+  expect(existsSync(marker)).toBe(false);
+  process.env["CANON_MACHINE"] = "normal,12,8";
+  const out = await Promise.all(runs);
+  expect(out.map((o) => o.kind)).toEqual(["landed", "landed"]);
+  expect(existsSync(marker)).toBe(true);
+  expect(sh(root, "show", "main:a.txt")).toBe("a");
+  expect(sh(root, "show", "main:b.txt")).toBe("b");
+  // reason: one gate for the batch, so one wait and one release, not one pair per member (BR-2630)
+  const rows = ws(root, "agent:s1").db.db.query<{ kind: string }, []>("SELECT kind FROM events WHERE kind LIKE 'load.%' ORDER BY id").all();
+  expect(rows.map((r) => r.kind)).toEqual(["load.wait", "load.start"]);
+  expect([...said[0]!, ...said[1]!].filter((l) => l.includes("canon: waiting for the machine load")).length).toBe(1);
 });
