@@ -43,7 +43,7 @@ function fixture(): string {
   return root;
 }
 
-test("BR-2629: canon work remaining lists open changes, rules not passed, open findings, unanswered questions and accepted decisions nothing names, each section counted; closed, retired, proposed, answered and withdrawn items are left out", () => {
+test("BR-2629: canon work remaining lists open changes, rules not passed, open findings, unanswered questions and accepted decisions nothing names, each section counted; closed, retired, proposed, answered and withdrawn items are left out; the last line points to the project's issue tool; --json has changes, rules, findings, questions and decisions", () => {
   const root = fixture();
   const r = canon(root, "work", "remaining");
   expect(r.code).toBe(0);
@@ -77,7 +77,7 @@ test("BR-2629: with nothing unfinished every section says (none) and the exit co
   expect(r.out.split("\n").filter((l) => l === "(none)").length).toBe(6);
 });
 
-test("BR-2629: each 决定 item of a recently added accepted decision that names no rule or change is listed; an item naming one is not; an older decision only with --all; past 30 lines the rest is counted", () => {
+test("BR-2629: each 决定 item of a recently added accepted decision that names no rule or change is listed; an item naming one is not; a decision added to main 40 days ago only with --all; past 30 lines the rest is counted; --json has every item and allItems", () => {
   const root = project(); roots.push(root);
   put(root, `canon/decisions/${id("D", 3)}.md`, decision(3, "accepted", "- 很久以前的一条"));
   // reason: committed 40 days ago, so its items are listed only with --all
