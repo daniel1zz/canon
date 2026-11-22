@@ -1,5 +1,5 @@
 import { standingInstructions } from "../../../kernel/agent.ts";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { git } from "../../../kernel/git.ts";
@@ -171,15 +171,34 @@ export function architectureOf(wt: string, base: string, head: string): Result<{
   return ok(diff?.ok ? { text: overview!, diff: diff.value } : undefined);
 }
 
+/** Where canon's own workflow guide lives in canon's source tree (BR-2143, #290). */
+export const GUIDE_SOURCE = "src/invocation/guide.ts";
+
+/**
+ * The guide the duplicate review compares against (BR-2143): in canon's own source tree (it has GUIDE_SOURCE), the
+ * guide that tree builds, since the reviewer binary may be older than the commit it reviews (#290); in any other project,
+ * `binary`, the guide its sessions see. Reading the tree's guide runs its code with bun; when that fails it says so and
+ * the review fails, never compares against a guide that may be the text this landing replaced.
+ */
+export function guideToCompare(wt: string, binary: string | undefined, bun = "bun"): Result<string | undefined> {
+  if (!existsSync(join(wt, GUIDE_SOURCE))) return ok(binary);
+  const script = `const m = await import(${JSON.stringify(join(wt, GUIDE_SOURCE))}); process.stdout.write(m.WORKFLOW_GUIDE);`;
+  const p = Bun.spawnSync([bun, "-e", script], { cwd: wt, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+  if (p.exitCode !== 0) return err("io", `cannot read the workflow guide of the reviewed tree (${GUIDE_SOURCE}) with ${bun}: exit ${p.exitCode}: ${p.stderr.toString().trim().slice(0, 500)}`);
+  return ok(p.stdout.toString());
+}
+
 /** The prompt of the duplicate review of `standing`, with the diff of each file (BR-2143). */
-export function duplicateReviewPrompt(wt: string, base: string, head: string, standing: readonly string[], instructions: readonly string[], guide: string | undefined): Result<string> {
+export function duplicateReviewPrompt(wt: string, base: string, head: string, standing: readonly string[], instructions: readonly string[], binaryGuide: string | undefined): Result<string> {
+  const guide = guideToCompare(wt, binaryGuide);
+  if (!guide.ok) return guide;
   const diffs: { path: string; diff: string }[] = [];
   for (const path of standing) {
     const d = git(wt, "-c", "core.quotePath=false", "diff", "--no-color", base, head, "--", path);
     if (!d.ok) return err("io", d.error.message);
     diffs.push({ path, diff: d.value });
   }
-  return ok(duplicatePrompt(standing, standingText(wt, instructions), guide, standing.filter((p) => SKILL_FILE.test(p)).map((path) => ({ path, text: readFileSync(join(wt, path), "utf8") })), diffs));
+  return ok(duplicatePrompt(standing, standingText(wt, instructions), guide.value, standing.filter((p) => SKILL_FILE.test(p)).map((path) => ({ path, text: readFileSync(join(wt, path), "utf8") })), diffs));
 }
 
 /** The review settings canon/config.yaml has at `rev` (main), each read as canon reads it; defaults when it has no config (#115). */

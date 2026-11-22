@@ -803,6 +803,31 @@ describe("duplicate review of standing instructions after landing", () => {
     expect(r.review).toContain("canon finding close <n>");
   });
 
+  test("BR-2143: in canon's own source tree the reviewer compares against the guide of the landed tree, not the one it was built with; a tree whose guide cannot be read fails the review (#290)", async () => {
+    const { root, promptFile } = standingProject("ok");
+    mkdirSync(join(root, "src/invocation"), { recursive: true });
+    writeFileSync(join(root, "src/invocation/guide.ts"), 'export const WORKFLOW_GUIDE = "- The old line the landing replaces.";\n');
+    sh(root, "add", "-A"); sh(root, "commit", "-qm", "canon's guide source");
+    const s = startNew(root, "Reword the guide");
+    writeFileSync(join(s.worktree, "src/invocation/guide.ts"), 'export const WORKFLOW_GUIDE = "- The new line, as landed.";\n');
+    writeFileSync(join(s.worktree, "CLAUDE.md"), "# Project\n\n- Changes land by tier.\n");
+    sh(s.worktree, "commit", "-qam", "reword");
+    // the binary's guide still has the replaced line, as a stale dist/canon would
+    const r = await landReviewed(root, s.worktree, "- The old line the landing replaces.");
+    expect(r.out.kind).toBe("landed");
+    const prompt = readFileSync(promptFile, "utf8");
+    expect(prompt).toContain("- The new line, as landed.");
+    expect(prompt).not.toContain("The old line the landing replaces");
+    const broken = startNew(root, "Break the guide");
+    writeFileSync(join(broken.worktree, "src/invocation/guide.ts"), "throw new Error('no guide');\n");
+    writeFileSync(join(broken.worktree, "CLAUDE.md"), "# Project\n\n- Changes land by tier, again.\n");
+    sh(broken.worktree, "commit", "-qam", "broken guide");
+    const failed = await landReviewed(root, broken.worktree, GUIDE);
+    expect(failed.out.kind).toBe("landed");
+    expect(failed.review).toContain("cannot read the workflow guide of the reviewed tree (src/invocation/guide.ts)");
+    expect(kinds(root).at(-1)).toBe("review.fail");
+  });
+
   test("BR-2143: the prompt carries the diff and tells the reviewer to block only duplication on added lines; an old duplicate with an unrelated edit is an ok with the finding as a note (#121)", async () => {
     const { root, promptFile } = standingProject("ok");
     writeFileSync(join(root, "CLAUDE.md"), "# Project\n\n- Ask the human about direction.\n- Ask the human only about direction.\n- Unrelated line.\n");
