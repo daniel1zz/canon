@@ -2,10 +2,14 @@
 id: C-687
 title: implicit delegation refuses a change claimed after its eligibility was
   checked (#294)
-status: open
-rules: [BR-2610]
+status: done
+rules:
+  - BR-2610
 owner_gate: "none: 修 bug"
 advances: "none: 修 bug"
+passes:
+  BR-2526: f20d9c4526be0f8b test wording
+  BR-2610: a620fcd4edf55593 test
 ---
 
 ## 为什么
