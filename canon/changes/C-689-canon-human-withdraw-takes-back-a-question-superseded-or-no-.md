@@ -2,10 +2,13 @@
 id: C-689
 title: canon human withdraw takes back a question superseded or no longer
   needed, so it leaves pending and waiting-owner (#299)
-status: open
-rules: [BR-2628]
+status: done
+rules:
+  - BR-2628
 owner_gate: "none: issue 写明了期望的行为"
 advances: "none: 修工具缺口"
+passes:
+  BR-2628: 5eaaec589745e55d test
 ---
 
 ## 为什么
