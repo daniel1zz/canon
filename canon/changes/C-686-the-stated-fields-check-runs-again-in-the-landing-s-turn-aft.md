@@ -2,10 +2,13 @@
 id: C-686
 title: the stated-fields check runs again in the landing's turn, after the
   rebase (#297)
-status: open
-rules: [BR-2624]
+status: done
+rules:
+  - BR-2624
 owner_gate: "none: 修 bug"
 advances: "none: 修 bug"
+passes:
+  BR-2624: 5b5be42a512ebead test
 ---
 
 ## 为什么
