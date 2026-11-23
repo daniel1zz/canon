@@ -70,6 +70,14 @@
             "command": "canon goal check --hook --runtime codex || echo '{\"systemMessage\":\"canon goal check failed or canon is not on PATH: the goal was not checked\"}'"
           }
         ]
+      },
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "canon work model --hook --runtime codex || echo '{\"systemMessage\":\"canon work model failed or canon is not on PATH: the model of this session was not recorded\"}'"
+          }
+        ]
       }
     ]
   }
