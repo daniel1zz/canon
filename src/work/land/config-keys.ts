@@ -5,18 +5,20 @@ import { configKey, readGroup, rawAt, type KeyContext, MINUTE, optionalString, p
 export interface LandingPolicy {
   /** While the background floor fails on main, only the fix change lands (BR-2644). */
   readonly pause_on_red_main: boolean;
+  /** When this branch and what main gained since it forked overlap, the tests test_select_command picks for main's side run on the tree being landed (BR-2645). */
+  readonly cross_tests: boolean;
 }
-export const LANDING_DEFAULTS: LandingPolicy = { pause_on_red_main: true };
+export const LANDING_DEFAULTS: LandingPolicy = { pause_on_red_main: true, cross_tests: true };
 const flag = (v: unknown, name: string): Result<boolean> => (typeof v === "boolean" ? ok(v) : err("invalid", `\`${name}\` must be true or false`));
 
 /** canon/config.yaml keys of landing (C-135). */
 export const landKeys = {
   landingPolicy: configKey<LandingPolicy>({
     key: "policies.landing",
-    doc: "What landing does while the background floor fails on main: pause_on_red_main (true) lets only the fix change land (BR-2644); an entry left out keeps its default.",
+    doc: "How landing protects main: pause_on_red_main (true) lets only the fix change land while the background floor fails on main (BR-2644); cross_tests (true) runs, when this branch and what main gained since it forked overlap, the tests test_select_command picks for main's side on the tree being landed (BR-2645); an entry left out keeps its default.",
     default: LANDING_DEFAULTS,
-    schema: { type: ["object", "null"], additionalProperties: false, default: LANDING_DEFAULTS, properties: { pause_on_red_main: { type: "boolean", default: true } } },
-    read: (v) => readGroup("policies.landing", v, LANDING_DEFAULTS, { pause_on_red_main: flag }),
+    schema: { type: ["object", "null"], additionalProperties: false, default: LANDING_DEFAULTS, properties: { pause_on_red_main: { type: "boolean", default: true }, cross_tests: { type: "boolean", default: true } } },
+    read: (v) => readGroup("policies.landing", v, LANDING_DEFAULTS, { pause_on_red_main: flag, cross_tests: flag }),
     flow: { steps: ["land.queue"], role: TUNABLE },
     listed: 403,
     checked: 403,

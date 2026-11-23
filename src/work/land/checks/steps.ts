@@ -1,3 +1,6 @@
+import { crossTests } from "./cross-tests.ts";
+import { ok } from "../../../kernel/result.ts";
+import { landingPolicyOf } from "../config-keys.ts";
 import { checkPolicyOf } from "../../../knowledge/check/config-keys.ts";
 import { configAt } from "../../delegation/delegate.ts";
 import { missingStatedFields, statedFieldsMessage } from "./fields.ts";
@@ -99,6 +102,23 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
     if (broken) return refuse("check", `canon check: ${broken.file} fails on the tree being landed, after the rebase (BR-2381); rebase onto main, fix it, run canon work test and land again:\n${tail(broken.output)}`);
     reports = reportsFor(ws.db, wt, landing.value, read.corpus, tests);
     if (!reports.ok) return refuse("environment", reports.error.message);
+  }
+  // reason: two changes that each passed on their own tree can break together; the tests the project selects for what main
+  // gained since this branch forked run on the tree being landed, whatever reports they have (BR-2645)
+  // reason: whether cross tests run comes from main's landed config, so a change cannot switch them off for itself (BR-2645, BR-2074)
+  const landingPolicy = landingPolicyOf(configAt(ws, v.main), wt);
+  if (!landingPolicy.ok) return refuse("config", `canon/config.yaml on ${v.main}: ${landingPolicy.error.message}`);
+  const cross = landingPolicy.value.cross_tests && landing.value.testCommand ? crossTests(wt, v.before, v.base, landing.value.testSelectCommand, new Set(tests)) : ok({ files: [], sharedPaths: [], sharedTests: [] });
+  if (!cross.ok) return refuse("environment", cross.error.message);
+  if (cross.value.files.length > 0 && landing.value.testCommand) {
+    const why = [...(cross.value.sharedPaths.length ? [`both changed ${cross.value.sharedPaths.slice(0, 5).join(", ")}${cross.value.sharedPaths.length > 5 ? ", …" : ""}`] : []), ...(cross.value.sharedTests.length ? [`test_select_command picks ${cross.value.sharedTests.slice(0, 5).join(", ")}${cross.value.sharedTests.length > 5 ? ", …" : ""} for both`] : [])].join("; ");
+    say(`cross tests: this change and what ${v.main} gained since it forked overlap (${why}); running the ${cross.value.files.length} test file(s) test_select_command picks for ${v.main}'s side on the tree being landed (BR-2645)`);
+    const gated = await v.running.gate?.();
+    if (gated && !gated.ok) return refuse("environment", gated.error.message);
+    const runs = await runLandingTests(ws, wt, landing.value.testCommand, cross.value.files, landingGroups(v.running));
+    for (const r of runs) say(`cross-tested ${r.file}: ${r.exitCode === 0 ? "pass" : "fail"}`);
+    const broken = runs.find((r) => r.exitCode !== 0);
+    if (broken) return refuse("check", `canon check: ${broken.file} fails on the tree being landed (BR-2645): test_select_command picks it for what ${v.main} gained since this branch forked, so this change and those together break it; fix it here, run canon work test ${broken.file} and land again:\n${tail(broken.output)}`);
   }
   // reason: which checks refuse comes from main's landed config, never the change's own tree, so a change cannot relax them for itself (BR-2641, BR-2074)
   const policy = checkPolicyOf(configAt(ws, v.main), wt);
