@@ -42,7 +42,7 @@ test("BR-2638: canon config lists each group as policies.<group>, and the editor
   expect(views.find((v) => v.key === "policies.agenda")).toMatchObject({ set: true, value: { slow_hours: 12 } });
   expect(views.find((v) => v.key === "policies.checks")).toMatchObject({ set: false });
   const schema = configSchema() as { properties: Record<string, { properties?: Record<string, unknown> }> };
-  expect(Object.keys(schema.properties["policies"]!.properties!).sort()).toEqual(["agenda", "capacity", "checks"]);
+  expect(Object.keys(schema.properties["policies"]!.properties!).sort()).toEqual(["agenda", "capacity", "checks", "landing"]);
   expect(Object.keys(schema.properties).some((k) => k.includes("."))).toBe(false);
 });
 

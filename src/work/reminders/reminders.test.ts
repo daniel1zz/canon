@@ -147,7 +147,7 @@ test("BR-2527: canon work due prints nothing due, or an object with empty groups
   expect(JSON.parse(j.out)).toMatchObject({ judge: [], owner: [], yours: [], heavy: { running: [], waiting: 0, load_waiting: [] } });
   finding(ws(root), 3, "A");
   const one = JSON.parse(cli(root, "agent:s1", ["work", "due", "--json"]).out) as { judge: { key: string; next: string }[] };
-  expect(one.judge.map((i) => Object.keys(i).sort())).toEqual([["key", "kind", "next", "since", "summary"]]);
+  expect(one.judge.map((i) => Object.keys(i).sort())).toEqual([["holds", "key", "kind", "next", "since", "summary"]]);
   expect(one.judge[0]!.next).toStartWith("canon finding close 1 ");
 });
 

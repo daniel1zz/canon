@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { land } from "../land/land.ts";
@@ -216,19 +216,32 @@ describe("when the background floor does not locate or revert", () => {
   });
 
   test("BR-2536 BR-2535: a chore found as the cause is not reverted; once a fix change holds the failure, a later failure is not located", async () => {
-    const root = await repo();
-    const c = startChore(ws(root), { title: "break the value" }, quiet);
-    if (!c.ok) throw new Error(c.error.message);
-    writeFileSync(join(c.value.worktree, "value.txt"), "bad\n");
-    sh(c.value.worktree, "commit", "-qam", "break");
-    expect((await land(ws(c.value.worktree), { finish: true, timeoutMs: 60_000 }, quiet)).kind).toBe("landed");
-    await watch(ws(root), quiet, { now: true });
-    expect(skips(root)).toEqual([expect.stringMatching(/^the landing [0-9a-f]{9} is a chore, with no change to send back$/)]);
-    expect(startFixMain(ws(root, "agent:fixer"), quiet).ok).toBe(true);
-    await landing(root, "Add notes", { "notes.txt": "n\n" });
-    await watch(ws(root), quiet, { now: true });
-    expect(skips(root)[1]).toMatch(/^C-\d+ is already fixing main$/);
-    expect(events(root, "land.revert")).toEqual([]);
+    // reason: a landing after the fix change started is what this case checks; the pause (BR-2644) would refuse it. Setting
+    // policies makes the after-mode landing ask the canon on PATH for its schema (BR-2224), so a stand-in that accepts any
+    // config goes first on PATH, and the case does not depend on which canon this machine has installed.
+    const bin = mkdtempSync(join(tmpdir(), "canon-fake-bin-"));
+    roots.push(bin);
+    writeFileSync(join(bin, "canon"), "#!/bin/sh\necho '{}'\n");
+    chmodSync(join(bin, "canon"), 0o755);
+    const realPath = process.env["PATH"];
+    process.env["PATH"] = `${bin}:${realPath}`;
+    try {
+      const root = await repo(undefined, CONFIG.concat("policies:\n  landing:\n    pause_on_red_main: false\n"));
+      const c = startChore(ws(root), { title: "break the value" }, quiet);
+      if (!c.ok) throw new Error(c.error.message);
+      writeFileSync(join(c.value.worktree, "value.txt"), "bad\n");
+      sh(c.value.worktree, "commit", "-qam", "break");
+      expect((await land(ws(c.value.worktree), { finish: true, timeoutMs: 60_000 }, quiet)).kind).toBe("landed");
+      await watch(ws(root), quiet, { now: true });
+      expect(skips(root)).toEqual([expect.stringMatching(/^the landing [0-9a-f]{9} is a chore, with no change to send back$/)]);
+      expect(startFixMain(ws(root, "agent:fixer"), quiet).ok).toBe(true);
+      await landing(root, "Add notes", { "notes.txt": "n\n" });
+      await watch(ws(root), quiet, { now: true });
+      expect(skips(root)[1]).toMatch(/^C-\d+ is already fixing main$/);
+      expect(events(root, "land.revert")).toEqual([]);
+    } finally {
+      process.env["PATH"] = realPath;
+    }
   });
 
   test("BR-2535: after one automatic revert, main failing again under the same record reverts nothing more", async () => {

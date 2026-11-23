@@ -27,6 +27,9 @@ function configured(config: string): string {
   return root;
 }
 
+// reason: these cases land while main fails on purpose, to check what the landing says (BR-2306); the pause (BR-2644) is off for them
+const NO_PAUSE = "policies:\n  landing:\n    pause_on_red_main: false\n";
+
 const commitFile = (wt: string, path: string, text: string) => {
   writeFileSync(join(wt, path), text);
   sh(wt, "add", path);
@@ -259,7 +262,7 @@ describe("the published canon on PATH reads the landing's config in after mode",
 describe("landing while main is failing", () => {
   /** A project in after mode whose main fails its floor, with the failure recorded by a background run. */
   async function redProject() {
-    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
+    const root = configured(`floor: test ! -e FAIL\nfloor_timing: after\nfloor_quiet_minutes: 0\n${NO_PAUSE}`);
     writeFileSync(join(root, "FAIL"), "x\n");
     sh(root, "add", "-A");
     sh(root, "commit", "-qm", "broken");
@@ -316,7 +319,7 @@ describe("landing while main is failing", () => {
   });
 
   test("BR-2306: when main is not failing nothing is added", async () => {
-    const root = configured("floor: test ! -e FAIL\nfloor_timing: after\nfloor_quiet_minutes: 0\n");
+    const root = configured(`floor: test ! -e FAIL\nfloor_timing: after\nfloor_quiet_minutes: 0\n${NO_PAUSE}`);
     const s = startNew(root, "Lands on green");
     commitFile(s.worktree, "new.txt", "x\n");
     const r = canon(s.worktree, "work", "land");
