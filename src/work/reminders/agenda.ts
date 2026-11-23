@@ -11,6 +11,7 @@ import { lightNote, roomDetail, roomOf, type Room } from "./room.ts";
 import { interruptItems } from "./interrupt.ts";
 import { changeFacts, contextOf } from "../delegation/notices.ts";
 import { DEFAULT_TIER, type Tier } from "../priority/tiers.ts";
+import { withHolds } from "./holds.ts";
 
 /**
  * The agenda (BR-2527, D-151): the one place that works out what the main agent should hear about. Three groups (what can
@@ -67,7 +68,8 @@ export const SUMMARY_SHOWN = 3;
 /** The most keys a folded line names (BR-2527). */
 export const FOLD_KEYS = 10;
 
-const byOrder = (a: DueItem, b: DueItem): number => a.tier - b.tier || (a.since === null ? 1 : 0) - (b.since === null ? 1 : 0) || (a.since !== null && b.since !== null ? Date.parse(a.since) - Date.parse(b.since) : 0);
+// reason: within a tier, what holds more waiting changes goes first (BR-2635)
+const byOrder = (a: DueItem, b: DueItem): number => a.tier - b.tier || (b.holds?.length ?? 0) - (a.holds?.length ?? 0) || (a.since === null ? 1 : 0) - (b.since === null ? 1 : 0) || (a.since !== null && b.since !== null ? Date.parse(a.since) - Date.parse(b.since) : 0);
 
 /** The calling session's agenda (BR-2527). */
 export function agenda(ws: Workspace, opts: AgendaOptions = {}): Result<Agenda> {
@@ -101,7 +103,7 @@ export function agenda(ws: Workspace, opts: AgendaOptions = {}): Result<Agenda> 
     return !o || !holds(o, since, (id) => closed.has(id) || !states.some((s) => s.id === id), now);
   };
   const ctx = contextOf(corpus.value, states, ws.db);
-  const items = [...mainItems(ws, now, states, corpus.value), ...interruptItems(ws, states, room, ctx)].filter((it) => keep(it.key, it.since));
+  const items = withHolds(ws, [...mainItems(ws, now, states, corpus.value), ...interruptItems(ws, states, room, ctx)], states).filter((it) => keep(it.key, it.since));
   // reason: the main agent chooses who does a change, so every change that can start is listed with both ways, not only the delegatable ones (BR-2607, D-156)
   const startable = states.filter((s): s is ChangeState & { change: NonNullable<ChangeState["change"]> } => (s.state === "ready-delegatable" || s.state === "ready-self") && s.change !== undefined && keep(`ready:${s.id}`, null));
   const ready: ReadyItem[] = startable.map((s) => {
@@ -130,9 +132,11 @@ export function folded(items: readonly DueItem[]): DueItem[][] {
   const out: DueItem[][] = [];
   const at = new Map<string, DueItem[]>();
   for (const it of items) {
-    const g = at.get(it.kind);
+    // reason: an item that holds waiting changes is its own line, so what it holds is never folded away (BR-2635)
+    const fold = it.holds && it.holds.length > 0 ? it.key : it.kind;
+    const g = at.get(fold);
     if (g) g.push(it);
-    else { const fresh = [it]; at.set(it.kind, fresh); out.push(fresh); }
+    else { const fresh = [it]; at.set(fold, fresh); out.push(fresh); }
   }
   return out;
 }
@@ -227,7 +231,7 @@ export function summary(a: Agenda, now: number = Date.now()): string[] {
   return lines.length === 0 ? [] : ["Agenda (canon work due):", ...lines.map((l) => `  ${l}`)];
 }
 
-const itemJson = (it: DueItem) => ({ key: it.key, kind: it.kind, since: it.since, summary: it.summary, next: it.next });
+const itemJson = (it: DueItem) => ({ key: it.key, kind: it.kind, since: it.since, summary: it.summary, next: it.next, holds: it.holds ?? [] });
 
 /** The `--json` form (BR-2527). */
 export function agendaJson(a: Agenda): Record<string, unknown> {

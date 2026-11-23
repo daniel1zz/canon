@@ -37,6 +37,8 @@ export interface DueItem {
   readonly tier: 0 | 1 | 2;
   /** Cannot be deferred or marked not doing: a P0 change's interrupt (BR-2606). */
   readonly fixOnly?: boolean;
+  /** The open changes waiting on this item's change, nearest first (BR-2635). */
+  readonly holds?: readonly string[];
 }
 
 /** `12m`, `3h05m`, `2d4h` (BR-2527); under a minute is `0m`. */
