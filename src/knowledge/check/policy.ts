@@ -15,6 +15,8 @@ export const CONFIGURABLE_CHECKS = {
   "decision-rule-unlinked": "remind",
   "decision-revision-reason": "remind",
   "domain-no-decision": "remind",
+  // reason: a landing check, not canon check's: an unfilled ## 教训 when --finish closes a change (BR-2161); a duplicate one is always refused (BR-2596)
+  lessons: "refuse",
 } as const satisfies Readonly<Record<string, CheckAction>>;
 export type ConfigurableCheck = keyof typeof CONFIGURABLE_CHECKS;
 export type CheckPolicy = { readonly [K in ConfigurableCheck]: CheckAction };

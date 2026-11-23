@@ -10,6 +10,8 @@ import { findDoc } from "../../../knowledge/query/query.ts";
 import { readCorpus } from "../../../knowledge/documents/read.ts";
 import { duplicateHeadings, hasLessons, LESSONS_SECTION, linesSaid } from "../../../knowledge/documents/templates.ts";
 import type { Finding } from "../../../knowledge/check/check.ts";
+import { checkPolicyOf } from "../../../knowledge/check/config-keys.ts";
+import { configAt } from "../../delegation/delegate.ts";
 
 export type RefusalReason = Extract<LandOutcome, { kind: "refused" }>["reason"];
 export interface Refusal {
@@ -22,26 +24,34 @@ export interface Refusal {
  * branch adds must state (BR-2624), and with `finish` the change's document, its lessons (BR-2161) and its owner_gate
  * approval (BR-2616). All of them, not the first, so one landing names everything to fix.
  */
-export function contentRefusals(ws: Workspace, wt: string, main: string, subject: string | null, finish: boolean): { refusals: Refusal[] } | { error: string } {
+export function contentRefusals(ws: Workspace, wt: string, main: string, subject: string | null, finish: boolean): { refusals: Refusal[]; notes: string[] } | { error: string } {
   const out: Refusal[] = [];
+  const notes: string[] = [];
   const stated = missingStatedFields(wt, main, ws.config);
   if ("error" in stated) return stated;
   if (stated.lines.length > 0) out.push({ reason: "fields", message: statedFieldsMessage(stated.lines) });
-  if (!finish || subject === null) return { refusals: out };
+  if (!finish || subject === null) return { refusals: out, notes };
   const doc = findDoc(readCorpus(wt, ws.config.types, ws.config).corpus, subject);
   if (!isChore(subject) && doc?.kind !== "change") {
     out.push({ reason: "check", message: `${subject}: its Change document is missing; this is not a chore` });
-    return { refusals: out };
+    return { refusals: out, notes };
   }
-  if (doc?.kind !== "change" || doc.status !== "open") return { refusals: out };
+  if (doc?.kind !== "change" || doc.status !== "open") return { refusals: out, notes };
   const twice = duplicateHeadings(readFileSync(join(wt, doc.path), "utf8")).find((h) => h.heading === LESSONS_SECTION);
   if (twice) out.push({ reason: "lessons", message: `${subject}: ${LESSONS_SECTION} appears on lines ${linesSaid(twice.lines)} of ${doc.path}; canon reads only the first, so merge them into one section; commit, then land --finish again` });
-  else if (!hasLessons(doc.body)) out.push({ reason: "lessons", message: `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again` });
+  else if (!hasLessons(doc.body)) {
+    // reason: whether an unfilled ## 教训 refuses is main's policies.checks.lessons, never the change's own (BR-2641, BR-2161)
+    const policy = checkPolicyOf(configAt(ws, main), wt);
+    if (!policy.ok) return { error: `canon/config.yaml on ${main}: ${policy.error.message}` };
+    const message = `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`;
+    if (policy.value.lessons === "refuse") out.push({ reason: "lessons", message });
+    else if (policy.value.lessons === "remind") notes.push(`note: ${message} (policies.checks.lessons is remind, so the landing goes on)`);
+  }
   if (doc.ownerGate !== undefined) {
     const approval = approvalOf(ws.db, subject, doc.ownerGate);
     if (!approval.approved) out.push({ reason: "owner-gate", message: gateRefusal(subject, doc.ownerGate, approval, isWorker(ws.actor)) });
   }
-  return { refusals: out };
+  return { refusals: out, notes };
 }
 
 /**

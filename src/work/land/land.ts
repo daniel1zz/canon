@@ -1,3 +1,5 @@
+import { checkPolicyOf } from "../../knowledge/check/config-keys.ts";
+import { configAt } from "../delegation/delegate.ts";
 import { failedOnBranch } from "./checks/tested.ts";
 import { contentRefusals, refusalsMessage } from "./finish/preflight.ts";
 import { existsSync, readFileSync } from "node:fs";
@@ -131,6 +133,7 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
   // reason: every refusal the content alone decides is said in one landing, before the related tests and the queue (BR-2634)
   const pre = contentRefusals(ws, wt, main, subject, opts.finish === true);
   if ("error" in pre) return early("environment", pre.error);
+  for (const n of pre.notes) say(n);
   if (pre.refusals.length > 0) {
     const now = opts.finish ? checkNow(ws, wt, main) : undefined;
     const message = refusalsMessage(pre.refusals, now?.ok ? now.findings : []);
@@ -227,7 +230,10 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
         // reason: a second ## 教训 is never read, so "not filled" would point at the wrong copy (BR-2161, BR-2596)
         const twice = duplicateHeadings(readFileSync(join(wt, doc.path), "utf8")).find((h) => h.heading === LESSONS_SECTION);
         if (twice) return early("lessons", `${subject}: ${LESSONS_SECTION} appears on lines ${linesSaid(twice.lines)} of ${doc.path}; canon reads only the first, so merge them into one section; commit, then land --finish again`);
-        if (!hasLessons(doc.body)) return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
+        // reason: the check before the queue already judged an unfilled ## 教训 by main's policies.checks.lessons (BR-2641)
+        const lessonsPolicy = checkPolicyOf(configAt(ws, main), wt);
+        if (!lessonsPolicy.ok) return early("config", `canon/config.yaml on ${main}: ${lessonsPolicy.error.message}`);
+        if (!hasLessons(doc.body) && lessonsPolicy.value.lessons === "refuse") return early("lessons", `${subject} has no filled ${LESSONS_SECTION} section: write each lesson this work found and where it went (a mechanism's id, 只靠文字：<原因>, or 待负责人确认是否固化), or 无 when there is none; commit, then land --finish again`);
         // reason: a light delegation whose branch changed what tests cover was delegated past the load; said, never refused (BR-2632)
         const delegated = delegation(ws.db, subject);
         if (delegated && delegated.ended === null && delegated.light !== null) {

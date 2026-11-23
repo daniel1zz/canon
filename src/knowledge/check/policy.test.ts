@@ -1,5 +1,5 @@
 import { afterEach, expect, setDefaultTimeout, test } from "bun:test";
-import { appendFileSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { appendFileSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { readCorpus } from "../documents/read.ts";
@@ -24,6 +24,13 @@ function noExample(): string {
   mkdirSync(join(root, "src/billing"), { recursive: true });
   for (const [p, text] of Object.entries(files)) { mkdirSync(dirname(join(root, p)), { recursive: true }); writeFileSync(join(root, p), text); }
   return root;
+}
+/** Takes the filled ## 教训 that startNew writes out of the change file and commits it. */
+function dropLessons(wt: string): void {
+  const dir = join(wt, "canon/changes");
+  const file = join(dir, readdirSync(dir)[0]!);
+  writeFileSync(file, readFileSync(file, "utf8").replace("## 教训\n\n无。\n\n", ""));
+  sh(wt, "add", "-A"); sh(wt, "commit", "-qm", "no lessons");
 }
 const kinds = (fs: readonly { rule: string }[]) => fs.map((f) => f.rule);
 const policy = (over: Partial<CheckPolicy>): CheckPolicy => ({ ...CONFIGURABLE_CHECKS, ...over });
@@ -74,4 +81,26 @@ test("BR-2641 BR-2074: a landing judges by main's policies.checks, so a branch t
   const r = await land(ws(s.worktree, "agent:s1"), FAST, quiet);
   expect(r.kind).toBe("refused");
   if (r.kind === "refused") expect((r.findings ?? []).map((f) => f.rule)).toContain("rule-no-example");
+});
+
+test("BR-2641 BR-2161: with main's policies.checks.lessons set to remind, --finish closes a change without lessons and says so in a note; the branch's own setting counts for nothing", async () => {
+  const root = project(); roots.push(root);
+  writeFileSync(join(root, "canon/product.md"), "# Product\n\nShared work.\n");
+  appendFileSync(join(root, "canon/config.yaml"), "policies:\n  checks:\n    lessons: remind\n");
+  sh(root, "add", "-A"); sh(root, "commit", "-qm", "lessons remind");
+  const s = startNew(root, "No lessons", "agent:s1");
+  dropLessons(s.worktree);
+  const said: string[] = [];
+  const r = await land(ws(s.worktree, "agent:s1"), { ...FAST, finish: true }, (l: string) => said.push(l));
+  expect(r).toMatchObject({ kind: "landed", finished: true });
+  expect(said.some((l) => l.startsWith("note: ") && l.includes("policies.checks.lessons is remind"))).toBe(true);
+  // the default on main refuses, whatever a branch writes for itself
+  const strict = project(); roots.push(strict);
+  writeFileSync(join(strict, "canon/product.md"), "# Product\n\nShared work.\n");
+  sh(strict, "add", "-A"); sh(strict, "commit", "-qm", "product");
+  const t = startNew(strict, "Relax lessons", "agent:s1");
+  dropLessons(t.worktree);
+  appendFileSync(join(t.worktree, "canon/config.yaml"), "policies:\n  checks:\n    lessons: \"off\"\n");
+  sh(t.worktree, "add", "-A"); sh(t.worktree, "commit", "-qm", "off for me");
+  expect(await land(ws(t.worktree, "agent:s1"), { ...FAST, finish: true }, quiet)).toMatchObject({ kind: "refused", reason: "lessons" });
 });
