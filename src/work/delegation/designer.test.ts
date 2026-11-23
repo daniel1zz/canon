@@ -149,17 +149,19 @@ test("BR-2633: a worker that may design takes up a change nobody works on, but n
   const mine = (ws(root, OWNER).db.db.query<{ subject: string }, []>("SELECT subject FROM claims").get())!.subject;
   expect(cli(root, W1, ["work", "stop", "--reason", "partial", "--next", "resume", "--release"]).code).not.toBe(2);
   // released by its opener, a new session of the same kind takes it up
+  // reason: a worker that may design is one another session launched (here CLAUDE_DELEGATE_CHILD=1, BR-2468); without that mark the start is BR-2610's implicit delegation for agent:s9
+  const launched = { CLAUDE_DELEGATE_CHILD: "1" };
   const w = ws(root, OWNER);
   w.db.db.query("DELETE FROM claims WHERE subject = ?").run(mine);
   w.db.close();
-  expect(cli(root, "agent:s9:w1", ["work", "start", mine]).code).toBe(0);
+  expect(cli(root, "agent:s9:w1", ["work", "start", mine], launched).code).toBe(0);
   const w2 = ws(root, OWNER);
   w2.db.db.query("DELETE FROM claims WHERE subject = ?").run(mine);
   w2.db.close();
   // the design owner delegates it to w3: a worker that may design still starts only what is delegated to its name
   const d = delegate(ws(root, OWNER), mine, "w3", [], quiet);
   if (!d.ok) throw new Error(d.error.message);
-  expect(cli(root, "agent:s9:w1", ["work", "start", mine]).code).toBe(1);
+  expect(cli(root, "agent:s9:w1", ["work", "start", mine], launched).code).toBe(1);
   // and a worker never delegates, whatever its profile
   expect(cli(root, W1, ["work", "delegate", mine, "--to", "w4"]).code).toBe(2);
 });

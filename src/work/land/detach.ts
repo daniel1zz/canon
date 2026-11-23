@@ -9,6 +9,7 @@ import { attemptIn } from "./queue/interrupted.ts";
 import { EXIT } from "../../invocation/command.ts";
 import { git } from "../../kernel/git.ts";
 import { groupAlive } from "../verify/stop-groups.ts";
+import { hideFromSelf } from "../verify/heavy-step.ts";
 
 /**
  * A landing runs in its own background process; `canon work land` only follows it (D-80, BR-2390..BR-2393). The
@@ -42,10 +43,10 @@ const GONE_MS = 5_000;
  * landing is the process whose parent is that follower, or the process that directory's `pid` file names.
  */
 export function backgroundRun(env: Record<string, string | undefined> = process.env, parent: number = process.ppid, name: string = RUN_ENV, self: number = process.pid): string | undefined {
-  const value = env[name];
-  // reason: Bun starts a child without an explicit env from the environment this process started with, so removing the
-  // variable here does not hide it from the floor or hooks; a `canon work land` they run has another parent and is not the landing (BR-2390)
-  delete env[name];
+  // reason: removed so this process does not read it again, but kept for the floor and hooks it starts (BR-2307); a
+  // `canon work land` they run has another parent and is not the landing (BR-2390)
+  const value = env === process.env ? hideFromSelf(name) : env[name];
+  if (env !== process.env) delete env[name];
   const m = /^(\d+):(.+)$/.exec(value ?? "");
   const dir = m?.[2];
   if (!m || dir === undefined) return undefined;

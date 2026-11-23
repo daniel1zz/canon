@@ -15,8 +15,20 @@ import { machineLoad, passLoadGate, type LoadDeps, type Passed, type StepKind } 
 export const HEAVY_ENV_NAME = "CANON_HEAVY_STEP";
 export const HEAVY_ENV: Readonly<Record<string, string>> = { [HEAVY_ENV_NAME]: "1" };
 export const insideHeavyStep = (env: Readonly<Record<string, string | undefined>> = process.env): boolean => env[HEAVY_ENV_NAME] === "1";
-/** `process.env` for a project command a heavy step runs. */
-export const heavyEnv = (): Record<string, string> => ({ ...(process.env as Record<string, string>), ...HEAVY_ENV });
+/** Variables this process removed from `process.env` that the project commands it starts still see (BR-2307). */
+const startedWith: Record<string, string> = {};
+/**
+ * Removes `name` from `process.env` while the project commands a heavy step runs still get it: a spawn with an explicit
+ * env no longer falls back to the environment the process started with, as one without did (BR-2307, BR-2390).
+ */
+export function hideFromSelf(name: string): string | undefined {
+  const value = process.env[name];
+  if (value !== undefined) startedWith[name] = value;
+  delete process.env[name];
+  return value;
+}
+/** `process.env` for a project command a heavy step runs, with the variables hideFromSelf removed. */
+export const heavyEnv = (): Record<string, string> => ({ ...startedWith, ...(process.env as Record<string, string>), ...HEAVY_ENV });
 
 /** One pass for a batch of steps: the first call passes the gate, later calls get the same answer (BR-2630). */
 export function gateOnce(pass: () => Promise<Result<Passed>>): () => Promise<Result<Passed>> {
