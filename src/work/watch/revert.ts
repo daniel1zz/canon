@@ -302,9 +302,9 @@ export function revertedChanges(ws: Workspace): { subject: string; since: string
   });
 }
 
-/** Files that passed on a rerun in the last 7 days, newest event first, for `canon work due` (BR-2534). */
+/** Files that passed on a rerun in the last policies.agenda.flaky_days (7 by default), newest event first, for `canon work due` (BR-2534, BR-2639). */
 export function flakyFiles(ws: Workspace, now: number): { file: string; since: string }[] {
-  const from = new Date(now - 7 * 24 * 3600 * 1000).toISOString();
+  const from = new Date(now - ws.config.agendaPolicy.flaky_days * 24 * 3600 * 1000).toISOString();
   const rows = ws.db.db.query<{ ts: string; detail: string }, [string]>("SELECT ts, detail FROM events WHERE kind = 'floor.flaky' AND ts >= ? ORDER BY id DESC").all(from);
   const seen = new Map<string, string>();
   for (const r of rows) for (const file of (JSON.parse(r.detail) as { files?: string[] }).files ?? []) if (!seen.has(file)) seen.set(file, r.ts);

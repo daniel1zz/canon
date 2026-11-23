@@ -474,7 +474,7 @@ async function runWorkTest(ws: Workspace, all: boolean, say: (line: string) => v
   if (!reports.ok) return reports;
   const arch = architectureBase(ws);
   if (!arch.ok) return arch;
-  const input = { root: ws.root, ...read, testFiles, reports: reports.value, branchChanges: onBranches.value, backlogBase: onMain.value, architecture: arch.value };
+  const input = { root: ws.root, ...read, testFiles, reports: reports.value, branchChanges: onBranches.value, backlogBase: onMain.value, architecture: arch.value, checkPolicy: ws.config.checkPolicy };
   const findings = check(input);
   for (const f of findings) say(`${f.rule.padEnd(18)} ${f.path}: ${f.message}`);
   for (const n of staleReportNotes(input)) say(noteLine(n)); // never a failure (BR-2345)

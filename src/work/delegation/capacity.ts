@@ -1,4 +1,4 @@
-import { memoryNow, type Memory } from "../../kernel/machine.ts";
+import { levelTight, MEMORY_LIMITS, memoryNow, type Memory, type MemoryLimits } from "../../kernel/machine.ts";
 import { ok, type Result } from "../../kernel/result.ts";
 import type { Corpus } from "../../knowledge/documents/model.ts";
 import { machineNow, type Machine } from "../session/load.ts";
@@ -24,20 +24,20 @@ export interface Capacity {
  * `none` for an unmeasured load), so tests do not depend on how busy the machine running them is, as CANON_NOW does
  * for the clock. A value in any other form fails loudly.
  */
-export function readings(env: Readonly<Record<string, string | undefined>> = process.env): { memory: Memory | undefined; machine: Machine | undefined } {
+export function readings(env: Readonly<Record<string, string | undefined>> = process.env, limits: MemoryLimits = MEMORY_LIMITS): { memory: Memory | undefined; machine: Machine | undefined } {
   const v = env["CANON_MACHINE"];
-  if (v === undefined || v === "") return { memory: memoryNow(), machine: machineNow() };
+  if (v === undefined || v === "") return { memory: memoryNow(undefined, limits), machine: machineNow() };
   const m = /^(normal|warn|critical|none),(none|\d+(?:\.\d+)?),(\d+)$/.exec(v);
   if (!m) throw new Error(`CANON_MACHINE=${JSON.stringify(v)} is not <normal|warn|critical|none>,<load|none>,<cpus> (e.g. normal,1.5,8)`);
   const [, mem, load, cpus] = m;
   return {
-    memory: mem === "none" ? undefined : { tight: mem !== "normal", text: `memory pressure ${mem}` },
+    memory: mem === "none" ? undefined : { tight: levelTight(mem!, limits), text: `memory pressure ${mem}` },
     machine: load === "none" ? undefined : { load5: Number(load), cpus: Number(cpus) },
   };
 }
 
 /** Reads the machine and works out which delegations in force hold no slot. */
-export function measure(ws: Workspace, main: Corpus, read: () => { memory: Memory | undefined; machine: Machine | undefined } = readings): Result<Capacity> {
+export function measure(ws: Workspace, main: Corpus, read: () => { memory: Memory | undefined; machine: Machine | undefined } = () => readings(process.env, ws.config.capacityPolicy)): Result<Capacity> {
   // reason: closed and stalled are the change state's to say, a branch-only change dropped since included (BR-2526, BR-2571)
   const all = changeStates(ws, { corpus: main, backlog: [], delegatable: false });
   if (!all.ok) return all;

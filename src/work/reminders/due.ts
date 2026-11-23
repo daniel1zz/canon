@@ -170,7 +170,7 @@ export function mainItems(ws: Workspace, now: number, states: readonly ChangeSta
   items.push(...findingItems(ws).map((f) => f.item));
   for (const s of states) {
     // reason: a P0 or P1 change's stall is its interrupt item, said once (BR-2606)
-    if (s.stalled && !interruptsStalled(s)) items.push(item(`stalled:${s.id}`, "stalled", s.stalled.since, `delegated to ${s.stalled.worker}, no live worker and no commit`, `canon work delegate ${s.id} --to <name> or canon work take ${s.id}`, "canon work delegate <n> --to <name> or canon work take <n>", "judge", 1));
+    if (s.stalled && !interruptsStalled(ws, s)) items.push(item(`stalled:${s.id}`, "stalled", s.stalled.since, `delegated to ${s.stalled.worker}, no live worker and no commit`, `canon work delegate ${s.id} --to <name> or canon work take ${s.id}`, "canon work delegate <n> --to <name> or canon work take <n>", "judge", 1));
     // reason: a refused landing whose worker is still there is its worker's to fix; only one left with no live claim blocks (BR-2527)
     if (s.state === "land-refused" && !s.flags.claimed) items.push(item(`land-refused:${s.id}`, "land-refused", s.landRefusedAt ?? null, "its landing was refused and no live worker holds it", `canon events --subject ${s.id} --kind land.refuse, then canon work delegate ${s.id} --to <name> or canon work start ${s.id}`, "canon events --subject <n> --kind land.refuse, then delegate or start it", "judge", 1));
     if (s.state === "awaiting-close") items.push(item(`awaiting-close:${s.id}`, "awaiting-close", null, "open on main with no branch or claim, and the rules it lists are active: its work looks done", `canon change close ${s.id} --commit <commit>`, "canon change close <n> --commit <commit>", "judge", 1));

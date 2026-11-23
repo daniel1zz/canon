@@ -39,31 +39,40 @@ const file = (path: string): string | undefined => {
 
 export const systemSources: MemorySources = { platform: process.platform, sysctl, file };
 
-/** The PSI `some avg10` at or over which Linux memory counts as tight (BR-2526). */
-export const PSI_TIGHT = 10;
-/** The MemAvailable share of MemTotal under which Linux memory counts as tight when there is no PSI (BR-2526). */
-export const AVAILABLE_TIGHT = 0.1;
+/**
+ * When memory counts as tight (BR-2526), a project's policies.capacity (BR-2640): the macOS pressure level from which it
+ * is tight, the Linux PSI `some avg10` percent at or over which it is, and the MemAvailable percent under which it is.
+ */
+export interface MemoryLimits {
+  readonly memory_tight_level: "warn" | "critical";
+  readonly memory_psi_percent: number;
+  readonly memory_available_percent: number;
+}
+export const MEMORY_LIMITS: MemoryLimits = { memory_tight_level: "warn", memory_psi_percent: 10, memory_available_percent: 10 };
+
+/** Whether a macOS pressure level name is tight under `limits` (BR-2640). */
+export const levelTight = (name: string, limits: MemoryLimits): boolean => name === "critical" || (name === "warn" && limits.memory_tight_level === "warn");
 
 const LEVELS: Readonly<Record<string, string>> = { "1": "normal", "2": "warn", "4": "critical" };
 
 /** The memory reading now; undefined when this platform gives none or reading it failed (BR-2526: not measured). */
-export function memoryNow(src: MemorySources = systemSources): Memory | undefined {
+export function memoryNow(src: MemorySources = systemSources, limits: MemoryLimits = MEMORY_LIMITS): Memory | undefined {
   if (src.platform === "darwin") {
     const level = src.sysctl("kern.memorystatus_vm_pressure_level");
     const name = level === undefined ? undefined : LEVELS[level];
     if (name === undefined) return undefined;
-    return { tight: level !== "1", text: `memory pressure ${name}` };
+    return { tight: levelTight(name, limits), text: `memory pressure ${name}` };
   }
   if (src.platform !== "linux") return undefined;
   const psi = src.file("/proc/pressure/memory")?.match(/^some avg10=([\d.]+)/m)?.[1];
   if (psi !== undefined) {
     const avg10 = Number(psi);
-    return { tight: avg10 >= PSI_TIGHT, text: `memory pressure (PSI some avg10) ${avg10.toFixed(2)}%, limit ${PSI_TIGHT}%` };
+    return { tight: avg10 >= limits.memory_psi_percent, text: `memory pressure (PSI some avg10) ${avg10.toFixed(2)}%, limit ${limits.memory_psi_percent}%` };
   }
   const info = src.file("/proc/meminfo");
   const kb = (key: string) => Number(info?.match(new RegExp(`^${key}:\\s+(\\d+) kB`, "m"))?.[1] ?? NaN);
   const total = kb("MemTotal"), available = kb("MemAvailable");
   if (!(total > 0) || !(available >= 0)) return undefined;
   const share = available / total;
-  return { tight: share < AVAILABLE_TIGHT, text: `MemAvailable ${Math.round(share * 100)}% of MemTotal, limit ${AVAILABLE_TIGHT * 100}%` };
+  return { tight: share * 100 < limits.memory_available_percent, text: `MemAvailable ${Math.round(share * 100)}% of MemTotal, limit ${limits.memory_available_percent}%` };
 }

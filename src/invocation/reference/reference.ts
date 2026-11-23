@@ -4,7 +4,7 @@ import { parse } from "yaml";
 import { ensureExcluded } from "../../kernel/exclude.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { CONFIG_KEYS } from "../config.ts";
-import type { JsonSchema } from "../key.ts";
+import { POLICIES, rawAt, type JsonSchema } from "../key.ts";
 
 /**
  * What a project can set in canon/config.yaml, for people and editors (D-28): the list `canon config` prints
@@ -35,7 +35,11 @@ export function configSchema(): JsonSchema {
     description: "canon's project configuration. Changing it lands like any other change; `canon config` shows every key and its current value.",
     type: "object",
     additionalProperties: false,
-    properties: Object.fromEntries(KEYS.map((k) => [k.key, { ...k.schema, description: k.doc }])),
+    // reason: a dotted key lives under its group's parent mapping, as canon/config.yaml writes it (BR-2638)
+    properties: {
+      ...Object.fromEntries(KEYS.filter((k) => !k.key.includes(".")).map((k) => [k.key, { ...k.schema, description: k.doc }])),
+      ...(KEYS.some((k) => k.key.startsWith(`${POLICIES}.`)) ? { [POLICIES]: { type: ["object", "null"], additionalProperties: false, description: "Policies a project sets, by group; each group is declared by the domain that uses it (BR-2638).", properties: Object.fromEntries(KEYS.filter((k) => k.key.startsWith(`${POLICIES}.`)).map((k) => [k.key.slice(POLICIES.length + 1), { ...k.schema, description: k.doc }])) } } : {}),
+    },
     ...(Object.keys(dependencies).length ? { dependencies } : {}),
   };
 }
@@ -61,8 +65,8 @@ export function viewConfig(root: string): KeyView[] {
   const path = join(root, "canon", "config.yaml");
   const raw = existsSync(path) ? ((parse(readFileSync(path, "utf8")) ?? {}) as Record<string, unknown>) : {};
   return KEYS.map((k) => {
-    const set = Object.hasOwn(raw, k.key);
-    return { key: k.key, set, value: set ? raw[k.key] : null, default: k.schema["default"] ?? null, doc: k.doc };
+    const at = rawAt(raw, k.key);
+    return { key: k.key, set: at.set, value: at.set ? at.value : null, default: k.schema["default"] ?? null, doc: k.doc };
   });
 }
 

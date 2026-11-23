@@ -1,3 +1,5 @@
+import { checkPolicyOf } from "../../knowledge/check/config-keys.ts";
+import { configAt } from "../delegation/delegate.ts";
 import { git } from "../../kernel/git.ts";
 import type { CoordDb } from "../db.ts";
 import type { Workspace } from "../workspace.ts";
@@ -53,7 +55,10 @@ export function checkNow(ws: Workspace, wt: string, main: string): { ok: true; f
   if (!reports.ok) return { ok: false, message: reports.error.message };
   const tip = git(wt, "rev-parse", main);
   if (!tip.ok) return { ok: false, message: tip.error.message };
-  return { ok: true, findings: check({ root: wt, ...read, testFiles: tests.value, reports: reports.value, branchChanges: onBranches.value, backlogBase: new Set(listed.value.map((e) => e.id)), architecture: { refs: [tip.value], since: tip.value } }) };
+  // reason: the same checks refuse here as when the landing runs canon check: main's policies.checks (BR-2641)
+  const policy = checkPolicyOf(configAt(ws, tip.value), wt);
+  if (!policy.ok) return { ok: false, message: policy.error.message };
+  return { ok: true, findings: check({ root: wt, ...read, testFiles: tests.value, reports: reports.value, branchChanges: onBranches.value, backlogBase: new Set(listed.value.map((e) => e.id)), architecture: { refs: [tip.value], since: tip.value }, checkPolicy: policy.value }) };
 }
 
 export interface Repeat {

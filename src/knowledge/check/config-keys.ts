@@ -1,9 +1,22 @@
 import { err, ok } from "../../kernel/result.ts";
-import { configKey, REL_DIR, relPath, optional, required } from "../../invocation/key.ts";
+import { configKey, oneOfEntry, rawAt, readGroup, REL_DIR, relPath, optional, required, TUNABLE } from "../../invocation/key.ts";
+import { CONFIGURABLE_CHECKS, type CheckAction, type CheckPolicy } from "./policy.ts";
 import { DEFAULT_DESIGN_SIGNALS, DESIGN_CLASSES, type DesignClass } from "./design-basis/design-basis.ts";
 
 /** canon/config.yaml keys of `canon check`: which files are tests and where each domain's code lives (C-135, D-63). */
+const ACTIONS: readonly CheckAction[] = ["refuse", "remind", "off"];
+
 export const checkKeys = {
+  checkPolicy: configKey<CheckPolicy>({
+    key: "policies.checks",
+    doc: "Per check, whether canon check refuses (a finding that refuses a landing), reminds (a note) or is off: only the checks that say a document is incomplete, never one that says it is false (BR-2641, D-164). An entry left out keeps its default.",
+    default: CONFIGURABLE_CHECKS,
+    schema: { type: ["object", "null"], additionalProperties: false, properties: Object.fromEntries(Object.entries(CONFIGURABLE_CHECKS).map(([k, d]) => [k, { enum: [...ACTIONS], default: d }])) },
+    read: (v) => readGroup("policies.checks", v, CONFIGURABLE_CHECKS as CheckPolicy, Object.fromEntries(Object.keys(CONFIGURABLE_CHECKS).map((k) => [k, oneOfEntry(ACTIONS)])) as never),
+    flow: { steps: ["test.check"], role: TUNABLE },
+    listed: 402,
+    checked: 402,
+  }),
   tests: configKey<readonly string[] | undefined>({
     key: "tests",
     doc: "Globs of the project's test files, whatever their language: the files whose JUnit reports name rules (BR-2005). Required: without it canon check, canon work test and landing fail with exit 2, since canon does not guess which files are tests (BR-2046, D-64).",
@@ -96,3 +109,9 @@ export const checkKeys = {
     checked: 125,
   }),
 };
+
+/** policies.checks as a config mapping (main's, for a landing) sets it; the defaults when it does not (BR-2641). */
+export function checkPolicyOf(raw: Readonly<Record<string, unknown>>, root: string) {
+  const at = rawAt(raw, checkKeys.checkPolicy.key);
+  return at.set ? checkKeys.checkPolicy.read(at.value, { root, raw }) : ok(checkKeys.checkPolicy.default);
+}

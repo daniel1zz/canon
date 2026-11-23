@@ -18,7 +18,8 @@ import { verifyKeys } from "../work/verify/config-keys.ts";
 import { watchKeys } from "../work/watch/config-keys.ts";
 import { remoteKeys } from "../work/remote/config-keys.ts";
 import { hookKeys } from "../work/hooks/config-keys.ts";
-import type { ConfigKey, FieldsOf, KeySet } from "./key.ts";
+import { POLICIES, rawAt, type ConfigKey, type FieldsOf, type KeySet } from "./key.ts";
+import { reminderKeys } from "../work/reminders/config-keys.ts";
 
 /**
  * `canon/config.yaml`: the project facts canon cannot infer and every extension point (D-2, D-3).
@@ -28,7 +29,7 @@ import type { ConfigKey, FieldsOf, KeySet } from "./key.ts";
  * Every key is declared (name, type, default, validation, doc) by the domain that uses it, in `config-keys.ts` in that
  * domain's directory; this file only composes them, so it changes when a domain is added, not when a key is (C-135).
  */
-const DOMAINS = [hookKeys, checkKeys, documentKeys, reviewKeys, claimKeys, landKeys, sessionKeys, delegationKeys, statsKeys, verifyKeys, watchKeys, remoteKeys, linksKeys, queryKeys, qualityKeys] as const;
+const DOMAINS = [hookKeys, checkKeys, documentKeys, reviewKeys, claimKeys, landKeys, sessionKeys, delegationKeys, statsKeys, verifyKeys, watchKeys, remoteKeys, linksKeys, queryKeys, qualityKeys, reminderKeys] as const;
 
 type Sections = typeof DOMAINS[number];
 type UnionToIntersection<U> = (U extends unknown ? (x: U) => void : never) extends (x: infer I) => void ? I : never;
@@ -54,7 +55,9 @@ export const CONFIG_KEYS: readonly (readonly [string, ConfigKey<unknown>])[] = (
   return out;
 })();
 
-const LISTED = [...CONFIG_KEYS].sort((a, b) => a[1].listed - b[1].listed).map(([, k]) => k.key);
+const LISTED = [...new Set([...CONFIG_KEYS].sort((a, b) => a[1].listed - b[1].listed).map(([, k]) => k.key.split(".")[0]!))];
+/** The groups of `policies:`, each a key some domain declares as `policies.<group>` (BR-2638). */
+const GROUPS = CONFIG_KEYS.map(([, k]) => k.key).filter((k) => k.startsWith(`${POLICIES}.`)).map((k) => k.slice(POLICIES.length + 1));
 const CHECKED = [...CONFIG_KEYS].sort((a, b) => a[1].checked - b[1].checked);
 const MOVED: Record<string, string> = Object.assign({}, ...CONFIG_KEYS.map(([, k]) => k.replaces ?? {}));
 
@@ -89,11 +92,17 @@ export function readConfig(root: string): Result<Config> {
     if (RETIRED[key]) return bad(`\`${key}\` was removed: ${RETIRED[key]}. Delete the \`${key}\` line from canon/config.yaml`);
     if (!LISTED.includes(key)) return bad(`unknown key \`${key}\` (known: ${LISTED.join(", ")})`);
   }
+  // reason: a policy group no domain declares is a mistake said loudly, like an unknown key (BR-2638, BR-2045)
+  const policies = c[POLICIES];
+  if (policies !== undefined && policies !== null) {
+    if (typeof policies !== "object" || Array.isArray(policies)) return bad(`\`${POLICIES}\` must be a mapping of groups (known: ${GROUPS.join(", ")})`);
+    for (const g of Object.keys(policies)) if (!GROUPS.includes(g)) return bad(`unknown policy group \`${POLICIES}.${g}\` (known: ${GROUPS.join(", ")})`);
+  }
 
   const values: Record<string, unknown> = {};
   const commands: string[] = [];
   for (const [field, k] of CHECKED) {
-    const v = c[k.key];
+    const v = rawAt(c, k.key).value;
     const r = v === undefined ? ok(k.default) : k.read(v, { root, raw: c });
     if (!r.ok) return bad(r.error.message);
     values[field] = r.value;

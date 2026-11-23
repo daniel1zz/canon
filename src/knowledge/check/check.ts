@@ -1,3 +1,4 @@
+import { CONFIGURABLE_CHECKS, type CheckAction, type CheckPolicy, type ConfigurableCheck } from "./policy.ts";
 import { commitmentFindings } from "./commitments.ts";
 import { fileSourceFailure, MIN_QUOTE, optionProblems, sourceFile, sources } from "./sources.ts";
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
@@ -93,7 +94,13 @@ export interface CheckInput {
   readonly backlogBase?: ReadonlySet<string>;
   /** What was there before this work, for the architecture checks (D-65); without it every domain and link counts as new. */
   readonly architecture?: ArchitectureBase;
+  /** The project's policies.checks (BR-2641): a configurable check refuses, reminds or is off; without it, the defaults. */
+  readonly checkPolicy?: CheckPolicy;
 }
+
+export { CONFIGURABLE_CHECKS, type CheckAction, type CheckPolicy, type ConfigurableCheck } from "./policy.ts";
+
+const actionOf = (input: CheckInput, rule: CheckRule): CheckAction | undefined => (Object.hasOwn(CONFIGURABLE_CHECKS, rule) ? (input.checkPolicy ?? CONFIGURABLE_CHECKS)[rule as ConfigurableCheck] : undefined);
 
 /** Backlog ids that name no change in the tree and no change only on its own branch, each marked when main already lists it. */
 function backlogDangling(input: CheckInput): { finding: Finding; known: boolean }[] {
@@ -153,7 +160,20 @@ export function domainNameNotes(input: CheckInput): Finding[] {
   return out;
 }
 
+/** What `canon check` finds: the findings, with the configurable checks set to refuse, whichever list computed them (BR-2641). */
 export function check(input: CheckInput): Finding[] {
+  // reason: a project moves a configurable check between finding, note and off (BR-2641, D-164)
+  const kept = (f: Finding, as: CheckAction) => (actionOf(input, f.rule) ?? as) === "refuse";
+  return [...rawFindings(input).filter((f) => kept(f, "refuse")), ...rawNotes(input).filter((f) => kept(f, "remind"))];
+}
+
+/** The reminders `canon check` prints as notes: those it computes as notes and the configurable ones set to remind (BR-2641). */
+export function checkNotes(input: CheckInput): Finding[] {
+  const kept = (f: Finding, as: CheckAction) => (actionOf(input, f.rule) ?? as) === "remind";
+  return [...rawNotes(input).filter((f) => kept(f, "remind")), ...rawFindings(input).filter((f) => actionOf(input, f.rule) === "remind")];
+}
+
+function rawFindings(input: CheckInput): Finding[] {
   const idsIn = (text: string) => idsOf(input.corpus.types, text);
   const findings: Finding[] = input.problems.map((p) => ({ path: p.path, rule: "file-invalid", message: p.message }));
   const byId = new Map<string, string[]>();
@@ -289,7 +309,7 @@ export function check(input: CheckInput): Finding[] {
  * a decision whose options show no real choice or whose revision names no reason, a new domain, or an overview that has
  * not caught up.
  */
-export function checkNotes(input: CheckInput): Finding[] {
+function rawNotes(input: CheckInput): Finding[] {
   const out: Finding[] = [];
   for (const d of input.corpus.docs) {
     if (d.kind !== "decision") continue;

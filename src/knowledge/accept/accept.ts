@@ -58,7 +58,7 @@ function corpusInput(ws: Workspace, read: ReadResult): Result<Parameters<typeof 
   if (!backlogBase.ok) return backlogBase;
   const architecture = architectureBase(ws);
   if (!architecture.ok) return architecture;
-  return ok({ root: ws.root, ...read, testFiles: testFiles.value, reports: reports.value, branchChanges: branchChanges.value, backlogBase: backlogBase.value, architecture: architecture.value });
+  return ok({ root: ws.root, ...read, testFiles: testFiles.value, reports: reports.value, branchChanges: branchChanges.value, backlogBase: backlogBase.value, architecture: architecture.value, checkPolicy: ws.config.checkPolicy });
 }
 
 /**

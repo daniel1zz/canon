@@ -80,6 +80,46 @@ export type FieldsOf<S extends KeySet> = { readonly [F in keyof S]: S[F] extends
 
 export const configKey = <T>(k: ConfigKey<T>): ConfigKey<T> => k;
 
+/**
+ * The group a policy key lives in: `policies.<group>` (BR-2638, D-164). Each group is declared by the domain that uses it,
+ * like any key; a dotted key name is read from the nested mapping.
+ */
+export const POLICIES = "policies";
+
+/** Where a key is written: `policies.agenda` under `policies:` → `agenda:`, any other key at the top (BR-2638). */
+export function rawAt(raw: Readonly<Record<string, unknown>>, key: string): { readonly set: boolean; readonly value: unknown } {
+  const [head, ...rest] = key.split(".");
+  if (rest.length === 0) return Object.hasOwn(raw, key) ? { set: true, value: raw[key] } : { set: false, value: undefined };
+  const parent = raw[head!];
+  if (typeof parent !== "object" || parent === null || Array.isArray(parent)) return { set: false, value: undefined };
+  const sub = rest.join(".");
+  return Object.hasOwn(parent, sub) ? { set: true, value: (parent as Record<string, unknown>)[sub] } : { set: false, value: undefined };
+}
+
+/**
+ * Reads one policy group: a mapping whose entries are the group's own names, each checked by `entry`; an entry left out
+ * keeps its default, an unknown one is a configuration error naming the group (BR-2638).
+ */
+export function readGroup<T extends object>(key: string, value: unknown, defaults: T, entry: { readonly [K in keyof T]: (v: unknown, name: string) => Result<T[K]> }): Result<T> {
+  if (value === null) return ok(defaults);
+  if (typeof value !== "object" || Array.isArray(value)) return err("invalid", `\`${key}\` must be a mapping of ${Object.keys(defaults).join(", ")}`);
+  const out: Record<string, unknown> = { ...(defaults as Record<string, unknown>) };
+  for (const [name, v] of Object.entries(value as Record<string, unknown>)) {
+    if (!Object.hasOwn(defaults, name)) return err("invalid", `unknown entry \`${key}.${name}\` (known: ${Object.keys(defaults).join(", ")})`);
+    const r = (entry[name as keyof T] as (v: unknown, n: string) => Result<unknown>)(v, `${key}.${name}`);
+    if (!r.ok) return r;
+    out[name] = r.value;
+  }
+  return ok(out as T);
+}
+
+/** A positive number entry of a policy group (BR-2638). */
+export const positiveEntry = (v: unknown, name: string): Result<number> => (typeof v === "number" && v > 0 && Number.isFinite(v) ? ok(v) : err("invalid", `\`${name}\` must be a positive number`));
+/** A whole number of at least 1 (BR-2638). */
+export const countEntry = (v: unknown, name: string): Result<number> => (typeof v === "number" && Number.isInteger(v) && v >= 1 ? ok(v) : err("invalid", `\`${name}\` must be a whole number of at least 1`));
+/** One of `allowed` (BR-2638). */
+export const oneOfEntry = <V extends string>(allowed: readonly V[]) => (v: unknown, name: string): Result<V> => (typeof v === "string" && (allowed as readonly string[]).includes(v) ? ok(v as V) : err("invalid", `\`${name}\` must be one of ${allowed.join(", ")}, got ${JSON.stringify(v)}`));
+
 /** A JSON Schema fragment; kept loose because only editors and the schema tests read it. */
 export type JsonSchema = Readonly<Record<string, unknown>>;
 

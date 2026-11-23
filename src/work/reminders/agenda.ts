@@ -85,7 +85,8 @@ export function agenda(ws: Workspace, opts: AgendaOptions = {}): Result<Agenda> 
   const states = all.value.states;
   let machine: ReturnType<Readings>;
   try {
-    machine = (opts.read ?? readings)();
+    // reason: memory counts as tight by the project's policies.capacity (BR-2640)
+    machine = (opts.read ?? (() => readings(process.env, ws.config.capacityPolicy)))();
   } catch (e) {
     // reason: CANON_MACHINE written wrong is a usage error said loudly, never a silent unmeasured machine (BR-2526)
     if (e instanceof Error && /CANON_MACHINE/.test(e.message)) return err("invalid", e.message);

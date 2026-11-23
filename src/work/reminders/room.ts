@@ -27,7 +27,7 @@ export interface Room {
 }
 
 /** The share of the load limit in force while a full test run is running (BR-2581), and the share watch falls below before it says room again (BR-2528). */
-export const HEAVY_SHARE = 0.9;
+export const HEAVY_SHARE = 0.9; // reason: the default of policies.capacity.full_run_load_share (BR-2640)
 export const HYSTERESIS = 0.9;
 
 /** One decimal at most: 16, 14.4. */
@@ -44,7 +44,7 @@ export function roomOf(ws: Workspace, read: { memory: Memory | undefined; machin
   let byLoad = false;
   const m = read.machine;
   const base = m ? ws.config.delegateMaxLoadPerCpu * m.cpus : undefined;
-  const limit = base === undefined ? undefined : fullRuns > 0 ? base * HEAVY_SHARE : base;
+  const limit = base === undefined ? undefined : fullRuns > 0 ? base * ws.config.capacityPolicy.full_run_load_share : base;
   if (m && limit !== undefined) {
     // reason: compared unrounded, as BR-2526 and BR-2400 do; once busy, watch says room only below HYSTERESIS of the limit (BR-2528)
     const line = wasBusy ? limit * HYSTERESIS : limit;

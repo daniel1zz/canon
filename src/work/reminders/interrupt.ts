@@ -6,13 +6,13 @@ import { changeFacts, type NoticeContext } from "../delegation/notices.ts";
 import type { DueItem } from "./due.ts";
 import { roomDetail, type Room } from "./room.ts";
 
-/** The tiers whose changes interrupt current work when nothing moves them (BR-2606, D-155). */
-export const INTERRUPTING: ReadonlySet<Tier> = new Set<Tier>(["P0", "P1"]);
+/** The tiers whose changes interrupt current work when nothing moves them: the project's policies.agenda.interrupt_tiers (BR-2606, BR-2639). */
+const interrupting = (ws: Workspace, tier: Tier): boolean => ws.config.agendaPolicy.interrupt_tiers.includes(tier);
 
 const tierOf = (s: ChangeState): Tier => s.priority?.tier ?? DEFAULT_TIER;
 
 /** Whether `s` is a P0 or P1 change whose delegation stalled: its `interrupt:` item replaces `stalled:` (BR-2606). */
-export const interruptsStalled = (s: ChangeState): boolean => s.stalled !== undefined && !isClosed(s) && INTERRUPTING.has(tierOf(s));
+export const interruptsStalled = (ws: Workspace, s: ChangeState): boolean => s.stalled !== undefined && !isClosed(s) && interrupting(ws, tierOf(s));
 
 /** BR-2581's room as one fact: `room for 2 more` or `machine busy (<reasons>)`. */
 export const roomFact = (room: Room): string => (room.room ? `room for ${room.fits} more (${roomDetail(room)})` : `machine busy (${room.reasons.join("; ")})`);
@@ -36,9 +36,9 @@ export function interruptItems(ws: Workspace, states: readonly ChangeState[], ro
   const out: DueItem[] = [];
   const held = heldFact(ws, states, ctx.holders);
   for (const s of states) {
-    if (!s.change || isClosed(s) || !INTERRUPTING.has(tierOf(s))) continue;
+    if (!s.change || isClosed(s) || !interrupting(ws, tierOf(s))) continue;
     const ready = (s.state === "ready-delegatable" || s.state === "ready-self") && !ctx.holders.has(s.id);
-    const stalled = interruptsStalled(s);
+    const stalled = interruptsStalled(ws, s);
     if (!ready && !stalled) continue;
     const delegatable = s.state !== "ready-self";
     const facts = [roomFact(room), held, ...changeFacts(ctx, s.id, s.change, delegatable && !stalled)];

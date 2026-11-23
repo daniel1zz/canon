@@ -1,3 +1,5 @@
+import { checkPolicyOf } from "../../../knowledge/check/config-keys.ts";
+import { configAt } from "../../delegation/delegate.ts";
 import { missingStatedFields, statedFieldsMessage } from "./fields.ts";
 import { git } from "../../../kernel/git.ts";
 import type { Say, Workspace } from "../../workspace.ts";
@@ -98,7 +100,10 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
     reports = reportsFor(ws.db, wt, landing.value, read.corpus, tests);
     if (!reports.ok) return refuse("environment", reports.error.message);
   }
-  const input = { root: wt, ...read, testFiles: tests, reports: reports.value, branchChanges: onBranches.value, backlogBase: new Set(listed.value.map((e) => e.id)), architecture: { refs: [v.base], since: v.base } };
+  // reason: which checks refuse comes from main's landed config, never the change's own tree, so a change cannot relax them for itself (BR-2641, BR-2074)
+  const policy = checkPolicyOf(configAt(ws, v.main), wt);
+  if (!policy.ok) return refuse("config", `canon/config.yaml on ${v.main}: ${policy.error.message}`);
+  const input = { root: wt, ...read, testFiles: tests, reports: reports.value, branchChanges: onBranches.value, backlogBase: new Set(listed.value.map((e) => e.id)), architecture: { refs: [v.base], since: v.base }, checkPolicy: policy.value };
   const findings = check(input);
   for (const n of backlogNotes(input)) say(noteLine(n));
   for (const n of staleReportNotes(input)) say(noteLine(n));

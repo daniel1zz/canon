@@ -2,10 +2,6 @@ import { isClosed, type ChangeState } from "../../knowledge/changes/state.ts";
 import type { Workspace } from "../workspace.ts";
 import { age, type DueItem } from "./due.ts";
 
-/** A delegated change older than this since its last delegation is slow (BR-2612, D-157). */
-export const SLOW_AFTER_MS = 6 * 3_600_000;
-/** This many failed `canon work test` runs in a row since its last delegation make it slow (BR-2612, D-157). */
-export const SLOW_FAILURES = 4;
 
 interface Ev { readonly id: number; readonly ts: string; readonly kind: string; readonly detail: string }
 
@@ -17,7 +13,7 @@ function failed(detail: string): boolean {
 
 /**
  * BR-2612: a `slow:<C-n>` item for each change this session delegated that is in force, not closed and not stalled, when
- * more than SLOW_AFTER_MS passed since its last delegation or its last SLOW_FAILURES test runs since then all failed; with
+ * more than policies.agenda.slow_hours passed since its last delegation or its last slow_test_failures test runs since then all failed; with
  * where the time went (queued for a full test slot, testing, other).
  */
 export function slowItems(ws: Workspace, states: readonly ChangeState[], now: number): DueItem[] {
@@ -34,7 +30,8 @@ export function slowItems(ws: Workspace, states: readonly ChangeState[], now: nu
     let streak = 0;
     for (let i = runs.length - 1; i >= 0 && runs[i]!.failed; i--) streak++;
     const elapsed = now - Date.parse(last.ts);
-    if (elapsed <= SLOW_AFTER_MS && streak < SLOW_FAILURES) continue;
+    // reason: the thresholds are the project's policies.agenda, 6 hours and 4 runs by default (BR-2612, BR-2639, D-164)
+    if (elapsed <= ws.config.agendaPolicy.slow_hours * 3_600_000 && streak < ws.config.agendaPolicy.slow_test_failures) continue;
     // reason: a run waits once per process; its wait ends when the same process starts (BR-2576's events)
     const waits = new Map<string, number>();
     let queued = 0;
