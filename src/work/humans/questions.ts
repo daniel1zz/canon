@@ -30,6 +30,10 @@ export interface Question {
   readonly asked_at: string;
   /** Why it was withdrawn unanswered (BR-2628); null while it stands. */
   readonly withdrawn: string | null;
+  /** The provisional answer given while the owner has not answered, with who gave it and why (BR-2636, D-163); null when none. */
+  readonly provisional: string | null;
+  readonly provisional_by: string | null;
+  readonly provisional_reason: string | null;
 }
 
 export function ask(db: CoordDb, actor: string, subject: string | null, question: string, options: readonly string[], multi = false): number {
@@ -71,9 +75,46 @@ export function withdraw(db: CoordDb, actor: string, id: number, reason: string,
   }).immediate();
 }
 
+/** An `approve C-n:` question: the owner's own approval of an owner_gate (BR-2616), never answered provisionally (BR-2636). */
+const APPROVAL = /approve\s+C-\d+\s*[:：]/i;
+
+/**
+ * Gives an unanswered question a provisional answer (BR-2636, D-163): it stays the owner's to answer, but the change it
+ * is about no longer waits on it. Not for a worker, an owner approval or a finding's verdict waiting on the owner.
+ */
+export function provisional(db: CoordDb, actor: string, id: number, text: string, reason: string, worker: boolean): Result<void> {
+  const answer = text.trim();
+  const why = reason.trim();
+  if (answer === "") return err("invalid", "the provisional answer is empty");
+  if (why === "") return err("invalid", "--reason is required: say what the provisional answer rests on and who weighed it");
+  if (worker) return err("refused", `${actor} is a worker: only the main session or a person gives a provisional answer to the owner's question (BR-2636)`);
+  return db.db.transaction((): Result<void> => {
+    const q = db.db.query<{ question: string; answer: string | null; withdrawn: string | null; provisional: string | null }, [number]>("SELECT question, answer, withdrawn, provisional FROM questions WHERE id = ?").get(id);
+    if (!q) return err("not_found", `no question #${id}`);
+    if (q.answer !== null) return err("conflict", `question #${id} is already answered (${JSON.stringify(q.answer)})`);
+    if (q.withdrawn !== null) return err("conflict", `question #${id} is withdrawn: ${q.withdrawn}`);
+    if (q.provisional !== null) return err("conflict", `question #${id} already has the provisional answer ${JSON.stringify(q.provisional)}; it stands until the owner answers or the question is withdrawn`);
+    // reason: an owner_gate approval is a block the owner asked for; deciding it for them would bypass it (BR-2636, D-158)
+    if (APPROVAL.test(q.question)) return err("refused", `question #${id} asks the owner to approve an owner_gate (BR-2616): only the owner answers it, never provisionally (BR-2636)`);
+    // reason: a tier-C finding's verdict is the owner's (D-118); its question is not decided for them (BR-2636)
+    if (db.db.query("SELECT 1 FROM review_findings WHERE question = ? AND closed_at IS NULL").get(id)) return err("refused", `question #${id} asks the owner's verdict on a review finding (BR-2461): only the owner answers it, never provisionally (BR-2636)`);
+    db.db.query("UPDATE questions SET provisional = ?, provisional_by = ?, provisional_reason = ?, provisional_at = ? WHERE id = ?").run(answer, actor, why, iso(now()), id);
+    db.event(actor, "human.provisional", String(id), { answer, reason: why });
+    return ok(undefined);
+  }).immediate();
+}
+
+/** The questions whose owner answer differed from the provisional one, latest event each (BR-2637). */
+export function overturned(db: CoordDb): { id: number; ts: string; provisional: string; answer: string; subject: string | null }[] {
+  return db.db
+    .query<{ subject: string; ts: string; detail: string }, []>("SELECT subject, ts, detail FROM events WHERE id IN (SELECT MAX(id) FROM events WHERE kind = 'human.provisional.overturned' GROUP BY subject) ORDER BY id")
+    .all()
+    .map((r) => { const d = JSON.parse(r.detail) as { provisional: string; answer: string; change: string | null }; return { id: Number(r.subject), ts: r.ts, provisional: d.provisional, answer: d.answer, subject: d.change }; });
+}
+
 export function questions(db: CoordDb, which: "pending" | "all"): Question[] {
   const rows = db.db
-    .query<Omit<Question, "options" | "multi"> & { options: string; multi: number }, []>(`SELECT id, subject, asked_by, question, options, multi, answer, answered_by, relayed, witness, asked_at, withdrawn FROM questions ${which === "pending" ? `WHERE ${PENDING}` : ""} ORDER BY id`)
+    .query<Omit<Question, "options" | "multi"> & { options: string; multi: number }, []>(`SELECT id, subject, asked_by, question, options, multi, answer, answered_by, relayed, witness, asked_at, withdrawn, provisional, provisional_by, provisional_reason FROM questions ${which === "pending" ? `WHERE ${PENDING}` : ""} ORDER BY id`)
     .all();
   return rows.map((r) => ({ ...r, options: JSON.parse(r.options) as string[], multi: r.multi === 1 }));
 }
@@ -109,7 +150,7 @@ export function answer(db: CoordDb, id: number, text: string, by: string, relaye
   }
   let conflictReason = "answered";
   const tx = db.db.transaction((): Result<void> => {
-    const q = db.db.query<{ answer: string | null; question: string; options: string; multi: number; withdrawn: string | null }, [number]>("SELECT answer, question, options, multi, withdrawn FROM questions WHERE id = ?").get(id);
+    const q = db.db.query<{ answer: string | null; question: string; options: string; multi: number; withdrawn: string | null; provisional: string | null; subject: string | null }, [number]>("SELECT answer, question, options, multi, withdrawn, provisional, subject FROM questions WHERE id = ?").get(id);
     if (!q) return err("not_found", `no question #${id}`);
     // reason: a withdrawn question is not shown to anyone as waiting; an answer to it would back nothing the asker still needs (BR-2628)
     if (q.withdrawn !== null && q.answer === null) return (conflictReason = "withdrawn"), err("conflict", `question #${id} was withdrawn (${q.withdrawn}); ask again with canon human ask if it still needs an answer`);
@@ -140,6 +181,8 @@ export function answer(db: CoordDb, id: number, text: string, by: string, relaye
     const r = db.db.query("UPDATE questions SET answer = ?, answered_by = ?, relayed = ?, witness = ?, answered_at = ? WHERE id = ? AND answer IS NULL").run(text, by, quote || null, witness, iso(now()), id);
     if (r.changes === 0) return err("conflict", `question #${id} is already answered`);
     db.event(by, "human.answer", String(id), { answer: text, ...(quote ? { relayed: quote, witness } : {}) });
+    // reason: work done on a provisional answer the owner did not give must be looked at again (BR-2637, D-163)
+    if (q.provisional !== null && q.provisional.trim().toLowerCase() !== text.trim().toLowerCase()) db.event(by, "human.provisional.overturned", String(id), { provisional: q.provisional, answer: text, change: q.subject });
     return ok(undefined);
   });
   const done = tx.immediate();

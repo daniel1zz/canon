@@ -277,6 +277,11 @@ const ADDED_COLUMNS: readonly (readonly [string, string])[] = [
   ["questions", "withdrawn TEXT"],
   // Why a delegation is light: its worker runs no tests or builds, so the machine's load does not stop delegating it; null for a heavy one (BR-2632, D-161).
   ["delegations", "light TEXT"],
+  // A provisional answer the main session or a person gave while the owner has not answered, who gave it, why and when (BR-2636, D-163).
+  ["questions", "provisional TEXT"],
+  ["questions", "provisional_by TEXT"],
+  ["questions", "provisional_reason TEXT"],
+  ["questions", "provisional_at TEXT"],
 ];
 
 /**

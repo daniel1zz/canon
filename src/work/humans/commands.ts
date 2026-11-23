@@ -10,7 +10,7 @@ import { claimOfWorktree } from "../claims/claims.ts";
 import { changeOffMain, mainCorpus } from "../session/session.ts";
 import type { Workspace } from "../workspace.ts";
 import { hookStatus } from "../../install/hook.ts";
-import { answer, answeredBy, ask, isFreeAnswer, parseAsked, questions, recordActor, recordAsked, refuseRecord, withdraw, witnessMark } from "./questions.ts";
+import { answer, answeredBy, ask, isFreeAnswer, parseAsked, provisional, questions, recordActor, recordAsked, refuseRecord, withdraw, witnessMark } from "./questions.ts";
 
 /**
  * The change `--change` names, as its id: a change on main or on its own change branch, matched in any case as
@@ -54,7 +54,7 @@ const human = defineCommand({
         const ws = workspace();
         const qs = questions(ws.db, args.all ? "all" : "pending");
         if (args.json) return json(qs);
-        for (const q of qs) say(`#${q.id} [${q.subject ?? "-"}] ${q.question}${q.options.length ? `  (${q.options.join(" | ")}${q.multi ? "; multi-select: ask with multiSelect: true" : ""})` : ""}${q.answer ? `\n    → ${q.answer} (${answeredBy(q)})${q.options.length && isFreeAnswer(q.options, q.answer) ? " [not one of the options]" : ""}${witnessMark(q)}` : q.withdrawn ? `\n    → withdrawn: ${q.withdrawn}` : ""}`);
+        for (const q of qs) say(`#${q.id} [${q.subject ?? "-"}] ${q.question}${q.options.length ? `  (${q.options.join(" | ")}${q.multi ? "; multi-select: ask with multiSelect: true" : ""})` : ""}${q.answer ? `\n    → ${q.answer} (${answeredBy(q)})${q.options.length && isFreeAnswer(q.options, q.answer) ? " [not one of the options]" : ""}${witnessMark(q)}` : q.withdrawn ? `\n    → withdrawn: ${q.withdrawn}` : q.provisional ? `\n    → provisional: ${q.provisional} (${q.provisional_by}: ${q.provisional_reason}); still the owner's to answer` : ""}`);
         if (qs.length === 0) say("(nothing waiting)");
       },
     }),
@@ -86,6 +86,22 @@ const human = defineCommand({
         const ws = workspace();
         const text = must(withdraw(ws.db, ws.actor, id, String(args.reason), by, isWorker(ws.actor)));
         say(`#${id} withdrawn (${text}); it no longer shows in canon human pending or as waiting-owner`);
+      },
+    }),
+    provisional: defineCommand({
+      meta: { description: "Give an unanswered question a provisional answer so the work waiting on it goes on; it stays the owner's to answer (main session or a person; not an owner approval)" },
+      args: {
+        id: { type: "positional", required: true },
+        text: { type: "positional", required: true },
+        reason: { type: "string", required: true, description: "What the provisional answer rests on, and who weighed it" },
+      },
+      run({ args }) {
+        const t = String(args.id).replace(/^#/, "");
+        // reason: an id that is not a number is a usage error, as for answer (BR-2636, BR-2022)
+        if (!/^\d+$/.test(t)) fail({ code: "invalid", message: `question id must be a number (#<n>); got ${String(args.id)}` });
+        const ws = workspace();
+        must(provisional(ws.db, ws.actor, Number(t), String(args.text), String(args.reason), isWorker(ws.actor)));
+        say(`#${t}: provisional answer recorded; the change it is about no longer waits on it, and it stays in canon human pending until the owner answers (if the owner answers otherwise, canon work due says so)`);
       },
     }),
     answer: defineCommand({

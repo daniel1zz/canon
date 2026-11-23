@@ -1,5 +1,5 @@
 import { openFindings, type OpenFinding } from "../../knowledge/review/findings/findings.ts";
-import { questions } from "../humans/questions.ts";
+import { overturned, questions } from "../humans/questions.ts";
 import type { ChangeState } from "../../knowledge/changes/state.ts";
 import { pendingRequests } from "../delegation/requests.ts";
 import { redMain, revertSettled } from "../watch/redmain.ts";
@@ -203,7 +203,16 @@ export function mainItems(ws: Workspace, now: number, states: readonly ChangeSta
     const said = `${u.items.length} item(s) of its 决定 name no rule and no active or planned rule names it; first: ${clip(u.items[0]!, 60)}`;
     items.push(item(`commitments:${u.id}`, "commitments", null, `${u.id} ${said}`, `write the rules it commits to (status: planned if not built) naming ${u.id}, or canon work handled commitments:${u.id} --not-doing "<why it commits to no product behaviour>"`, "write rules naming the decision, or canon work handled commitments:<D-n> --not-doing \"<why>\"", "judge", 2));
   }
+  // reason: the owner answered otherwise than the provisional answer, so the work done on it is looked at again (BR-2637, D-163)
+  for (const o of overturned(ws.db)) {
+    items.push(item(`overturned:${o.id}`, "overturned", o.ts, `question #${o.id}${o.subject ? ` (${o.subject})` : ""}: the owner answered ${JSON.stringify(clip(o.answer, 40))}, the provisional answer was ${JSON.stringify(clip(o.provisional, 40))}`, `look again at the work done on the provisional answer: canon work handled overturned:${o.id} --to <C-n that redoes it>, or --not-doing "<why nothing changes>"`, "look again at the work done on the provisional answer: canon work handled overturned:<n> --to <C-n> or --not-doing \"<why>\"", "judge", 1));
+  }
   for (const q of questions(ws.db, "pending")) {
+    // reason: a provisional answer keeps the question the owner's, shown with what was decided meanwhile (BR-2636)
+    if (q.provisional !== null) {
+      items.push(item(`question:${q.id}`, "question provisional", q.asked_at, `${clip(q.question)} [provisional: ${clip(q.provisional, 40)} by ${q.provisional_by}]`, `confirm with the owner in the conversation, then canon human answer ${q.id} "<answer>" --relayed "<their words>"`, `confirm the provisional answer with the owner, then canon human answer <n> "<answer>" --relayed "<their words>"`, "owner", 2));
+      continue;
+    }
     items.push(item(`question:${q.id}`, "question", q.asked_at, clip(q.question), `ask the owner in the conversation, then canon human answer ${q.id} "<answer>" --relayed "<their words>"`, `ask the owner, then canon human answer <n> "<answer>" --relayed "<their words>"`, "owner", 2));
   }
   for (const r of releaseViews(corpus, releasesInProgress(corpus))) {

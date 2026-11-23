@@ -166,7 +166,8 @@ function readFacts(ws: Workspace, now: number): Result<Facts> {
   const stalls = stallCandidates(ws, now);
   if (!stalls.ok) return stalls;
   const questions = new Map<string, number[]>();
-  for (const r of q<{ id: number; subject: string }>("SELECT id, subject FROM questions WHERE answer IS NULL AND withdrawn IS NULL AND subject IS NOT NULL ORDER BY id")) questions.set(r.subject, [...(questions.get(r.subject) ?? []), r.id]);
+  // reason: a question with a provisional answer stays the owner's, but its change no longer waits on it (BR-2636, D-163)
+  for (const r of q<{ id: number; subject: string }>("SELECT id, subject FROM questions WHERE answer IS NULL AND withdrawn IS NULL AND provisional IS NULL AND subject IS NOT NULL ORDER BY id")) questions.set(r.subject, [...(questions.get(r.subject) ?? []), r.id]);
   const claimed = new Set(liveClaims(ws.db).map((c) => c.subject));
   const allDelegations = q<{ subject: string; worker: string; owner: string; epoch: number; ended: string | null }>("SELECT subject, worker, owner, epoch, ended FROM delegations");
   const hs = new Map(handoffs(ws.db).map((h) => [h.subject, h]));
