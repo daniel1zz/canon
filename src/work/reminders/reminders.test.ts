@@ -242,8 +242,8 @@ test("BR-2582: the full test runs running and waiting come from the machine-wide
   expect(agendaLines(must(agenda(w, { read: CALM, slots: q.slots })))).toEqual(["heavy: C-637 full test run 12m, main full test run 2m; 2 waiting"]);
   q.end(1); q.end(7);
   expect(agendaLines(must(agenda(w, { read: CALM, slots: q.slots })))).toEqual(["heavy: none running; 2 waiting"]);
-  expect(must(runningFullRuns(NONE()))).toEqual({ running: [], waiting: 0, loadWaiting: [] });
-  expect(must(runningFullRuns({ dir: join(emptyQueue(), "missing"), gone: () => false }))).toEqual({ running: [], waiting: 0, loadWaiting: [] });
+  expect(must(runningFullRuns(NONE()))).toEqual({ running: [], waiting: 0, loadWaiting: [], lane: { running: [], waiting: 0 } });
+  expect(must(runningFullRuns({ dir: join(emptyQueue(), "missing"), gone: () => false }))).toEqual({ running: [], waiting: 0, loadWaiting: [], lane: { running: [], waiting: 0 } });
 });
 
 test("BR-2583: canon work handled records each key's outcome as a reminder.handled event and the agenda leaves them out while it holds", () => {
