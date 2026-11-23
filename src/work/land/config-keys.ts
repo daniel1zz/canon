@@ -1,8 +1,26 @@
 import { err, ok, type Result } from "../../kernel/result.ts";
-import { configKey, type KeyContext, MINUTE, optionalString, positiveNumber, positiveValue, REL_DIR, relPath, stringValue, TUNABLE, optional, required } from "../../invocation/key.ts";
+import { configKey, readGroup, rawAt, type KeyContext, MINUTE, optionalString, positiveNumber, positiveValue, REL_DIR, relPath, stringValue, TUNABLE, optional, required } from "../../invocation/key.ts";
+
+/** `policies.landing` (BR-2644, D-164): what landing does while main is failing. */
+export interface LandingPolicy {
+  /** While the background floor fails on main, only the fix change lands (BR-2644). */
+  readonly pause_on_red_main: boolean;
+}
+export const LANDING_DEFAULTS: LandingPolicy = { pause_on_red_main: true };
+const flag = (v: unknown, name: string): Result<boolean> => (typeof v === "boolean" ? ok(v) : err("invalid", `\`${name}\` must be true or false`));
 
 /** canon/config.yaml keys of landing (C-135). */
 export const landKeys = {
+  landingPolicy: configKey<LandingPolicy>({
+    key: "policies.landing",
+    doc: "What landing does while the background floor fails on main: pause_on_red_main (true) lets only the fix change land (BR-2644); an entry left out keeps its default.",
+    default: LANDING_DEFAULTS,
+    schema: { type: ["object", "null"], additionalProperties: false, default: LANDING_DEFAULTS, properties: { pause_on_red_main: { type: "boolean", default: true } } },
+    read: (v) => readGroup("policies.landing", v, LANDING_DEFAULTS, { pause_on_red_main: flag }),
+    flow: { steps: ["land.queue"], role: TUNABLE },
+    listed: 403,
+    checked: 403,
+  }),
   main: configKey<string>({
     key: "main",
     doc: "The branch changes land on.",
@@ -172,4 +190,10 @@ function readFloorScopes(v: unknown, ctx: KeyContext): Result<FloorScope[]> {
     return err("invalid", "`floor_scopes` needs `test_select_command`: the command that says which test files a change can break, so a landing runs only its scope's command when no test outside the scope is selected");
   }
   return ok(out);
+}
+
+/** policies.landing as a config mapping (main's, for a landing) sets it; the defaults when it does not (BR-2644). */
+export function landingPolicyOf(raw: Readonly<Record<string, unknown>>, root: string): Result<LandingPolicy> {
+  const at = rawAt(raw, landKeys.landingPolicy.key);
+  return at.set ? landKeys.landingPolicy.read(at.value, { root, raw }) : ok(LANDING_DEFAULTS);
 }

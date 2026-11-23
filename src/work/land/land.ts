@@ -1,3 +1,4 @@
+import { redMainPause } from "./red-main-pause.ts";
 import { checkPolicyOf } from "../../knowledge/check/config-keys.ts";
 import { configAt } from "../delegation/delegate.ts";
 import { failedOnBranch } from "./checks/tested.ts";
@@ -116,6 +117,10 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
     return early("on-main", `land runs from a change worktree on its own branch, not from ${main} or a detached HEAD`);
   }
   if (!ws.config.floor) return early("no-floor", "canon/config.yaml has no `floor` command; nothing proves the tree is sound");
+  // reason: while main fails its background floor only the fix lands, so nothing more is built on a broken main; main's own
+  // config decides, so a change cannot turn the pause off for itself (BR-2644, D-164)
+  const paused = redMainPause(ws, wt, main, subject);
+  if (paused) return early("red-main", paused);
   const clean = isClean(wt);
   if (!clean.ok || !clean.value) return early("dirty", "the worktree has uncommitted changes; commit them first");
   // reason: a run canon work test left failing on this branch may be stale or an environment fluke, and the landing runs
