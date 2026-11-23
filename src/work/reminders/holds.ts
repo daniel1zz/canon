@@ -59,6 +59,9 @@ export function withHolds(ws: Workspace, items: readonly DueItem[], states: read
     const holds = change === undefined ? undefined : held.get(change);
     if (!holds) return since === it.since ? it : { ...it, since };
     const named = holds.slice(0, HOLDS_SHOWN).join(", ") + (holds.length > HOLDS_SHOWN ? `, … +${holds.length - HOLDS_SHOWN}` : "");
-    return { ...it, since, holds, tier: it.group === "judge" && it.tier === 2 ? 1 : it.tier, summary: `${it.summary}; holds ${holds.length} waiting change(s): ${named}` };
+    // reason: said where it applies rather than in the brief every session loads (BR-2635, session_text_budget)
+    const owners = it.kind === "owner-gate" || it.kind === "question";
+    const next = owners ? `${it.next}; it holds waiting changes, so ask now, or land without --finish so the owner sees the work on main` : it.next;
+    return { ...it, since, holds, next, tier: it.group === "judge" && it.tier === 2 ? 1 : it.tier, summary: `${it.summary}; holds ${holds.length} waiting change(s): ${named}` };
   });
 }

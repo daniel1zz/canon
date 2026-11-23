@@ -43,9 +43,11 @@ test("BR-2635 BR-2527: an owner-gate item whose change three others wait on name
   expect(held.tier).toBe(1);
   expect(held.holds).toEqual(["C-1060", "C-1070", "C-1071"]);
   expect(held.summary).toEndWith("; holds 3 waiting change(s): C-1060, C-1070, C-1071");
+  expect(held.next).toEndWith("; it holds waiting changes, so ask now, or land without --finish so the owner sees the work on main");
   const plain = a.judge.find((i) => i.key === "owner-gate:C-5")!;
   expect(plain.tier).toBe(2);
   expect(plain.holds).toBeUndefined();
+  expect(plain.next).not.toContain("it holds waiting changes");
   expect(a.judge.indexOf(held)).toBeLessThan(a.judge.indexOf(plain));
 });
 
