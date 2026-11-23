@@ -1,5 +1,5 @@
 import { failedOnBranch } from "./checks/tested.ts";
-import { missingStatedFields, statedFieldsMessage } from "./checks/fields.ts";
+import { contentRefusals, refusalsMessage } from "./finish/preflight.ts";
 import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import type { Say, Workspace } from "../workspace.ts";
@@ -128,9 +128,15 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
   }
   // reason: a document this landing adds states the fields its type wants at creation, whatever made the file (BR-2624, D-159);
   // refused before queueing, since the content alone decides it and canon doc set fixes it in place
-  const stated = missingStatedFields(wt, main, ws.config);
-  if ("error" in stated) return early("environment", stated.error);
-  if (stated.lines.length > 0) return early("fields", statedFieldsMessage(stated.lines));
+  // reason: every refusal the content alone decides is said in one landing, before the related tests and the queue (BR-2634)
+  const pre = contentRefusals(ws, wt, main, subject, opts.finish === true);
+  if ("error" in pre) return early("environment", pre.error);
+  if (pre.refusals.length > 0) {
+    const now = opts.finish ? checkNow(ws, wt, main) : undefined;
+    const message = refusalsMessage(pre.refusals, now?.ok ? now.findings : []);
+    ws.db.event(ws.actor, "land.refuse", subject, { reason: pre.refusals[0]!.reason, message: message.slice(0, 2000), diff: ownDiffId(wt, main), refusals: pre.refusals.map((r) => r.reason) });
+    return { kind: "refused", reason: pre.refusals[0]!.reason, message };
+  }
 
   // reason: a refusal its content and main alone decide comes again on the same content and main; said now, without
   // waiting a turn in the queue (BR-2388, #154). Before the close commit, so there is nothing to take back.
