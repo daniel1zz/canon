@@ -1,6 +1,6 @@
 import { ok, type Result } from "../../kernel/result.ts";
 import { loadWaitsNow, machineLoad, type LoadDeps, type StepKind } from "../verify/load-gate.ts";
-import { fullRunsNow, machineSlots, type SlotDeps } from "../verify/slot.ts";
+import { fullRunsNow, machineLane, machineSlots, type SlotDeps } from "../verify/slot.ts";
 
 /**
  * The full test runs running and waiting on this machine, and the heavy steps waiting for the load (BR-2582, D-151,
@@ -29,6 +29,8 @@ export interface HeavyRuns {
   readonly waiting: number;
   /** Heavy steps waiting for the load, in queue order. */
   readonly loadWaiting: readonly LoadWait[];
+  /** The critical-path lane (BR-2643): the run in it, and how many wait behind it. */
+  readonly lane?: { readonly running: readonly FullRun[]; readonly waiting: number };
 }
 
 /** Where the queues are and how a process is told gone; tests pass their own. */
@@ -40,9 +42,13 @@ export type Loads = Pick<LoadDeps, "dir" | "gone">;
  * with their worktree path (BR-2630). A full run that holds a slot but is still in the load queue is waiting for the load,
  * not running (BR-2582).
  */
-export function runningFullRuns(slots: Slots = machineSlots, load: Loads = machineLoad, here?: { readonly primary: string }): Result<HeavyRuns> {
+export function runningFullRuns(slots: Slots = machineSlots, load: Loads = machineLoad, here?: { readonly primary: string }, laneSlots: Slots = machineLane): Result<HeavyRuns> {
   const entries = fullRunsNow(slots);
   if (!entries.ok) return entries;
+  // reason: the critical-path lane is listed apart from the full runs and the load queue (BR-2643)
+  const inLane = fullRunsNow(laneSlots);
+  if (!inLane.ok) return inLane;
+  const lane = { running: inLane.value.filter((e) => e.startedAt !== undefined).map((e) => ({ subject: e.subject ?? "main", since: new Date(e.startedAt!).toISOString() })), waiting: inLane.value.filter((e) => e.startedAt === undefined).length };
   const waits = loadWaitsNow(load);
   if (!waits.ok) return waits;
   const gated = new Set(waits.value.map((w) => w.pid));
@@ -54,5 +60,5 @@ export function runningFullRuns(slots: Slots = machineSlots, load: Loads = machi
   }
   const own = (worktree: string) => here === undefined || worktree === here.primary || worktree.startsWith(`${here.primary}.worktrees/`);
   const loadWaiting = waits.value.map((w) => ({ subject: own(w.worktree) ? w.subject : `${w.subject}（${w.worktree}）`, kind: w.kind, since: new Date(w.queuedAt).toISOString() }));
-  return ok({ running, waiting, loadWaiting });
+  return ok({ running, waiting, loadWaiting, lane });
 }

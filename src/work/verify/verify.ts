@@ -27,7 +27,8 @@ import { claimOfWorktree } from "../claims/claims.ts";
 import { groupAlive, stopGroups } from "./stop-groups.ts";
 import { availableParallelism } from "node:os";
 import { jobCap, readCpu, startPool, type CpuSample, type CpuState, type FileResult, type Outcome } from "./pool.ts";
-import { acquireSlot, machineSlots, type Slot, type SlotDeps } from "./slot.ts";
+import { acquireSlot, machineLane, machineSlots, type Slot, type SlotDeps } from "./slot.ts";
+import { criticalHolds } from "./critical-lane.ts";
 import { heavyEnv, passHeavyStep } from "./heavy-step.ts";
 import { machineLoad, type LoadDeps } from "./load-gate.ts";
 import type { Workspace } from "../workspace.ts";
@@ -233,6 +234,8 @@ export interface WorkTestDeps {
   readonly slots: SlotDeps;
   /** The machine-wide queue of heavy steps waiting for the load (BR-2630). */
   readonly load: LoadDeps;
+  /** The machine-wide critical-path lane (BR-2643). */
+  readonly lane: SlotDeps;
 }
 
 export const machineDeps: WorkTestDeps = {
@@ -245,6 +248,7 @@ export const machineDeps: WorkTestDeps = {
   exit: (code) => process.exit(code),
   slots: machineSlots,
   load: machineLoad,
+  lane: machineLane,
 };
 
 const STOP_SIGNALS: readonly NodeJS.Signals[] = ["SIGTERM", "SIGINT", "SIGHUP"];
@@ -271,6 +275,22 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
     return ok({ files: 0, failed: 0, typecheck: null, check: 0, unmatched: 0, evidence: 0, signal: sig });
   };
   try {
+    // reason: named files of a change others wait on skip the load and queue one at a time on this machine, so a long
+    // chain is not held by a short run (BR-2643); a full run and --all still wait for the load (BR-2630)
+    const holds = only.length > 0 && !all && subject !== null ? criticalHolds(ws, subject) : { ok: true as const, value: [] as string[] };
+    if (!holds.ok) return holds;
+    if (holds.value.length > 0) {
+      say(`canon: critical-path lane: ${subject} holds ${holds.value.join(", ")}; these named files do not wait for the machine load and run one at a time on this machine (BR-2643; policies.capacity.critical_lane: false turns it off)`);
+      const taken = await acquireSlot(deps.lane, {
+        subject, worktree: ws.root, kind: "work-test", max: 1, say,
+        aborted: () => stoppedWhileWaiting !== undefined,
+        record: (kind, detail) => void ws.db.event(ws.actor, kind.replace("test.full.", "test.lane."), subject, { ...detail, holds: holds.value }),
+      });
+      if (!taken.ok) return taken;
+      if (taken.value === "aborted") return stopped("the critical-path lane");
+      slot = taken.value;
+      slot.began();
+    } else {
     // reason: named files are not a full run and take no slot (BR-2576)
     if (only.length === 0) {
       const taken = await acquireSlot(deps.slots, {
@@ -293,6 +313,7 @@ export async function workTest(ws: Workspace, all: boolean, say: (line: string) 
       return stopped("the machine load");
     }
     slot?.began();
+    }
   } finally {
     for (const s of STOP_SIGNALS) deps.signals.off(s, onWaitSignal);
   }

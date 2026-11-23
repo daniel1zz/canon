@@ -7,15 +7,18 @@ import { err, ok } from "../../kernel/result.ts";
 export interface CapacityPolicy extends MemoryLimits {
   /** The share of delegate_max_load_per_cpu's limit in force while a full test run is running (BR-2581). */
   readonly full_run_load_share: number;
+  /** Named-file test runs of a change others wait on skip the load and run one at a time (BR-2643). */
+  readonly critical_lane: boolean;
 }
-export const CAPACITY_DEFAULTS: CapacityPolicy = { ...MEMORY_LIMITS, full_run_load_share: 0.9 };
+export const CAPACITY_DEFAULTS: CapacityPolicy = { ...MEMORY_LIMITS, full_run_load_share: 0.9, critical_lane: true };
+const bool = (v: unknown, name: string) => (typeof v === "boolean" ? ok(v) : fail("invalid", `\`${name}\` must be true or false`));
 const percent = (v: unknown, name: string) => (typeof v === "number" && v > 0 && v <= 100 ? ok(v) : fail("invalid", `\`${name}\` must be a percent above 0 and at most 100`));
 const share = (v: unknown, name: string) => (typeof v === "number" && v > 0 && v <= 1 ? ok(v) : fail("invalid", `\`${name}\` must be a share above 0 and at most 1`));
 
 export const delegationKeys = {
   capacityPolicy: configKey<CapacityPolicy>({
     key: "policies.capacity",
-    doc: "When the machine counts as busy for delegating and the agenda: memory_tight_level (macOS warn|critical), memory_psi_percent and memory_available_percent (Linux), full_run_load_share; an entry left out keeps its default (BR-2640).",
+    doc: "When the machine counts as busy for delegating and the agenda: memory_tight_level (macOS warn|critical), memory_psi_percent and memory_available_percent (Linux), full_run_load_share, critical_lane (BR-2643); an entry left out keeps its default (BR-2640).",
     default: CAPACITY_DEFAULTS,
     schema: {
       type: ["object", "null"],
@@ -26,9 +29,10 @@ export const delegationKeys = {
         memory_psi_percent: { type: "number", exclusiveMinimum: 0, maximum: 100, default: 10 },
         memory_available_percent: { type: "number", exclusiveMinimum: 0, maximum: 100, default: 10 },
         full_run_load_share: { type: "number", exclusiveMinimum: 0, maximum: 1, default: 0.9 },
+        critical_lane: { type: "boolean", default: true },
       },
     },
-    read: (v) => readGroup("policies.capacity", v, CAPACITY_DEFAULTS, { memory_tight_level: oneOfEntry(["warn", "critical"] as const), memory_psi_percent: percent, memory_available_percent: percent, full_run_load_share: share }),
+    read: (v) => readGroup("policies.capacity", v, CAPACITY_DEFAULTS, { memory_tight_level: oneOfEntry(["warn", "critical"] as const), memory_psi_percent: percent, memory_available_percent: percent, full_run_load_share: share, critical_lane: bool }),
     flow: { steps: ["start.delegate"], role: TUNABLE },
     listed: 401,
     checked: 401,

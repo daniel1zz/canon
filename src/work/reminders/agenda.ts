@@ -60,6 +60,8 @@ export interface AgendaOptions {
   readonly slots?: Slots;
   /** The machine-wide queue of heavy steps waiting for the load; tests pass a directory of their own (BR-2630). */
   readonly load?: Loads;
+  /** The machine-wide critical-path lane; tests pass a directory of their own (BR-2643). */
+  readonly lane?: Slots;
 }
 
 /** How many delegatable changes are named (BR-2581) and how many items a summary group shows (BR-2529). */
@@ -74,7 +76,7 @@ const byOrder = (a: DueItem, b: DueItem): number => a.tier - b.tier || (b.holds?
 /** The calling session's agenda (BR-2527). */
 export function agenda(ws: Workspace, opts: AgendaOptions = {}): Result<Agenda> {
   const now = opts.now ?? Date.now();
-  const runs = runningFullRuns(opts.slots, opts.load, { primary: ws.primary });
+  const runs = runningFullRuns(opts.slots, opts.load, { primary: ws.primary }, opts.lane);
   if (!runs.ok) return runs;
   const heavy = runs.value;
   if (isWorker(ws.actor)) return ok({ delegate: null, judge: [], owner: [], yours: workerItems(ws), heavy, startable: [], states: [] });
@@ -126,7 +128,7 @@ export function agenda(ws: Workspace, opts: AgendaOptions = {}): Result<Agenda> 
 export const dueList = (a: Agenda): DueItem[] => [...a.judge, ...a.owner, ...a.yours];
 
 /** Whether nothing would be printed (BR-2527, BR-2529). */
-export const isEmpty = (a: Agenda): boolean => (a.delegate === null || a.delegate.ready.length === 0) && dueList(a).length === 0 && a.heavy.running.length === 0 && a.heavy.waiting === 0 && a.heavy.loadWaiting.length === 0;
+export const isEmpty = (a: Agenda): boolean => (a.delegate === null || a.delegate.ready.length === 0) && dueList(a).length === 0 && a.heavy.running.length === 0 && a.heavy.waiting === 0 && a.heavy.loadWaiting.length === 0 && (a.heavy.lane?.running.length ?? 0) === 0 && (a.heavy.lane?.waiting ?? 0) === 0;
 
 /** One group's items with the same kind folded together where there are two or more, in the order of each kind's first item (BR-2527). */
 export function folded(items: readonly DueItem[]): DueItem[][] {
@@ -154,12 +156,15 @@ const entryLine = (g: readonly DueItem[], now: number): string => (g.length === 
 
 /** `heavy: C-637 full test run 12m; 2 waiting; 1 waiting for the load (C-9 test 4m)` (BR-2582), or undefined when nothing runs or waits. */
 export function heavyLine(h: HeavyRuns, now: number): string | undefined {
-  if (h.running.length === 0 && h.waiting === 0 && h.loadWaiting.length === 0) return undefined;
+  const laneBusy = h.lane !== undefined && (h.lane.running.length > 0 || h.lane.waiting > 0);
+  if (h.running.length === 0 && h.waiting === 0 && h.loadWaiting.length === 0 && !laneBusy) return undefined;
+  // reason: the critical-path lane runs past the load, so it is said apart from what waits for it (BR-2643)
+  const lane = laneBusy && h.lane ? `; critical lane: ${h.lane.running.map((r) => `${r.subject} ${age(now - Date.parse(r.since))}`).join(", ") || "none running"}${h.lane.waiting > 0 ? `, ${h.lane.waiting} waiting` : ""}` : "";
   const running = h.running.map((r) => `${r.subject ?? "main"} full test run ${age(now - Date.parse(r.since))}`).join(", ");
   const shown = h.loadWaiting.slice(0, DELEGATE_SHOWN).map((w) => `${w.subject} ${w.kind} ${age(now - Date.parse(w.since))}`).join(", ");
   const more = h.loadWaiting.length > DELEGATE_SHOWN ? `, … +${h.loadWaiting.length - DELEGATE_SHOWN}` : "";
   const load = h.loadWaiting.length > 0 ? `; ${h.loadWaiting.length} waiting for the load (${shown}${more})` : "";
-  return `heavy: ${running || "none running"}${h.waiting > 0 ? `; ${h.waiting} waiting` : ""}${load}`;
+  return `heavy: ${running || "none running"}${h.waiting > 0 ? `; ${h.waiting} waiting` : ""}${load}${lane}`;
 }
 
 /** With only the load in the way a light delegation may still be made, up to the slots that fit (BR-2581, BR-2632). */

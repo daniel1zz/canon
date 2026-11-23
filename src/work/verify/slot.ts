@@ -43,6 +43,9 @@ export const machineSlots: SlotDeps = {
   sleep: (ms) => Bun.sleep(ms),
 };
 
+/** The machine-wide critical-path lane: named-file runs of changes others wait on, one at a time, not waiting for the load (BR-2643). */
+export const machineLane: SlotDeps = { ...machineSlots, dir: join(machineDir(), "critical-lane") };
+
 /** What a queue file says about a run. */
 export interface Entry {
   readonly seq: number;
