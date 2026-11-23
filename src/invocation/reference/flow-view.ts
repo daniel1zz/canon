@@ -24,7 +24,9 @@ export interface FlowKeyView extends KeyView {
 export const COMMAND_PLACEHOLDER = "<命令>";
 
 // reason: a JSON value is valid YAML on one line, so the snippet reads back as exactly the value shown (BR-2541)
-const yamlOf = (key: string, value: unknown) => `${key}: ${value === null || value === undefined ? "" : JSON.stringify(value)}`;
+const scalar = (value: unknown) => (value === null || value === undefined ? "" : JSON.stringify(value));
+// reason: a policy group's key is written under its parent mapping, so its yaml reads back as canon/config.yaml writes it (BR-2638)
+const yamlOf = (key: string, value: unknown) => (key.includes(".") ? `${key.split(".")[0]}:\n  ${key.split(".").slice(1).join(".")}: ${scalar(value)}` : `${key}: ${scalar(value)}`);
 const yamlOfPart = (key: string, part: string, value: unknown) => `${key}:\n  ${part}: ${JSON.stringify(value ?? COMMAND_PLACEHOLDER)}`;
 
 export interface FlowStepView {

@@ -20,6 +20,7 @@ export const delegationKeys = {
     schema: {
       type: ["object", "null"],
       additionalProperties: false,
+      default: CAPACITY_DEFAULTS,
       properties: {
         memory_tight_level: { enum: ["warn", "critical"], default: "warn" },
         memory_psi_percent: { type: "number", exclusiveMinimum: 0, maximum: 100, default: 10 },

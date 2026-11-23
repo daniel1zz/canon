@@ -27,6 +27,7 @@ export const reminderKeys = {
     schema: {
       type: ["object", "null"],
       additionalProperties: false,
+      default: AGENDA_DEFAULTS,
       properties: {
         slow_hours: { type: "number", exclusiveMinimum: 0, default: 6 },
         slow_test_failures: { type: "integer", minimum: 1, default: 4 },

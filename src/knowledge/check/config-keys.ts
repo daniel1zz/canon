@@ -11,7 +11,7 @@ export const checkKeys = {
     key: "policies.checks",
     doc: "Per check, whether canon check refuses (a finding that refuses a landing), reminds (a note) or is off: only the checks that say a document is incomplete, never one that says it is false (BR-2641, D-164). An entry left out keeps its default.",
     default: CONFIGURABLE_CHECKS,
-    schema: { type: ["object", "null"], additionalProperties: false, properties: Object.fromEntries(Object.entries(CONFIGURABLE_CHECKS).map(([k, d]) => [k, { enum: [...ACTIONS], default: d }])) },
+    schema: { type: ["object", "null"], additionalProperties: false, default: CONFIGURABLE_CHECKS, properties: Object.fromEntries(Object.entries(CONFIGURABLE_CHECKS).map(([k, d]) => [k, { enum: [...ACTIONS], default: d }])) },
     read: (v) => readGroup("policies.checks", v, CONFIGURABLE_CHECKS as CheckPolicy, Object.fromEntries(Object.keys(CONFIGURABLE_CHECKS).map((k) => [k, oneOfEntry(ACTIONS)])) as never),
     flow: { steps: ["test.check"], role: TUNABLE },
     listed: 402,

@@ -221,8 +221,12 @@ describe("the config schema", () => {
     expect(validate(own)).toBe(true);
   });
 
-  test("BR-2175: every key has a property with its doc, and a schema default reads back to canon's default", () => {
-    const props = (configSchema() as { properties: Record<string, { description: string; default?: unknown }> }).properties;
+  test("BR-2175 BR-2638: every key has a property with its doc, and a schema default reads back to canon's default", () => {
+    const top = (configSchema() as { properties: Record<string, { description: string; default?: unknown; properties?: Record<string, { description: string }> }> }).properties;
+    // a policy group is written under policies (BR-2638), so its property is policies.<group>
+    const props: Record<string, { description: string; default?: unknown }> = { ...top };
+    for (const [g, p] of Object.entries(top["policies"]?.properties ?? {})) props[`policies.${g}`] = p;
+    delete props["policies"];
     expect(Object.keys(props).sort()).toEqual(CONFIG_KEYS.map(([, k]) => k.key).sort());
     for (const [, k] of CONFIG_KEYS) {
       expect(props[k.key]!.description).toBe(k.doc);

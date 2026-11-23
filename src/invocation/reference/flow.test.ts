@@ -48,7 +48,7 @@ describe("canon config --flow", () => {
   test("BR-2540: stages come in the flow's order, and every key canon knows is under at least one step", () => {
     const f = flowOf(BASE);
     expect(f.stages.map((s) => s.id)).toEqual(["session", "start", "test", "preview", "land", "after", "stop", "accept"]);
-    const listed = new Set(f.stages.flatMap((s) => s.steps.flatMap((st) => st.keys.map((k) => k.key.split(".")[0]))));
+    const listed = new Set(f.stages.flatMap((s) => s.steps.flatMap((st) => st.keys.flatMap((k) => [k.key, k.key.split(".")[0]!]))));
     for (const [, k] of CONFIG_KEYS) expect(listed.has(k.key)).toBe(true);
     // review configures both the preview and the review after landing
     expect(keyIn(step(f, "preview.review"), "review")).toBeDefined();
