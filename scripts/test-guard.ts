@@ -8,7 +8,8 @@ if (process.env["CANON_TEST_SCRIPT"] !== "1") {
   const file = first && first.endsWith(".ts") ? relative(process.cwd(), first) : "<test file>";
   console.error(
     [
-      "bun test refused: in this repository run tests through scripts/test.sh, which sets the 30 s test timeout and a fixed git config (C-247):",
+      // reason: starts with error: and says no test ran, so a reader filtering the output for error: or fail does not take the refusal for a pass
+      "error: bun test refused, no test ran: in this repository run tests through scripts/test.sh, which sets the 30 s test timeout and a fixed git config (C-247):",
       `  sh scripts/test.sh ${file}`,
       "It takes the same arguments as bun test (e.g. sh scripts/test.sh -t \"BR-2022\"); canon work test runs it for you.",
     ].join("\n"),
