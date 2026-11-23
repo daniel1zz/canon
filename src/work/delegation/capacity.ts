@@ -92,6 +92,16 @@ export const loadOver = (ws: Workspace, c: Pick<Capacity, "machine">): string | 
 export const refusalMessage = (subject: string, reasons: readonly string[]): string =>
   `${subject} not delegated: the machine has no room for another worker (BR-2526): ${reasons.join("; ")}. Wait for a worker to land or for the load to fall, then delegate again`;
 
+/** How many more light delegations fit: the free worker slots, as BR-2526 counts them (BR-2642). */
+export function lightRoom(ws: Workspace, c: Capacity): number {
+  const rows = ws.db.db.query<{ subject: string }, []>("SELECT subject FROM delegations WHERE ended IS NULL").all();
+  return Math.max(0, ws.config.delegateMaxWorkers - rows.filter((r) => !c.free.has(r.subject)).length);
+}
+
+/** What a heavy delegation refused for the load alone may do instead (BR-2642). */
+export const lightHint = (subject: string, fits: number): string =>
+  `\nA light delegation still fits (${fits} more): when the worker only reads, designs or researches, running no tests or builds, canon work delegate ${subject} --to <name> --light "<why>" (BR-2632). Light opens only the delegation: canon work test and the other heavy steps still wait for the load (BR-2630)`;
+
 /** One line per signal that was not measured (BR-2526). */
 export const unmeasuredLines = (c: Capacity): string[] => unmeasured(c).map((s) => `capacity: ${s} not measured on this platform; delegated without that check`);
 

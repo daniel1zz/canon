@@ -11,7 +11,7 @@ import { branchSubject } from "../session/subject.ts";
 import type { Say, Workspace } from "../workspace.ts";
 import { isWorker } from "./worker.ts";
 import { delegationKeys } from "./config-keys.ts";
-import { loadOver, measure, refusal, refusalMessage, unmeasured, unmeasuredLines } from "./capacity.ts";
+import { lightHint, lightRoom, loadOver, measure, refusal, refusalMessage, unmeasured, unmeasuredLines } from "./capacity.ts";
 import { delegation, delegationNotice, type ContractItem, type Delegation } from "./records.ts";
 import { startNotices } from "./notices.ts";
 import { parseDocFile } from "../../knowledge/documents/docfile.ts";
@@ -147,8 +147,11 @@ export function delegate(ws: Workspace, subject: string, worker: string, contrac
       const no = refusal(ws, cap.value, toHeavy ? "load" : why !== null ? "light" : "all");
       if (no && implicit) busy = no.reasons;
       else if (no) {
-        ws.db.event(ws.actor, "delegation.refuse", subject, no.detail);
-        return err("refused", refusalMessage(subject, no.reasons));
+        // reason: a heavy delegation refused for the load alone would fit as a light one; the refusal says so, or a session
+        // waits for the load with work that runs nothing heavy (BR-2642, BR-2632)
+        const light = !toHeavy && why === null && refusal(ws, cap.value, "light") === undefined ? lightRoom(ws, cap.value) : undefined;
+        ws.db.event(ws.actor, "delegation.refuse", subject, { ...no.detail, ...(light !== undefined ? { light_fits: light } : {}) });
+        return err("refused", refusalMessage(subject, no.reasons) + (light !== undefined ? lightHint(subject, light) : ""));
       }
     }
     // reason: eligibility was read before this transaction; a claim taken since (the main session starting the change) binds it,

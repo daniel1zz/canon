@@ -199,3 +199,16 @@ test("BR-2632: a change still writing cpu_light is reported by canon check, and 
   expect(refused.code).toBe(1);
   expect(refused.text).toContain("5-minute load 17.0 on 8 CPUs (limit 16)");
 });
+
+test("BR-2642: a heavy delegation refused for the load alone says a light one still fits, how many more, and that light opens only the delegation; refused also for memory or slots, it does not", () => {
+  const root = fixture();
+  const a = started(root, "Design draft");
+  const r = cli(root, "normal,17,8", "work", "delegate", a.change, "--to", "w1");
+  expect(r.code).toBe(1);
+  expect(r.text).toContain(`A light delegation still fits (10 more): when the worker only reads, designs or researches, running no tests or builds, canon work delegate ${a.change} --to <name> --light "<why>" (BR-2632). Light opens only the delegation: canon work test and the other heavy steps still wait for the load (BR-2630)`);
+  expect(events(root, "delegation.refuse").at(-1)).toMatchObject({ subject: a.change, reason: "capacity", light_fits: 10 });
+  const tight = cli(root, "warn,17,8", "work", "delegate", a.change, "--to", "w1");
+  expect(tight.code).toBe(1);
+  expect(tight.text).not.toContain("A light delegation still fits");
+  expect(events(root, "delegation.refuse").at(-1)!["light_fits"]).toBeUndefined();
+});
