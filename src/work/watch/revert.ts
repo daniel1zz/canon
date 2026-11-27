@@ -13,6 +13,7 @@ import type { Say, Workspace } from "../workspace.ts";
 import { redMain } from "./redmain.ts";
 import { runLogged, shellQuote } from "./run.ts";
 import { canonCommand } from "./watch.ts";
+import { REVERT_TRAILER } from "../../kernel/revert-trailer.ts";
 
 /**
  * Auto-revert after a real background failure (D-137): find the first landing between the last green commit and the
@@ -21,7 +22,7 @@ import { canonCommand } from "./watch.ts";
  */
 
 /** The trailer that marks a revert commit canon made, so a watcher killed after moving main can finish it (BR-2536). */
-export const TRAILER = "Canon-Reverts:";
+export const TRAILER = REVERT_TRAILER;
 
 export interface Landing {
   readonly subject: string | null;

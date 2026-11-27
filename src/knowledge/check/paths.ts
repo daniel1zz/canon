@@ -4,6 +4,7 @@ import { basename, join } from "node:path";
 import { fencedLines as inFence, type Corpus } from "../documents/model.ts";
 import { git } from "../../kernel/git.ts";
 import { ARCHITECTURE_FILE } from "./architecture.ts";
+import { REVERT_TRAILER } from "../../kernel/revert-trailer.ts";
 
 /**
  * BR-2171, D-25: a repository path written in backticks in a current document must not name a path the repository
@@ -122,10 +123,22 @@ export function pathFindings(root: string, corpus: Corpus): PathFinding[] {
   if (!history.ok) return [{ path: missing[0]!.doc, message: history.message }];
   const had = (p: string) =>
     p.includes("/") ? history.files.some((f) => f === p || f.startsWith(`${p}/`)) : history.files.some((f) => basename(f) === p);
-  return missing.filter((m) => had(m.path)).map((m) => ({
+  return missing.filter((m) => had(m.path) && !revertedWithItsChange(root, m.doc, m.path)).map((m) => ({
     path: m.doc,
     message: `names \`${m.path}\`, which the repository no longer has (git history does); write where it is now, or drop the backticks where the text means the old location`,
   }));
+}
+
+/**
+ * Whether `path`, named in the open change file `doc`, was last deleted by that change's own automatic revert (a commit
+ * with `Canon-Reverts: <C-n> ...`): the work waits on the change's branch and comes back when it lands again (BR-2171, BR-2536).
+ */
+function revertedWithItsChange(root: string, doc: string, path: string): boolean {
+  const id = /(?:^|\/)changes\/(C-\d+)\.md$/.exec(doc)?.[1];
+  if (!id) return false;
+  const spec = path.includes("/") ? `:(literal)${path}` : `:(glob)**/${path}`;
+  const last = git(root, "log", "-1", "--diff-filter=D", "--format=%B", "HEAD", "--", spec);
+  return last.ok && last.value.split("\n").some((l) => l.startsWith(`${REVERT_TRAILER} ${id} `));
 }
 
 /**

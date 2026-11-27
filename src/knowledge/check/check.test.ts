@@ -632,6 +632,25 @@ describe("backticked repository paths", () => {
     expect(at({ "canon/notes/N-1.md": `---\nid: ${["N", 1].join("-")}\ntitle: X\n---\nWas \`src/old.ts\`.\n` })).toEqual([]);
   });
 
+  test("BR-2171: a path the open change's own automatic revert deleted is not reported; another change's revert or a plain delete is", () => {
+    const id = (n: number) => ["C", n].join("-");
+    const at = (deletedBy: string) => {
+      const root = moved({ "canon/rules/billing/README.md": domainReadme });
+      writeFileSync(join(root, "src/added.ts"), "x\n");
+      mkdirSync(join(root, "canon/changes"), { recursive: true });
+      writeFileSync(join(root, `canon/changes/${id(1)}.md`), `---\nid: ${id(1)}\ntitle: X\nstatus: open\nrules: []\n---\n## 要改什么\n\nAdds \`src/added.ts\`.\n`);
+      sh(root, "add", "-A");
+      sh(root, "commit", "-qm", "land");
+      rmSync(join(root, "src/added.ts"));
+      sh(root, "add", "-A");
+      sh(root, "commit", "-qm", deletedBy);
+      return missing(root);
+    };
+    expect(at(`canon: revert ${id(1)}\n\nFailing: x\n\nCanon-Reverts: ${id(1)} 0123456789abcdef`)).toEqual([]);
+    expect(at(`canon: revert ${id(2)}\n\nCanon-Reverts: ${id(2)} 0123456789abcdef`)).toEqual([`canon/changes/${id(1)}.md: src/added.ts`]);
+    expect(at("remove it")).toEqual([`canon/changes/${id(1)}.md: src/added.ts`]);
+  });
+
   test("BR-2186: symbolic links are not followed, so dangling links and loops do not crash check", () => {
     const root = moved({
       "CLAUDE.md": "See `src/dangling` and `link.ts`.\n",
