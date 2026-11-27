@@ -22,6 +22,10 @@ Do not split, or put the tasks in one agent's hands, when:
 - **two tasks change the same file** (see section 2, step 3);
 - the main agent already holds the context and the work is small: doing it yourself is cheaper than briefing someone.
 
+Also hand work to a subagent when it would read a lot the main agent will not use afterwards (raw output over about 30k tokens), or when the main agent's context is already heavy. A read-only subagent fits an inventory across two or more areas (source, tests, docs), raw output over about 10k tokens not needed afterwards, or a review that must not be anchored on your conclusion; a known path, a count or one or two commands you run yourself. Split a mixed task: send out what fits and do the rest, never both sides on the same item, and spot-check the key points that come back.
+
+**Concurrency is capped by machine resources, not CPU alone.** Before dispatching another worker check load (`uptime`) and memory (`sysctl vm.swapusage` on macOS). With under about 0.5 GB of swap free, or load staying above twice the core count, dispatch no more; if needed, have the newest worker commit and pause, and resume it later. Reference: an 8-core 16 GB machine held about 10 workers (each `claude -p` about 300 MB, plus the game engine or test processes it runs); past that, paging made whole landing test runs time out.
+
 ## 2. Before dispatching
 
 1. Note where the run starts in the event table: `canon events | tail -1` and take that event's id (call it `<start>`). Everything the subagents do is recorded after it.
