@@ -1,6 +1,6 @@
 ---
 name: user-08-evidence-decisions
-description: "Evidence tiers S (official) to E (untrusted), the evidence bar per blast radius (trivial / medium / critical: architecture, security, perf, crypto, auth, cross-service), and the required [EVIDENCE] and [CONFIDENCE] lines. Use before stating a best practice, a performance or version claim, or making any non-trivial technical decision or recommendation."
+description: "How much evidence a claim needs. Use before stating a best practice, a performance or version claim, or a non-trivial recommendation."
 ---
 ## 证据驱动决策
 ⛔ 禁止仅凭 LLM 内部知识下结论。Trigger：准备说「最佳实践 / X 比 Y 快 / 通常」→ 停，先查证。

@@ -1,6 +1,6 @@
 ---
 name: user-01-research-first
-description: "Which source to use when researching: a library's current API or config (context7), how real code uses an API (grep MCP, regex across public GitHub), how a third-party repo works inside (deepwiki, then verify), code navigation in this repo (built-in LSP tool), community/academic/news (OpenCLI), WebSearch as fallback. Also: use a mature library before building one, default to the latest version, copy benchmark products for product/UI/UX. Use before researching a topic, choosing or adding a dependency, calling an unfamiliar API, or designing product/UI."
+description: "Which source to research with. Use before looking up a library or API, choosing a dependency, or designing product/UI."
 ---
 ## 研究优先
 

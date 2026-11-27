@@ -1,6 +1,6 @@
 ---
 name: user-02-agent-browser
-description: "Agent-browser persistent-profile rules: logged-in profile usage, mock-keychain incompatibility, --profile (not --session) for cookie isolation, single-instance profile, and closing sessions with the top-level close command. Use before any agent-browser run that needs login state, runs in parallel, or must clean up sessions."
+description: "agent-browser login profiles and session isolation. Use before an agent-browser run that needs login, runs in parallel, or must clean up."
 ---
 ## Agent Browser 持久化 Profile
 - 默认无头自主操作；需登录态 → `agent-browser --session claude-profile --profile ~/.agent-browser/profiles/claude open <url>`。仅「未登录/验证码/2FA」让用户介入
