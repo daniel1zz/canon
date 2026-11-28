@@ -1,6 +1,6 @@
 ---
 name: canon-rules
-description: "Use when writing, editing, splitting or reviewing a canon rule (canon/rules/<domain>/BR-n.md), or turning a requirement, PRD or bug into rules before code. Triggers: 'write a rule', 'business rule', 'acceptance criteria', 'edge cases', 'what should happen when', '写规则', '业务规则', '验收标准', '边界情况', '需求拆解'. NOT for the architecture behind a rule (use canon-design) or for writing the test itself."
+description: "Use when writing, editing, splitting or reviewing a canon rule (canon/rules/<domain>/BR-n.md), or turning a requirement, PRD or bug into rules before code. Triggers: 'business rule', 'acceptance criteria', 'what should happen when', 'edge cases', '写规则', '验收标准'. NOT for the architecture behind a rule or the test itself."
 ---
 
 # Writing rules (canon)

@@ -1,6 +1,6 @@
 ---
 name: canon-domains
-description: "Use when deciding how the baseline is divided into domains: a new project's baseline, a domain over the split hint or mixing vocabularies, a behaviour that fits no domain, or reorganising. Triggers: 'split this domain', 'which domain does this belong to', '划分领域', '拆领域', '领域设计', 'baseline 目录'. NOT for writing rules (canon-rules) or code architecture (canon-design)."
+description: "Use when deciding how the baseline splits into domains: a new baseline, a domain too big or mixing vocabularies, a behaviour that fits none, or reorganising. Triggers: 'which domain', '划分领域', '拆领域'. NOT for writing rules or code architecture."
 ---
 
 # Dividing the baseline into domains (canon)
