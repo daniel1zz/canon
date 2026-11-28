@@ -62,7 +62,7 @@ Banned verbs (no observer, no observation): works, runs, handles, supports, inte
 - Bad: `canon work land` 支持冲突处理.
 - Good: `canon work land` 在 rebase 冲突时退出码 1，main 不动，提示列出冲突的文件。
 
-An experience goal ("feels fast", "easy to understand", "fun for 20 minutes", "the hit feels heavy") is not a rule: a test named after it can only check a stand-in ("every screen has hint text") that passes while users still do not understand (D-145, option 4). It becomes a quality standard instead: `canon quality new --title "<threshold>" --aspect <aspect> --judge test|agent|owner --covers <domain|path>`, then fill its `## 门槛` (one sentence that can pass or fail, with a number where one exists) and `## 来源` (the benchmark product, the measurement or recording, the user review). The rules keep the mechanics the experience rests on (the hint appears on first entry); the standard holds how good it must feel, and canon-uat judges it by its judge.
+An experience goal ("feels fast", "easy to understand", "fun for 20 minutes", "the hit feels heavy") is not a rule: a test named after it can only check a stand-in ("every screen has hint text") that passes while users still do not understand. It becomes a quality standard instead: `canon quality new --title "<threshold>" --aspect <aspect> --judge test|agent|owner --covers <domain|path>`, then fill its `## 门槛` (one sentence that can pass or fail, with a number where one exists) and `## 来源` (the benchmark product, the measurement or recording, the user review). The rules keep the mechanics the experience rests on (the hint appears on first entry); the standard holds how good it must feel, and canon-uat judges it by its judge.
 
 ## 4. One trigger, one outcome
 

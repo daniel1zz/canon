@@ -23,7 +23,7 @@ Run them as separate subagents. If you cannot (you are a subagent yourself), exe
 
 ## 1a. Add the quality standards in scope
 
-Rules say what the product must do; quality standards (`canon/quality/Q-n.md`) say how good it must be, and acceptance judges both (D-145).
+Rules say what the product must do; quality standards (`canon/quality/Q-n.md`) say how good it must be, and acceptance judges both.
 
 1. Find the standards in scope: `canon quality list --json`, keeping each one whose `covers` names a domain of the rules in the inventory or a path the accepted work changed (`.` covers everything). The `quality:` lines that `canon work start` and `canon work land` printed for the change list the same ones.
 2. Add one row per standard below the rule rows: `Q-n · 门槛 · judge`, the threshold copied from its `## 门槛` (`canon show Q-n`). Status `draft` (not yet confirmed by the owner) still counts.
@@ -102,7 +102,7 @@ Scored 1–5, from the trace: **friction** (backtracks and confusion against the
 | No gate fails on P0, but some P0 gate is UNVERIFIED (rule gap, no probe), a P0 row is uncovered, a P1 gate fails, a score is < 3, or a quality row is not `pass` | ACCEPT-WITH-ISSUES |
 | A P0 gate fails (H1 reproduced by a second executor) | REJECT |
 
-Modifiers on the verdict line: `COVERAGE-GAP`, `RULE-GAP`, `UNVERIFIED`, `SELF-VERIFIED`, `EXECUTOR-VARIANCE`, `QUALITY-FAIL`, `QUALITY-GAP`, `PENDING-OWNER`. A quality row never turns the verdict into REJECT on its own: standards remind, they do not block (D-139, D-145). An UNVERIFIED P0 gate is a blocking gap, listed first: the row is not accepted until it is probed or its rule is fixed. P2 findings never change the verdict on their own.
+Modifiers on the verdict line: `COVERAGE-GAP`, `RULE-GAP`, `UNVERIFIED`, `SELF-VERIFIED`, `EXECUTOR-VARIANCE`, `QUALITY-FAIL`, `QUALITY-GAP`, `PENDING-OWNER`. A quality row never turns the verdict into REJECT on its own: standards remind, they do not block. An UNVERIFIED P0 gate is a blocking gap, listed first: the row is not accepted until it is probed or its rule is fixed. P2 findings never change the verdict on their own.
 
 ## 6. Report and findings
 
