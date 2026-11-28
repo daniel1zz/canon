@@ -224,6 +224,12 @@ CREATE TABLE IF NOT EXISTS goals (
   marker      TEXT,                    -- main, the worktree's HEAD and its status when last held (BR-2519)
   stalls      INTEGER NOT NULL DEFAULT 0
 );
+-- A session's dispatch check at its stops (BR-2655, BR-2660, D-170): turned off, and what the check saw when it last held the session.
+CREATE TABLE IF NOT EXISTS dispatch_state (
+  actor   TEXT PRIMARY KEY,
+  off     INTEGER NOT NULL DEFAULT 0,
+  marker  TEXT                         -- its own latest event, the worktree's HEAD and its status when last held
+);
 `;
 
 /** Columns added after the first schema, as `table`, `column definition`. */

@@ -152,7 +152,8 @@ function foldLine(g: readonly DueItem[], now: number): string {
   return `${g[0]!.kind} ×${g.length} oldest ${ageOf(oldest, now)}: ${keys}${more} → ${g[0]!.foldNext}`;
 }
 
-const entryLine = (g: readonly DueItem[], now: number): string => (g.length === 1 ? renderDue(g[0]!, now) : foldLine(g, now));
+/** One folded group as `canon work due` prints it (BR-2527); the dispatch check names items the same way (BR-2655). */
+export const entryLine = (g: readonly DueItem[], now: number): string => (g.length === 1 ? renderDue(g[0]!, now) : foldLine(g, now));
 
 /** `heavy: C-637 full test run 12m; 2 waiting; 1 waiting for the load (C-9 test 4m)` (BR-2582), or undefined when nothing runs or waits. */
 export function heavyLine(h: HeavyRuns, now: number): string | undefined {

@@ -9,6 +9,7 @@ import type { CoordDb } from "../db.ts";
 import { landed } from "../overview/overview.ts";
 import { allCriteria, headLine, releasesInProgress, releaseViews, type CriterionView } from "../../knowledge/releases/current.ts";
 import { mainCorpus } from "../session/session.ts";
+import { checkDispatch } from "./dispatch.ts";
 import type { Workspace } from "../workspace.ts";
 
 /** A session's goal mode (BR-2518, BR-2519, D-132). */
@@ -92,8 +93,18 @@ export function checkGoal(ws: Workspace, input: string, runtime: AgentRuntime, c
     return {};
   }
   const actor = sessionActor(runtime, session);
+  // reason: when the goal does not hold the session, the dispatch check may (BR-2519, BR-2655)
+  const orDispatch = (base: Record<string, unknown>): Record<string, unknown> => {
+    try {
+      const d = checkDispatch(ws, ws.actor, actor, cwd);
+      if (!d.ok) return { ...base, systemMessage: [base["systemMessage"], `canon dispatch check failed: ${d.error.message}`].filter(Boolean).join("; ") };
+      return d.value ? { ...d.value, ...(base["systemMessage"] ? { systemMessage: base["systemMessage"] } : {}) } : base;
+    } catch (e) {
+      return { ...base, systemMessage: [base["systemMessage"], `canon dispatch check failed: ${(e as Error).message}`].filter(Boolean).join("; ") };
+    }
+  };
   const goal = goalOf(ws.db, actor);
-  if (!goal) return {};
+  if (!goal) return orDispatch({});
   const corpus = mainCorpus(ws);
   if (!corpus.ok) return { systemMessage: `canon goal check failed: ${corpus.error.message}` };
   const releases = goal.releases.map((id) => corpus.value.docs.find((d): d is Release => d.kind === "release" && d.id === id)).filter((r): r is Release => r !== undefined);
@@ -105,9 +116,9 @@ export function checkGoal(ws: Workspace, input: string, runtime: AgentRuntime, c
   if (open.length === 0 && owner.length === 0) {
     ws.db.db.query("DELETE FROM goals WHERE actor = ?").run(actor);
     ws.db.event(actor, "goal.reached", null, { releases: goal.releases });
-    return { systemMessage: `goal reached: ${names}` };
+    return orDispatch({ systemMessage: `goal reached: ${names}` });
   }
-  if (open.length === 0) return { systemMessage: `goal: only the owner's acceptance is left: ${owner.length} criterion(s)` };
+  if (open.length === 0) return orDispatch({ systemMessage: `goal: only the owner's acceptance is left: ${owner.length} criterion(s)` });
   const marker = progressMarker(ws, cwd);
   const row = ws.db.db.query<{ marker: string | null; stalls: number }, [string]>("SELECT marker, stalls FROM goals WHERE actor = ?").get(actor)!;
   const stalls = row.marker !== null && row.marker === marker ? row.stalls + 1 : 0;

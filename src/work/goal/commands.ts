@@ -3,6 +3,7 @@ import { defineCommand } from "citty";
 import { readRuntime } from "../../kernel/agent.ts";
 import { entry, fail, json, must, RUNTIME_ARG, say, workspace, type DomainCommands } from "../../invocation/command.ts";
 import { openWorkspace } from "../workspace.ts";
+import { setDispatch } from "./dispatch.ts";
 import { checkGoal, goalActor, goalLines, goalOf, startGoal, stopGoal } from "./goal.ts";
 
 /** `canon goal`: a session's goal mode, driven by the Stop hook (BR-2518, BR-2519, D-132). */
@@ -14,7 +15,7 @@ const actorOrFail = (): string => {
 };
 
 const goal = defineCommand({
-  meta: { description: "Goal mode for this session: with it on, the Stop hook keeps the session working toward the releases' success criteria (start, stop; no subcommand shows the goal)" },
+  meta: { description: "Goal mode for this session: with it on, the Stop hook keeps the session working toward the releases' success criteria (start, stop; no subcommand shows the goal); without a goal the Stop hook still names what the main session can do now (dispatch)" },
   args: { json: { type: "boolean" } },
   subCommands: {
     start: defineCommand({
@@ -30,6 +31,15 @@ const goal = defineCommand({
       meta: { description: "Turn goal mode off for this session" },
       run() {
         say(must(stopGoal(workspace(), actorOrFail())));
+      },
+    }),
+    dispatch: defineCommand({
+      meta: { description: "The dispatch check at this session's stops (on by default): off when the owner asks to pause, on to resume; no argument shows it" },
+      args: { to: { type: "positional", required: false, description: "on or off" } },
+      run({ args }) {
+        const to = args.to as string | undefined;
+        if (to !== undefined && to !== "on" && to !== "off") fail({ code: "invalid", message: `canon goal dispatch takes on or off, not ${to}` });
+        say(setDispatch(workspace(), actorOrFail(), to as "on" | "off" | undefined));
       },
     }),
     check: defineCommand({
@@ -56,7 +66,7 @@ const goal = defineCommand({
   },
   run({ args, rawArgs }) {
     // reason: citty runs this after a subcommand too; only a bare `canon goal` shows the goal (BR-2518)
-    if (rawArgs.some((a) => ["start", "stop", "check"].includes(a))) return;
+    if (rawArgs.some((a) => ["start", "stop", "check", "dispatch"].includes(a))) return;
     const ws = workspace();
     const g = goalOf(ws.db, actorOrFail());
     if (args.json) return json(g ? { releases: g.releases, started_at: g.startedAt } : null);

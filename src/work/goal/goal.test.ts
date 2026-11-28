@@ -74,13 +74,15 @@ describe("canon goal", () => {
 });
 
 describe("the Stop hook", () => {
-  test("BR-2519: no goal lets the session stop; open criteria hold it with what is open, who advances it, the next step and the drift", () => {
+  test("BR-2519: no goal (and the dispatch check off) lets the session stop; open criteria hold it with what is open, who advances it, the next step and the drift", () => {
     const root = project();
     write(root, {
       [`canon/releases/${R(5)}.md`]: release(5, "active", "- S1 负责人玩通。（待负责人）", `features: [${F(1)}]\n`),
       [`canon/features/${F(1)}.md`]: feature(1, "- S1 五个分支各有构筑通关。（未满足）\n- S2 有引导。（已满足：" + R(5) + "）"),
       [`canon/changes/${C(9)}.md`]: `---\nid: ${C(9)}\ntitle: 做\nstatus: open\nrules: []\nadvances: [${F(1)}/S1]\n---\n\n## 为什么\n\nx\n\n## 要改什么\n\nx\n`,
     });
+    // reason: C-9 can start, so the dispatch check (BR-2655) would hold these stops; it has its own tests
+    for (const who of [SESSION, OTHER]) canon(root, who, ["goal", "dispatch", "off"]);
     expect(stop(root)).toEqual({});
     canon(root, SESSION, ["goal", "start"]);
     const land = ws(root).db.db.query("INSERT INTO events(ts, actor, kind, subject, detail) VALUES (?, 'agent:a', 'land.ok', ?, '{}')");
