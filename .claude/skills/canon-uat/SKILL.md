@@ -5,7 +5,7 @@ description: "Use when finished work needs acceptance through its real entry poi
 
 # Acceptance (canon)
 
-Acceptance answers one question: **does the product do what its rules promise, for someone who uses only the real entry point and knows nothing about the implementation?** Tests prove units; acceptance proves the product. "The component exists and its tests pass" is not "a user can reach it".
+Acceptance answers one question: **does the product do what its rules promise, for someone who uses only the real entry point and knows nothing about the implementation?** Where quality standards cover the work, it also asks whether the product is as good as they require (section 1a). Tests prove units; acceptance proves the product. "The component exists and its tests pass" is not "a user can reach it".
 
 ## The spine: the executor reports, the judge rules
 
@@ -20,6 +20,20 @@ Run them as separate subagents. If you cannot (you are a subagent yourself), exe
 2. Build the **inventory**, the denominator of the run: one row per active rule in scope, `BR-n · what it promises · P0/P1/P2` (P0 = without this the feature has no reason to exist). Include every rule about what the product must **refuse** (invalid input → usage error, foreign claim → conflict, check violation → refusal with a fix hint); refusals are first-class rows, not afterthoughts.
 3. A user-visible promise in the change that no rule states, or a rule too vague to judge, is a **rule gap**: record it and judge that row `UNVERIFIED`. Do not stop to ask. The finding becomes a rule edit (step 6).
 4. Environment: local or a throwaway copy, never production or a shared repo. Build or start the product first and record exactly what you ran.
+
+## 1a. Add the quality standards in scope
+
+Rules say what the product must do; quality standards (`canon/quality/Q-n.md`) say how good it must be, and acceptance judges both (D-145).
+
+1. Find the standards in scope: `canon quality list --json`, keeping each one whose `covers` names a domain of the rules in the inventory or a path the accepted work changed (`.` covers everything). The `quality:` lines that `canon work start` and `canon work land` printed for the change list the same ones.
+2. Add one row per standard below the rule rows: `Q-n · 门槛 · judge`, the threshold copied from its `## 门槛` (`canon show Q-n`). Status `draft` (not yet confirmed by the owner) still counts.
+3. Judge each row the way its `judge` says, never another way:
+   - `test`: run the test its `## 来源` or `## 门槛` names and keep the output; no such test ⇒ `UNVERIFIED`.
+   - `agent`: drive the real entry point against the threshold like a journey (section 2), as the judge, and keep what you saw (recording, screenshot, report) at a path outside the throwaway repo. If you landed a change on a path the standard covers, the verdict is self-assessed: say so, and prefer an independent subagent.
+   - `owner`: never judge it yourself. Prepare the evidence and how to try it, then `canon human ask` with the threshold; do not wait. The row stays `PENDING-OWNER` until the owner answers.
+4. Record each result: `canon quality verdict Q-n --result pass|fail --evidence <path> --by test|agent`; an owner verdict adds `--by owner --question <n>`, the answered question.
+
+A product that does what its rules promise but misses its threshold still feels broken: that is what these rows catch. An experience goal in the change with no standard and no rule ("feels fast") is a **quality gap**: report it and propose `canon quality new` (canon-rules section 3), never a substitute rule.
 
 ## 2. Derive journeys
 
@@ -76,24 +90,28 @@ Three hard gates, each `pass` / `fail` / `UNVERIFIED`. `UNVERIFIED` never counts
 - **H2 Outcome correctness, by a machine probe the judge runs itself**: read the file, query the record, `git log main`, parse the export. For P0 a `ui` observation is not enough. No probe possible ⇒ `UNVERIFIED`. A success message over wrong data is the most dangerous pass there is.
 - **H3 No cheat**, audited from the trace: did any step use a path, flag, format or id the persona's whitelist could not have produced? A cheat invalidates the journey: re-dispatch it with a corrected card before ruling.
 
+Quality rows (section 1a) are not ruled by H1 to H3: each is `pass`, `fail`, `UNVERIFIED` or `PENDING-OWNER` against its threshold, by its own judge.
+
 Scored 1–5, from the trace: **friction** (backtracks and confusion against the shortest path any executor actually took), **error recovery** (was the message actionable to this persona, was work preserved), **rule fidelity** (each promise delivered as written, differently, or missing; "differently" is a finding, never silently accepted).
 
 ## 5. Verdict
 
 | Condition | Verdict |
 |-----------|---------|
-| Every P0 and P1 gate passes, scores ≥ 3, no gap | ACCEPT |
-| No gate fails on P0, but some P0 gate is UNVERIFIED (rule gap, no probe), a P0 row is uncovered, a P1 gate fails or a score is < 3 | ACCEPT-WITH-ISSUES |
+| Every P0 and P1 gate passes, scores ≥ 3, no gap, every quality row passes | ACCEPT |
+| No gate fails on P0, but some P0 gate is UNVERIFIED (rule gap, no probe), a P0 row is uncovered, a P1 gate fails, a score is < 3, or a quality row is not `pass` | ACCEPT-WITH-ISSUES |
 | A P0 gate fails (H1 reproduced by a second executor) | REJECT |
 
-Modifiers on the verdict line: `COVERAGE-GAP`, `RULE-GAP`, `UNVERIFIED`, `SELF-VERIFIED`, `EXECUTOR-VARIANCE`. An UNVERIFIED P0 gate is a blocking gap, listed first: the row is not accepted until it is probed or its rule is fixed. P2 findings never change the verdict on their own.
+Modifiers on the verdict line: `COVERAGE-GAP`, `RULE-GAP`, `UNVERIFIED`, `SELF-VERIFIED`, `EXECUTOR-VARIANCE`, `QUALITY-FAIL`, `QUALITY-GAP`, `PENDING-OWNER`. A quality row never turns the verdict into REJECT on its own: standards remind, they do not block (D-139, D-145). An UNVERIFIED P0 gate is a blocking gap, listed first: the row is not accepted until it is probed or its rule is fixed. P2 findings never change the verdict on their own.
 
 ## 6. Report and findings
 
-Report in the reply (and in the change file's tasks when accepting a change): verdict and modifiers; the inventory with each row's journey, gates and verdict; the uncovered rows with reasons; what was run and where. Every non-pass finding cites its rule, the trace steps and the evidence; a finding without evidence is deleted, not reported.
+Report in the reply (and in the change file's tasks when accepting a change): verdict and modifiers; the inventory with each row's journey, gates and verdict; the quality rows grouped by judge (test, agent, owner), each with its result, the recorded verdict or the `canon human` question, and whether it is self-assessed; the uncovered rows with reasons; what was run and where. Every non-pass finding cites its rule, the trace steps and the evidence; a finding without evidence is deleted, not reported.
 
 Each finding lands in canon, not in a report nobody reads again:
 
 - **Product contradicts a rule** → a defect. Fix it in this change with a regression test named after the rule (see canon-test), or open a GitHub issue (`gh issue create`) as the brief says.
 - **Rule gap** → edit the rule (`## 规则`, `## 例子` with the boundary just found) or add one with `canon rule new`, in a change. If what the rule should say is a product direction call, `canon human ask`.
+- **Quality row fails** → the recorded `fail` verdict puts it on the agenda; fix it in this change if the cause is in this work, otherwise open an issue as the brief says. A threshold that cannot be judged as written is an edit to the standard, not a pass.
+- **Quality gap** → `canon quality new --title "<threshold>" --aspect <aspect> --judge test|agent|owner --covers <domain|path>` in a change, then fill its 门槛 and 来源.
 - **Accepted P0 journeys** → freeze into automated tests named after their rules, asserting the same oracle the judge probed, so the floor re-checks them at every land.
