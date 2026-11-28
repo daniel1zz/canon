@@ -3,7 +3,7 @@ import type { Workspace } from "../workspace.ts";
 import { machineLoad, passLoadGate, type LoadDeps, type Passed, type StepKind } from "./load-gate.ts";
 
 /**
- * The gate of one heavy step (BR-2630): the load queue of load-gate.ts with this repository's `delegate_max_load_per_cpu`
+ * The gate of one heavy step (BR-2630): the load queue of load-gate.ts with this repository's `heavy_max_load_per_cpu` (BR-2665)
  * and the coordination events `load.wait` and `load.start` written for the step's subject.
  */
 
@@ -51,7 +51,7 @@ export interface HeavyStep {
 export async function passHeavyStep(ws: Pick<Workspace, "db" | "actor" | "config">, step: HeavyStep, env: Readonly<Record<string, string | undefined>> = process.env): Promise<Result<Passed>> {
   if (insideHeavyStep(env)) return ok("go");
   return passLoadGate(step.deps ?? machineLoad, {
-    kind: step.kind, subject: step.subject, worktree: step.worktree, perCpu: ws.config.delegateMaxLoadPerCpu, say: step.say, aborted: step.aborted ?? (() => false),
+    kind: step.kind, subject: step.subject, worktree: step.worktree, perCpu: ws.config.heavyMaxLoadPerCpu, say: step.say, aborted: step.aborted ?? (() => false),
     record: (kind, detail) => void ws.db.event(ws.actor, kind, step.subject === "main" ? null : step.subject, detail),
   });
 }

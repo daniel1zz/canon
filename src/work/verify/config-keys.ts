@@ -1,5 +1,5 @@
 import { err, ok } from "../../kernel/result.ts";
-import { configKey, optionalString, stringValue, TUNABLE, optional, required } from "../../invocation/key.ts";
+import { configKey, optionalString, positiveNumber, positiveValue, stringValue, TUNABLE, optional, required } from "../../invocation/key.ts";
 import { REPORT_PLACEHOLDER, REPORT_RECIPES } from "./report.ts";
 
 /** Where `test_command` takes the test file's path (BR-2160). */
@@ -112,6 +112,19 @@ export const verifyKeys = {
     },
     listed: 223,
     checked: 223,
+  }),
+  heavyMaxLoadPerCpu: configKey<number>({
+    key: "heavy_max_load_per_cpu",
+    doc: "The 5-minute load average per CPU at which heavy steps (canon work test, a landing's floor and test files, the background floor, canon heavy run) wait in the machine's load queue, and at which a failed background floor counts as failed under overload. Separate from delegate_max_load_per_cpu, which only limits delegating; default 2 (BR-2630, BR-2665, BR-2666, D-172).",
+    default: 2,
+    schema: positiveNumber(2),
+    read: positiveValue("heavy_max_load_per_cpu", 1),
+    flow: {
+      steps: ["test.run"],
+      role: TUNABLE,
+    },
+    listed: 234,
+    checked: 234,
   }),
   heavyCommands: configKey<readonly string[]>({
     key: "heavy_commands",

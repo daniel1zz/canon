@@ -22,6 +22,7 @@ import { gateOnce, HEAVY_ENV, passHeavyStep } from "../verify/heavy-step.ts";
 import { acceptAfterFloor } from "../../knowledge/accept/accept.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
 import { finishInterrupted, revertBad, runFiles } from "./revert.ts";
+import { OVERLOAD_TRIES, overloadOf } from "./overload.ts";
 
 /**
  * Merge-then-test (D-31): with `floor_timing: after`, landings move main without the floor and `canon floor watch`
@@ -118,7 +119,7 @@ export interface Watched {
 type Tested = { readonly sha: string; readonly passed: boolean; readonly log: string };
 
 /** One tested commit, and whether after_green ran and every command of it exited 0 (BR-2251). */
-type TestedHere = Tested & { readonly rebuilt?: boolean; readonly files?: readonly string[]; readonly reported?: boolean };
+type TestedHere = Tested & { readonly rebuilt?: boolean; readonly files?: readonly string[]; readonly reported?: boolean; readonly overload?: boolean };
 
 /**
  * `canon floor watch` (BR-2219): unless another watcher is alive, tests main's latest commit once the untested
@@ -193,6 +194,8 @@ export async function watch(ws: Workspace, say: Say, opts: { readonly now?: bool
         ws.db.db.query("UPDATE watcher SET sha = NULL WHERE id = 1 AND pid = ?").run(self.pid);
         if (!r.ok) return r;
         results.push({ sha: r.value.sha, passed: r.value.passed, log: r.value.log });
+        // reason: a failure under overload is no failing main: nothing is reverted, and main is tested again behind the load gate (BR-2666)
+        if (r.value.overload) continue;
         if (!r.value.passed) {
           // reason: a real failure is located and its landing reverted when the reverted tree checks out; otherwise the forward fix stands (BR-2535, BR-2536)
           const fd = openSync(r.value.log, "a");
@@ -354,12 +357,32 @@ async function testCommit(ws: Workspace, say: Say, sha: string): Promise<Result<
       closeSync(fd);
     }
     const passed = code === 0 || flaky;
+    // reason: a floor that failed with the machine overloaded says nothing about main (#317): it is tested again once the
+    // load falls, and only the OVERLOAD_TRIES-th such failure in a row counts as failing (BR-2666)
+    // reason: a commit whose config cannot be read or names no floor ran nothing the load could have slowed down
+    const overload = passed || !config.ok || !config.value.floor ? undefined : overloadOf(ws.db, ws.config.heavyMaxLoadPerCpu);
+    if (overload) {
+      const under = `the 5-minute load was ${overload.load.toFixed(1)} on ${overload.cpus} CPUs (limit ${overload.limit})`;
+      if (overload.attempt < OVERLOAD_TRIES) {
+        try {
+          ws.db.event(ws.actor, "floor.overload", null, { sha, log, exit: code, why, load: overload.load, cpus: overload.cpus, limit: overload.limit, attempt: overload.attempt });
+        } catch (e) {
+          return err("io", `cannot record that the background floor failed under overload on ${sha.slice(0, 9)} (${(e as Error).message}); it is tested again next time`);
+        }
+        const line = `floor watch: ${ws.config.main} ${sha.slice(0, 9)} failed (${why}) while ${under}: overload failure ${overload.attempt} of ${OVERLOAD_TRIES} in a row, not recorded as a failing main; tested again once the load falls (BR-2666)`;
+        appendFileSync(log, `\ncanon: ${line}\n`);
+        say(line);
+        return ok({ sha, passed: false, log, overload: true });
+      }
+      why = `${why} while ${under}, overload failure ${overload.attempt} of ${OVERLOAD_TRIES} in a row, so it counts as failing; the machine may be too loaded for this floor (BR-2666)`;
+      appendFileSync(log, `\ncanon: floor watch: ${ws.config.main} ${sha.slice(0, 9)} failed (${why})\n`);
+    }
     // reason: the result event is what marks a commit tested (tested()), so it is written in one transaction with the
     // failing-main record it implies; a watcher killed before that commit leaves neither, and the commit is tested again (#86).
     const record = (write: () => void): Result<void> => {
       try {
         ws.db.db.transaction(() => {
-          ws.db.event(ws.actor, passed ? "floor.pass" : "floor.fail", null, { sha, log, exit: code, ...(passed ? {} : { why }), ...(flaky ? { flaky: failing } : {}) });
+          ws.db.event(ws.actor, passed ? "floor.pass" : "floor.fail", null, { sha, log, exit: code, ...(passed ? {} : { why }), ...(flaky ? { flaky: failing } : {}), ...(overload ? { overload: { load: overload.load, cpus: overload.cpus, limit: overload.limit, attempt: overload.attempt } } : {}) });
           if (flaky) ws.db.event(ws.actor, "floor.flaky", null, { sha, files: failing, log });
           write();
         }).immediate();

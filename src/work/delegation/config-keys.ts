@@ -78,7 +78,7 @@ export const delegationKeys = {
   }),
   delegateMaxLoadPerCpu: configKey<number>({
     key: "delegate_max_load_per_cpu",
-    doc: "The 5-minute load average per CPU at which canon work delegate refuses a new worker (BR-2526).",
+    doc: "The 5-minute load average per CPU at which canon work delegate refuses a new worker (BR-2526); heavy steps wait by heavy_max_load_per_cpu instead (BR-2665).",
     default: 2,
     schema: positiveNumber(2),
     read: positiveValue("delegate_max_load_per_cpu", 1),

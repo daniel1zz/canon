@@ -55,7 +55,7 @@ export interface LoadRequest {
   readonly kind: StepKind;
   readonly subject: string;
   readonly worktree: string;
-  /** `delegate_max_load_per_cpu` of the repository that runs the step (BR-2526). */
+  /** `heavy_max_load_per_cpu` of the repository that runs the step (BR-2665). */
   readonly perCpu: number;
   readonly say: (line: string) => void;
   /** Turns true when the step is stopped while it waits. */

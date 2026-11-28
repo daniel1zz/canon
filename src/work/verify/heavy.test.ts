@@ -67,6 +67,22 @@ describe("the Bash hook refuses a heavy command that did not come through canon 
     expect(refusals(root)).toEqual([]);
   });
 
+  test("BR-2665 BR-2631: the hook judges the load by heavy_max_load_per_cpu, not delegate_max_load_per_cpu: 1000 for delegating still refuses at 17 on 8 CPUs, and heavy_max_load_per_cpu 3 lets it through", () => {
+    const delegating = fixture(`${CONFIG}delegate_max_load_per_cpu: 1000\n`);
+    expect(hook(delegating, "scripts/record.sh level1", "normal,17,8")).toContain("(limit 16)");
+    expect(refusals(delegating)).toMatchObject([{ limit: 16 }]);
+    const heavy = fixture(`${CONFIG}heavy_max_load_per_cpu: 3\n`);
+    expect(hook(heavy, "scripts/record.sh level1", "normal,17,8")).toBeUndefined();
+    expect(hook(heavy, "scripts/record.sh level1", "normal,24,8")).toContain("(limit 24)");
+  });
+
+  test("BR-2665: heavy_max_load_per_cpu that is not a number above 0 is a configuration error with exit 2 naming the key", () => {
+    for (const value of ["0", "-1", '"high"']) {
+      const r = cli(fixture(`heavy_max_load_per_cpu: ${value}\n`), "normal,1,8", ["work", "due"]);
+      expect([value, r.code, r.text.includes("heavy_max_load_per_cpu")]).toEqual([value, 2, true]);
+    }
+  });
+
   test("BR-2631: a command that matches nothing is let through at any load, and without heavy_commands the hook stops nothing", () => {
     const root = fixture(CONFIG);
     expect(hook(root, "bun test", "normal,30,8")).toBeUndefined();

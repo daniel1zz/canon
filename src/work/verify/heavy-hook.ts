@@ -34,7 +34,7 @@ export function heavyRefusal(command: string, cwd: string, load: LoadDeps = mach
   let wait;
   try {
     machine = readings().machine;
-    wait = wouldWait({ ...load, read: () => machine, now }, config.value.delegateMaxLoadPerCpu);
+    wait = wouldWait({ ...load, read: () => machine, now }, config.value.heavyMaxLoadPerCpu);
   } catch {
     return undefined;
   }
@@ -47,7 +47,7 @@ export function heavyRefusal(command: string, cwd: string, load: LoadDeps = mach
   const opened = openWorkspace(cwd);
   if (opened.ok) {
     // reason: the event carries the matched item and, when the load can be read, the load and the limit (BR-2631)
-    const measured = machine ? { load: Math.round(machine.load5 * 10) / 10, limit: config.value.delegateMaxLoadPerCpu * machine.cpus, cpus: machine.cpus } : {};
+    const measured = machine ? { load: Math.round(machine.load5 * 10) / 10, limit: config.value.heavyMaxLoadPerCpu * machine.cpus, cpus: machine.cpus } : {};
     opened.value.db.event(opened.value.actor, "heavy.refuse", null, { matched, ...measured, ...(w.reason === "load" ? {} : w.reason === "queue" ? { ahead: w.ahead } : { spacing: true }) });
   }
   return `${why}; ${HOW(command)}`;
