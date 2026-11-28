@@ -91,7 +91,7 @@ test("BR-2665: the background floor waits by heavy_max_load_per_cpu, not by dele
   expect(events(root, "load.wait")).toHaveLength(1);
 });
 
-test("BR-2666: a background floor that fails while the 5-minute load is at the heavy-step limit records floor.overload, no floor.fail and no failing main, reverts nothing, and tests main again behind the load gate once the load falls", async () => {
+test("BR-2666 BR-2220: a background floor that fails while the 5-minute load is at the heavy-step limit records floor.overload, no floor.fail and no failing main, reverts nothing, and tests main again behind the load gate once the load falls", async () => {
   const { root, hold, tested } = watched();
   const a = commit(root, "FAIL");
   writeFileSync(hold, "");
