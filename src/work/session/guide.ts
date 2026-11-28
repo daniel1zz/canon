@@ -10,5 +10,7 @@ export const sessionTopics: readonly GuideTopic[] = [
 
 With no task given, take the first change in canon change list (branch-only changes included) not marked claimed, ambiguous or waiting: the owner's order in canon/backlog.md (only the owner edits it) first, then started work; a new change goes after the backlog.
 
-For a worker, the design owner creates the Change, publishes its design on main, then runs canon work delegate <C-n> --to <name>. Workers start only their assigned C-n and cannot create changes, fixes or chores. After redelegation the acceptor runs canon work accept-design <C-n>.` },
+For a worker, the design owner creates the Change, publishes its design on main, then runs canon work delegate <C-n> --to <name>. Workers start only their assigned C-n and cannot create changes, fixes or chores. After redelegation the acceptor runs canon work accept-design <C-n>.
+
+Before the main session stops, the Stop hook names what it can do now from canon work due (BR-2655): do it, or stop again to leave it. When the owner asks to pause, canon goal dispatch off; canon goal dispatch on resumes.` },
 ];
