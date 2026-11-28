@@ -172,6 +172,22 @@ describe("canon check session text sizes", () => {
     expect([j.code, JSON.parse(j.out), hintLines(j.err).length]).toEqual([0, [], 1]);
   });
 
+  test("BR-2256 BR-2257: every .claude/rules/*.md counts in full, canon's and the project's; the hint names the rules only when there are some", () => {
+    const root = clean();
+    write(root, { "CLAUDE.md": "x".repeat(10), ".claude/rules/canon-a.md": "规则\n", ".claude/rules/project.md": "y".repeat(20), "canon/config.yaml": `tests: []\nsession_text_budget: ${guideBytes}\n` });
+    const r = canon(root, "check", "--sizes");
+    expect(sizeLines(r.err)).toEqual([
+      "session-text CLAUDE.md: 10 bytes",
+      `session-text work guide: ${guideBytes} bytes`,
+      "session-text .claude/rules/canon-a.md: 7 bytes",
+      "session-text .claude/rules/project.md: 20 bytes",
+      `session-text total: ${guideBytes + 37} bytes, budget ${guideBytes}`,
+    ]);
+    expect(hintLines(r.err)).toEqual([
+      `hint session-text: ${guideBytes + 37} bytes loaded every session, over session_text_budget ${guideBytes} (CLAUDE.md 10, work guide ${guideBytes}, rules 27, skill descriptions 0); canon check --sizes lists each part`,
+    ]);
+  });
+
   test("BR-2257: a total equal to the budget, or no budget, prints no hint", () => {
     const root = clean();
     write(root, { "CLAUDE.md": "x".repeat(150), "canon/config.yaml": `tests: []\nsession_text_budget: ${guideBytes + 150}\n` });

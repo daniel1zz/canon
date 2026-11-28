@@ -12,7 +12,8 @@
   },
   "files": [
     "dist/canon.js",
-    ".claude/skills/canon-*/**"
+    ".claude/skills/canon-*/**",
+    ".claude/rules/canon-*.md"
   ],
   "engines": {
     "bun": ">=1.3"

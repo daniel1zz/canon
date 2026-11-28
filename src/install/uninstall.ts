@@ -19,7 +19,7 @@ import { currentActor, openWorkspace, type Say, type Workspace } from "../work/w
 import { branchSubject, isChore } from "../work/session/subject.ts";
 import { hooksDir, removeGuard } from "./githook.ts";
 import { planUnhook, writeUnhook } from "./hook.ts";
-import { applyUnskills, planUnskills } from "./install.ts";
+import { applyUnskills, planUnskills, targetDir, type AssetTarget } from "./install.ts";
 import { runningCleanups } from "../work/session/clean-after-land.ts";
 
 /**
@@ -162,10 +162,12 @@ async function removeFromMain(root: string, config: Config, opts: UninstallOptio
   }
   const selected = selectedTargets(root);
   if (!selected.ok) return selected;
-  for (const runtime of selected.value) {
+  // reason: the rules canon installed go with its Claude skills (BR-2651)
+  const assets: AssetTarget[] = [...selected.value, ...(selected.value.includes("claude") ? ["rules" as const] : [])];
+  for (const runtime of assets) {
     const skills = planUnskills(root, opts.force, runtime);
     if (!skills.ok) return skills;
-    if (skills.value.edited.length > 0 && !opts.force) return err("conflict", `these canon skill files were edited in this project and would be deleted:\n${skills.value.edited.map((c) => `  ${SKILL_DIRS[runtime]}/${c}`).join("\n")}\nKeep a copy elsewhere, or run canon uninstall --force to delete them too.`);
+    if (skills.value.edited.length > 0 && !opts.force) return err("conflict", `these canon ${runtime === "rules" ? "rule" : "skill"} files were edited in this project and would be deleted:\n${skills.value.edited.map((c) => `  ${targetDir(runtime)}/${c}`).join("\n")}\nKeep a copy elsewhere, or run canon uninstall --force to delete them too.`);
   }
   const settings = selected.value.includes("claude") ? planUnhook(root) : ok(undefined);
   if (!settings.ok) return settings;
@@ -185,7 +187,7 @@ async function removeFromMain(root: string, config: Config, opts: UninstallOptio
   const lw = openWorkspace(wt);
   if (!lw.ok) return lw;
   const removed: string[] = [];
-  for (const runtime of selected.value) {
+  for (const runtime of assets) {
     const wtSkills = planUnskills(wt, opts.force, runtime);
     if (!wtSkills.ok) return wtSkills;
     removed.push(...applyUnskills(wtSkills.value));

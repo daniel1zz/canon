@@ -41,6 +41,20 @@ describe("publishing a release (BR-2412)", () => {
     expect(readdirSync(join(primary, "dist")).filter((n) => n.includes(".tmp-"))).toEqual([]);
   });
 
+  test("BR-2651: canon's rules are published inside the same skills directory; a rule not named canon-* is not", () => {
+    const { root, primary, commits } = history();
+    mkdirSync(join(root, ".claude/rules"), { recursive: true });
+    writeFileSync(join(root, ".claude/rules/canon-r.md"), "r\n");
+    writeFileSync(join(root, ".claude/rules/project.md"), "mine\n");
+    sh(root, "add", "-A");
+    sh(root, "commit", "-qm", "rules");
+    const green = sh(root, "rev-parse", "HEAD");
+    expect(commits).not.toContain(green);
+    expect(publishRelease({ primary, cwd: root, green, build: (o) => { writeFileSync(o, "canon\n"); return ok(undefined); } }).ok).toBe(true);
+    expect(readdirSync(join(primary, "dist/skills/.rules"))).toEqual(["canon-r.md"]);
+    expect(readFileSync(join(primary, "dist/skills/canon-a/SKILL.md"), "utf8")).toBe("a v3\n");
+  });
+
   test("BR-2412: publishing the same commit again keeps its skills and replaces the binary", () => {
     const { primary, commits, publish } = history();
     expect(publish(2).ok).toBe(true);

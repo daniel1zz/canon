@@ -14,7 +14,7 @@ import { hookStatus, planHook, writeHook, type Settings } from "./hook.ts";
 import { ensureGuard, foreignGuard, guardStatus } from "./githook.ts";
 import { readConfig } from "../invocation/config.ts";
 import { ARCHITECTURE_FILE } from "../knowledge/check/architecture.ts";
-import { applySkills, editedSkills, planSkills, skillsStatus, type InstallReport, type SkillsPlan } from "./install.ts";
+import { applySkills, editedSkills, planSkills, rulesSourceOf, skillsStatus, targetDir, type AssetTarget, type InstallReport, type SkillsPlan } from "./install.ts";
 
 /**
  * Everything canon puts into a project, and how up to date it is (D-10). Discovery is automatic and live:
@@ -92,9 +92,20 @@ function ensureLinksSince(root: string): Result<boolean> {
 /** The line git's info/exclude needs so Claude Code's subagent worktrees do not dirty the checkout (BR-2305). */
 export const WORKTREES_EXCLUDE = "/.claude/worktrees/";
 
+/** The rules' status beside the Claude skills, or none when this canon ships no rules (an older release, BR-2651). */
+function rulesStatus(root: string, source: string): Result<{ outdated: string[]; edited: string[] }> {
+  const rules = rulesSourceOf(source);
+  if (!existsSync(rules)) return ok({ outdated: [], edited: [] });
+  const r = skillsStatus(root, rules, "rules");
+  if (!r.ok) return r;
+  return ok({ outdated: r.value.outdated.map((f) => `rule ${targetDir("rules")}/${f}`), edited: r.value.edited.map((f) => `${targetDir("rules")}/${f}`) });
+}
+
 function claudeAssetsStatus(root: string, source: string): Result<AssetsStatus> {
   const s = skillsStatus(root, source);
   if (!s.ok) return s;
+  const rules = rulesStatus(root, source);
+  if (!rules.ok) return rules;
   const h = hookStatus(root);
   if (!h.ok) return h;
   const brief = { present: [], missing: ["hook: canon brief at session start (.claude/settings.json)"], old: ["hook: canon brief at session start, older form that says nothing when canon is not on PATH (.claude/settings.json)"] }[h.value.brief];
@@ -120,10 +131,10 @@ function claudeAssetsStatus(root: string, source: string): Result<AssetsStatus> 
   const since = missingLinksSince(root);
   if (!since.ok) return since;
   const links = since.value === undefined ? [] : [`config canon/config.yaml: links_since missing, main's commit ${since.value.slice(0, 9)} as the start of suspect references`];
-  const outdated = [...s.value.outdated.map((f) => `skill ${f}`), ...hook, ...overview, ...links, ...g.value.line, ...exclude];
+  const outdated = [...s.value.outdated.map((f) => `skill ${f}`), ...rules.value.outdated, ...hook, ...overview, ...links, ...g.value.line, ...exclude];
   const local = g.value.line.length > 0 || x.value;
   // reason: the overview and canon/config.yaml are tracked files, so their updates are never local-only (BR-2086, BR-2452)
-  return ok({ version: s.value.version, current: outdated.length === 0, outdated, edited: s.value.edited, localOnly: s.value.outdated.length === 0 && hook.length === 0 && !missingOverview && links.length === 0 && local, guard: g.value.line.length > 0, exclude: x.value, architecture: missingOverview, linksSince: links.length > 0 });
+  return ok({ version: s.value.version, current: outdated.length === 0, outdated, edited: [...s.value.edited, ...rules.value.edited], localOnly: s.value.outdated.length === 0 && rules.value.outdated.length === 0 && hook.length === 0 && !missingOverview && links.length === 0 && local, guard: g.value.line.length > 0, exclude: x.value, architecture: missingOverview, linksSince: links.length > 0 });
 }
 
 /** Checks only Canon-selected targets; unrelated host directories never opt a project in. */
@@ -175,7 +186,7 @@ export function updateNotice(st: AssetsStatus): string | undefined {
  * else's git hook (BR-2123, BR-2124), then the skills (symlinks and the manifest, BR-2083, before edited files, BR-2081),
  * then `.claude/settings.json` (BR-2087). Edited skill files are returned, not refused, so each caller words the refusal.
  */
-function preflight(root: string, source: string, force: boolean, mainBranch?: string, requested?: string): Result<{ main: string; skills: { runtime: AgentRuntime; plan: SkillsPlan }[]; settings: Settings | undefined; codex: CodexPlan | undefined; claude: boolean }> {
+function preflight(root: string, source: string, force: boolean, mainBranch?: string, requested?: string): Result<{ main: string; skills: { runtime: AssetTarget; plan: SkillsPlan }[]; settings: Settings | undefined; codex: CodexPlan | undefined; claude: boolean }> {
   const targets = selectedTargets(root, requested);
   if (!targets.ok) return targets;
   const config = readConfig(root);
@@ -184,13 +195,19 @@ function preflight(root: string, source: string, force: boolean, mainBranch?: st
   const g = guardStatus(root, main);
   if (!g.ok) return g;
   if (g.value.state === "foreign") return foreignGuard(g.value.path);
-  const skills: { runtime: AgentRuntime; plan: SkillsPlan }[] = [];
+  const skills: { runtime: AssetTarget; plan: SkillsPlan }[] = [];
   for (const runtime of targets.value) {
     const p = planSkills(root, source, force, runtime);
     if (!p.ok) return p;
     skills.push({ runtime, plan: p.value });
   }
   const claude = targets.value.includes("claude");
+  // reason: the rules go with the Claude target only, and only from a canon that ships them (BR-2651)
+  if (claude && existsSync(rulesSourceOf(source))) {
+    const r = planSkills(root, rulesSourceOf(source), force, "rules");
+    if (!r.ok) return r;
+    skills.push({ runtime: "rules", plan: r.value });
+  }
   const settings = claude ? planHook(root) : ok(undefined);
   if (!settings.ok) return settings;
   const codex = targets.value.includes("codex") ? planCodex(root) : ok(undefined);
@@ -198,7 +215,7 @@ function preflight(root: string, source: string, force: boolean, mainBranch?: st
   return ok({ main, skills, settings: settings.value, codex: codex.value, claude });
 }
 
-function skillConflicts(plans: readonly { runtime: AgentRuntime; plan: SkillsPlan }[], rerun: string): Result<void> {
+function skillConflicts(plans: readonly { runtime: AssetTarget; plan: SkillsPlan }[], rerun: string): Result<void> {
   for (const { runtime, plan } of plans) if (plan.conflicts.length) return editedSkills(plan.conflicts, rerun, runtime);
   return ok(undefined);
 }
@@ -212,7 +229,7 @@ export function installAssets(root: string, source: string, force: boolean, main
   const skills: InstallReport = { written: [], unchanged: [], removed: [], kept: [] };
   for (const { runtime, plan } of p.value.skills) {
     const report = applySkills(plan);
-    for (const field of ["written", "unchanged", "removed", "kept"] as const) (skills[field] as string[]).push(...report[field].map((f) => runtime === "claude" ? f : `${SKILL_DIRS[runtime]}/${f}`));
+    for (const field of ["written", "unchanged", "removed", "kept"] as const) (skills[field] as string[]).push(...report[field].map((f) => runtime === "claude" ? f : `${targetDir(runtime)}/${f}`));
   }
   const hook = p.value.claude && writeHook(root, p.value.settings);
   const codex = p.value.codex ? applyCodex(root, p.value.codex) : false;

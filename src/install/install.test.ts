@@ -264,3 +264,62 @@ describe("text canon ships into other projects", () => {
     expect(idsIn(BUILTIN_TYPES, stripCode(sample)).size).toBe(1); // the scan does catch a bare id
   });
 });
+
+describe("canon's always-loaded rules (BR-2651)", () => {
+  /** A canon whose skills are at `<base>/skills` and whose rules sit beside them at `<base>/rules`, as in canon's repository or package. */
+  const withRules = (extra: Record<string, string> = {}) => {
+    const base = dir({ "skills/canon-a/SKILL.md": "a v1\n", "rules/canon-r.md": "r v1\n", "rules/notes.md": "not canon's\n", ...extra });
+    return { base, src: join(base, "skills") };
+  };
+  const rule = (root: string, name: string) => readFileSync(join(root, ".claude/rules", name), "utf8");
+
+  test("BR-2651: canon init copies canon-*.md rules into .claude/rules with their own manifest; a project's rule stays; an edited rule refuses the install", () => {
+    const { base, src } = withRules();
+    const root = gitRepo();
+    mkdirSync(join(root, ".claude/rules"), { recursive: true });
+    writeFileSync(join(root, ".claude/rules/project.md"), "the project's own\n");
+    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "init", "--floor", "true").code).toBe(0);
+    expect(rule(root, "canon-r.md")).toBe("r v1\n");
+    expect(existsSync(join(root, ".claude/rules/notes.md"))).toBe(false);
+    expect(rule(root, "project.md")).toBe("the project's own\n");
+    expect(Object.keys(JSON.parse(rule(root, ".canon-rules.json")).files)).toEqual(["canon-r.md"]);
+
+    writeFileSync(join(base, "rules/canon-r.md"), "r v2\n");
+    const check = canon(root, { CANON_SKILLS_SOURCE: src }, "update", "--check");
+    expect(check.code).toBe(1);
+    expect(check.out + check.err).toContain("rule .claude/rules/canon-r.md");
+    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "install").code).toBe(0);
+    expect(rule(root, "canon-r.md")).toBe("r v2\n");
+
+    writeFileSync(join(root, ".claude/rules/canon-r.md"), "edited here\n");
+    writeFileSync(join(base, "rules/canon-r.md"), "r v3\n");
+    const refused = canon(root, { CANON_SKILLS_SOURCE: src }, "install");
+    expect(refused.code).toBe(5);
+    expect(refused.err).toContain("canon rule files were edited");
+    expect(refused.err).toContain(".claude/rules/canon-r.md");
+    expect(rule(root, "canon-r.md")).toBe("edited here\n");
+  });
+
+  test("BR-2651: a published release's .rules wins over rules beside it; a canon that ships no rules leaves .claude/rules alone", () => {
+    const { src } = withRules({ "skills/.rules/canon-r.md": "r as published\n" });
+    const root = gitRepo();
+    expect(canon(root, { CANON_SKILLS_SOURCE: src }, "init", "--floor", "true").code).toBe(0);
+    expect(rule(root, "canon-r.md")).toBe("r as published\n");
+
+    const old = dir({ "skills/canon-a/SKILL.md": "a v1\n" });
+    const other = gitRepo();
+    mkdirSync(join(other, ".claude/rules"), { recursive: true });
+    writeFileSync(join(other, ".claude/rules/canon-mine.md"), "kept\n");
+    expect(canon(other, { CANON_SKILLS_SOURCE: join(old, "skills") }, "init", "--floor", "true").code).toBe(0);
+    expect(rule(other, "canon-mine.md")).toBe("kept\n");
+    expect(existsSync(join(other, ".claude/rules/.canon-rules.json"))).toBe(false);
+  });
+
+  test("BR-2651: in canon's own repository the rules are the source, so nothing is written to .claude/rules", () => {
+    const repo = dir({ ".claude/skills/canon-a/SKILL.md": "a\n", ".claude/rules/canon-r.md": "r\n" });
+    Bun.spawnSync(["git", "init", "-q"], { cwd: repo });
+    expect(canon(repo, { CANON_SKILLS_SOURCE: join(repo, ".claude/skills") }, "install").code).toBe(0);
+    expect(existsSync(join(repo, ".claude/rules/.canon-rules.json"))).toBe(false);
+    expect(readFileSync(join(repo, ".claude/rules/canon-r.md"), "utf8")).toBe("r\n");
+  });
+});

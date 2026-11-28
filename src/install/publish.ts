@@ -12,6 +12,8 @@ import { err, ok, type Result } from "../kernel/result.ts";
  * not whatever main holds now.
  */
 export const SKILLS_LINK = "skills";
+/** Where a published release keeps canon's rules, inside its skills directory (BR-2651). */
+export const PUBLISHED_RULES = ".rules";
 const PREFIX = "canon-";
 
 export interface PublishEnv {
@@ -111,6 +113,11 @@ export function publishRelease(e: PublishEnv): Result<PublishOutcome> {
       }
       try {
         for (const s of skills) cpSync(join(src, s), join(tmpDir, s), { recursive: true });
+        // reason: the rules travel inside the same published directory, so one link switch publishes both together (BR-2651)
+        const rules = join(e.cwd, ".claude", "rules");
+        const shipped = existsSync(rules) ? readdirSync(rules).filter((n) => n.startsWith(PREFIX) && n.endsWith(".md")) : [];
+        if (shipped.length > 0) mkdirSync(join(tmpDir, PUBLISHED_RULES), { recursive: true });
+        for (const r of shipped) cpSync(join(rules, r), join(tmpDir, PUBLISHED_RULES, r));
         renameSync(tmpDir, target);
       } catch (e) {
         rmSync(tmpDir, { recursive: true, force: true });

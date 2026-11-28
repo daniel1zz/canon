@@ -32,8 +32,9 @@ const onMain = (root: string, path: string) => run(root, "cat-file", "-e", `main
 const guard = (root: string) => join(root, ".git", "hooks", "reference-transaction");
 
 /** A canon project with a bare remote, committed and pushed; `config` is canon/config.yaml. */
-function project(config = 'floor: "true"\ntests: []\nremote: origin\n') {
-  const src = dir({ "canon-a/SKILL.md": "a v1\n", "canon-b/SKILL.md": "b v1\n" });
+function project(config = 'floor: "true"\ntests: []\nremote: origin\n', rules = false) {
+  const base = dir({ "skills/canon-a/SKILL.md": "a v1\n", "skills/canon-b/SKILL.md": "b v1\n", ...(rules ? { "rules/canon-r.md": "r v1\n" } : {}) });
+  const src = join(base, "skills");
   const remote = mkdtempSync(join(tmpdir(), "canon-uninstall-remote-"));
   run(remote, "init", "-q", "--bare", "-b", "main");
   const root = mkdtempSync(join(tmpdir(), "canon-uninstall-repo-"));
@@ -116,6 +117,24 @@ describe("canon uninstall", () => {
     expect(canon(root, env, "uninstall", "--force").code).toBe(0);
     expect(onMain(root, ".claude/skills/canon-a/SKILL.md")).toBe(false);
     expect(onMain(root, ".claude/skills/canon-b/mine.md")).toBe(true);
+  });
+
+  test("BR-2651: canon's rules go with its skills; an edited rule refuses with exit 5; a project's own rule stays", () => {
+    const { root, env } = project(undefined, true);
+    expect(onMain(root, ".claude/rules/canon-r.md")).toBe(true);
+    writeFileSync(join(root, ".claude/rules/canon-r.md"), "edited\n");
+    writeFileSync(join(root, ".claude/rules/project.md"), "mine\n");
+    git(root, "add", "-A");
+    const c = git(root, "commit-tree", git(root, "write-tree"), "-p", "HEAD", "-m", "edit");
+    Bun.spawnSync(["git", "update-ref", "refs/heads/main", c], { cwd: root, env: { ...process.env, CANON_LAND_MAIN: c } });
+    const refused = canon(root, env, "uninstall");
+    expect(refused.code).toBe(5);
+    expect(refused.err).toContain("canon rule files were edited");
+    expect(refused.err).toContain(".claude/rules/canon-r.md");
+    expect(canon(root, env, "uninstall", "--force").code).toBe(0);
+    expect(onMain(root, ".claude/rules/canon-r.md")).toBe(false);
+    expect(onMain(root, ".claude/rules/.canon-rules.json")).toBe(false);
+    expect(onMain(root, ".claude/rules/project.md")).toBe(true);
   });
 
   test("BR-2280: after the landing, the guard, coordination state, worktrees, branches and non-recovery refs are gone; main moves by plain git; a second run says not installed", () => {

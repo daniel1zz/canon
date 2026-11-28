@@ -18,6 +18,25 @@ import { err, ok, type Result } from "../kernel/result.ts";
 export const MANIFEST = ".canon-skills.json";
 const PREFIX = "canon-";
 
+/**
+ * canon's always-loaded rules (`.claude/rules/canon-*.md`, D-167) are installed the way its skills are: copied into the
+ * project, recorded in their own manifest, an edited file never overwritten without --force (BR-2651). Claude Code only.
+ */
+export const RULES_DIR = ".claude/rules";
+export const RULES_MANIFEST = ".canon-rules.json";
+
+/** What an install writes: one runtime's skills, or the Claude rules. */
+export type AssetTarget = AgentRuntime | "rules";
+export const targetDir = (t: AssetTarget): string => (t === "rules" ? RULES_DIR : SKILL_DIRS[t]);
+const manifestOf = (t: AssetTarget): string => (t === "rules" ? RULES_MANIFEST : MANIFEST);
+
+/** Where the rules come from: `.rules` inside a published `dist/skills`, else next to the skills source (`<repo>/.claude/rules`, the npm package's `.claude/rules`, BR-2651). */
+export function rulesSourceOf(skillsSource: string): string {
+  // reason: a published release carries its rules inside `dist/skills` (publish.ts PUBLISHED_RULES), switched with the skills
+  const published = join(skillsSource, ".rules");
+  return existsSync(published) ? published : join(dirname(skillsSource), "rules");
+}
+
 export interface InstallReport {
   readonly written: readonly string[];
   readonly unchanged: readonly string[];
@@ -116,15 +135,15 @@ function isBrokenLink(p: string): boolean {
  * counts as the project's own and is reviewed as before.
  */
 export function shippedUnedited(root: string): Set<string> {
-  return new Set((["claude", "codex"] as const).flatMap((runtime) => [...shippedFor(root, runtime)]));
+  return new Set((["claude", "codex", "rules"] as const).flatMap((runtime) => [...shippedFor(root, runtime)]));
 }
 
-function shippedFor(root: string, runtime: AgentRuntime): Set<string> {
-  const target = join(root, SKILL_DIRS[runtime]);
+function shippedFor(root: string, runtime: AssetTarget): Set<string> {
+  const target = join(root, targetDir(runtime));
   const shipped = new Set<string>();
   let files: unknown;
   try {
-    files = (JSON.parse(readFileSync(join(target, MANIFEST), "utf8")) as { files?: unknown } | null)?.files;
+    files = (JSON.parse(readFileSync(join(target, manifestOf(runtime)), "utf8")) as { files?: unknown } | null)?.files;
   } catch {
     return shipped;
   }
@@ -132,14 +151,19 @@ function shippedFor(root: string, runtime: AgentRuntime): Set<string> {
   for (const [rel, hash] of Object.entries(files as Record<string, unknown>)) {
     if (!safeKey(rel) || typeof hash !== "string") continue;
     const full = join(target, rel);
-    if (existsSync(full) && !lstatSync(full).isSymbolicLink() && statSync(full).isFile() && sha(readFileSync(full)) === hash) shipped.add(`${SKILL_DIRS[runtime]}/${rel}`);
+    if (existsSync(full) && !lstatSync(full).isSymbolicLink() && statSync(full).isFile() && sha(readFileSync(full)) === hash) shipped.add(`${targetDir(runtime)}/${rel}`);
   }
   return shipped;
 }
 
-/** Every file of every `canon-*` skill in `source`, by path relative to `source`. */
-function sourceFiles(source: string): Map<string, Buffer> {
+/** Every file of every `canon-*` skill in `source`, or every `canon-*.md` rule for the rules, by path relative to `source`. */
+function sourceFiles(source: string, target: AssetTarget = "claude"): Map<string, Buffer> {
   const wanted = new Map<string, Buffer>();
+  if (target === "rules") {
+    if (!existsSync(source)) return wanted;
+    for (const rule of readdirSync(source).filter((n) => n.startsWith(PREFIX) && n.endsWith(".md") && statSync(join(source, n)).isFile()).sort()) wanted.set(rule, readFileSync(join(source, rule)));
+    return wanted;
+  }
   for (const skill of readdirSync(source).filter((n) => n.startsWith(PREFIX) && statSync(join(source, n)).isDirectory())) {
     for (const f of filesUnder(join(source, skill))) wanted.set(relative(source, f), readFileSync(f));
   }
@@ -163,13 +187,13 @@ export interface SkillsStatus {
 }
 
 /** How the project's installed skills compare with the ones canon ships (BR-2084); reads only. */
-export function skillsStatus(root: string, source: string, runtime: AgentRuntime = "claude"): Result<SkillsStatus> {
-  const target = join(root, SKILL_DIRS[runtime]);
-  const wanted = sourceFiles(source);
+export function skillsStatus(root: string, source: string, runtime: AssetTarget = "claude"): Result<SkillsStatus> {
+  const target = join(root, targetDir(runtime));
+  const wanted = sourceFiles(source, runtime);
   const version = versionOf(Object.fromEntries([...wanted].map(([k, v]) => [k, sha(v)])));
   if (isSourceRepository(root, target, source)) return ok({ state: "source", version, outdated: [], edited: [] });
   let manifest: Record<string, string> = {};
-  const manifestPath = join(target, MANIFEST);
+  const manifestPath = join(target, manifestOf(runtime));
   if (existsSync(manifestPath)) {
     try {
       manifest = (JSON.parse(readFileSync(manifestPath, "utf8")) as { files?: Record<string, string> }).files ?? {};
@@ -217,14 +241,14 @@ export interface SkillsPlan {
 }
 
 /** Reads only: refuses a bad manifest or a symlink on any path it would touch (exit 2), and lists the conflicts. */
-export function planSkills(root: string, source: string, force: boolean, runtime: AgentRuntime = "claude"): Result<SkillsPlan> {
-  const target = join(root, SKILL_DIRS[runtime]);
-  const manifestPath = join(target, MANIFEST);
+export function planSkills(root: string, source: string, force: boolean, runtime: AssetTarget = "claude"): Result<SkillsPlan> {
+  const target = join(root, targetDir(runtime));
+  const manifestPath = join(target, manifestOf(runtime));
   if (isSourceRepository(root, target, source)) {
     return ok({ target, manifestPath, wanted: new Map(), write: [], unchanged: [], remove: [], kept: [], conflicts: [], source: true });
   }
 
-  const wanted = sourceFiles(source);
+  const wanted = sourceFiles(source, runtime);
   let manifest: Record<string, string> = {};
   if (existsSync(manifestPath)) {
     try {
@@ -269,8 +293,8 @@ export function planSkills(root: string, source: string, force: boolean, runtime
 }
 
 /** The refusal for skill files edited here that an install would overwrite (BR-2081). */
-export function editedSkills(conflicts: readonly string[], rerun: string, runtime: AgentRuntime = "claude"): Result<never> {
-  return err("conflict", `these canon skill files were edited in this project and would be overwritten:\n${conflicts.map((c) => `  ${SKILL_DIRS[runtime]}/${c}`).join("\n")}\nMove the edits into canon itself, or ${rerun} to discard them.`);
+export function editedSkills(conflicts: readonly string[], rerun: string, runtime: AssetTarget = "claude"): Result<never> {
+  return err("conflict", `these canon ${runtime === "rules" ? "rule" : "skill"} files were edited in this project and would be overwritten:\n${conflicts.map((c) => `  ${targetDir(runtime)}/${c}`).join("\n")}\nMove the edits into canon itself, or ${rerun} to discard them.`);
 }
 
 /** Writes a plan that has no conflicts (or was forced). */
@@ -300,9 +324,9 @@ export interface UnskillPlan {
 }
 
 /** Reads only: refuses a bad manifest (BR-2195) or a symlink on any path it would delete (BR-2083). */
-export function planUnskills(root: string, force: boolean, runtime: AgentRuntime = "claude"): Result<UnskillPlan> {
-  const target = join(root, SKILL_DIRS[runtime]);
-  const manifestPath = join(target, MANIFEST);
+export function planUnskills(root: string, force: boolean, runtime: AssetTarget = "claude"): Result<UnskillPlan> {
+  const target = join(root, targetDir(runtime));
+  const manifestPath = join(target, manifestOf(runtime));
   if (!existsSync(manifestPath)) return ok({ target, manifestPath, remove: [], edited: [], manifest: false });
   let manifest: Record<string, string>;
   try {

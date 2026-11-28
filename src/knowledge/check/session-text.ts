@@ -5,9 +5,9 @@ import { parse } from "yaml";
 
 /** One part of the text every session loads at start, measured in UTF-8 bytes, never judged by content (D-37). */
 export interface SessionTextPart {
-  /** `CLAUDE.md`, `work guide`, or `.claude/skills/<name>/SKILL.md description`. */
+  /** `CLAUDE.md`, `work guide`, `.claude/rules/<name>.md`, or `.claude/skills/<name>/SKILL.md description`. */
   readonly label: string;
-  readonly kind: "instructions" | "guide" | "skill";
+  readonly kind: "instructions" | "guide" | "rule" | "skill";
   readonly bytes: number;
   /** Why the part counts as 0 bytes, when it does. */
   readonly note?: "no description" | "symbolic link, not read";
@@ -16,7 +16,7 @@ export interface SessionTextPart {
 const bytes = (s: string) => Buffer.byteLength(s, "utf8");
 const isLink = (p: string) => lstatSync(p).isSymbolicLink();
 
-/** The parts BR-2256 lists, in its order: root CLAUDE.md, the work guide canon brief prints, each skill description. */
+/** The parts BR-2256 lists, in its order: root CLAUDE.md, the work guide canon brief prints, each rule file, each skill description. */
 export function sessionText(root: string, guide: string): SessionTextPart[] {
   const parts: SessionTextPart[] = [];
   const runtime = agentSession()?.runtime ?? (existsLink(join(root, SKILL_DIRS.codex, ".canon-skills.json")) && !existsLink(join(root, SKILL_DIRS.claude, ".canon-skills.json")) ? "codex" : "claude");
@@ -25,6 +25,14 @@ export function sessionText(root: string, guide: string): SessionTextPart[] {
   const path = join(root, instruction);
   if (existsLink(path)) parts.push(isLink(path) ? { label: instruction, kind: "instructions", bytes: 0, note: "symbolic link, not read" } : { label: instruction, kind: "instructions", bytes: bytes(readFileSync(path, "utf8")) });
   parts.push({ label: "work guide", kind: "guide", bytes: bytes(guide) });
+  // reason: Claude Code loads every .claude/rules/*.md in full at every session start, canon's own and the project's (BR-2256, BR-2651)
+  const rules = join(root, ".claude/rules");
+  if (runtime === "claude" && existsSync(rules) && !isLink(join(root, ".claude")) && !isLink(rules)) {
+    for (const name of readdirSync(rules).filter((n) => n.endsWith(".md")).sort()) {
+      const file = join(rules, name);
+      parts.push(isLink(file) ? { label: `.claude/rules/${name}`, kind: "rule", bytes: 0, note: "symbolic link, not read" } : { label: `.claude/rules/${name}`, kind: "rule", bytes: bytes(readFileSync(file, "utf8")) });
+    }
+  }
   const skills = SKILL_DIRS[runtime];
   const dir = join(root, skills);
   if (!existsSync(dir) || isLink(join(root, skills.split("/")[0]!)) || isLink(dir)) return parts;
@@ -79,5 +87,5 @@ export function budgetHint(parts: readonly SessionTextPart[], budget: number | u
   const sum = total(parts);
   if (budget === undefined || sum <= budget) return undefined;
   const of = (kind: SessionTextPart["kind"]) => total(parts.filter((p) => p.kind === kind));
-  return `hint session-text: ${sum} bytes loaded every session, over session_text_budget ${budget} (${parts.find((p) => p.kind === "instructions")?.label ?? "CLAUDE.md"} ${of("instructions")}, work guide ${of("guide")}, skill descriptions ${of("skill")}); canon check --sizes lists each part`;
+  return `hint session-text: ${sum} bytes loaded every session, over session_text_budget ${budget} (${parts.find((p) => p.kind === "instructions")?.label ?? "CLAUDE.md"} ${of("instructions")}, work guide ${of("guide")}, ${of("rule") > 0 ? `rules ${of("rule")}, ` : ""}skill descriptions ${of("skill")}); canon check --sizes lists each part`;
 }
