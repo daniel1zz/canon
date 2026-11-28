@@ -136,7 +136,10 @@ describe("exit codes", () => {
   test("BR-2021: without a terminal and without --relayed an answer is refused; an agent relaying the human's words is recorded as a relay", () => {
     const root = repo();
     canon(root, "init", "--floor", "true");
-    expect(canon(root, "human", "ask", "Ship it?").code).toBe(0);
+    const asked = canon(root, "human", "ask", "Ship it?");
+    expect(asked.code).toBe(0);
+    // reason: how to ask and record the answer is said when the question is recorded (BR-2654)
+    expect(asked.out).toContain('with this text word for word as the question, then record their exact words in this session: canon human answer 1 <answer> --relayed "<their words>"');
     const bare = canon(root, "human", "answer", "1", "yes");
     expect(bare.code).toBe(2);
     expect(bare.err).toContain("--relayed");
@@ -478,7 +481,11 @@ describe("session continuity", () => {
     writeFileSync(join(root, "canon/quality/README.md"), "# 质量标准\n\n## 方面\n\n- **联机**：不适用：canon human #3\n");
     const idle = canon(root, "brief").out;
     expect(idle.trim()).toBe(guideFor(root)); // init wrote canon/architecture.md, so the guide starts with the overview line (BR-2090)
-    for (const cmd of ["canon context", "canon work start", "canon work land --finish", "canon work stop --reason", "--relayed", "canon work drop", "canon work after-land --wait", "canon-product"]) expect(idle).toContain(cmd);
+    for (const cmd of ["canon context", "canon work start", "canon work land --finish", "canon work stop --reason", "canon guide human", "canon work drop", "canon guide land", "canon-product"]) expect(idle).toContain(cmd);
+    // reason: the moment-specific detail is a topic the guide names, not part of every session start (BR-2654, D-169)
+    for (const cmd of ["--relayed", "canon work after-land --wait"]) expect(idle).not.toContain(cmd);
+    const land = canon(root, "guide", "land");
+    expect([land.code, land.out.includes("canon work after-land --wait <C-n>")]).toEqual([0, true]);
     committed(root);
     const wt = canon(root, "work", "start", "--owner-gate", "none: test", "--advances", "none: test", "--title", "Refunds").out.match(/cd (.+)/)![1]!.trim();
     const b = canon(wt, "brief").out;
@@ -488,6 +495,18 @@ describe("session continuity", () => {
 });
 
 describe("brief when it cannot read the project", () => {
+  test("BR-2654: canon guide lists every topic with when to read it; a topic prints its text; an unknown one exits 3 naming the topics", () => {
+    const root = repo();
+    const list = canon(root, "guide");
+    expect(list.code).toBe(0);
+    const lines = list.out.trim().split("\n");
+    expect(lines.at(-1)).toBe("read one: canon guide <topic>");
+    expect(lines.some((l) => l.startsWith("land ") && l.includes("priority"))).toBe(true);
+    const unknown = canon(root, "guide", "nope");
+    expect(unknown.code).toBe(3);
+    expect(unknown.err).toContain("evidence, findings, human");
+  });
+
   test("BR-2090: outside a repository and with a broken config, brief still prints the guide first and its error on stdout", () => {
     const outside = mkdtempSync(join(tmpdir(), "canon-not-a-repo-"));
     const r = canon(outside, "brief");

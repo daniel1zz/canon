@@ -392,7 +392,8 @@ async function waitAndLand(ws: Workspace, opts: LandOptions, say: Say, t: { entr
       ws.db.event(ws.actor, "land.turn", subject, { entry, waited_ms: Date.now() - queued, ...loadDetail() });
       break;
     }
-    if (turn.ahead !== lastAhead) say(`waiting: ${turn.ahead} landing(s) ahead`);
+    // reason: said the first time the lander waits, the moment a session needs it, instead of in every session's guide (BR-2654, D-169)
+    if (turn.ahead !== lastAhead) say(`waiting: ${turn.ahead} landing(s) ahead${lastAhead === -1 ? "; the landing goes on in the background: a timeout or Ctrl-C only stops following it, canon work land again follows it, --stop stops it" : ""}`);
     lastAhead = turn.ahead;
     // Each time main moves while this lander waits, a merge of main and HEAD in memory predicts the rebase:
     // a conflict refuses now instead of when the turn comes, and the worktree is not touched (BR-2153, D-22).
@@ -558,6 +559,8 @@ async function landTurn(ws: Workspace, opts: LandOptions, say: Say, t: { entry: 
   // Open review findings naming a document now retired or superseded on main are closed by this landing (BR-2435).
   closeRetired(ws.db, new Set(steps.retired), landed);
   say(`landed ${head.value.slice(0, 9)} on ${main}`);
+  // reason: the follow-up a session needs right after its landing, said then instead of in every session's guide (BR-2654, D-169)
+  if (subject !== null) say(`post-land commands and the rule review run in the background: canon work after-land --wait ${subject} reports them; do not poll the log`);
   // The background floor starts on the main this landing made, before after_land (BR-2218, BR-2219).
   if (floorDeferred) ensureWatcher(ws, say);
   afterLand(ws, say, { entry, subject, base: base.value, head: head.value, branch: t.branch, landed, review: steps.review });

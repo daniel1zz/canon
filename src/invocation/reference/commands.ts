@@ -2,6 +2,7 @@ import { defineCommand } from "citty";
 import { join } from "node:path";
 import { entry, fail, json, say, workspace, type DomainCommands } from "../command.ts";
 import { flowPage } from "./flow-page.ts";
+import { GUIDE_TOPICS } from "../guide.ts";
 import { FLOW_PAGE, renderFlow, viewFlow } from "./flow-view.ts";
 import { modelineHint, renderConfig, schemaText, viewConfig, writeGenerated, writeSchemaFile } from "./reference.ts";
 
@@ -47,4 +48,20 @@ const configCmd = defineCommand({
   },
 });
 
-export const referenceCommands: DomainCommands = { commands: [entry("config", 155, configCmd)] };
+/** `canon guide [topic]`: the detail the work guide names instead of printing at every session start (BR-2654, D-169). */
+const guideCmd = defineCommand({
+  meta: { description: "The detail behind a line of the work guide canon brief prints: with no topic, every topic and when to read it; with one, its text. Exit 3 for an unknown topic" },
+  args: { topic: { type: "positional", required: false, description: "The topic the guide names" } },
+  run({ args }) {
+    const name = typeof args.topic === "string" ? args.topic : undefined;
+    if (name === undefined) {
+      for (const t of GUIDE_TOPICS) say(`${t.name.padEnd(9)} ${t.when}`);
+      return say("read one: canon guide <topic>");
+    }
+    const topic = GUIDE_TOPICS.find((t) => t.name === name);
+    if (!topic) fail({ code: "not_found", message: `no guide topic ${name}; the topics are ${GUIDE_TOPICS.map((t) => t.name).join(", ")} (canon guide lists them with when to read each)` });
+    say(topic.text);
+  },
+});
+
+export const referenceCommands: DomainCommands = { commands: [entry("guide", 21, guideCmd), entry("config", 155, configCmd)] };

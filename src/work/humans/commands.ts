@@ -45,6 +45,8 @@ const human = defineCommand({
         if (args.multi && options.length === 0) fail({ code: "invalid", message: "--multi needs --option: only a question with options can be answered with several of them" });
         const id = ask(ws.db, ws.actor, subject, String(args.question), options, args.multi === true);
         say(`question #${id} recorded; \`canon human pending\` shows it${args.multi ? "; ask it with multiSelect: true in the question tool" : ""}`);
+        // reason: how to ask and record it is said when the question is recorded, instead of in every session's guide (BR-2654, D-169)
+        say(`ask it in the question tool with this text word for word as the question, then record their exact words in this session: canon human answer ${id} <answer> --relayed "<their words>"`);
       },
     }),
     pending: defineCommand({
