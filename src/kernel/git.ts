@@ -25,9 +25,18 @@ export function firstCommitStep(main: string): string {
   return `commit what \`canon init\` wrote to ${main} first: git checkout ${main} && git add -A && git commit -m "canon init"`;
 }
 
+/** What git prints when a repository uses Git LFS and git-lfs is not on PATH: its filter, or the hooks `git lfs install` wrote. */
+const LFS_MISSING = /git-lfs: command not found|'git-lfs' was not found on your path|git-lfs: not found/;
+
+/** The line added to a git failure caused by a missing git-lfs, so the error names the tool and how to get it (BR-2650). */
+export const LFS_HINT = "git-lfs is not installed, but this repository uses Git LFS (see .gitattributes): install it (macOS: brew install git-lfs; others: https://git-lfs.com), then run git lfs install";
+
 export function gitEnv(cwd: string, env: Readonly<Record<string, string>>, ...args: string[]): Result<string> {
   const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", ...(Object.keys(env).length > 0 ? { env: { ...process.env, ...env } } : {}) });
-  if (r.exitCode !== 0) return err("io", `git ${args.join(" ")}: ${(r.stderr.toString() || r.stdout.toString()).trim()}`);
+  if (r.exitCode !== 0) {
+    const out = (r.stderr.toString() || r.stdout.toString()).trim();
+    return err("io", `git ${args.join(" ")}: ${out}${LFS_MISSING.test(out) ? `\n${LFS_HINT}` : ""}`);
+  }
   return ok(r.stdout.toString().trim());
 }
 
