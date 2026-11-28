@@ -6,7 +6,7 @@ export const reviewGuide: readonly GuideLine[] = [
 ];
 
 export const reviewTopics: readonly GuideTopic[] = [
-  { name: "findings", when: `the rule review after a landing left blocking findings, or canon context or canon brief shows findings or notes on a document you touch`, text: `The rule review runs after landing; its blocking findings stay open on the documents they name. Tier each with canon finding tier: A, you settle it; B, and any spurious close, needs another session's canon finding advise; C is the owner's, canon finding ask. Then close it at once with canon finding close, as canon context shows.
+  { name: "findings", when: `the rule review after a landing left blocking findings, or canon context or canon brief shows findings or notes on a document you touch`, text: `The rule review runs after landing; its blocking findings stay open on the documents they name. The commands: canon finding tier sets the tier; for a B finding, and for any spurious close, another session runs canon finding advise; a C finding is asked of the owner with canon finding ask; canon finding close closes it, with the arguments canon context shows.
 
 Notes are not changes (canon context and canon brief show both): handle a note when you next change that document.` },
 ];
