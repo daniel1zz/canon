@@ -119,6 +119,9 @@ function listCommand(kind: Kind, describe: string) {
             say(`${s.id.padEnd(8)} ${(s.change?.status ?? "").padEnd(10)} ${tier}  ${s.change?.title ?? "(no file)"}  (${marks.join("; ")})`);
           }
           if (listed.length === 0 && unreadable.length === 0) say("(no changes)");
+          // reason: a handoff written before reasons were recorded reads unrecorded until someone sets one; the list says how once (BR-2575)
+          const old = listed.filter((s) => s.handoff && s.handoff.reason === null).map((s) => s.id);
+          if (old.length > 0) say(`${old.length} handoff(s) have no recorded reason (${old.slice(0, 5).join(", ")}${old.length > 5 ? ", …" : ""}): canon work handoff-reason <C-n> --reason <land|design|owner|deps|partial>`);
         }
         // reason: the rest is listed first; an unreadable branch file is said on stderr and fails the command (BR-2292)
         if (unreadable.length) fail({ code: "io", message: unreadable.map((u) => `unreadable change file: ${u}`).join("\n") });
@@ -258,7 +261,7 @@ const change = defineCommand({
 const doc = defineCommand({
   meta: { description: "Documents of the types declared under `types:` in canon/config.yaml" },
   subCommands: {
-    new: newDocCommand("", { type: { type: "string", required: true, description: "Declared type name" } }),
+    new: newDocCommand("", { type: { type: "string", required: true, description: "Declared type name" } }, "Create a document of a type declared under types: in canon/config.yaml (allocates its id; edit the file afterwards)"),
     list: listCommand("extra", "List documents of one declared type (--type)"),
     status: defineCommand({
       meta: { description: "Set the status of a declared-type document to one of its declared statuses" },

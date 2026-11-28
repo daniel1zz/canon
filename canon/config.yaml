@@ -33,6 +33,8 @@ test_command: "sh scripts/test.sh {file} --reporter=junit --reporter-outfile={re
 always_tests:
   - "src/work/session/worktree-lock-callers.test.ts"
   - "src/install/install.test.ts"
+  # reads every command and every non-test source file to find where each command is named (BR-2648)
+  - "src/invocation/every-command-guided.test.ts"
 # canon work test 在测试之前跑一次（BR-2226）：和 floor 的类型检查那一步相同，类型错误不用等 floor 才发现（C-163 曾因此被拒）
 typecheck_command: "bunx tsc --noEmit -p tsconfig.json"
 # 每个会话开始时都会读到的文件：改了它们，合入时评审同一条要求是否写在多处（BR-2143）；工作说明的源码也算：

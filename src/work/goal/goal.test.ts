@@ -39,6 +39,19 @@ const release = (n: number, status: string, criteria: string, front = "") => `--
 const feature = (n: number, criteria: string) => `---\nid: ${F(n)}\ntitle: 模块${n}\nstatus: active\n---\n\n## 目标\n\n内容\n\n## 成功标准\n\n${criteria}\n`;
 
 describe("canon goal", () => {
+  test("BR-2506 BR-2518: the brief of an agent session with a release in progress and no goal says how to turn goal mode on; not once it is on, not outside a session, not with no active release", () => {
+    const HINT = "  goal mode is off for this session: canon goal start keeps it working toward these success criteria (canon goal stop ends it)";
+    const root = project();
+    write(root, { [`canon/releases/${R(5)}.md`]: release(5, "active", "- S1 甲（未满足）") });
+    expect(canon(root, SESSION, ["brief"]).out.split("\n")).toContain(HINT);
+    expect(canon(root, null, ["brief"]).out.split("\n")).not.toContain(HINT);
+    expect(canon(root, SESSION, ["goal", "start"]).code).toBe(0);
+    expect(canon(root, SESSION, ["brief"]).out.split("\n")).not.toContain(HINT);
+    const planned = project();
+    write(planned, { [`canon/releases/${R(6)}.md`]: release(6, "planned", "- S1 丙") });
+    expect(canon(planned, SESSION, ["brief"]).out.split("\n")).not.toContain(HINT);
+  });
+
   test("BR-2518: start takes the releases in progress or the ones named, stop ends it, a bare goal shows it; each session has its own", () => {
     const root = project();
     write(root, { [`canon/releases/${R(1)}.md`]: release(1, "shipped", "- x", `shipped_at: ${"a".repeat(40)}\n`), [`canon/releases/${R(5)}.md`]: release(5, "active", "- S1 甲（未满足）\n- S2 乙"), [`canon/releases/${R(6)}.md`]: release(6, "planned", "- S1 丙") });

@@ -106,6 +106,9 @@ test("BR-2527: a main session's findings carry their age and the next command of
   expect(a.owner.map((it) => it.key)).toEqual([`finding:${tierC}`, `question:${q}`]);
   expect(a.owner[0]!.next).toStartWith(`canon finding ask ${tierC} `);
   expect(renderDue(a.owner[1]!)).toMatch(new RegExp(`^question:${q} 8m close #3 this way\\? → ask the owner`));
+  // reason: work waiting on a question can go on with a provisional answer, and a stale one is withdrawn (BR-2636, BR-2628)
+  expect(a.owner[1]!.next).toContain(`canon human provisional ${q} "<answer>" --reason`);
+  expect(a.owner[1]!.next).toContain(`canon human withdraw ${q} --reason`);
   expect([...a.judge, ...a.owner].some((it) => it.key === `finding:${asked}`)).toBe(false);
   // reason: no claim lapsed, so judging them wrote nothing (BR-2527, BR-2360)
   expect(lastEventId(w.db)).toBe(before);

@@ -210,7 +210,7 @@ describe("quality standards", () => {
     const root = project();
     const briefLine = (r: string) => canon(r, "brief").out.split("\n").find((l) => l.startsWith("  quality:"));
     expect(canon(root, "overview").out).toContain("质量标准：还没有（canon/quality）。用 canon-product 按产品类型调研同类产品，列出方面、写 Q-n");
-    expect(briefLine(root)).toBe("  quality: no quality standards yet (canon/quality): research them with the canon-product skill");
+    expect(briefLine(root)).toBe("  quality: no quality standards yet (canon/quality): research them with the canon-product skill, then canon quality new --title \"<standard>\"");
     expect(JSON.parse(canon(root, "overview", "--json").out).quality).toEqual({ standards: 0, drafts: 0, uncovered: [], none: true });
     write(root, { [README]: aspects("- **战斗手感**：", "- **音效**："), [`canon/quality/${Q(1)}.md`]: standard(1, front("战斗手感")) });
     expect(canon(root, "overview").out).toContain("质量标准 1 条，其中 draft 1 条（负责人未确认）；未覆盖的方面：音效（canon quality status；用 canon-product 补上）");
@@ -226,6 +226,6 @@ describe("quality standards", () => {
     expect(briefLine(seven)).toBe("  quality: aspects not covered: 甲, 乙, 丙, 丁, 戊, and 2 more (canon quality status; canon-product skill)");
     const retiredOnly = project();
     write(retiredOnly, { [`canon/quality/${Q(1)}.md`]: standard(1, front("战斗手感", "status: retired\nretired_reason: 不要了\n")) });
-    expect(briefLine(retiredOnly)).toBe("  quality: no quality standards yet (canon/quality): research them with the canon-product skill");
+    expect(briefLine(retiredOnly)).toBe("  quality: no quality standards yet (canon/quality): research them with the canon-product skill, then canon quality new --title \"<standard>\"");
   });
 });

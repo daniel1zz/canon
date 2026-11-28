@@ -197,6 +197,16 @@ describe("BR-2572: canon change list gives each change's state, flags and what i
     expect(rows.find((r) => r.id === "C-2")!.handoff).toMatchObject({ reason: "unrecorded" });
     expect(cli(root, "agent:a", "change", "list").out).toContain("(handed-off: unrecorded; handoff: old)");
   });
+
+  test("BR-2575: canon change list ends with one line naming the handoffs with no recorded reason and the command that sets one; none when every handoff has one", () => {
+    const root = repo({ "changes/C-1.md": change(1, "open"), "changes/C-2.md": change(2, "open") });
+    db(root, (w) => writeHandoff(w.db, { subject: "C-1", worktree: null, actor: "agent:b", next: "land it", note: null, reason: "land", on: null }));
+    expect(cli(root, "agent:a", "change", "list").out).not.toContain("handoff-reason");
+    db(root, (w) => writeHandoff(w.db, { subject: "C-2", worktree: null, actor: "agent:b", next: "old", note: null, reason: null, on: null }));
+    const lines = cli(root, "agent:a", "change", "list").out.trimEnd().split("\n");
+    expect(lines.at(-1)).toBe("1 handoff(s) have no recorded reason (C-2): canon work handoff-reason <C-n> --reason <land|design|owner|deps|partial>");
+    expect(cli(root, "agent:a", "change", "list", "--json").out).not.toContain("handoff-reason");
+  });
 });
 
 describe("BR-2564 BR-2149: the brief keeps changes waiting on the owner or already on main off the line to take", () => {

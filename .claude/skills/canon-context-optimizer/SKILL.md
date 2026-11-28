@@ -9,6 +9,7 @@ Shorten instructions that load into many sessions (in this project: `CLAUDE.md`,
 
 ## 1. Measure and snapshot first
 
+- For what is loaded but never used, `canon usage --days 30` lists the skills, MCP servers and subagent types this project's sessions did not use, with the size each injects: an unused one is cut whole before any sentence is trimmed.
 - Measure the current size (lines, words or tokens) and report it. Never set a reduction target before measuring: a preset target forces rule cuts. The size is an outcome, not a goal.
 - Keep the verbatim before-text where the next editor and the grader can read it. If the file is committed, the original is `git show HEAD:<file>`; record that commit in the change file. If it is not in git, or several files are merged, save it first in a note (`canon note new`).
 

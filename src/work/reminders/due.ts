@@ -220,7 +220,7 @@ export function mainItems(ws: Workspace, now: number, states: readonly ChangeSta
       items.push(item(`question:${q.id}`, "question provisional", q.asked_at, `${clip(q.question)} [provisional: ${clip(q.provisional, 40)} by ${q.provisional_by}]`, `confirm with the owner in the conversation, then canon human answer ${q.id} "<answer>" --relayed "<their words>"`, `confirm the provisional answer with the owner, then canon human answer <n> "<answer>" --relayed "<their words>"`, "owner", 2));
       continue;
     }
-    items.push(item(`question:${q.id}`, "question", q.asked_at, clip(q.question), `ask the owner in the conversation, then canon human answer ${q.id} "<answer>" --relayed "<their words>"`, `ask the owner, then canon human answer <n> "<answer>" --relayed "<their words>"`, "owner", 2));
+    items.push(item(`question:${q.id}`, "question", q.asked_at, clip(q.question), `ask the owner in the conversation, then canon human answer ${q.id} "<answer>" --relayed "<their words>"; work waiting on it can go on with canon human provisional ${q.id} "<answer>" --reason "<what it rests on>"; no longer needed: canon human withdraw ${q.id} --reason "<why>"`, `ask the owner, then canon human answer <n> "<answer>" --relayed "<their words>"; or canon human provisional / canon human withdraw <n>`, "owner", 2));
   }
   for (const r of releaseViews(corpus, releasesInProgress(corpus))) {
     for (const { doc, c } of criteriaWithDoc(r)) {

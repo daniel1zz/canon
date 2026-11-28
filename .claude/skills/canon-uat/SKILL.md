@@ -16,7 +16,7 @@ Run them as separate subagents. If you cannot (you are a subagent yourself), exe
 
 ## 1. Anchor on the rules
 
-1. `canon context <domain|C-n>`: the active rules in scope, their examples, the accepted decisions and the change being accepted.
+1. `canon context <domain|C-n>`: the active rules in scope, their examples, the accepted decisions and the change being accepted; `canon progress <domain|C-n>` lists which of them are planned, passed or waiting to be executed again.
 2. Build the **inventory**, the denominator of the run: one row per active rule in scope, `BR-n · what it promises · P0/P1/P2` (P0 = without this the feature has no reason to exist). Include every rule about what the product must **refuse** (invalid input → usage error, foreign claim → conflict, check violation → refusal with a fix hint); refusals are first-class rows, not afterthoughts.
 3. A user-visible promise in the change that no rule states, or a rule too vague to judge, is a **rule gap**: record it and judge that row `UNVERIFIED`. Do not stop to ask. The finding becomes a rule edit (step 6).
 4. Environment: local or a throwaway copy, never production or a shared repo. Build or start the product first and record exactly what you ran.

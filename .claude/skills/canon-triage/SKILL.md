@@ -12,6 +12,7 @@ Every open issue leaves triage with exactly one outcome: closed with a reason, f
 ```
 gh issue list --label canon-review --state open --json number,title,createdAt   # oldest first
 canon issues                                   # every open issue, and the commits on main that name it as fixed
+canon work remaining                           # everything else unfinished: open changes, rules not passed, open findings, unanswered questions
 gh issue view <n> --comments
 ```
 

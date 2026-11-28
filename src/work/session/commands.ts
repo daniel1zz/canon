@@ -1,4 +1,5 @@
 import { proposedNotice } from "./proposed.ts";
+import { goalActor, goalOf } from "../goal/goal.ts";
 import { stalledLine } from "../delegation/stall.ts";
 import { changeStates, hasFile, isClosed, marksOf, type ChangeState } from "../../knowledge/changes/state.ts";
 import { fstatSync, readFileSync } from "node:fs";
@@ -351,8 +352,12 @@ function briefState(ws: Workspace, env: Readonly<Record<string, string | undefin
     // The whole progress first, so a session starts from the release and not from the latest small change (BR-2506);
     // a failure is said in one line, never fatal: the rest of the brief still comes.
     const progress = overview(ws, { ruleCounts: false, agenda: false });
-    if (progress.ok) for (const line of briefSummary(progress.value)) say(line);
-    else say(`Overall progress unavailable: ${progress.error.message}`);
+    if (progress.ok) {
+      for (const line of briefSummary(progress.value)) say(line);
+      // reason: goal mode is the session's to turn on (D-132); the brief is where a session learns it exists, once a release is in progress (BR-2506)
+      const goalSession = goalActor();
+      if (progress.value.releases.some((r) => !r.fallback) && goalSession.ok && goalSession.value && !goalOf(ws.db, goalSession.value)) say("  goal mode is off for this session: canon goal start keeps it working toward these success criteria (canon goal stop ends it)");
+    } else say(`Overall progress unavailable: ${progress.error.message}`);
     // Commits on main the remote lacks, counted locally; like the handoffs, only where no change is claimed (BR-2261, BR-2024).
     for (const line of unpushedNotice(ws)) say(line);
     if (hs.length) say(`Unfinished changes with handoffs: ${hs.map((h) => h.subject).join(", ")} (canon work status)`);

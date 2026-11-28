@@ -152,7 +152,7 @@ const BRIEF_SHOWN = 5;
 
 /** The brief's quality line, only when there is something to remind of (BR-2558); without its two-space indent. */
 export function briefQualityLine(s: QualitySummary): string | undefined {
-  if (s.none) return "quality: no quality standards yet (canon/quality): research them with the canon-product skill";
+  if (s.none) return "quality: no quality standards yet (canon/quality): research them with the canon-product skill, then canon quality new --title \"<standard>\"";
   if (s.uncovered.length === 0) return undefined;
   const more = s.uncovered.length > BRIEF_SHOWN ? `, and ${s.uncovered.length - BRIEF_SHOWN} more` : "";
   return `quality: aspects not covered: ${s.uncovered.slice(0, BRIEF_SHOWN).join(", ")}${more} (canon quality status; canon-product skill)`;
