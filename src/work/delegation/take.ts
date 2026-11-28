@@ -97,7 +97,7 @@ export function takeBack(db: CoordDb, subject: string, actor: string, from: stri
       db.event(actor, "claim.refuse", subject, { reason: "handover", from, actor: cur?.holder ?? null, ...extra });
       return err("conflict", message);
     };
-    if (actor !== d.owner) return refuse(`${subject} is delegated by ${d.owner}; only its current design owner can take it back (you are ${actor}); nothing changed`);
+    if (actor !== d.owner) return refuse(`${subject} is delegated by ${d.owner}; only its current design owner can take it back (you are ${actor}); nothing changed. If that session has ended (a new session, another machine), adopt its delegations first: canon work adopt ${subject} --from ${d.owner} (add --gone when canon cannot tell it ended)`);
     if (d.ended) return refuse(`${subject}: its delegation already ended at ${d.ended}; there is nothing delegated to take back`);
     // reason: a worker that released its claim (stop --release) leaves the delegation in force with no claim to hand over;
     // the owner ends it so the change and its rule proposals come back, keeping a claim the owner already holds (BR-2500)

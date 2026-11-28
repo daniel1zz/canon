@@ -12,6 +12,7 @@ import { criteriaWithDoc, releasesInProgress, releaseViews } from "../../knowled
 import { uncoveredDecisions } from "../../knowledge/check/commitments.ts";
 import { interruptsStalled } from "./interrupt.ts";
 import { slowItems } from "./slow.ts";
+import { orphanedDelegations } from "../delegation/adopt.ts";
 import { approvalOf, askLine, keepLine } from "../land/owner-gate.ts";
 
 /**
@@ -177,6 +178,12 @@ export function mainItems(ws: Workspace, now: number, states: readonly ChangeSta
     if (s.state !== "landed" && s.state !== "dropped") {
       for (const w of s.waiting.filter((x) => x.state === "dropped")) items.push(item(`dropped-dep:${s.id}`, "dropped-dep", null, `waits on ${w.id}, dropped without done_by`, `write done_by: <C-n> on ${w.id}, or take ${w.id} out of ${s.id}'s depends_on`, "write done_by on the dropped change, or take it out of depends_on", "judge", 1));
     }
+  }
+  // reason: delegations whose design owner's session ended can be taken back by nobody until someone adopts them (BR-2647, D-165)
+  for (const o of orphanedDelegations(ws.db, ws.actor, now)) {
+    const shown = o.subjects.slice(0, 5).join(", ") + (o.subjects.length > 5 ? `, … +${o.subjects.length - 5}` : "");
+    const why = o.proven ? "whose session has ended" : "whose session canon cannot see and which has been quiet";
+    items.push(item(`adopt:${o.owner}`, "adopt", o.since, `${o.subjects.length} delegation(s) in force owned by ${o.owner}, ${why}: ${shown}`, `canon work adopt --from ${o.owner}${o.proven ? "" : " --gone"} (once you know it ended), then canon work take <C-n> --from <worker>`, "canon work adopt --from <owner> [--gone]", "judge", 1));
   }
   // reason: a delegated change that has run long or keeps failing its tests is its design owner's to look at (BR-2612, D-157)
   items.push(...slowItems(ws, states, now));

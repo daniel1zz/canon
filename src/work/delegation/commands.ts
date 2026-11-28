@@ -5,6 +5,8 @@ import { acceptDesign } from "./accept-design.ts";
 import { designAnswer, needDesign } from "./requests.ts";
 import { applyProposals, proposalNotice, proposeRule } from "./proposals.ts";
 import { claimOfWorktree } from "../claims/claims.ts";
+import { adopt, mayAdopt } from "./adopt.ts";
+import { normalizeSubject } from "../session/subject.ts";
 
 const delegateCmd = defineCommand({
   meta: { description: "Delegate a change with a published design contract" },
@@ -71,4 +73,31 @@ export const applyCmd = defineCommand({
   },
 });
 
-export const delegationCommands: DomainCommands = { commands: [entry("delegate", 12, delegateCmd, "work"), entry("accept-design", 13, acceptCmd, "work"), entry("need-design", 14, needDesignCmd, "work"), entry("design-answer", 15, designAnswerCmd, "work")] };
+
+/** `canon work adopt`: become the design owner of the delegations of an owner session that has ended (BR-2500, D-128). */
+const adoptCmd = defineCommand({
+  meta: { description: "Main session or a person: become the design owner of the delegations whose owner session has ended (after a new session or a machine move), then take them back or delegate again; --gone when canon cannot tell that session ended" },
+  args: {
+    changes: { type: "positional", required: false, description: "Changes to adopt, comma separated (default: every delegation in force the old owner has)" },
+    from: { type: "string", required: true, description: "The old design owner, as canon names it: agent:<session>" },
+    gone: { type: "boolean", description: "You confirm the old owner's session has ended, when canon cannot see its process (it ran on another machine, or recorded none)" },
+    ...AS_ARG,
+  },
+  run({ args }) {
+    // reason: only the main session decides design (D-128); a worker or subagent adopts nothing
+    if (args.as !== undefined) fail({ code: "invalid", message: "`canon work adopt` is for the main session or a person: do not pass --as" });
+    const from = String(args.from);
+    if (!/^(agent|human):[A-Za-z0-9_-]+$/.test(from)) fail({ code: "invalid", message: `--from ${JSON.stringify(from)}: the old design owner is agent:<session> or human:<name>` });
+    const raw: unknown = args.changes;
+    const subjects = raw === undefined ? [] : String(raw).split(",").map((s) => normalizeSubject(s.trim()));
+    if (subjects.some((s) => s === "") || new Set(subjects).size !== subjects.length) fail({ code: "invalid", message: "the changes are a comma-separated list with no empty or duplicate items" });
+    const ws = workspace();
+    if (!mayAdopt(ws.actor)) fail({ code: "invalid", message: `\`canon work adopt\` runs in a main session (agent:<session>) or as a person, not as ${ws.actor}` });
+    const r = adopt(ws.db, ws.actor, from, subjects, Boolean(args.gone));
+    if (!r.ok) fail(r.error);
+    say(`adopted ${r.value.subjects.length} delegation(s) from ${from} (gone: ${r.value.gone}): ${r.value.subjects.join(", ")}; you (${ws.actor}) are their design owner now`);
+    say("next: canon work take <C-n> --from <worker name> [--stopped] to take one back, or canon work delegate <C-n> --to <name> once it is taken back");
+  },
+});
+
+export const delegationCommands: DomainCommands = { commands: [entry("delegate", 12, delegateCmd, "work"), entry("accept-design", 13, acceptCmd, "work"), entry("need-design", 14, needDesignCmd, "work"), entry("design-answer", 15, designAnswerCmd, "work"), entry("adopt", 64, adoptCmd, "work")] };

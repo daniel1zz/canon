@@ -1,3 +1,6 @@
 dist/
 node_modules
 .claude/review.local.json
+
+# bun build --compile leaves its temp output in the cwd when a test compiles canon (#319)
+.*.bun-build
