@@ -478,7 +478,7 @@ describe("source quotes", () => {
 });
 
 describe("source verification", () => {
-  test("BR-2111: a page that is gone, or readable without the quote, fails; one that cannot be fetched, refuses canon or is a PDF is only unverified", async () => {
+  test("BR-2111: a page that is gone (404, 410), or readable without the quote, fails; one that cannot be fetched, answers 403 or 503, or is a PDF is only unverified", async () => {
     const server = Bun.serve({
       port: 0,
       fetch: (req) => {

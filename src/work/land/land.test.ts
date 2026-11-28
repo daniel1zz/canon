@@ -230,7 +230,7 @@ describe("work land", () => {
     expect(again.kind === "refused" && again.message).not.toContain("nothing changed since");
   });
 
-  describe("BR-2111: a new decision with no source at all is a note; each source new to main is verified against its file or page; a quote that does not hold, or a page that is gone, refuses the landing, and a page canon cannot reach is a note", () => {
+  describe("BR-2111: a new decision with no source at all is a note; each source new to main is verified against its file or page; a quote that does not hold, or a page that is gone, refuses the landing, and a page canon cannot reach (offline, 403) is a note and a source.unverified event", () => {
     const decision = (options: string) =>
       `---\nid: D-1\ntitle: Pick\nstatus: accepted\namends: \"none: t\"\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n${options}\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
     const pages: Record<string, string> = { "https://ok.example/a": "<html><body><p>refunds are&nbsp;allowed\n  within 30 days</p></body></html>" };
