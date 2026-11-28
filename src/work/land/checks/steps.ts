@@ -96,7 +96,7 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
     // reason: the test files the landing runs itself are a heavy step: the turn waits for the load before the first of them (BR-2630)
     const gated = await v.running.gate?.();
     if (gated && !gated.ok) return refuse("environment", gated.error.message);
-    const runs = await runLandingTests(ws, wt, landing.value.testCommand, unreported, landingGroups(v.running));
+    const runs = await runLandingTests(ws, wt, landing.value.testCommand, unreported, landingGroups(v.running), ws.config.testJobs, say);
     for (const r of runs) say(`tested ${r.file} after the rebase, as its content there had no report: ${r.exitCode === 0 ? "pass" : "fail"}`);
     const broken = runs.find((r) => r.exitCode !== 0);
     if (broken) return refuse("check", `canon check: ${broken.file} fails on the tree being landed, after the rebase (BR-2381); rebase onto main, fix it, run canon work test and land again:\n${tail(broken.output)}`);
@@ -112,13 +112,13 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   if (!cross.ok) return refuse("environment", cross.error.message);
   if (cross.value.files.length > 0 && landing.value.testCommand) {
     const why = [...(cross.value.sharedPaths.length ? [`both changed ${cross.value.sharedPaths.slice(0, 5).join(", ")}${cross.value.sharedPaths.length > 5 ? ", …" : ""}`] : []), ...(cross.value.sharedTests.length ? [`test_select_command picks ${cross.value.sharedTests.slice(0, 5).join(", ")}${cross.value.sharedTests.length > 5 ? ", …" : ""} for both`] : [])].join("; ");
-    say(`cross tests: this change and what ${v.main} gained since it forked overlap (${why}); running the ${cross.value.files.length} test file(s) test_select_command picks for ${v.main}'s side on the tree being landed (BR-2645)`);
+    say(`cross tests: this change and what ${v.main} gained since it forked overlap (${why}); running the ${cross.value.files.length} test file(s) test_select_command picks for both on the tree being landed (BR-2645)`);
     const gated = await v.running.gate?.();
     if (gated && !gated.ok) return refuse("environment", gated.error.message);
-    const runs = await runLandingTests(ws, wt, landing.value.testCommand, cross.value.files, landingGroups(v.running));
+    const runs = await runLandingTests(ws, wt, landing.value.testCommand, cross.value.files, landingGroups(v.running), ws.config.testJobs, say);
     for (const r of runs) say(`cross-tested ${r.file}: ${r.exitCode === 0 ? "pass" : "fail"}`);
     const broken = runs.find((r) => r.exitCode !== 0);
-    if (broken) return refuse("check", `canon check: ${broken.file} fails on the tree being landed (BR-2645): test_select_command picks it for what ${v.main} gained since this branch forked, so this change and those together break it; fix it here, run canon work test ${broken.file} and land again:\n${tail(broken.output)}`);
+    if (broken) return refuse("check", `canon check: ${broken.file} fails on the tree being landed (BR-2645): test_select_command picks it for both this change and what ${v.main} gained since this branch forked, so the two together break it; fix it here, run canon work test ${broken.file} and land again:\n${tail(broken.output)}`);
   }
   // reason: which checks refuse comes from main's landed config, never the change's own tree, so a change cannot relax them for itself (BR-2641, BR-2074)
   const policy = checkPolicyOf(configAt(ws, v.main), wt);

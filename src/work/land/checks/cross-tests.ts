@@ -4,7 +4,7 @@ import { runSelectCommand } from "../../verify/select-command.ts";
 
 /** Why a landing's cross tests run: the paths both sides changed, and the test files both sides' selections share (BR-2645). */
 export interface Cross {
-  /** The test files to run on the tree being landed: what test_select_command picks for main's side; empty when nothing overlaps. */
+  /** The test files to run on the tree being landed: what test_select_command picks for both sides (D-168); empty when none. */
   readonly files: string[];
   /** Paths changed on main since the fork and on this branch too. */
   readonly sharedPaths: string[];
@@ -25,8 +25,9 @@ const picked = (wt: string, command: string, paths: readonly string[], tests: Re
 /**
  * The cross tests of a landing (BR-2645, D-137's heavier step only where it is needed): when main moved since this branch
  * forked and the two sides overlap (a path both changed, or a test file the project's test_select_command picks for both),
- * the test files it picks for main's side. Otherwise none, and the landing goes as usual. No test_select_command, none
- * (canon reads no source, D-64).
+ * the test files it picks for both sides: one picked for main's side alone reads only what main changed, by the command's
+ * own judgement, so this branch cannot change its result there (D-168). Otherwise none, and the landing goes as usual.
+ * No test_select_command, none (canon reads no source, D-64).
  */
 export function crossTests(wt: string, before: string, base: string, command: string | undefined, tests: ReadonlySet<string>): Result<Cross> {
   const none: Cross = { files: [], sharedPaths: [], sharedTests: [] };
@@ -45,5 +46,5 @@ export function crossTests(wt: string, before: string, base: string, command: st
   if (!forMine.ok) return forMine;
   const sharedTests = [...forTheirs.value].filter((f) => forMine.value.has(f)).sort();
   if (sharedPaths.length === 0 && sharedTests.length === 0) return ok(none);
-  return ok({ files: [...forTheirs.value].sort(), sharedPaths, sharedTests });
+  return ok({ files: sharedTests, sharedPaths, sharedTests });
 }

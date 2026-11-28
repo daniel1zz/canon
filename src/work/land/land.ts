@@ -24,6 +24,9 @@ import { duplicateHeadings, hasLessons, LESSONS_SECTION, linesSaid } from "../..
 import { git, isClean, removeWorktree } from "../../kernel/git.ts";
 import { ensureWatcher, pathCanonReads, timingOf } from "../watch/watch.ts";
 import { missingMessage, passesMeta, planClose } from "../execution/landing.ts";
+import { runHooks } from "../hooks/hooks.ts";
+import { changePort } from "../hooks/ports.ts";
+import { forgetEnded } from "../verify/stop-groups.ts";
 import { landingGroups, type LandOptions, type LandOutcome, type Running } from "./outcome.ts";
 import { stopGroupsSync, TERM_WAIT_MS } from "../verify/stop-groups.ts";
 import { changesIn, ownDiffId, rebaseInProgress } from "./worktree-state.ts";
@@ -218,7 +221,7 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
     const related = unreportedRelated(ws, wt);
     if (!related.ok) return early("environment", `the related test files could not be listed: ${related.error.message}`);
     if (related.value.files.length > 0 && related.value.testCommand) {
-      const runs = await runLandingTests(ws, wt, related.value.testCommand, related.value.files, landingGroups(running));
+      const runs = await runLandingTests(ws, wt, related.value.testCommand, related.value.files, landingGroups(running), ws.config.testJobs, say);
       for (const r of runs) say(`tested ${r.file} before landing, as it had no report of its content: ${r.exitCode === 0 ? "pass" : "fail"}`);
       const broken = runs.find((r) => r.exitCode !== 0);
       if (broken) return early("tests", `${broken.file} fails (BR-2542): the landing ran it as this change makes it relevant and canon work test had not run its content; fix it, then land again:\n${tail(broken.output)}`);
@@ -285,6 +288,18 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
       }
     }
 
+    // reason: before_land checks that judge the change's own content refuse here, before the queue, so such a refusal never
+    // holds the turn; the turn runs them again on the tree that becomes main (BR-2652, BR-2057, D-168)
+    if (ws.config.hooks.before_land.length > 0) {
+      const fork = git(wt, "merge-base", main, "HEAD");
+      const headNow = git(wt, "rev-parse", "HEAD");
+      if (!fork.ok) return early("environment", `before_land could not be run before the queue: ${fork.error.message}`);
+      if (!headNow.ok) return early("environment", `before_land could not be run before the queue: ${headNow.error.message}`);
+      const env = { CANON_BASE: fork.value, CANON_HEAD: headNow.value, CANON_BRANCH: branch.value, CANON_HOOK_PREVIEW: "1" };
+      const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env, port: changePort(ws, subject) }, ws.config.hooks.before_land, say, true, landingGroups(running));
+      forgetEnded(landingGroups(running));
+      if (failed) return early("hook", `before_land \`${failed.command}\` exited ${failed.exit} before the queue, on this branch as committed (BR-2652); if it passes only once rebased onto ${main}, rebase and land again\n${failed.output}`);
+    }
     // Same-file overlap with other changes in flight: a notice only, never a refusal (BR-2062).
     noticeOverlaps(ws, wt, subject, "land", say);
     // A landing whose changes lie in one floor scope goes ahead of the full-floor landings not yet started (BR-2399, D-82).

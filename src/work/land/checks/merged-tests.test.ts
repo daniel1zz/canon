@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { project, sh, startNew, ws } from "../../testkit.ts";
+import { runLandingTests } from "./merged-tests.ts";
 
 // reason: these tests land changes through the spawned CLI, which waits out queue polls (C-111).
 const TIMED = 60_000;
@@ -127,5 +128,25 @@ describe("the landing runs the related test files that have no report (BR-2542, 
     const r = await canonIn(a.worktree, "work", "land");
     expect(r.code).toBe(0);
     expect(r.out + r.err).not.toContain("before landing");
+  }, TIMED);
+});
+
+describe("the landing's own test runs", () => {
+  test("BR-2542 BR-2381 BR-2645: the files a landing runs itself run several at once by test_jobs; one that failed while others ran is run again alone and its alone result counts", async () => {
+    const root = project();
+    mkdirSync(join(root, "t"), { recursive: true });
+    mkdirSync(join(root, "running"));
+    // each file is busy for 3 s and writes how many files were running when it started; t/alone.sh fails when another was
+    const busy = (failTogether: boolean) => `#!/bin/sh\nmkdir running/$$\nn=$(ls running | wc -l | tr -d ' ')\necho "$n" >> counts\nsleep 3\nrmdir running/$$\n${failTogether ? '[ "$n" = 1 ] || exit 1\n' : ""}exit 0\n`;
+    writeFileSync(join(root, "t/a.sh"), busy(false));
+    writeFileSync(join(root, "t/alone.sh"), busy(true));
+    let i = 0;
+    // reason: an always-idle machine, so the pool's idle-CPU rule (BR-2302) lets a second file start and the test does not depend on the load
+    const idle = () => ({ idle: ++i * 400, total: i * 400, count: 4 });
+    const runs = await runLandingTests(ws(root), root, "sh {file}", ["t/a.sh", "t/alone.sh"], new Set(), 2, () => {}, idle);
+    expect(runs.map((r) => [r.file, r.exitCode])).toEqual([["t/a.sh", 0], ["t/alone.sh", 0]]);
+    const counts = readFileSync(join(root, "counts"), "utf8").trim().split("\n");
+    expect(counts.length).toBe(3);
+    expect(counts.includes("2")).toBe(true);
   }, TIMED);
 });

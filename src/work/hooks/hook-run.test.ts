@@ -177,4 +177,41 @@ describe("before_land through the CLI", () => {
     expect(r.exitCode).toBe(1);
     expect(sh(root, "rev-parse", "main")).toBe(before);
   });
+
+  const queued = (root: string, change: string) => ws(root).db.db.query<{ n: number }, [string]>("SELECT count(*) AS n FROM events WHERE kind = 'queue.enter' AND subject = ?").get(change)!.n;
+
+  test("BR-2652: before_land runs once before the queue on the branch as committed; a failure there refuses with exit 1 and never enters the queue", () => {
+    const root = project();
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nhooks:\n  before_land: test -e CHANGELOG.md\n`);
+    sh(root, "commit", "-qam", "hook");
+    const s = startNew(root, "No changelog");
+    writeFileSync(join(s.worktree, "x.txt"), "x\n");
+    sh(s.worktree, "add", "x.txt");
+    sh(s.worktree, "commit", "-qm", "x");
+    const r = Bun.spawnSync(["bun", MAIN, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr.toString()).toContain("before the queue, on this branch as committed (BR-2652)");
+    expect(queued(root, s.change)).toBe(0);
+  });
+
+  test("BR-2652: the preview gets CANON_HOOK_PREVIEW=1 and the fork point as CANON_BASE; a hook that skips the preview still runs, and refuses, in the turn on the tree that becomes main", () => {
+    const root = realpathSync(project());
+    const log = join(root, "..", `hook-env-${Date.now()}.log`);
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nhooks:\n  before_land: 'printf "%s %s\\n" "\${CANON_HOOK_PREVIEW:-0}" "$CANON_BASE" >> ${log}; test "$CANON_HOOK_PREVIEW" = 1 || test -e CHANGELOG.md'\n`);
+    sh(root, "commit", "-qam", "hook");
+    const s = startNew(root, "No changelog");
+    const fork = sh(root, "rev-parse", "main").trim();
+    writeFileSync(join(s.worktree, "x.txt"), "x\n");
+    sh(s.worktree, "add", "x.txt");
+    sh(s.worktree, "commit", "-qm", "x");
+    writeFileSync(join(root, "other.txt"), "main moved\n");
+    sh(root, "add", "other.txt");
+    sh(root, "commit", "-qm", "main moves");
+    const moved = sh(root, "rev-parse", "main").trim();
+    const r = Bun.spawnSync(["bun", MAIN, "work", "land"], { cwd: s.worktree, stdout: "pipe", stderr: "pipe", stdin: "ignore", env: { ...process.env, CANON_ACTOR: "agent:a" } });
+    expect(r.exitCode).toBe(1);
+    expect(r.stderr.toString()).not.toContain("before the queue");
+    expect(queued(root, s.change)).toBe(1);
+    expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([`1 ${fork}`, `0 ${moved}`]);
+  });
 });

@@ -58,14 +58,16 @@ describe("cross tests when a branch and what main gained since it forked overlap
     expect(sh(root, "rev-parse", "main").trim()).toBe(before);
   });
 
-  test("BR-2645: a path both sides changed runs the tests picked for main's side; they pass and the change lands", async () => {
+  test("BR-2645: a path both sides changed runs only the tests picked for both sides, not one picked for main's side alone; they pass and the change lands", async () => {
     const root = fixture();
-    const a = change(root, "A", { "src/x.txt": "a\n", "src/y.txt": "a\n" });
-    const b = change(root, "B", { "src/x.txt": "a\n" });
+    const a = change(root, "A", { "src/x.txt": "a\n" });
+    const b = change(root, "B", { "src/x.txt": "a\n", "src/y.txt": "b\n" });
     expect((await landing(b.worktree)).r.kind).toBe("landed");
     const second = await landing(a.worktree);
     expect(second.cross.join("\n")).toContain("both changed src/x.txt");
+    expect(second.cross.join("\n")).toContain("running the 1 test file(s) test_select_command picks for both");
     expect(second.said).toContain("cross-tested t/x.sh: pass");
+    expect(second.said.some((l) => l.startsWith("cross-tested t/y.sh"))).toBe(false);
     expect(second.r.kind).toBe("landed");
   });
 
