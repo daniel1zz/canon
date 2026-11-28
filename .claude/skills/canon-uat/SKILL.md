@@ -33,7 +33,7 @@ Rules say what the product must do; quality standards (`canon/quality/Q-n.md`) s
    - `owner`: never judge it yourself. Prepare the evidence and how to try it, then `canon human ask` with the threshold; do not wait. The row stays `PENDING-OWNER` until the owner answers.
 4. Record each result: `canon quality verdict Q-n --result pass|fail --evidence <path> --by test|agent`; an owner verdict adds `--by owner --question <n>`, the answered question.
 
-A product that does what its rules promise but misses its threshold still feels broken: that is what these rows catch. An experience goal in the change with no standard and no rule ("feels fast") is a **quality gap**: report it and propose `canon quality new` (canon-rules section 3), never a substitute rule.
+A product that does what its rules promise but misses its threshold still feels broken: that is what these rows catch. An experience goal in the change with no standard and no rule ("feels fast") is a **quality gap** (section 6), never a substitute rule.
 
 ## 2. Derive journeys
 
