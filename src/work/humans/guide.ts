@@ -6,5 +6,5 @@ export const humanGuide: readonly GuideLine[] = [
 ];
 
 export const humanTopics: readonly GuideTopic[] = [
-  { name: "human", when: `asking the human a question and recording their answer`, text: `Ask with the question tool (AskUserQuestion in Claude Code, request_user_input in Codex, or the client's own), using question #n's text word for word as the question. Then, in the same session, record their exact words (the option picked or what they typed): canon human answer <n> <answer> --relayed "<their words>"; canon checks them against what the question tool recorded. Never answer for them.` },
+  { name: "human", when: `asking the human a question and recording their answer`, text: `The question tool is AskUserQuestion in Claude Code, request_user_input in Codex, or the client's own. Use question #n's text word for word as the question. Then, in the same session, record their exact words (the option picked or what they typed): canon human answer <n> <answer> --relayed "<their words>"; canon checks them against what the question tool recorded.` },
 ];

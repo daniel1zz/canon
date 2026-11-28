@@ -6,7 +6,7 @@ export const verifyGuide: readonly GuideLine[] = [
 ];
 
 export const verifyTopics: readonly GuideTopic[] = [
-  { name: "test", when: `before landing, or when deciding which tests to run and whether to run the rule review`, text: `Before landing run canon work test: it runs only the test files related to your change (changed tests, tests test_select_command picks, tests naming a rule you touched), one file per run, says why it picked each, runs the project's typecheck_command first and canon check last, and fails on either; --all runs every test file. The floor runs the full suite when landing.
+  { name: "test", when: `before landing, or when deciding which tests to run and whether to run the rule review`, text: `canon work test runs only the test files related to your change (changed tests, tests test_select_command picks, tests naming a rule you touched), one file per run, says why it picked each, runs the project's typecheck_command first and canon check last, and fails on either; --all runs every test file. The floor runs the full suite when landing.
 
-A change to rules or decisions: also run canon work review once before landing (not after every small edit): it is the post-land rule review on your current text, one model call.` },
+canon work review is the post-land rule review on your current text, one model call: run it before landing, not after every small edit.` },
 ];
