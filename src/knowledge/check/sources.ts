@@ -122,30 +122,39 @@ export function pageText(html: string): string {
     });
 }
 
-export type Fetcher = (url: string) => Promise<{ status: number; text: string }>;
+export type Fetcher = (url: string) => Promise<{ status: number; text: string; type?: string }>;
 
 export const httpFetch: Fetcher = async (url) => {
   const r = await fetch(url, { redirect: "follow", signal: AbortSignal.timeout(20_000), headers: { "user-agent": "canon-source-check" } });
-  return { status: r.status, text: await r.text() };
+  const type = r.headers.get("content-type") ?? "";
+  // reason: a PDF or other binary body is not text canon can search, and reading it as text only wastes memory (BR-2111)
+  return { status: r.status, type, text: readable(type) ? await r.text() : "" };
 };
+
+/** Whether a response of this content type is text whose words canon can search: HTML, XML, JSON or plain text; no type is taken as text. */
+const readable = (type: string): boolean => type === "" || /^(text\/|application\/(xhtml\+xml|xml|json|[a-z.+-]*\+(xml|json))\b)/i.test(type.trim());
 
 /**
  * BR-2111: whether each source's quote is really in what it names. A repository path is read from `root`
  * (the tree that becomes main); a URL is fetched. Returns one message per source that does not hold.
  */
-export async function verify(root: string, list: readonly Source[], fetcher: Fetcher = httpFetch): Promise<string[]> {
+export async function verify(root: string, list: readonly Source[], fetcher: Fetcher = httpFetch, unverified: string[] = []): Promise<string[]> {
   const failures: string[] = [];
   for (const s of list) {
     const want = collapse(s.quote);
     if (/^https?:\/\//.test(s.target)) {
-      let got: { status: number; text: string };
+      let got: { status: number; text: string; type?: string };
       try {
         got = await fetcher(s.target);
       } catch (e) {
-        failures.push(`${s.target} could not be fetched (${e instanceof Error ? e.message : String(e)})`);
+        // reason: a timeout or DNS failure says nothing about the quote; the third party's availability is no lie in the document (BR-2111, D-139)
+        unverified.push(`${s.target} could not be fetched (${e instanceof Error ? e.message : String(e)})`);
         continue;
       }
-      if (got.status < 200 || got.status >= 300) failures.push(`${s.target} answered HTTP ${got.status}`);
+      // reason: only a page that is gone (404, 410) shows the source no longer exists; a refusal to serve canon (401, 403, 429, 5xx) shows nothing about it (BR-2111)
+      if (got.status === 404 || got.status === 410) failures.push(`${s.target} answered HTTP ${got.status}`);
+      else if (got.status < 200 || got.status >= 300) unverified.push(`${s.target} answered HTTP ${got.status}`);
+      else if (!readable(got.type ?? "")) unverified.push(`${s.target} is ${got.type}, whose text canon cannot read`);
       // reason: a page renders `code` as a tag, which becomes a space and loses its backticks, so the page reads "x , y" for "`x`, y" (BR-2111)
       else if (!loose(pageText(got.text)).includes(loose(s.quote))) failures.push(`${s.target} does not contain “${want}”`);
       continue;

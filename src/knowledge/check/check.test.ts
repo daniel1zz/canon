@@ -478,6 +478,35 @@ describe("source quotes", () => {
 });
 
 describe("source verification", () => {
+  test("BR-2111: a page that is gone, or readable without the quote, fails; one that cannot be fetched, refuses canon or is a PDF is only unverified", async () => {
+    const server = Bun.serve({
+      port: 0,
+      fetch: (req) => {
+        const p = new URL(req.url).pathname;
+        if (p === "/ok") return new Response("<p>the quote is here</p>", { headers: { "content-type": "text/html; charset=utf-8" } });
+        if (p === "/forbidden") return new Response("no bots", { status: 403 });
+        if (p === "/busy") return new Response("later", { status: 503 });
+        if (p === "/pdf") return new Response("%PDF-1.7 binary", { headers: { "content-type": "application/pdf" } });
+        if (p === "/gone") return new Response("gone", { status: 410 });
+        return new Response("missing", { status: 404 });
+      },
+    });
+    try {
+      const at = (path: string, quote = "the quote is here") => ({ target: `http://localhost:${server.port}${path}`, quote, line: "" });
+      const unverified: string[] = [];
+      const got = await verify(repo({}), [at("/ok"), at("/ok", "a quote not on the page"), at("/forbidden"), at("/busy"), at("/pdf"), at("/gone"), at("/nothing")], undefined, unverified);
+      const host = (m: string) => m.replace(/localhost:\d+/, "host");
+      expect(got.map(host)).toEqual(["http://host/ok does not contain “a quote not on the page”", "http://host/gone answered HTTP 410", "http://host/nothing answered HTTP 404"]);
+      expect(unverified.map(host)).toEqual(["http://host/forbidden answered HTTP 403", "http://host/busy answered HTTP 503", "http://host/pdf is application/pdf, whose text canon cannot read"]);
+      const offline: string[] = [];
+      const thrown = await verify(repo({}), [at("/ok")], async () => { throw new Error("getaddrinfo ENOTFOUND"); }, offline);
+      expect(thrown).toEqual([]);
+      expect(offline.map(host)).toEqual(["http://host/ok could not be fetched (getaddrinfo ENOTFOUND)"]);
+    } finally {
+      server.stop(true);
+    }
+  });
+
   test("BR-2111: a real HTTP page is fetched and its visible text, not its markup or scripts, must hold the quote; backticks and whitespace do not count, so a rendered `code` span matches", async () => {
     const server = Bun.serve({
       port: 0,

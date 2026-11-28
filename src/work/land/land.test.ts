@@ -230,12 +230,13 @@ describe("work land", () => {
     expect(again.kind === "refused" && again.message).not.toContain("nothing changed since");
   });
 
-  describe("BR-2111: a new decision with no source at all is a note; each source new to main is verified against its file or page and a quote that does not hold refuses the landing", () => {
+  describe("BR-2111: a new decision with no source at all is a note; each source new to main is verified against its file or page; a quote that does not hold, or a page that is gone, refuses the landing, and a page canon cannot reach is a note", () => {
     const decision = (options: string) =>
       `---\nid: D-1\ntitle: Pick\nstatus: accepted\namends: \"none: t\"\n---\n## 背景\n\nB.\n\n## 方案\n\n1. A：采用。\n${options}\n2. B：否决。\n\n## 决定\n\nA.\n\n## 后果\n\nC.\n`;
     const pages: Record<string, string> = { "https://ok.example/a": "<html><body><p>refunds are&nbsp;allowed\n  within 30 days</p></body></html>" };
     const fetcher = async (url: string) => {
       if (url === "https://down.example/") throw new Error("getaddrinfo ENOTFOUND down.example");
+      if (url === "https://blocked.example/") return { status: 403, text: "no bots" };
       return url in pages ? { status: 200, text: pages[url]! } : { status: 404, text: "not found" };
     };
     const attempt = async (options: string, title: string) => {
@@ -249,8 +250,11 @@ describe("work land", () => {
       const said: string[] = [];
       const out = await land(ws(s.worktree), { ...FAST, fetcher }, (line) => said.push(line));
       if (out.kind !== "refused") {
-        const notes = said.filter((l) => l.startsWith("note: D-1 is new and cites no source"));
-        return [out.kind, ...notes].join("; ");
+        const notes = said.filter((l) => l.startsWith("note: D-1"));
+        const w = ws(root);
+        const unverified = w.db.db.query<{ n: number }, []>("SELECT count(*) AS n FROM events WHERE kind = 'source.unverified'").get()!.n;
+        w.db.close();
+        return [out.kind, ...notes, ...(unverified > 0 ? [`source.unverified ×${unverified}`] : [])].join("; ");
       }
       // reason: a source path that is no file, or a file without its quote, is reported by canon check before the source step (BR-2110, BR-2252)
       if (out.findings) return `${out.reason}: ${out.findings.map((f) => `${f.rule} ${f.message}`).join(" ")}`;
@@ -265,7 +269,8 @@ describe("work land", () => {
       ["Page ok", "   - 来源：https://ok.example/a “refunds are allowed within 30 days”", "landed"],
       ["Page wrong", "   - 来源：https://ok.example/a “refunds are allowed within 60 days”", "source: - D-1: https://ok.example/a does not contain “refunds are allowed within 60 days”"],
       ["Page 404", "   - 来源：https://ok.example/gone “refunds are allowed within 30 days”", "source: - D-1: https://ok.example/gone answered HTTP 404"],
-      ["Offline", "   - 来源：https://down.example/ “refunds are allowed within 30 days”", "source: - D-1: https://down.example/ could not be fetched (getaddrinfo ENOTFOUND down.example)"],
+      ["Offline", "   - 来源：https://down.example/ “refunds are allowed within 30 days”", "landed; note: D-1: https://down.example/ could not be fetched (getaddrinfo ENOTFOUND down.example); the quote was not verified and the landing goes on (BR-2111); source.unverified ×1"],
+      ["Page 403", "   - 来源：https://blocked.example/ “refunds are allowed within 30 days”", "landed; note: D-1: https://blocked.example/ answered HTTP 403; the quote was not verified and the landing goes on (BR-2111); source.unverified ×1"],
     ];
     for (const [title, options, expected] of cases) {
       test(`BR-2111: ${title}`, async () => {

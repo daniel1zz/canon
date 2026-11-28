@@ -159,7 +159,7 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
   if (scope.linksOnly.length > 0) say(`review: ${scope.linksOnly.length} file(s) only re-recorded references, not reviewed`);
   if (scope.sourcesOnly.length > 0) say(`review: ${scope.sourcesOnly.length} decision(s) only changed their 来源 lines, which the landing checks; not reviewed`);
   // Sources new to main are checked once, here, on the tree that becomes main (BR-2111).
-  const sourceFailures = await checkSources(wt, base.value, entries, read.corpus.docs, opts.fetcher ?? httpFetch, say);
+  const sourceFailures = await checkSources(wt, base.value, entries, read.corpus.docs, opts.fetcher ?? httpFetch, say, (decision, source) => ws.db.event(ws.actor, "source.unverified", v.subject, { decision, source }));
   if (sourceFailures.length > 0) return refuse("source", `decision sources do not hold:\n${sourceFailures.map((f) => `  - ${f}`).join("\n")}`);
   // reason: how a landing is reviewed (the command, its limit, the standing instruction list) comes from main's already-landed
   // config, never from the change's own tree: a change that swaps the reviewer would otherwise review itself (BR-2074, #115)
@@ -187,10 +187,11 @@ export async function verifyChange(ws: Workspace, opts: LandOptions, say: Say, v
 
 /**
  * BR-2111: every source line a decision added by this landing gives that is not already on main (in that decision) is
- * verified against what it names. A source that cannot be fetched fails too: an unverified quote never reaches main. A
+ * verified against what it names. A page that is gone (404, 410) or readable without the quote fails; one that cannot be
+ * fetched, refuses canon or is not text (a PDF) is a note, since the third party's availability is no lie in the document. A
  * new decision citing no source at all is a note, not a refusal (D-139).
  */
-async function checkSources(wt: string, base: string, entries: readonly { status: string; path: string }[], docs: readonly Doc[], fetcher: Fetcher, say: Say): Promise<string[]> {
+async function checkSources(wt: string, base: string, entries: readonly { status: string; path: string }[], docs: readonly Doc[], fetcher: Fetcher, say: Say, unverifiedSource: (decision: string, source: string) => void): Promise<string[]> {
   const failures: string[] = [];
   const touched = new Map(entries.filter((e) => e.status !== "D" && e.path.startsWith("canon/decisions/")).map((e) => [e.path, e.status]));
   for (const d of docs) {
@@ -202,7 +203,12 @@ async function checkSources(wt: string, base: string, entries: readonly { status
     }
     const old = git(wt, "show", `${base}:${d.path}`);
     const before = new Set(old.ok ? sources(old.value).sources.map((s) => `${s.target} ${s.quote}`) : []);
-    for (const f of await verify(wt, now.filter((s) => !before.has(`${s.target} ${s.quote}`)), fetcher)) failures.push(`${d.id}: ${f}`);
+    const unverified: string[] = [];
+    for (const f of await verify(wt, now.filter((s) => !before.has(`${s.target} ${s.quote}`)), fetcher, unverified)) failures.push(`${d.id}: ${f}`);
+    for (const u of unverified) {
+      say(`note: ${d.id}: ${u}; the quote was not verified and the landing goes on (BR-2111)`);
+      unverifiedSource(d.id, u);
+    }
   }
   return failures;
 }
