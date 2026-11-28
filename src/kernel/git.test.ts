@@ -35,3 +35,11 @@ test("BR-2650: a git command that fails because git-lfs is missing says so and h
   expect(other.ok).toBe(false);
   if (!other.ok) expect(other.error.message).not.toContain("git-lfs");
 });
+
+test("a git command in a directory that is gone fails as a result naming the directory, never throws", () => {
+  const base = mkdtempSync(join(tmpdir(), "canon-gone-")); dirs.push(base);
+  const gone = join(base, "removed-worktree");
+  const r = git(gone, "status", "--porcelain");
+  expect(r.ok).toBe(false);
+  if (!r.ok) expect(r.error.message).toBe(`git status --porcelain: ${gone} does not exist`);
+});

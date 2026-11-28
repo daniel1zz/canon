@@ -32,6 +32,8 @@ const LFS_MISSING = /git-lfs: command not found|'git-lfs' was not found on your 
 export const LFS_HINT = "git-lfs is not installed, but this repository uses Git LFS (see .gitattributes): install it (macOS: brew install git-lfs; others: https://git-lfs.com), then run git lfs install";
 
 export function gitEnv(cwd: string, env: Readonly<Record<string, string>>, ...args: string[]): Result<string> {
+  // reason: Bun's spawn in a directory that is gone throws "ENOENT posix_spawn 'git'", which reads like git is missing; a worktree removed meanwhile (canon removes landed ones in the background) is an ordinary failure
+  if (!existsSync(cwd)) return err("io", `git ${args.join(" ")}: ${cwd} does not exist`);
   const r = Bun.spawnSync(["git", ...args], { cwd, stdout: "pipe", stderr: "pipe", ...(Object.keys(env).length > 0 ? { env: { ...process.env, ...env } } : {}) });
   if (r.exitCode !== 0) {
     const out = (r.stderr.toString() || r.stdout.toString()).trim();

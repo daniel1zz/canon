@@ -509,6 +509,7 @@ function deleteLandedBranch(ws: Workspace, branch: string): void {
 export function keepReason(ws: Workspace, w: WorktreeInfo, held: ReadonlySet<string>): string | undefined {
   if (w.path === ws.root) return "you are in it";
   if (held.has(w.path)) return "claimed";
+  if (!existsSync(w.path)) return "already removed";
   const c = isClean(w.path);
   if (!c.ok || !c.value) return "uncommitted changes";
   const subject = branchSubject(w.branch);
