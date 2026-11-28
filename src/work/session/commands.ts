@@ -1,4 +1,5 @@
 import { proposedNotice } from "./proposed.ts";
+import { relocate, relocationLine } from "./relocate.ts";
 import { goalActor, goalOf } from "../goal/goal.ts";
 import { stalledLine } from "../delegation/stall.ts";
 import { changeStates, hasFile, isClosed, marksOf, type ChangeState } from "../../knowledge/changes/state.ts";
@@ -309,6 +310,9 @@ function agendaSection(ws: Workspace, env: Readonly<Record<string, string | unde
 
 /** What `canon brief` says after the guide: in a claimed worktree only its own change; elsewhere the handoffs and questions; then the update notice. */
 function briefState(ws: Workspace, env: Readonly<Record<string, string | undefined>> = process.env): Result<void> {
+  // reason: a moved repository's recorded paths are fixed before anything below reads them, the claim of this worktree first (BR-2649)
+  const moved = relocate(ws);
+  if (moved) say(relocationLine(moved, ws));
   const claimed = claimOfWorktree(ws.db, ws.root);
   const chore = choreIn(ws);
   if (!chore.ok) return chore;
