@@ -267,3 +267,12 @@ const CODE_SPAN = /(?<!`)(`+)(?!`)[^\n]*?(?<!`)\1(?!`)/g;
 export function stripCode(markdown: string): string {
   return withoutFences(markdown).replace(CODE_SPAN, " ");
 }
+
+/**
+ * A domain that has rules, its subdomains' included, and all of them retired (BR-2653): its business has left this
+ * repository, so its code may be gone and its README need not name any.
+ */
+export function domainRetired(docs: readonly Doc[], domain: string): boolean {
+  const rules = docs.filter((d): d is Extract<Doc, { kind: "rule" }> => d.kind === "rule" && (d.domain === domain || d.domain.startsWith(`${domain}/`)));
+  return rules.length > 0 && rules.every((r) => r.status === "retired");
+}

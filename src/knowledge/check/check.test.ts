@@ -560,6 +560,23 @@ describe("code layout (D-15)", () => {
     expect(kinds(layered, { codeRoot: "src", shared: ["src/auth"] })).toEqual([]);
   });
 
+  test("BR-2653: a domain whose rules, its subdomains' included, are all retired needs no code: no code list, a gone path or a missing code_root directory passes; one active rule or no rule at all does not", () => {
+    const retired = (n: number) => ruleFile(n, "status: retired\n");
+    const gone = repo({ "canon/rules/devlog/README.md": readme("devlog", "tools/devlog"), [`canon/rules/devlog/${br(1)}.md`]: retired(1), "canon/rules/devlog/feed/README.md": readme("devlog/feed"), [`canon/rules/devlog/feed/${br(2)}.md`]: retired(2), "canon/rules/billing/README.md": readme("billing", "src/billing") });
+    expect(kinds(gone)).toEqual([]);
+    const none = repo({ "canon/rules/devlog/README.md": readme("devlog"), [`canon/rules/devlog/${br(1)}.md`]: retired(1), "canon/rules/billing/README.md": readme("billing", "src/billing") });
+    expect(kinds(none)).toEqual([]);
+    const layered = repo({ "canon/rules/devlog/README.md": readme("devlog"), [`canon/rules/devlog/${br(1)}.md`]: retired(1), "canon/rules/auth/README.md": readme("auth"), "canon/rules/billing/README.md": readme("billing"), "src/auth/a.ts": "", "src/billing/b.ts": "" });
+    expect(kinds(layered, { codeRoot: "src", shared: [] })).toEqual([]);
+
+    const active = repo({ "canon/rules/devlog/README.md": readme("devlog"), [`canon/rules/devlog/${br(1)}.md`]: retired(1), "canon/rules/devlog/feed/README.md": readme("devlog/feed"), [`canon/rules/devlog/feed/${br(2)}.md`]: ruleFile(2), "canon/rules/billing/README.md": readme("billing", "src/billing") });
+    expect(kinds(active).filter((k) => !k.startsWith("rule-"))).toEqual(["file-invalid canon/rules/devlog/README.md"]);
+    const empty = repo({ "canon/rules/devlog/README.md": readme("devlog"), "canon/rules/billing/README.md": readme("billing", "src/billing") });
+    expect(kinds(empty)).toEqual(["file-invalid canon/rules/devlog/README.md"]);
+    const missing = repo({ "canon/rules/devlog/README.md": readme("devlog", "tools/devlog"), [`canon/rules/devlog/${br(1)}.md`]: ruleFile(1), "canon/rules/billing/README.md": readme("billing", "src/billing") });
+    expect(kinds(missing).filter((k) => !k.startsWith("rule-"))).toEqual(["domain-code-missing canon/rules/devlog/README.md"]);
+  });
+
   test("BR-2117: `code` is reported on a subdomain README, and on every README once code_root is set", () => {
     const root = repo({ "canon/rules/billing/README.md": readme("billing", "src/billing"), "canon/rules/billing/refunds/README.md": readme("billing/refunds", "src/billing") });
     expect(kinds(root)).toEqual(["domain-code-declared canon/rules/billing/refunds/README.md"]);

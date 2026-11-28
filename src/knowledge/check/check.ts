@@ -5,7 +5,7 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { parse } from "yaml";
 import { technicalLayerWord, technicalNameAdvice } from "../documents/domain-names.ts";
-import { stripCode, type Corpus, type Rule } from "../documents/model.ts";
+import { domainRetired, stripCode, type Corpus, type Rule } from "../documents/model.ts";
 import type { FileProblem } from "../documents/read.ts";
 import { idsIn as idsOf } from "../documents/types.ts";
 import { BACKLOG_FILE, readBacklog } from "../documents/backlog.ts";
@@ -217,7 +217,8 @@ function rawFindings(input: CheckInput): Finding[] {
       findings.push({ path: dom.path, rule: "domain-code-declared", message: `remove \`code:\` from the README: ${why}` });
     }
     // A path that does not exist silently drops the domain from `canon context <path>` (BR-2079).
-    if (codeRoot === undefined) {
+    // reason: a domain whose rules are all retired has left this repository with its code (BR-2653)
+    if (codeRoot === undefined && !domainRetired(input.corpus.docs, dom.name)) {
       for (const c of dom.code) {
         if (!existsSync(join(input.root, c))) findings.push({ path: dom.path, rule: "domain-code-missing", message: `code path ${c} does not exist; fix it or remove it from the README` });
       }
@@ -340,7 +341,7 @@ function layoutFindings(root: string, corpus: Corpus): Finding[] {
   for (const dom of corpus.domains) {
     const dir = `${codeRoot}/${dom.name}`;
     // reason: git keeps no empty directory, so one with no file passes here and is gone once landed (#236, BR-2118)
-    if (!holdsFile(join(root, dir))) out.push({ path: dom.path, rule: "code-layout", message: `domain ${dom.name} has no code directory ${dir}${isDir(join(root, dir)) ? " (it exists but holds no file, and git does not keep an empty directory)" : ""}` });
+    if (!holdsFile(join(root, dir)) && !domainRetired(corpus.docs, dom.name)) out.push({ path: dom.path, rule: "code-layout", message: `domain ${dom.name} has no code directory ${dir}${isDir(join(root, dir)) ? " (it exists but holds no file, and git does not keep an empty directory)" : ""}` });
   }
   for (const s of shared) {
     if (!existsSync(join(root, s))) out.push({ path: "canon/config.yaml", rule: "code-layout", message: `shared path ${s} does not exist` });

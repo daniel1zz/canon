@@ -5,7 +5,7 @@ import { join, relative } from "node:path";
 import { parseDocFile, parseReadme } from "./docfile.ts";
 import { parseLinks, parsePasses } from "./behaviour.ts";
 import { changeLinks } from "../changes/links.ts";
-import { NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type Advances, type DecisionStatus, type Doc, type FeatureStatus, type Domain, type Layout, type QualityJudge, type QualityStatus, type ReleaseStatus, type RuleStatus } from "./model.ts";
+import { domainRetired, NO_LAYOUT, type ChangeStatus, type Corpus, type CodeList, type Advances, type DecisionStatus, type Doc, type FeatureStatus, type Domain, type Layout, type QualityJudge, type QualityStatus, type ReleaseStatus, type RuleStatus } from "./model.ts";
 import { BUILTIN_TYPES, type DocType } from "./types.ts";
 
 /** A chore identity (D-100), the value of a light change's `chore` (BR-2458). */
@@ -75,6 +75,7 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
   const featurePrefix = types.find((t) => t.name === "feature")?.prefix ?? "F";
   const rulesDir = join(base, ruleType.dir);
   const ruleFile = new RegExp(`^${ruleType.prefix}-\\d+\\.md$`);
+  const codeless: { domain: string; path: string }[] = [];
   // reason: a domain may hold subdomains as subdirectories; each level is a domain of its own (BR-2113)
   const walk = (domain: string, parent: string | undefined): void => {
     const dir = join(rulesDir, ...domain.split("/"));
@@ -89,7 +90,8 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
         // reason: only a top-level domain without a code root names its code; otherwise the location is the
         // convention or the enclosing domain's, and a stray `code:` is a check finding, not a read problem (D-15, BR-2117)
         const named = codeRoot === undefined && !parent;
-        if (named && declared.length === 0) problems.push({ path: rel(readme), message: "front matter `code` must list at least one code directory this domain governs (or set code_root in canon/config.yaml)" });
+        // reason: judged once the domain's rules are read, since a domain whose rules are all retired needs no code (BR-2653)
+        if (named && declared.length === 0) codeless.push({ domain, path: rel(readme) });
         const effective = codeRoot !== undefined ? [`${codeRoot}/${domain}`] : named ? declared : [];
         domains.push({ name: domain, path: rel(readme), code: effective, declared, body: parsed.value.body, ...(parent ? { parent } : {}) });
       }
@@ -161,6 +163,9 @@ export function readCorpus(root: string, types: readonly DocType[] = BUILTIN_TYP
     for (const sub of listDirs(dir)) walk(`${domain}/${sub}`, domain);
   };
   for (const domain of listDirs(rulesDir)) walk(domain, undefined);
+  for (const c of codeless) {
+    if (!domainRetired(docs, c.domain)) problems.push({ path: c.path, message: "front matter `code` must list at least one code directory this domain governs (or set code_root in canon/config.yaml; a domain whose rules are all retired needs none, BR-2653)" });
+  }
 
   let qualityReadme: { path: string; text: string } | undefined;
   for (const type of types) {
