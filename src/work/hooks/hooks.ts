@@ -23,6 +23,8 @@ export interface HookContext {
   readonly env: Readonly<Record<string, string>>;
   /** The change's port for CANON_PORT (BR-2267); asked only when there is a command to run. */
   readonly port: PortLookup;
+  /** before_land's run before the landing queue (BR-2652), recorded as such so it is not counted as the turn's run. */
+  readonly preview?: boolean;
 }
 
 export interface HookFailure {
@@ -87,7 +89,7 @@ export async function runHooks(ctx: HookContext, commands: readonly string[], sa
     const [out, errText, exit] = await Promise.all([new Response(proc.stdout).text(), new Response(proc.stderr).text(), proc.exited]);
     const output = `${out}${errText}`;
     if (output.trim() !== "") for (const line of tail(output).split("\n")) say(`  ${line}`);
-    ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit, ...prep.portNote });
+    ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit, ...(ctx.preview ? { preview: true } : {}), ...prep.portNote });
     if (exit !== 0) {
       first ??= { command, exit, output: tail(output) };
       if (stopOnFailure) return first;
@@ -108,7 +110,7 @@ export function runHooksSync(ctx: HookContext, commands: readonly string[], say:
     const output = `${r.stdout.toString()}${r.stderr.toString()}`;
     if (output.trim() !== "") for (const line of tail(output).split("\n")) say(`  ${line}`);
     const exit = r.exitCode ?? -1;
-    ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit, ...prep.portNote });
+    ctx.db.event(ctx.actor, "hook.run", ctx.change, { event: ctx.event, command, exit, ...(ctx.preview ? { preview: true } : {}), ...prep.portNote });
     if (exit !== 0) {
       first ??= { command, exit, output: tail(output) };
       say(`hook ${ctx.event} exited ${exit}; the result is unchanged`);

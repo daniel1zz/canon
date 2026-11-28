@@ -74,9 +74,10 @@ describe("lifecycle hooks", () => {
     expect(ok.out.kind).toBe("landed");
   });
 
-  test("BR-2057 BR-2014: before_land runs before the floor, so a red floor still follows it; a canon check refusal means it never runs", async () => {
+  test("BR-2057 BR-2014: in the turn before_land runs before the floor, so a red floor still follows it; a canon check refusal means it never runs there", async () => {
     // the landing has no wording judgement step any more (BR-2239, D-141): canon check is the step before before_land that refuses here
-    const root = configured(`  before_land: 'touch "${"$"}CANON_WORKTREE/../before-land-ran"'\n`);
+    // reason: the run before the queue (BR-2652) is skipped by the hook itself, so the marker says only whether the turn ran it
+    const root = configured(`  before_land: 'test "${"$"}CANON_HOOK_PREVIEW" = 1 || touch "${"$"}CANON_WORKTREE/../before-land-ran"'\n`);
     const s = startNew(root, "Red");
     writeFileSync(join(s.worktree, "FAIL"), "x");
     sh(s.worktree, "add", "FAIL");
@@ -139,6 +140,7 @@ describe("lifecycle hooks", () => {
     expect(out.kind).toBe("landed");
     const runs = hookRuns(root);
     expect(runs.map((r) => [r.subject, r.event, r.command, r.exit, r.background ?? false])).toEqual([
+      [s.change, "before_land", "exit 0", 0, false], // before the queue (BR-2652)
       [s.change, "before_land", "exit 0", 0, false],
       [s.change, "after_land", 'echo one >> "$CANON_EVENT.log"', null, true],
       [s.change, "after_land", 'echo two >> "$CANON_EVENT.log"', null, true],

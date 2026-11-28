@@ -213,5 +213,7 @@ describe("before_land through the CLI", () => {
     expect(r.stderr.toString()).not.toContain("before the queue");
     expect(queued(root, s.change)).toBe(1);
     expect(readFileSync(log, "utf8").trim().split("\n")).toEqual([`1 ${fork}`, `0 ${moved}`]);
+    const runs = ws(root).db.db.query<{ detail: string }, [string]>("SELECT detail FROM events WHERE kind = 'hook.run' AND subject = ? ORDER BY id").all(s.change).map((r) => JSON.parse(r.detail) as { preview?: boolean });
+    expect(runs.map((r) => r.preview ?? false)).toEqual([true, false]);
   });
 });

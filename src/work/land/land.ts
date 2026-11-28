@@ -296,7 +296,7 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
       if (!fork.ok) return early("environment", `before_land could not be run before the queue: ${fork.error.message}`);
       if (!headNow.ok) return early("environment", `before_land could not be run before the queue: ${headNow.error.message}`);
       const env = { CANON_BASE: fork.value, CANON_HEAD: headNow.value, CANON_BRANCH: branch.value, CANON_HOOK_PREVIEW: "1" };
-      const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env, port: changePort(ws, subject) }, ws.config.hooks.before_land, say, true, landingGroups(running));
+      const failed = await runHooks({ db: ws.db, actor: ws.actor, event: "before_land", change: subject, cwd: wt, env, port: changePort(ws, subject), preview: true }, ws.config.hooks.before_land, say, true, landingGroups(running));
       forgetEnded(landingGroups(running));
       if (failed) return early("hook", `before_land \`${failed.command}\` exited ${failed.exit} before the queue, on this branch as committed (BR-2652); if it passes only once rebased onto ${main}, rebase and land again\n${failed.output}`);
     }

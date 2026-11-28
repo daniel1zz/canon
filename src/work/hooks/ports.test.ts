@@ -267,7 +267,7 @@ describe("a hook with no port", () => {
     expect(readFileSync(join(s.worktree, "..", "before-land.txt"), "utf8").trim()).toBe("[]");
     expect(said.join("\n")).toContain("CANON_PORT is empty");
     const runs = events(root, "hook.run");
-    expect(runs.map((r) => [r["event"], r["exit"], typeof r["port"]])).toEqual([["after_stop", 0, "string"], ["before_land", 0, "string"]]);
+    expect(runs.map((r) => [r["event"], r["exit"], typeof r["port"]])).toEqual([["after_stop", 0, "string"], ["before_land", 0, "string"], ["before_land", 0, "string"]]); // before the queue (BR-2652) and in the turn
   });
 
   test("BR-2287: background after_land without a port runs every command and records their own exit codes", async () => {

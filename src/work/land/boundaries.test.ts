@@ -112,7 +112,7 @@ describe("boundaries record and clean up", () => {
     const marker = join(root, "..", `${root.split("/").pop()}-before-land`);
     const release = `${marker}.release`;
     writeFileSync(`${marker}.sh`, `touch ${marker}\n${boundedLoop(`[ ! -e ${release} ]`)}\n`);
-    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nlander_stale_minutes: 0.02\nhooks:\n  before_land: sh ${marker}.sh\n`);
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nlander_stale_minutes: 0.02\nhooks:\n  before_land: test \"$CANON_HOOK_PREVIEW\" = 1 || sh ${marker}.sh\n`); // the turn's run, not the one before the queue (BR-2652)
     sh(root, "commit", "-qam", "slow before_land, 1.2 s stale time");
     const s = startNew(root, "Slow");
     writeFileSync(join(s.worktree, "x.txt"), "x\n");
@@ -165,7 +165,7 @@ describe("boundaries record and clean up", () => {
     const marker = join(root, "..", `${root.split("/").pop()}-before-land`);
     const release = `${marker}.release`;
     writeFileSync(`${marker}.sh`, `touch ${marker}\n${boundedLoop(`[ ! -e ${release} ]`)}\n`);
-    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nhooks:\n  before_land: sh ${marker}.sh\n`);
+    writeFileSync(join(root, "canon/config.yaml"), `floor: "true"\ntests: []\nhooks:\n  before_land: test \"$CANON_HOOK_PREVIEW\" = 1 || sh ${marker}.sh\n`); // the turn's run, not the one before the queue (BR-2652)
     sh(root, "commit", "-qam", "slow before_land");
     const s = startNew(root, "Skipped mid-turn");
     writeFileSync(join(s.worktree, "m.txt"), "m\n");
