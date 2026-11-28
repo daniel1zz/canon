@@ -47,7 +47,6 @@ instructions:
   - src/knowledge/query/guide.ts
   - src/knowledge/review/guide.ts
   - src/work/drop/guide.ts
-  - src/work/hooks/guide.ts
   - src/work/humans/guide.ts
   - src/work/issues/guide.ts
   - src/work/land/guide.ts

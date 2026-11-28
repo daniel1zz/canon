@@ -211,7 +211,7 @@ describe("dependencies not satisfied are not offered to start", () => {
     expect(take).toContain("C-6");
     expect(take).not.toContain("C-5");
     expect(brief).toContain("Waiting for dependencies, not ready to start: C-5 (waiting for C-3)");
-    expect(brief).toContain("not marked claimed, ambiguous or waiting");
+    expect(cli(root, "guide", "work").out).toContain("not marked claimed, ambiguous or waiting");
     expect(cli(root, "overview").out).toContain("C-5 Change 5  waiting-deps: C-3");
     write(root, { "changes/C-3.md": change(3, "done") });
     sh(root, "commit", "-qam", "C-3 lands");

@@ -163,10 +163,11 @@ describe("the owner's priority in the coordination DB", () => {
     expect(JSON.parse(events(root, "urgent.clear")[0]!.detail).relayed).toBe("撤销");
   });
 
-  test("BR-2364: the command's help and canon brief say agents use it only when the owner asked", () => {
+  test("BR-2364: the command's help and canon guide land say agents use it only when the owner asked; canon brief names canon guide land", () => {
     const root = project();
     expect(canon(root, "backlog", "urgent", "--help").out).toContain("ONLY when the owner asked");
-    expect(canon(root, "brief").out).toContain("canon backlog urgent");
+    expect(canon(root, "guide", "land").out).toContain("canon backlog urgent");
+    expect(canon(root, "brief").out).toContain("canon guide land");
   });
 
   test("BR-2365: canon work status lists the marks, in text and in --json, and nothing when there are none", () => {
