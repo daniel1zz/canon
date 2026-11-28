@@ -12,6 +12,8 @@ import { batchRefusal, enter, failKeepingPlace, failIfActive, finishEntry, heart
 import { moveMainGuarded, snapshotDetail, withDesigner, workerLandingRefusal } from "./checks/delegation.ts";
 import { selfProcess, sessionProcess } from "../claims/liveness.ts";
 import { noticeOverlaps } from "../session/overlap.ts";
+import { remindLand } from "../../knowledge/changes/duplicates.ts";
+import type { Change } from "../../knowledge/documents/model.ts";
 import { choreIn, isChore } from "../session/subject.ts";
 import { findDoc } from "../../knowledge/query/query.ts";
 import { readCorpus } from "../../knowledge/documents/read.ts";
@@ -302,6 +304,11 @@ async function landOnce(ws: Workspace, opts: LandOptions, say: Say): Promise<Lan
     }
     // Same-file overlap with other changes in flight: a notice only, never a refusal (BR-2062).
     noticeOverlaps(ws, wt, subject, "land", say);
+    // reason: what this change touched is compared with what unfinished changes wrote down; a reminder, never a refusal (BR-2657, D-171, D-139)
+    if (subject !== null && !isChore(subject)) {
+      const own = readCorpus(wt, ws.config.types, ws.config).corpus.docs.find((d): d is Change => d.kind === "change" && d.id === subject);
+      remindLand(ws, wt, subject, own, say);
+    }
     // A landing whose changes lie in one floor scope goes ahead of the full-floor landings not yet started (BR-2399, D-82).
     const forkPoint = git(wt, "merge-base", main, "HEAD");
     const scopedNow = forkPoint.ok && timingOf(wt) !== "after" && floorScope(wt, forkPoint.value, "HEAD") !== undefined;

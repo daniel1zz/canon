@@ -17,7 +17,8 @@ import { statedArgs, statedFields, statedInput } from "./stated.ts";
 import { refuseOnGuardedMain } from "./guarded.ts";
 import { findDoc } from "../query/query.ts";
 import { waitingJson } from "../changes/deps.ts";
-import { closeCmd, graphCmd, LINK_ARGS, linkCmd, newLinks } from "../changes/commands.ts";
+import { closeCmd, duplicateCmd, graphCmd, LINK_ARGS, linkCmd, newLinks } from "../changes/commands.ts";
+import { remindNew } from "../changes/duplicates.ts";
 import { mainCorpus } from "../../work/session/session.ts";
 
 /** `canon rule`, `decision`, `change`, `note`, `doc`: creating, listing and setting the status of documents. */
@@ -57,6 +58,12 @@ function newDocCommand(kind: string, extra: Record<string, { type: "string"; des
         }, ws.config.templates),
       );
       say(path);
+      // reason: a new change is compared with the unfinished ones by title; a reminder only, after the file is made (BR-2656, D-171)
+      if (kind === "change") {
+        const now = corpusOf(ws).corpus;
+        const made = now.docs.find((d) => d.kind === "change" && d.path === path);
+        if (made) remindNew(ws, made.id, made.title, say, now);
+      }
     },
   });
 }
@@ -239,6 +246,7 @@ const change = defineCommand({
       "Create a change ahead of time: its file only, open, no worktree (allocates its id; it lands with the change you are in, then canon work start <C-n> starts it). Refused where main is checked out and guarded, since the file could not be committed there: use `canon work start --title` instead (BR-2409, BR-2562)",
     ),
     link: linkCmd,
+    duplicate: duplicateCmd,
     graph: graphCmd,
     close: closeCmd,
     list: listCommand("change", "List open changes by priority tier (P0 first, canon priority set), each tier in the owner's order (canon/backlog.md, then the rest by id; --all for done and dropped)"),

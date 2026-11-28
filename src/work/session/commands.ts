@@ -47,6 +47,7 @@ import { failedReviewNotice } from "../../knowledge/review/landed-queue.ts";
 import { unpushedNotice } from "../remote/remote.ts";
 import { briefSummary, overview } from "../overview/overview.ts";
 import { LINK_ARGS, newLinks } from "../../knowledge/changes/commands.ts";
+import { remindNew } from "../../knowledge/changes/duplicates.ts";
 import { statedArgs, statedFor, statedInput } from "../../knowledge/documents/stated.ts";
 
 /** `canon brief` and `canon work start`, `stop`, `status`, `clean`: a session and its change's worktree. */
@@ -81,6 +82,8 @@ const startCmd = defineCommand({
     if (settles.some((v) => !/^[1-9]\d*$/.test(v))) fail({ code: "invalid", message: `--settles takes review finding numbers, comma separated (got ${String(args.settles)})` });
     if (fixMain && settles.length > 0) fail({ code: "invalid", message: "--fix-main opens its own change; give no --settles with it" });
     const s = must(fixMain ? startFixMain(ws, say) : start(ws, target, say, { settles: settles.map(Number) }));
+    // reason: a new change is compared with the unfinished ones by title; a reminder only, after it started (BR-2656, D-171)
+    if ("title" in target) remindNew(ws, s.change, target.title, say);
     for (const line of startHint(ws.db, machineNow(), { fixMain, created: s.created })) say(line);
     noticeUpdates(ws, say);
     say(`cd ${s.worktree}`);

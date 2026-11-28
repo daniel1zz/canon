@@ -1,4 +1,5 @@
 import { git } from "../../kernel/git.ts";
+import { overlapping } from "./duplicate-events.ts";
 import { err, ok, type Result } from "../../kernel/result.ts";
 import { backlogAt, type BacklogEntry } from "../documents/backlog.ts";
 import type { Change, Corpus, Doc } from "../documents/model.ts";
@@ -50,7 +51,7 @@ export interface Flags {
   readonly claimed: boolean;
   readonly ambiguous: boolean;
   readonly closed_on_branch: boolean;
-  /** The scope may overlap another change's; always false until D-148 step D fills it. */
+  /** The scope may overlap another change's: an unanswered duplicate reminder pairs it with another unfinished change (BR-2658). */
   readonly overlap: boolean;
 }
 
@@ -141,7 +142,11 @@ export function changeStates(ws: Workspace, opts: StatesOptions = {}): Result<St
   const changeId = new RegExp(`^${prefix}-\\d+$`);
   const extra = [...new Set([...f.coordinated])].filter((id) => changeId.test(id) && !listed.has(id) && !onMain.has(id) && !listing.value.branches.has(id));
   for (const id of extra.sort((a, b) => Number(a.split("-")[1]) - Number(b.split("-")[1]))) out.push(withoutFile(id, f));
-  return ok({ states: out, unreadable: listing.value.unreadable });
+  // reason: an unanswered duplicate reminder between two unfinished changes marks both, so the other side's session sees it too (BR-2658, D-171)
+  const open = new Set(out.filter((s) => !isClosed(s)).map((s) => s.id));
+  const overlap = overlapping(ws, (id) => open.has(id));
+  const marked = out.map((s) => (overlap.has(s.id) ? { ...s, flags: { ...s.flags, overlap: true } } : s));
+  return ok({ states: marked, unreadable: listing.value.unreadable });
 }
 
 /** The coordination facts every change's state reads, read once. */

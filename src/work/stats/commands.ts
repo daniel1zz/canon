@@ -13,6 +13,7 @@ import { batchStats, renderBatchStats } from "./batches.ts";
 import { designStats, renderDesignStats } from "./design.ts";
 import { followEvents } from "./follow.ts";
 import { reminderStats, renderReminderStats } from "./reminders.ts";
+import { duplicateStats, renderDuplicateStats } from "./duplicates.ts";
 import { agenda, dueList } from "../reminders/agenda.ts";
 import { readFileSync } from "node:fs";
 import { readRuntime } from "../../kernel/agent.ts";
@@ -70,6 +71,9 @@ const stats = defineCommand({
     const a = must(agenda(ws));
     const reminders = renderReminderStats(reminderStats(ws, since ?? 0, until, dueList(a).map((it) => it.key), a.states));
     if (reminders) say(`\n${reminders}`);
+    // reason: text-only like the reminders; the duplicate reminder's precision per stage, to tune its threshold (BR-2659, D-171)
+    const duplicates = renderDuplicateStats(duplicateStats(ws, since ?? 0, until, a.states));
+    if (duplicates) say(`\n${duplicates}`);
     const searches = searchStats(ws.db, since ?? 0, until);
     if (searches.searches > 0) say(`\n${renderSearchStats(searches)}`);
     // reason: the shared code line is the last one (BR-2121, issue #70)

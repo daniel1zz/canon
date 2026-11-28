@@ -11,6 +11,7 @@ import { cycleThrough } from "./deps.ts";
 import { changeGraph, graphInputs, graphJson, graphLines, memberOf } from "./graph.ts";
 import { dependsArg, isCriterionRef, issueArg, linkMeta, type ChangeLinks, type Prefixes } from "./links.ts";
 import { criteriaByDoc } from "../releases/features.ts";
+import { recordAnswer } from "./duplicate-events.ts";
 
 /** The command-line arguments that write a change's links (BR-2562, BR-2563). */
 export const LINK_ARGS = {
@@ -204,5 +205,26 @@ export const closeCmd = defineCommand({
     must(setMeta(ws.root, doc, { status: "done", landed_in: sha.value }, doc.status));
     ws.db.event(ws.actor, "change.close", id, { commit: sha.value });
     say(`${id} → done, landed in ${sha.value.slice(0, 9)} (${doc.path}; commit it with your change)`);
+  },
+});
+
+/** `canon change duplicate`: the session's answer to a duplicate reminder, same work or not and why (BR-2658, D-171). */
+export const duplicateCmd = defineCommand({
+  meta: { description: "Answer a duplicate reminder about two changes: --same (it is that one) or --not \"<why>\" (it is not, because …); the latest answer counts (BR-2658)" },
+  args: {
+    change: { type: "positional", required: true, description: "One change of the reminded pair (C-n)" },
+    other: { type: "positional", required: true, description: "The other change (C-m)" },
+    same: { type: "boolean", description: "It is the same work" },
+    not: { type: "string", description: "It is not the same work, and why" },
+  },
+  run({ args }) {
+    const ws = workspace();
+    const a = String(args.change).toUpperCase();
+    const b = String(args.other).toUpperCase();
+    const given = typeof args.not === "string";
+    if (Boolean(args.same) === given) fail({ code: "invalid", message: "give --same or --not \"<why>\", one of them (BR-2658)" });
+    if (given && String(args.not).trim() === "") fail({ code: "invalid", message: "--not needs the reason it is not the same work (BR-2658)" });
+    if (a === b) fail({ code: "invalid", message: `${a} twice: name the two changes of the reminder (BR-2658)` });
+    say(must(recordAnswer(ws, a, b, { same: Boolean(args.same), reason: given ? String(args.not).trim() : null })));
   },
 });
