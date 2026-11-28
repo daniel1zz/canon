@@ -129,7 +129,8 @@ describe("project-level skills", () => {
 describe("where the skills come from and their version", () => {
   test("BR-2082 BR-2412: the compiled dist/canon installs from the dist/skills published beside it, else from the .claude/skills of the repository that holds it", () => {
     const repo = dir({ ".claude/skills/canon-z/SKILL.md": "z from the repository holding dist/canon\n" });
-    const built = Bun.spawnSync(["bun", "build", "--compile", MAIN, "--outfile", join(repo, "dist/canon")], { stdout: "pipe", stderr: "pipe" });
+    // reason: bun build --compile writes an ~88 MB temp file into its cwd; the temp repository, not the worktree (#319)
+    const built = Bun.spawnSync(["bun", "build", "--compile", MAIN, "--outfile", join(repo, "dist/canon")], { cwd: repo, stdout: "pipe", stderr: "pipe" });
     expect(built.exitCode).toBe(0);
     const root = gitRepo();
     const env: Record<string, string | undefined> = { ...process.env, CANON_ACTOR: "agent:test" };
